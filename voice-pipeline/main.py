@@ -847,20 +847,62 @@ async def test_dashboard():
 
 @app.post("/api/test/tts")
 async def test_tts(req: TTSTestRequest):
-    """Direct Sarvam Telugu TTS test"""
+    """Direct Sarvam Telugu TTS test — bypasses fallback to show real errors"""
+    import base64
     try:
-        import base64
-        tts = SarvamTTS()
-        audio_bytes = await tts.synthesize(req.text, req.speaker)
-        return {
-            "audio_b64": base64.b64encode(audio_bytes).decode(),
-            "audio_bytes": len(audio_bytes),
-            "text": req.text,
-            "speaker": req.speaker,
-        }
+        # Enforce word cap
+        words = req.text.split()
+        text = " ".join(words[:20]) if len(words) > 20 else req.text
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.sarvam.ai/text-to-speech",
+                headers={
+                    "api-subscription-key": SARVAM_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "inputs": [text],
+                    "target_language_code": "te-IN",
+                    "speaker": req.speaker,
+                    "model": "bulbul:v3",
+                    "pitch": 0,
+                    "pace": 1.1,
+                    "loudness": 1.4,
+                    "speech_sample_rate": 8000,
+                    "enable_preprocessing": True,
+                    "eng_interpolation_wt": 100,
+                }
+            )
+
+        # Return full details of what happened
+        if resp.status_code == 200:
+            data = resp.json()
+            audio_b64 = data.get("audios", [""])[0]
+            audio_bytes = base64.b64decode(audio_b64)
+            return {
+                "audio_b64": audio_b64,
+                "audio_bytes": len(audio_bytes),
+                "text": text,
+                "speaker": req.speaker,
+                "sarvam_status": 200,
+            }
+        else:
+            return {
+                "error": f"Sarvam returned {resp.status_code}",
+                "sarvam_response": resp.text[:500],
+                "text": text,
+                "speaker": req.speaker,
+                "api_key_prefix": SARVAM_KEY[:10] + "..." if SARVAM_KEY else "NOT SET",
+            }
+    except httpx.HTTPError as e:
+        return {"error": f"HTTP error: {type(e).__name__}: {str(e)}"}
     except Exception as e:
-        log.exception("TTS test failed")
-        return {"error": str(e)}
+        import traceback
+        return {
+            "error": f"{type(e).__name__}: {str(e)}",
+            "traceback": traceback.format_exc()[-500:],
+        }
 
 
 @app.post("/api/test/llm")
@@ -890,11 +932,10 @@ async def test_llm(req: LLMTestRequest):
 
 @app.post("/api/test/full")
 async def test_full(req: LLMTestRequest):
-    """Full chain: LLM → TTS audio"""
+    """Full chain: LLM → TTS audio (with error details)"""
+    import base64
     try:
-        import base64
         llm = GeminiLLM()
-        tts = SarvamTTS()
         fake_profile = {
             "profile_sku": req.profile_sku,
             "business_name": req.business_name,
@@ -911,17 +952,48 @@ async def test_full(req: LLMTestRequest):
             "real_estate": "karun", "premium": "manisha",
         }
         speaker = speaker_map.get(req.profile_sku, "anushka")
-        audio_bytes = await tts.synthesize(response, speaker)
 
-        return {
-            "response": response,
-            "audio_b64": base64.b64encode(audio_bytes).decode(),
-            "audio_bytes": len(audio_bytes),
-            "speaker": speaker,
-        }
+        # Direct Sarvam call for better error visibility
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://api.sarvam.ai/text-to-speech",
+                headers={
+                    "api-subscription-key": SARVAM_KEY,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "inputs": [response],
+                    "target_language_code": "te-IN",
+                    "speaker": speaker,
+                    "model": "bulbul:v3",
+                    "speech_sample_rate": 8000,
+                    "enable_preprocessing": True,
+                    "eng_interpolation_wt": 100,
+                }
+            )
+
+        if r.status_code == 200:
+            data = r.json()
+            audio_b64 = data.get("audios", [""])[0]
+            return {
+                "response": response,
+                "audio_b64": audio_b64,
+                "audio_bytes": len(base64.b64decode(audio_b64)),
+                "speaker": speaker,
+            }
+        else:
+            return {
+                "response": response,
+                "error": f"TTS failed: Sarvam returned {r.status_code}",
+                "sarvam_response": r.text[:500],
+                "speaker": speaker,
+            }
     except Exception as e:
-        log.exception("Full pipeline test failed")
-        return {"error": str(e)}
+        import traceback
+        return {
+            "error": f"{type(e).__name__}: {str(e)}",
+            "traceback": traceback.format_exc()[-500:],
+        }
 
 
 TEST_CONSOLE_HTML = """<!DOCTYPE html>
