@@ -532,9 +532,41 @@ class Session:
         # so a single loud noise doesn't trigger a false interrupt.
         self.interrupt_flag = False
         self.barge_in_speech_ms = 0
+        # "exotel" (default) or "widget" — see send_pcm and handle_widget_ws.
+        # Everything else (VAD, STT, Gemini, TTS, barge-in, fillers,
+        # language switching) is identical regardless of transport; only
+        # how audio physically gets sent/received differs.
+        self.transport = "exotel"
 
     async def send_pcm(self, pcm_bytes: bytes):
-        """Send 16-bit PCM @ 8kHz to Exotel Voicebot in 3200-byte (100ms) chunks."""
+        """Send 16-bit PCM audio to the caller. Exotel needs its specific
+        JSON media-event envelope with base64 + stream_sid; the widget
+        transport is a raw binary WebSocket pipe with no envelope at all —
+        nothing else about the pipeline (VAD, TTS, barge-in) differs."""
+        if self.transport == "widget":
+            FRAME = 3200
+            for i in range(0, len(pcm_bytes), FRAME):
+                if not self.socket_open:
+                    return
+                if self.interrupt_flag:
+                    log.info("send_pcm: interrupt flag set, stopping playback mid-stream")
+                    return
+                chunk = pcm_bytes[i:i+FRAME]
+                try:
+                    await self.ws.send_bytes(chunk)
+                except Exception as e:
+                    log.info("send_pcm (widget) stopped: %s", e)
+                    self.socket_open = False
+                    return
+            return
+
+        # Exotel path: JSON media-event envelope, base64, fixed 100ms
+        # frames, paced in real-time (asyncio.sleep below) since Exotel
+        # expects audio delivered at playback speed. The widget path above
+        # deliberately skips that pacing — a raw binary WS stream sends as
+        # fast as possible and lets the browser's own Web Audio scheduling
+        # handle playback timing, which is the more standard pattern for
+        # browser-based audio streaming.
         FRAME = 3200  # 100ms of 16-bit @ 8kHz per Exotel docs
         for i in range(0, len(pcm_bytes), FRAME):
             if not self.socket_open:
@@ -829,6 +861,75 @@ async def handle_exotel_ws(ws: WebSocket):
             log.exception("runtime: %s", e)
     except Exception as e:
         log.exception("handler: %s", e)
+    finally:
+        s.socket_open = False
+
+
+async def handle_widget_ws(ws: WebSocket):
+    """Website widget entry point — lets a visitor on jovio.in talk to
+    Jovio directly through their browser microphone, no phone call
+    needed. Reuses the exact same Session/VAD/STT/Gemini/TTS/barge-in/
+    filler pipeline already built and tested for Exotel calls (this
+    session, earlier today) — only the transport differs. If barge-in,
+    fillers, or language switching work on the phone line, they work
+    here too, for free.
+
+    Protocol — deliberately simpler than Exotel's, since there's no
+    telephony provider dictating the format:
+      - Client sends raw 16-bit PCM mono @ 16kHz binary WS frames
+        directly. This matches PIPE_SR exactly, so — unlike Exotel's
+        8kHz, which needs upsampling — zero resampling happens on the
+        input side.
+      - Server sends raw 16-bit PCM mono @ 8kHz binary WS frames back
+        (same audio speak_dynamic already produces for Exotel).
+      - No JSON envelope, no base64, no stream_sid/call_sid — a plain
+        binary audio pipe in both directions.
+
+    Deliberately does NOT create a `calls` row or upload a recording —
+    this is a public "try it now" demo surface on the marketing site,
+    not a billable customer call. If widget conversations should show
+    up in the dashboard/analytics later, that's a small, separate
+    addition (wire up save_call_row/finalize_call_recording the same
+    way handle_exotel_ws does).
+
+    UNTESTED IN A REAL BROWSER as of this commit — the backend logic is
+    tested the same way everything else today was (mocked WebSocket,
+    verified message flow), but actual browser audio capture/playback
+    behavior (autoplay policies, AudioContext quirks, mic permission
+    flows) can only be verified by loading the widget in a real browser.
+    See scripts/test_widget_local.html for a one-time manual verification
+    page — run that before trusting this live on jovio.in.
+    """
+    log.info("INCOMING widget WS attempt")
+    await ws.accept()
+    s = Session(ws)
+    s.transport = "widget"
+    s.started_at = time.time()
+    # Same demo persona heard on the phone line — a website visitor and a
+    # phone caller should get a consistent first impression of Jovio.
+    s.tenant = {"name": "Jovio Demo", "voice_profile": DEFAULT_VOICE}
+    s._sys = SYSTEM_PROMPT.format(business_type="general", business_name="Jovio Demo")
+    log.info("widget WS accepted")
+
+    asyncio.create_task(s.play_cached("default"))
+
+    try:
+        while True:
+            pcm_16k = await ws.receive_bytes()
+            if not pcm_16k:
+                continue
+            utt = s.feed_caller_audio(pcm_16k)
+            if utt is not None:
+                asyncio.create_task(_handle_utterance(s, utt))
+    except WebSocketDisconnect:
+        log.info("widget ws disconnect")
+    except RuntimeError as e:
+        if "not connected" in str(e) or "after sending" in str(e):
+            log.info("widget ws closed: %s", e)
+        else:
+            log.exception("widget runtime: %s", e)
+    except Exception as e:
+        log.exception("widget handler: %s", e)
     finally:
         s.socket_open = False
 

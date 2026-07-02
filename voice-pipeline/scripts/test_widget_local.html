@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<!--
+  Standalone test page for the /ws/widget backend endpoint.
+
+  WHY THIS EXISTS: real browser audio (microphone capture, AudioContext,
+  autoplay policies) cannot be tested from a server-side sandbox — the
+  backend logic was tested with mocked WebSocket messages, but whether a
+  REAL browser's microphone → WebSocket → speaker pipeline actually works
+  can only be verified by opening this in an actual browser. Do that
+  before building the polished embedded widget for jovio.in — fixing a
+  bug here is a five-minute edit; fixing the same bug after it's wired
+  into the live marketing site is a much bigger loop.
+
+  USAGE:
+    1. Open this file directly in a browser (double-click it, or serve it
+       with `python3 -m http.server` and visit the URL — either works,
+       it's a single self-contained file with no build step).
+    2. Click "Start Call".
+    3. Grant microphone permission when the browser asks.
+    4. Speak a sentence in Telugu, English, or Hindi.
+    5. You should hear Jovio's cached greeting immediately, then your
+       words should transcribe (visible in the on-page log), then a
+       reply should play back through your speakers.
+
+  If anything breaks, the on-page log shows exactly what happened —
+  paste that log back for debugging rather than just "it didn't work".
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jovio Widget — Local Test</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #070B19; color: #F8FAFC; padding: 24px; max-width: 640px; margin: 0 auto; }
+  h1 { color: #00E676; font-size: 20px; }
+  button { background: #00E676; color: #070B19; border: none; padding: 12px 24px; font-size: 16px; font-weight: 700; border-radius: 8px; cursor: pointer; }
+  button:disabled { background: #374151; color: #9CA3AF; cursor: not-allowed; }
+  button.stop { background: #EF4444; color: white; }
+  #status { margin: 16px 0; padding: 12px; border-radius: 8px; background: #111827; border: 1px solid #1F2937; }
+  #log { background: #000; color: #0F0; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  input { background: #111827; border: 1px solid #374151; color: #F8FAFC; padding: 8px; border-radius: 6px; width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Jovio Widget — Local Test Page</h1>
+<p style="color:#9CA3AF; font-size: 14px;">Not the real widget UI — this is a bare-bones test harness to verify the mic → WebSocket → speaker pipeline works in a real browser before building the polished version.</p>
+
+<input id="wsUrl" value="wss://api.jovio.in/ws/widget" />
+<button id="startBtn">Start Call</button>
+<button id="stopBtn" class="stop" disabled>Stop Call</button>
+
+<div id="status">Idle</div>
+<div id="log"></div>
+
+<script>
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(msg);
+}
+function setStatus(s) { statusEl.textContent = s; }
+
+let ws = null;
+let audioContext = null;
+let workletNode = null;
+let micStream = null;
+let nextPlayTime = 0;
+
+// Inline AudioWorklet processor — captures mic audio at whatever the
+// AudioContext's native sample rate is (commonly 44100 or 48000, browser/
+// hardware dependent — NOT guaranteed to be 16000 even if requested),
+// downsamples to 16kHz via simple linear interpolation (adequate for
+// speech, not broadcast-quality), converts to Int16 PCM, and posts each
+// chunk back to the main thread for sending over the WebSocket.
+const WORKLET_CODE = `
+class MicCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.targetRate = 16000;
+    this.inputRate = sampleRate; // AudioWorkletGlobalScope's native rate
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const channel = input[0]; // Float32Array, native sample rate
+    const ratio = this.inputRate / this.targetRate;
+    const outLength = Math.floor(channel.length / ratio);
+    const out = new Int16Array(outLength);
+    for (let i = 0; i < outLength; i++) {
+      const srcIdx = i * ratio;
+      const idxLow = Math.floor(srcIdx);
+      const idxHigh = Math.min(idxLow + 1, channel.length - 1);
+      const frac = srcIdx - idxLow;
+      const sample = channel[idxLow] * (1 - frac) + channel[idxHigh] * frac;
+      out[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
+    }
+    this.port.postMessage(out.buffer, [out.buffer]);
+    return true;
+  }
+}
+registerProcessor('mic-capture-processor', MicCaptureProcessor);
+`;
+
+async function startCall() {
+  document.getElementById('startBtn').disabled = true;
+  try {
+    log('Requesting microphone access...');
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    });
+    log('Microphone granted.');
+
+    audioContext = new AudioContext();
+    log(`AudioContext created, native sample rate: ${audioContext.sampleRate}Hz`);
+
+    const workletBlob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+    const workletUrl = URL.createObjectURL(workletBlob);
+    await audioContext.audioWorklet.addModule(workletUrl);
+    log('AudioWorklet module loaded.');
+
+    const source = audioContext.createMediaStreamSource(micStream);
+    workletNode = new AudioWorkletNode(audioContext, 'mic-capture-processor');
+    source.connect(workletNode);
+    // Deliberately NOT connecting workletNode to audioContext.destination —
+    // we don't want to hear our own mic input played back locally.
+
+    const wsUrl = document.getElementById('wsUrl').value;
+    log(`Connecting to ${wsUrl} ...`);
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      log('WebSocket connected. Call is live — speak now.');
+      setStatus('Call active — listening');
+      nextPlayTime = audioContext.currentTime;
+      workletNode.port.onmessage = (event) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(event.data); // raw Int16 PCM @ 16kHz, matches PIPE_SR exactly
+        }
+      };
+    };
+
+    ws.onmessage = (event) => {
+      // Incoming: raw 16-bit PCM mono @ 8kHz from speak_dynamic/play_cached.
+      // Decode -> Float32 -> schedule for gapless playback.
+      const int16 = new Int16Array(event.data);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
+      const buffer = audioContext.createBuffer(1, float32.length, 8000);
+      buffer.getChannelData(0).set(float32);
+      const src = audioContext.createBufferSource();
+      src.buffer = buffer;
+      src.connect(audioContext.destination);
+
+      // Schedule back-to-back, not "play immediately" — otherwise fast-
+      // arriving chunks would overlap/glitch, and slow-arriving chunks
+      // would leave gaps.
+      const startAt = Math.max(nextPlayTime, audioContext.currentTime);
+      src.start(startAt);
+      nextPlayTime = startAt + buffer.duration;
+    };
+
+    ws.onerror = (e) => log(`WebSocket error: ${JSON.stringify(e)}`);
+    ws.onclose = (e) => {
+      log(`WebSocket closed (code=${e.code})`);
+      setStatus('Call ended');
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+    };
+
+    document.getElementById('stopBtn').disabled = false;
+  } catch (err) {
+    log(`ERROR: ${err.message}`);
+    setStatus('Failed to start — see log');
+    document.getElementById('startBtn').disabled = false;
+  }
+}
+
+function stopCall() {
+  if (ws) ws.close();
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (audioContext) audioContext.close();
+  setStatus('Idle');
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  log('Call stopped by user.');
+}
+
+document.getElementById('startBtn').addEventListener('click', startCall);
+document.getElementById('stopBtn').addEventListener('click', stopCall);
+</script>
+
+</body>
+</html>

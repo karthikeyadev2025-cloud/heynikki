@@ -157,11 +157,11 @@ function Pill({ children, color }: { children: React.ReactNode; color: string })
 }
 
 function LiveCounter() {
-  const [n, setN] = useState(1847);
-  useEffect(() => {
-    const t = setInterval(() => setN(c => c + Math.floor(Math.random() * 3) + 1), 4000);
-    return () => clearInterval(t);
-  }, []);
+  // Was a fake auto-incrementing "calls answered today" number
+  // (Math.random() every 4s) — removed 2026-07-02. Replaced with a claim
+  // that's actually true and verifiable: the pipeline genuinely does run
+  // 24/7 right now, which any visitor can confirm by calling the demo
+  // line, unlike a fabricated usage counter.
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 8,
@@ -172,8 +172,8 @@ function LiveCounter() {
         width: 8, height: 8, borderRadius: "50%", background: J.mercury,
         boxShadow: `0 0 12px ${J.mercury}`, animation: "pulse 2s infinite",
       }} />
-      <span style={{ color: J.mercury, fontWeight: 800 }}>{n.toLocaleString()}</span>
-      <span>calls answered today</span>
+      <span style={{ color: J.mercury, fontWeight: 800 }}>Live now</span>
+      <span>— answering calls in Telugu, Hindi &amp; English, 24/7</span>
     </div>
   );
 }
@@ -366,15 +366,15 @@ export default function Home() {
           fontSize: mobile ? 16 : 20, color: J.textMid, maxWidth: 700,
           margin: "0 auto 36px", lineHeight: 1.6,
         }}>
-          Jovio is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7,
-          books appointments, and sends WhatsApp confirmations — automatically.
+          Jovio is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7
+          and books appointments — with WhatsApp confirmations coming soon.
         </p>
         <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
           <Button primary href="https://jovi-smoky.vercel.app/signup">Start 14-day Free Trial →</Button>
           <Button href="#demo">▶ Watch 60s Demo</Button>
         </div>
         <div style={{ marginTop: 28, fontSize: 13, color: J.textDim }}>
-          No credit card · Setup in 60 seconds · Cancel anytime
+          No credit card · Cancel anytime
         </div>
       </section>
 
@@ -409,9 +409,9 @@ export default function Home() {
       }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 64 }}>
-            <Pill color={J.mercury}>TRUSTED BY INDIAN SMBS</Pill>
+            <Pill color={J.mercury}>BUILT, NOT PROMISED</Pill>
             <h2 style={{ fontSize: 38, fontWeight: 800, margin: "20px 0 12px", letterSpacing: -1 }}>
-              Numbers that matter
+              What's actually real today
             </h2>
           </div>
           <div style={{
@@ -419,10 +419,10 @@ export default function Home() {
             gap: 32, maxWidth: 1000, margin: "0 auto",
           }}>
             {[
-              { v: "200+", l: "Businesses Onboarded", c: J.mercury },
-              { v: "98%", l: "Call Pickup Rate", c: J.surya },
-              { v: "₹3.28", l: "Cost Per Call Minute", c: J.mercury },
-              { v: "60s", l: "Average Setup Time", c: J.surya },
+              { v: "3", l: "Languages, switched mid-call", c: J.mercury },
+              { v: "24/7", l: "Always answering, never on hold", c: J.surya },
+              { v: "AES-256", l: "Every call recording encrypted", c: J.mercury },
+              { v: "<1s", l: "Acknowledges you instantly", c: J.surya },
             ].map((s, i) => (
               <div key={i} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 52, fontWeight: 900, color: s.c, lineHeight: 1, marginBottom: 8 }}>
@@ -573,7 +573,7 @@ export default function Home() {
           }}>Jovio</span>.
         </h2>
         <p style={{ fontSize: 18, color: J.textMid, marginBottom: 40 }}>
-          Join 200+ Indian businesses already running on Jovio
+          Free for 14 days. No credit card required.
         </p>
         <Button primary href="https://jovi-smoky.vercel.app/signup">Start Free Trial →</Button>
       </section>

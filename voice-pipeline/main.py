@@ -829,9 +829,13 @@ if __name__ == "__main__":
 
 
 # ─── Exotel WebSocket bridge ──────────────────────────────
-from app.exotel.bridge import handle_exotel_ws
+from app.exotel.bridge import handle_exotel_ws, handle_widget_ws
 from fastapi import WebSocket as _WebSocket
 
 @app.websocket("/ws/exotel")
 async def exotel_ws(ws: _WebSocket):
     await handle_exotel_ws(ws)
+
+@app.websocket("/ws/widget")
+async def widget_ws(ws: _WebSocket):
+    await handle_widget_ws(ws)
