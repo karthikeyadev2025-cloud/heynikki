@@ -823,6 +823,260 @@ async def handle_call_end(
     return {"status": "saved"}
 
 
+
+# ═══════════════════════════════════════════════════════════
+# TEST CONSOLE — Verify pipeline works without needing Exotel
+# Public endpoints, no auth. Visit /test in browser.
+# ═══════════════════════════════════════════════════════════
+
+class TTSTestRequest(BaseModel):
+    text: str = "నమస్కారం! Jovio నుండి కాల్ చేస్తున్నాము."
+    speaker: str = "anushka"
+
+class LLMTestRequest(BaseModel):
+    user_message: str = "డాక్టర్ కి appointment కావాలి"
+    profile_sku: str = "clinic"
+    business_name: str = "Ravi Clinic, Banjara Hills"
+
+@app.get("/test")
+async def test_dashboard():
+    """Interactive test dashboard — visit in a browser"""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=TEST_CONSOLE_HTML)
+
+
+@app.post("/api/test/tts")
+async def test_tts(req: TTSTestRequest):
+    """Direct Sarvam Telugu TTS test"""
+    try:
+        import base64
+        tts = SarvamTTS()
+        audio_bytes = await tts.synthesize(req.text, req.speaker)
+        return {
+            "audio_b64": base64.b64encode(audio_bytes).decode(),
+            "audio_bytes": len(audio_bytes),
+            "text": req.text,
+            "speaker": req.speaker,
+        }
+    except Exception as e:
+        log.exception("TTS test failed")
+        return {"error": str(e)}
+
+
+@app.post("/api/test/llm")
+async def test_llm(req: LLMTestRequest):
+    """Direct Gemini LLM test"""
+    try:
+        llm = GeminiLLM()
+        fake_profile = {
+            "profile_sku": req.profile_sku,
+            "business_name": req.business_name,
+            "open_time": "09:00", "close_time": "21:00",
+            "services": ["Consultation", "Blood Test", "ECG"],
+            "appointment_types": ["New Patient", "Follow-up"],
+        }
+        system_prompt = build_system_prompt(fake_profile)
+        history = [{"role": "user", "content": req.user_message}]
+        response = await llm.generate(system_prompt, history)
+        return {
+            "response": response,
+            "model": "gemini-2.5-flash",
+            "user_message": req.user_message,
+        }
+    except Exception as e:
+        log.exception("LLM test failed")
+        return {"error": str(e)}
+
+
+@app.post("/api/test/full")
+async def test_full(req: LLMTestRequest):
+    """Full chain: LLM → TTS audio"""
+    try:
+        import base64
+        llm = GeminiLLM()
+        tts = SarvamTTS()
+        fake_profile = {
+            "profile_sku": req.profile_sku,
+            "business_name": req.business_name,
+            "open_time": "09:00", "close_time": "21:00",
+            "services": ["Consultation", "Blood Test", "ECG"],
+            "appointment_types": ["New Patient", "Follow-up"],
+        }
+        system_prompt = build_system_prompt(fake_profile)
+        history = [{"role": "user", "content": req.user_message}]
+        response = await llm.generate(system_prompt, history)
+
+        speaker_map = {
+            "standard": "anushka", "clinic": "vidya",
+            "real_estate": "karun", "premium": "manisha",
+        }
+        speaker = speaker_map.get(req.profile_sku, "anushka")
+        audio_bytes = await tts.synthesize(response, speaker)
+
+        return {
+            "response": response,
+            "audio_b64": base64.b64encode(audio_bytes).decode(),
+            "audio_bytes": len(audio_bytes),
+            "speaker": speaker,
+        }
+    except Exception as e:
+        log.exception("Full pipeline test failed")
+        return {"error": str(e)}
+
+
+TEST_CONSOLE_HTML = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Jovio Pipeline Test Console</title>
+  <meta charset="utf-8"/>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #070B19; color: #F8FAFC; padding: 40px; max-width: 900px; margin: 0 auto; }
+    h1 { background: linear-gradient(135deg,#F59E0B,#00E676); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 40px; margin: 0 0 8px; }
+    .sub { color: #9CA3AF; margin-bottom: 32px; }
+    .card { background: #111827; border: 1px solid #1F2937; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+    .card h2 { margin: 0 0 12px; color: #00E676; font-size: 18px; }
+    .card p { color: #9CA3AF; font-size: 14px; margin: 0 0 16px; }
+    input, textarea, select { width: 100%; padding: 10px; background: #1A2235; border: 1px solid #1F2937; border-radius: 8px; color: #F8FAFC; margin-bottom: 12px; font-size: 14px; box-sizing: border-box; }
+    button { background: linear-gradient(135deg,#F59E0B,#00E676); color: #070B19; padding: 12px 24px; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 14px; }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .result { margin-top: 16px; padding: 12px; background: #070B19; border-radius: 8px; font-family: monospace; font-size: 13px; color: #F8FAFC; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+    .ok { color: #00E676; } .err { color: #EF4444; }
+    audio { width: 100%; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Jovio Pipeline Test Console</h1>
+  <div class="sub">Verify each piece of the voice pipeline works independently</div>
+
+  <div class="card">
+    <h2>1. Sarvam TTS — Text to Telugu Speech</h2>
+    <p>Enter Telugu/Tanglish/English text. Hear it spoken in a chosen voice.</p>
+    <textarea id="tts-text" rows="3">నమస్కారం! Ravi Clinic కి కాల్ చేసినందుకు thank you. మీకు ఎలా సహాయపడగలను?</textarea>
+    <select id="tts-speaker">
+      <option value="anushka">Anushka (default female)</option>
+      <option value="vidya">Vidya (clinic)</option>
+      <option value="karun">Karun (male)</option>
+      <option value="manisha">Manisha (premium)</option>
+    </select>
+    <button onclick="testTTS()">🔊 Generate Telugu Speech</button>
+    <div id="tts-result" class="result" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. Gemini LLM — Business Response</h2>
+    <p>Simulate a caller message. Get Jovio Telugu response.</p>
+    <input id="llm-text" value="డాక్టర్ కి appointment కావాలి, రేపు available ఉందా?" />
+    <select id="llm-profile">
+      <option value="clinic">Clinic</option>
+      <option value="standard">Standard Business</option>
+      <option value="real_estate">Real Estate</option>
+      <option value="premium">Premium</option>
+    </select>
+    <button onclick="testLLM()">🧠 Generate Response</button>
+    <div id="llm-result" class="result" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Full Pipeline — TTS + LLM together</h2>
+    <p>Feed a Telugu message as if transcribed from a call. Hear audio response back.</p>
+    <input id="full-text" value="రేపు 10 గంటలకి appointment బుక్ చేయండి" />
+    <button onclick="testFull()">⚡ Run Full Chain</button>
+    <div id="full-result" class="result" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. Health Check</h2>
+    <button onclick="testHealth()">✅ Check Server Health</button>
+    <div id="health-result" class="result" style="display:none"></div>
+  </div>
+
+<script>
+async function testTTS() {
+  const btn = event.target;
+  const div = document.getElementById('tts-result');
+  btn.disabled = true;
+  div.style.display = 'block';
+  div.innerHTML = 'Generating speech...';
+  try {
+    const r = await fetch('/api/test/tts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text: document.getElementById('tts-text').value,
+        speaker: document.getElementById('tts-speaker').value,
+      })
+    });
+    const data = await r.json();
+    if (data.audio_b64) {
+      div.innerHTML = '<span class="ok">✓ Success — ' + data.audio_bytes + ' bytes</span><br><audio controls autoplay src="data:audio/wav;base64,' + data.audio_b64 + '"></audio>';
+    } else {
+      div.innerHTML = '<span class="err">✗ Error: ' + (data.error || 'Unknown') + '</span>';
+    }
+  } catch (e) { div.innerHTML = '<span class="err">✗ ' + e.message + '</span>'; }
+  btn.disabled = false;
+}
+async function testLLM() {
+  const btn = event.target;
+  const div = document.getElementById('llm-result');
+  btn.disabled = true;
+  div.style.display = 'block';
+  div.innerHTML = 'Thinking...';
+  try {
+    const r = await fetch('/api/test/llm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        user_message: document.getElementById('llm-text').value,
+        profile_sku: document.getElementById('llm-profile').value,
+        business_name: 'Ravi Clinic, Banjara Hills',
+      })
+    });
+    const data = await r.json();
+    if (data.response) {
+      div.innerHTML = '<span class="ok">✓ ' + data.model + '</span><br><br><b>Response:</b><br>' + data.response;
+    } else {
+      div.innerHTML = '<span class="err">✗ ' + (data.error || 'Unknown') + '</span>';
+    }
+  } catch (e) { div.innerHTML = '<span class="err">✗ ' + e.message + '</span>'; }
+  btn.disabled = false;
+}
+async function testFull() {
+  const btn = event.target;
+  const div = document.getElementById('full-result');
+  btn.disabled = true;
+  div.style.display = 'block';
+  div.innerHTML = 'Running LLM + TTS chain...';
+  try {
+    const r = await fetch('/api/test/full', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        user_message: document.getElementById('full-text').value,
+        profile_sku: 'clinic',
+        business_name: 'Ravi Clinic, Banjara Hills',
+      })
+    });
+    const data = await r.json();
+    if (data.audio_b64) {
+      div.innerHTML = '<span class="ok">✓ Response:</span> ' + data.response +
+        '<br><br><audio controls autoplay src="data:audio/wav;base64,' + data.audio_b64 + '"></audio>';
+    } else {
+      div.innerHTML = '<span class="err">✗ ' + (data.error || 'Unknown') + '</span>';
+    }
+  } catch (e) { div.innerHTML = '<span class="err">✗ ' + e.message + '</span>'; }
+  btn.disabled = false;
+}
+async function testHealth() {
+  const div = document.getElementById('health-result');
+  div.style.display = 'block';
+  const r = await fetch('/health');
+  div.innerHTML = '<span class="ok">' + JSON.stringify(await r.json(), null, 2) + '</span>';
+}
+</script>
+</body>
+</html>"""
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
