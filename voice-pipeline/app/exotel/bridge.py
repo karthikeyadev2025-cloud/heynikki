@@ -642,8 +642,10 @@ async def handle_exotel_ws(ws: WebSocket):
 
 
 async def _handle_utterance(s: Session, pcm: bytes):
+    t_start = time.time()
     try:
         text, detected_lang = await sarvam_stt(pcm)
+        t_stt = time.time()
         if not text:
             return
         log.info("caller: %s", text)
@@ -666,15 +668,31 @@ async def _handle_utterance(s: Session, pcm: bytes):
         # fallback has none, so this is a no-op there). A failure at any
         # step inside retrieve_context just means no extra context for
         # this turn — never blocks or delays the call beyond the lookup.
+        t_rag_start = time.time()
         if s.voice_profile_id:
             snippets = await knowledge.retrieve_context(s.voice_profile_id, text)
             if snippets:
                 log.info("knowledge base: %d snippet(s) matched", len(snippets))
                 sys_for_turn = knowledge.augment_prompt(sys_for_turn, snippets)
+        t_rag = time.time()
 
         reply = await gemini_reply(s.history, sys_for_turn)
+        t_llm = time.time()
         log.info("ai: %s", reply)
         s.history.append({"role":"assistant","content":reply})
         await s.speak_dynamic(reply)
+        t_tts = time.time()
+
+        # Real per-turn latency breakdown — this did not exist before today.
+        # "total" is what the caller actually experiences: silence after
+        # their sentence ends until Jovio's reply starts playing.
+        log.info(
+            "LATENCY turn: stt=%dms rag=%dms llm=%dms tts=%dms total=%dms",
+            int((t_stt - t_start) * 1000),
+            int((t_rag - t_rag_start) * 1000) if s.voice_profile_id else 0,
+            int((t_llm - t_rag) * 1000),
+            int((t_tts - t_llm) * 1000),
+            int((t_tts - t_start) * 1000),
+        )
     except Exception as e:
         log.exception("utterance failed: %s", e)
