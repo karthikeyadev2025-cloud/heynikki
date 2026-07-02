@@ -23,6 +23,7 @@ except ImportError:
 
 from app.exotel import knowledge
 from app.exotel import circuit_breaker as cb
+from app.exotel import webhooks
 
 log = logging.getLogger("exotel-bridge")
 logging.basicConfig(level=logging.INFO,
@@ -469,6 +470,23 @@ async def finalize_call_recording(s: "Session", duration_s: int):
         await update_call_row(s.call_row_id, updates)
     else:
         log.warning("finalize_call_recording: no call_row_id, call metadata not saved")
+
+    # Outbound webhook — fires AFTER the call is fully finalized, never in
+    # the critical path. tenant.get("id") is "unmatched" for the demo
+    # fallback path (no real tenant), which dispatch_event treats as a
+    # no-op rather than an error.
+    await webhooks.dispatch_event(
+        tenant_id=str(s.tenant.get("id") or ""),
+        event="call.completed",
+        payload={
+            "call_id": s.call_row_id,
+            "caller_number": s.caller,
+            "duration_seconds": duration_s,
+            "language": s.current_language,
+            "recording_available": "recording_path" in updates,
+            "transcript": s.history,
+        },
+    )
 
 
 def split_sentences(text: str) -> list:
