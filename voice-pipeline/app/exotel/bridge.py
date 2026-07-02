@@ -10,7 +10,7 @@ AES-256-GCM encrypted with JOVIO_RECORDING_KEY, and uploaded to Supabase
 Storage. A `calls` row is created on 'start' and finalized on 'stop' so the
 recording has somewhere to attach (recording_path, duration_seconds).
 """
-import asyncio, audioop, base64, json, logging, os, secrets, time, wave, io
+import asyncio, audioop, base64, json, logging, os, re, secrets, time, wave, io
 from typing import Optional
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -436,6 +436,20 @@ async def finalize_call_recording(s: "Session", duration_s: int):
         log.warning("finalize_call_recording: no call_row_id, call metadata not saved")
 
 
+def split_sentences(text: str) -> list:
+    """Split a reply into sentence-sized chunks for pipelined TTS. Handles
+    Telugu/Hindi/English sentence-ending punctuation (., !, ?, and the
+    Devanagari danda ।, which Hindi text sometimes uses in place of a
+    period). Keeps punctuation attached to its sentence for natural TTS
+    prosody. Deliberately simple regex, not a full NLP tokenizer — replies
+    are short (capped at 150 tokens) and conversational, so edge cases
+    like decimal numbers splitting mid-sentence are low-risk here."""
+    if not text:
+        return []
+    parts = re.split(r'(?<=[.!?।])\s+', text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
 class Session:
     def __init__(self, ws: WebSocket):
         self.ws = ws
@@ -497,28 +511,65 @@ class Session:
         finally:
             self.speaking_back = False
 
+    async def _synthesize_sentence_pcm8k(self, text: str) -> Optional[bytes]:
+        """Synthesize one sentence, downsample to 8k PCM. None on failure —
+        caller skips that sentence rather than aborting the whole reply."""
+        pcm_22k = await sarvam_tts(text, self.tenant.get("voice_profile", DEFAULT_VOICE),
+                                   self.current_language)
+        if not pcm_22k:
+            return None
+        pcm_8k, self.downsample_state = audioop.ratecv(
+            pcm_22k, 2, 1, TTS_SR, EXOTEL_SR, self.downsample_state)
+        return pcm_8k
+
     async def speak_dynamic(self, text: str):
+        """Pipelined sentence-by-sentence TTS: sentence N+1 synthesizes
+        WHILE sentence N is being sent to the caller, instead of waiting
+        for the entire reply's audio before playing any of it. Added
+        2026-07-02 after real per-turn latency measurements showed TTS
+        averaging 64% of total turn time, dominated by longer multi-
+        sentence replies (a 3-sentence reply waited for all 3 sentences'
+        audio before playing the first word). This cuts the caller's wait
+        to roughly (first sentence's TTS time) instead of (all sentences'
+        TTS time combined) — the LLM call itself is unchanged, still one
+        blocking request per turn.
+
+        speaking_back is held True for the whole call (synthesis included,
+        not just sending) — caller audio arriving while Jovio is about to
+        speak shouldn't be treated as a fresh utterance.
+        """
         if not text:
+            return
+        sentences = split_sentences(text)
+        if not sentences:
             return
         try:
             log.info("speak_dynamic: %s", text[:60])
-            pcm_22k = await sarvam_tts(text, self.tenant.get("voice_profile", DEFAULT_VOICE),
-                                       self.current_language)
-            if not pcm_22k:
-                # Live TTS failed (or the circuit breaker skipped it entirely) —
-                # caller should hear SOMETHING, not dead air. Falls back to a
-                # pre-cached clip that needs no live Sarvam call to play.
-                log.warning("speak_dynamic: TTS unavailable, playing cached fallback")
-                await self.play_cached("technical_difficulty")
-                return
-            pcm_8k, self.downsample_state = audioop.ratecv(
-                pcm_22k, 2, 1, TTS_SR, EXOTEL_SR, self.downsample_state)
             self.speaking_back = True
+            any_sent = False
             try:
-                self.recording_buf.extend(pcm_8k)
-                await self.send_pcm(pcm_8k)  # Send raw PCM, not mu-law
+                next_task = asyncio.create_task(
+                    self._synthesize_sentence_pcm8k(sentences[0]))
+                for i in range(len(sentences)):
+                    pcm_8k = await next_task
+                    if i + 1 < len(sentences):
+                        next_task = asyncio.create_task(
+                            self._synthesize_sentence_pcm8k(sentences[i + 1]))
+                    if pcm_8k is None:
+                        log.warning("speak_dynamic: sentence %d/%d TTS failed, skipping",
+                                    i + 1, len(sentences))
+                        continue
+                    any_sent = True
+                    self.recording_buf.extend(pcm_8k)
+                    await self.send_pcm(pcm_8k)
             finally:
                 self.speaking_back = False
+
+            if not any_sent:
+                # Every sentence failed — caller's heard nothing this turn.
+                # Same fallback as before: a pre-cached clip, no live call needed.
+                log.warning("speak_dynamic: all sentences failed TTS, playing cached fallback")
+                await self.play_cached("technical_difficulty")
         except Exception as e:
             log.warning("speak_dynamic failed: %s", e)
 
