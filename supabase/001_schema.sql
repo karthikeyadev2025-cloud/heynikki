@@ -276,15 +276,23 @@ alter table invoices          enable row level security;
 alter table admin_audit_log   enable row level security;
 
 -- ── HELPER FUNCTIONS ─────────────────────────────────────────
+-- Both fixed for the same search_path bug found in handle_new_user() —
+-- these two back nearly every RLS policy below, so an unqualified
+-- `tenant_users` reference here is a much bigger blast radius than the
+-- signup trigger alone.
 create or replace function get_my_tenant_id()
-returns uuid language sql stable security definer as $$
-  select tenant_id from tenant_users where user_id = auth.uid() limit 1;
+returns uuid language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select tenant_id from public.tenant_users where user_id = auth.uid() limit 1;
 $$;
 
 create or replace function is_super_admin()
-returns boolean language sql stable security definer as $$
+returns boolean language sql stable security definer
+set search_path = public, pg_temp
+as $$
   select exists(
-    select 1 from tenant_users
+    select 1 from public.tenant_users
     where user_id = auth.uid() and role = 'super_admin'
   );
 $$;
@@ -451,11 +459,13 @@ create policy "audit_insert" on admin_audit_log for insert
 
 -- Increment call minutes used (called by voice pipeline after each call)
 create or replace function increment_call_minutes(p_tenant_id uuid, p_seconds integer)
-returns void language plpgsql security definer as $$
+returns void language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   v_month text := to_char(now(), 'YYYY-MM');
 begin
-  insert into call_minutes (tenant_id, month, used_seconds, plan_limit_seconds)
+  insert into public.call_minutes (tenant_id, month, used_seconds, plan_limit_seconds)
   values (p_tenant_id, v_month, p_seconds, 12000)
   on conflict (tenant_id, month)
   do update set used_seconds = call_minutes.used_seconds + excluded.used_seconds;
@@ -464,19 +474,21 @@ $$;
 
 -- Check if tenant has minutes remaining
 create or replace function tenant_has_minutes(p_tenant_id uuid)
-returns boolean language plpgsql security definer as $$
+returns boolean language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   v_month  text := to_char(now(), 'YYYY-MM');
   v_used   integer;
   v_limit  integer;
   v_plan   text;
 begin
-  select plan into v_plan from tenants where id = p_tenant_id;
+  select plan into v_plan from public.tenants where id = p_tenant_id;
   if v_plan = 'suspended' then return false; end if;
 
   select used_seconds, plan_limit_seconds
   into v_used, v_limit
-  from call_minutes
+  from public.call_minutes
   where tenant_id = p_tenant_id and month = v_month;
 
   if v_used is null then return true; end if;
@@ -486,7 +498,9 @@ $$;
 
 -- Get tenant stats for dashboard
 create or replace function get_tenant_stats(p_tenant_id uuid)
-returns json language plpgsql security definer as $$
+returns json language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   v_today       text := to_char(now(), 'YYYY-MM-DD');
   v_month       text := to_char(now(), 'YYYY-MM');
@@ -499,11 +513,11 @@ declare
 begin
   select count(*), count(*) filter (where appointment_created), count(*) filter (where status='missed'), count(*) filter (where wa_sent)
   into v_total, v_appts, v_missed, v_wa
-  from calls
+  from public.calls
   where tenant_id = p_tenant_id and created_at >= (v_today || 'T00:00:00')::timestamptz;
 
   select used_seconds, plan_limit_seconds into v_used_sec, v_limit_sec
-  from call_minutes where tenant_id = p_tenant_id and month = v_month;
+  from public.call_minutes where tenant_id = p_tenant_id and month = v_month;
 
   return json_build_object(
     'today', json_build_object(
@@ -539,8 +553,20 @@ $$;
 -- ══════════════════════════════════════════════════════════════
 
 -- Auto-create tenant on user signup
+--
+-- BUGFIX (found live, 2026-07-02): this function is `security definer`,
+-- which means it does NOT automatically inherit the caller's search_path —
+-- it uses whatever search_path was in effect at function-creation time
+-- (often just pg_catalog/pg_temp for definer functions on Supabase). That
+-- caused every real signup to fail with `42P01: relation "tenants" does
+-- not exist` even though public.tenants exists and works fine everywhere
+-- else. Fixed two ways for defense-in-depth: explicit `public.` schema
+-- qualification on every table reference, AND an explicit search_path set
+-- on the function itself.
 create or replace function handle_new_user()
-returns trigger language plpgsql security definer as $$
+returns trigger language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   v_tenant_id uuid;
   v_biz_name  text;
@@ -550,14 +576,14 @@ begin
     split_part(new.email, '@', 1)
   );
 
-  insert into tenants (name, plan, status, owner_id, trial_ends_at)
+  insert into public.tenants (name, plan, status, owner_id, trial_ends_at)
   values (v_biz_name, 'trial', 'trial', new.id, now() + interval '14 days')
   returning id into v_tenant_id;
 
-  insert into tenant_users (tenant_id, user_id, role)
+  insert into public.tenant_users (tenant_id, user_id, role)
   values (v_tenant_id, new.id, 'owner');
 
-  insert into call_minutes (tenant_id, month, used_seconds, plan_limit_seconds)
+  insert into public.call_minutes (tenant_id, month, used_seconds, plan_limit_seconds)
   values (v_tenant_id, to_char(now(), 'YYYY-MM'), 0, 12000);
 
   return new;

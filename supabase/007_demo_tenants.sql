@@ -19,7 +19,9 @@ create index if not exists tenants_demo_phone_idx
   where is_demo = true;
 
 create or replace function delete_expired_demo_tenants()
-returns void language plpgsql security definer as $$
+returns void language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 begin
-  delete from tenants where is_demo = true and demo_expires_at < now();
+  delete from public.tenants where is_demo = true and demo_expires_at < now();
 end; $$;
