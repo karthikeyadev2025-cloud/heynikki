@@ -268,7 +268,20 @@ async def gemini_reply(history: list, system: str) -> str:
             r = await c.post(url, headers={"Content-Type":"application/json"},
                 json={"system_instruction":{"parts":[{"text":system}]},
                       "contents":contents,
-                      "generationConfig":{"maxOutputTokens":150,"temperature":0.7}})
+                      "generationConfig":{
+                          "maxOutputTokens":150,"temperature":0.7,
+                          # BUGFIX (found live, 2026-07-02): Gemini 2.5 Flash
+                          # has "thinking mode" ON by default. Without this,
+                          # its internal reasoning ("(thinking) The user is
+                          # asking about...") was being spoken verbatim to
+                          # real callers instead of a natural reply — and
+                          # synthesizing that much extra text drove some
+                          # turns to 25+ SECONDS of TTS alone. thinkingBudget
+                          # 0 disables it entirely; a receptionist doesn't
+                          # need multi-step reasoning, it needs a fast,
+                          # direct answer.
+                          "thinkingConfig": {"thinkingBudget": 0},
+                      }})
         except Exception as e:
             log.error("Gemini request failed: %s", e)
             cb.gemini_breaker.record_failure()
@@ -286,7 +299,16 @@ async def gemini_reply(history: list, system: str) -> str:
                 # in, most likely once RAG context pushed a prompt past the
                 # model's ~1024-token minimum. Worth knowing when it happens.
                 log.info("gemini_reply: %d cached tokens (implicit caching active)", cached)
-            reply = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            # Defense-in-depth: even with thinkingBudget=0, explicitly drop
+            # any part marked as a "thought" rather than trusting the budget
+            # setting alone — a stray thought part reaching the caller is a
+            # severe enough failure mode to guard against twice.
+            reply = " ".join(
+                p["text"] for p in parts if p.get("text") and not p.get("thought")
+            ).strip()
+            if not reply:
+                raise KeyError("no non-thought text parts in response")
             cb.gemini_breaker.record_success()
             return reply
         except (KeyError, IndexError):
