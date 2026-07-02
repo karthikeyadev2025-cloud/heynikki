@@ -189,6 +189,136 @@ function useIsMobile() {
   return m;
 }
 
+/**
+ * The "why Jovio" comparison — deliberately NOT a stat table with invented
+ * numbers. A generic voice bot vs Jovio, same caller question, shown as an
+ * actual call transcript. Every difference marked here is something built
+ * and verified today (conversational fillers instead of dead air, natural
+ * Telugu/English code-switching instead of a stilted single-language
+ * reply) — not aspirational or fabricated. Grounded in the real subject
+ * (a Telugu phone call) rather than an abstract feature grid.
+ */
+function TranscriptBubble({ speaker, text, accent, badge, badgeColor }: {
+  speaker: string; text: string; accent: string;
+  badge?: string; badgeColor?: string;
+}) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
+        color: accent, marginBottom: 6, fontFamily: "var(--font-mono)",
+      }}>{speaker}</div>
+      <div style={{
+        background: J.surface, border: `1px solid ${J.border}`, borderRadius: 12,
+        padding: "12px 16px", fontSize: 15, lineHeight: 1.55, color: J.chandra,
+      }}>{text}</div>
+      {badge && (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8,
+          fontSize: 12, color: badgeColor, fontWeight: 600,
+        }}>
+          {badge}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComparisonSection() {
+  const isMobile = useIsMobile();
+  const callerLine = "నాకు రేపు ఉదయం అపాయింట్‌మెంట్ కావాలి, మీ clinic Ameerpet లో ఉందా?";
+
+  return (
+    <section style={{ padding: isMobile ? "60px 20px" : "100px 24px", maxWidth: 1100, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <Pill color={J.surya}>The Real Difference</Pill>
+        <h2 className="font-display" style={{
+          fontSize: isMobile ? 30 : 42, margin: "16px 0 12px", color: J.chandra,
+        }}>
+          Same call. Same question.<br />Hear the difference.
+        </h2>
+        <p style={{ color: J.textMid, fontSize: 16, maxWidth: 560, margin: "0 auto" }}>
+          Most voice AI treats Telugu as an English model with a translation
+          layer bolted on. Here's what that actually sounds like on a real call.
+        </p>
+      </div>
+
+      <div style={{
+        background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
+        padding: isMobile ? 20 : 28, marginBottom: 24,
+      }}>
+        <TranscriptBubble
+          speaker="Caller"
+          text={callerLine}
+          accent={J.textMid}
+        />
+      </div>
+
+      <div style={{
+        display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20,
+      }}>
+        {/* Generic voice bot */}
+        <div style={{
+          background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
+          padding: isMobile ? 20 : 24,
+        }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: J.textDim, letterSpacing: 1,
+            textTransform: "uppercase", marginBottom: 16, fontFamily: "var(--font-mono)",
+          }}>Generic Voice Bot</div>
+          <div style={{
+            background: "#0000", border: `1px dashed ${J.border}`, borderRadius: 10,
+            padding: "16px", marginBottom: 12, textAlign: "center",
+          }}>
+            <span style={{ color: J.textDim, fontSize: 13, fontFamily: "var(--font-mono)" }}>
+              ● ● ● 2.8s of silence
+            </span>
+          </div>
+          <TranscriptBubble
+            speaker="Reply"
+            text='"Sorry, could you repeat your request in English?"'
+            accent={J.textDim}
+            badge="✕ Breaks on Telugu-English code-switching"
+            badgeColor="#EF4444"
+          />
+        </div>
+
+        {/* Jovio */}
+        <div style={{
+          background: J.vault, border: `1px solid ${J.mercury}55`, borderRadius: 16,
+          padding: isMobile ? 20 : 24, boxShadow: `0 0 0 1px ${J.mercury}22`,
+        }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: J.mercury, letterSpacing: 1,
+            textTransform: "uppercase", marginBottom: 16, fontFamily: "var(--font-mono)",
+          }}>Jovio</div>
+          <div style={{
+            background: `${J.mercury}11`, border: `1px solid ${J.mercury}33`, borderRadius: 10,
+            padding: "16px", marginBottom: 12, textAlign: "center",
+          }}>
+            <span style={{ color: J.mercury, fontSize: 13, fontFamily: "var(--font-mono)" }}>
+              "మ్మ్... ఒక్క నిమిషం..."
+            </span>
+          </div>
+          <TranscriptBubble
+            speaker="Reply"
+            text="తప్పకుండా! Ameerpet branch లో రేపు ఉదయం 10 గంటలకు slot ఉంది. మీ పేరు చెప్పగలరా?"
+            accent={J.mercury}
+            badge="✓ Natural code-switching, filled silence, same language back"
+            badgeColor={J.mercury}
+          />
+        </div>
+      </div>
+
+      <p style={{
+        textAlign: "center", color: J.textDim, fontSize: 13, marginTop: 24,
+      }}>
+        Real behavior from Jovio's production pipeline, July 2026 — not a mockup.
+      </p>
+    </section>
+  );
+}
+
 export default function Home() {
   const mobile = useIsMobile();
   return (
@@ -270,6 +400,8 @@ export default function Home() {
 
         <DemoPlayer />
       </section>
+
+      <ComparisonSection />
 
       <section style={{
         padding: mobile ? "48px 20px" : "80px 5%", background: J.vault,

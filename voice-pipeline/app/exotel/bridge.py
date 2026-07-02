@@ -10,7 +10,7 @@ AES-256-GCM encrypted with JOVIO_RECORDING_KEY, and uploaded to Supabase
 Storage. A `calls` row is created on 'start' and finalized on 'stop' so the
 recording has somewhere to attach (recording_path, duration_seconds).
 """
-import asyncio, audioop, base64, json, logging, os, re, secrets, time, wave, io
+import asyncio, audioop, base64, json, logging, os, random, re, secrets, time, wave, io
 from typing import Optional
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -40,6 +40,19 @@ TTS_SR    = 22050
 VAD_THRESHOLD = 500
 SILENCE_MS    = 1200
 MIN_SPEECH_MS = 300
+
+# ─── Barge-in (interrupt while Jovio is speaking) ────────────
+# Higher threshold + longer sustained-speech requirement while Jovio is
+# talking, to reduce the risk of Jovio self-interrupting from echo of its
+# own audio being picked up by the caller's phone mic. Exotel's WebSocket
+# doesn't provide echo cancellation, so this trade-off is unavoidable:
+# set BARGE_IN_THRESHOLD too low and Jovio interrupts itself from its own
+# playback echo; set it too high and quiet-speaking callers can't
+# interrupt at all. 2000 RMS + 400ms of sustained speech is a conservative
+# starting point — most legitimate interruption attempts ("wait...",
+# "actually...") land well above this bar.
+BARGE_IN_THRESHOLD = 2000
+BARGE_IN_MIN_MS    = 400
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "assets")
@@ -472,12 +485,22 @@ class Session:
         self.voice_profile_id: Optional[str] = None
         self.current_language: str = DEFAULT_LANGUAGE
         self.started_at: Optional[float] = None
+        # Barge-in state. interrupt_flag is set by feed_caller_audio when the
+        # caller speaks over Jovio's reply; send_pcm and speak_dynamic both
+        # check it between frames/sentences and stop cleanly. barge_in_speech_ms
+        # tracks how long the caller has been continuously above BARGE_IN_THRESHOLD,
+        # so a single loud noise doesn't trigger a false interrupt.
+        self.interrupt_flag = False
+        self.barge_in_speech_ms = 0
 
     async def send_pcm(self, pcm_bytes: bytes):
         """Send 16-bit PCM @ 8kHz to Exotel Voicebot in 3200-byte (100ms) chunks."""
         FRAME = 3200  # 100ms of 16-bit @ 8kHz per Exotel docs
         for i in range(0, len(pcm_bytes), FRAME):
             if not self.socket_open:
+                return
+            if self.interrupt_flag:
+                log.info("send_pcm: interrupt flag set, stopping playback mid-stream")
                 return
             chunk = pcm_bytes[i:i+FRAME]
             if len(chunk) < FRAME:
@@ -510,6 +533,37 @@ class Session:
             log.info("play_cached done")
         finally:
             self.speaking_back = False
+
+    async def play_random_filler(self):
+        """Play a short conversational filler ("మ్మ్...", "అలాగా...") from
+        the pre-cached set for the session's current language. Meant to
+        run concurrently with a Gemini call — fills the 1-2 second thinking
+        gap that would otherwise be dead silence. Silent no-op if the
+        fillers directory doesn't exist (script not yet run for this env).
+
+        Doesn't set speaking_back=True: fillers are so short they finish
+        long before the real reply arrives, and holding speaking_back
+        would suppress any legitimate caller barge-in during the reply
+        that follows. speak_dynamic sets it itself when the real reply
+        starts speaking."""
+        filler_dir = os.path.join(CACHED_DIR, "fillers")
+        if not os.path.isdir(filler_dir):
+            return
+        lang = self.current_language
+        candidates = [f for f in os.listdir(filler_dir)
+                      if f.startswith(f"{lang}_") and f.endswith(".pcm")]
+        if not candidates:
+            return
+        chosen = random.choice(candidates)
+        path = os.path.join(filler_dir, chosen)
+        try:
+            pcm = open(path, "rb").read()
+            log.info("filler: %s (%d bytes)", chosen, len(pcm))
+            self.recording_buf.extend(pcm)
+            await self.send_pcm(pcm)
+        except Exception as e:
+            log.warning("filler playback failed: %s", e)
+
 
     async def _synthesize_sentence_pcm8k(self, text: str) -> Optional[bytes]:
         """Synthesize one sentence, downsample to 8k PCM. None on failure —
@@ -547,10 +601,19 @@ class Session:
             log.info("speak_dynamic: %s", text[:60])
             self.speaking_back = True
             any_sent = False
+            interrupted = False
             try:
                 next_task = asyncio.create_task(
                     self._synthesize_sentence_pcm8k(sentences[0]))
                 for i in range(len(sentences)):
+                    if self.interrupt_flag:
+                        # Barge-in fired between sentences. Cancel the
+                        # in-flight synthesis for the next sentence (if any)
+                        # so it doesn't waste an API call, then stop cleanly.
+                        interrupted = True
+                        if not next_task.done():
+                            next_task.cancel()
+                        break
                     pcm_8k = await next_task
                     if i + 1 < len(sentences):
                         next_task = asyncio.create_task(
@@ -562,8 +625,20 @@ class Session:
                     any_sent = True
                     self.recording_buf.extend(pcm_8k)
                     await self.send_pcm(pcm_8k)
+                    # send_pcm returns early on interrupt_flag — check again
+                    # after it so we don't kick off synthesis of a sentence
+                    # we'll never send.
+                    if self.interrupt_flag:
+                        interrupted = True
+                        if not next_task.done():
+                            next_task.cancel()
+                        break
             finally:
                 self.speaking_back = False
+
+            if interrupted:
+                log.info("speak_dynamic: stopped early due to caller barge-in")
+                return
 
             if not any_sent:
                 # Every sentence failed — caller's heard nothing this turn.
@@ -574,14 +649,40 @@ class Session:
             log.warning("speak_dynamic failed: %s", e)
 
     def feed_caller_audio(self, pcm_16k: bytes):
-        if self.speaking_back:
-            return None
         try:
             rms = audioop.rms(pcm_16k, 2)
         except audioop.error:
             return None
-        is_speech = rms > VAD_THRESHOLD
         chunk_ms = int(len(pcm_16k) / 2 / PIPE_SR * 1000)
+
+        if self.speaking_back:
+            # Jovio is currently speaking. Watch for the caller talking
+            # over the top — but require louder + more sustained speech
+            # than the normal VAD threshold, because the caller's phone
+            # mic can pick up echo of Jovio's own playback. Only trigger
+            # the interrupt after BARGE_IN_MIN_MS of continuous loud speech,
+            # so a single spike (car horn, cough) doesn't cut Jovio off.
+            if rms > BARGE_IN_THRESHOLD:
+                self.barge_in_speech_ms += chunk_ms
+                if (self.barge_in_speech_ms >= BARGE_IN_MIN_MS
+                        and not self.interrupt_flag):
+                    log.info("barge-in detected: rms=%d ms=%d", rms, self.barge_in_speech_ms)
+                    self.interrupt_flag = True
+            else:
+                # Non-speech chunk resets the counter — the caller must
+                # speak *continuously* above threshold to interrupt, not
+                # just briefly.
+                self.barge_in_speech_ms = 0
+            # Do not buffer speech for utterance-processing while Jovio
+            # is still speaking. Once send_pcm / speak_dynamic notice the
+            # interrupt flag, playback stops, speaking_back flips to False,
+            # and this function's normal (non-playback) path takes over
+            # for the caller's actual utterance.
+            return None
+
+        # Normal path: Jovio is not speaking, so any speech is a real
+        # utterance to transcribe.
+        is_speech = rms > VAD_THRESHOLD
         if is_speech:
             self.silence_count = 0
             if not self.in_speech:
@@ -694,6 +795,10 @@ async def handle_exotel_ws(ws: WebSocket):
 
 async def _handle_utterance(s: Session, pcm: bytes):
     t_start = time.time()
+    # Fresh turn — clear any barge-in state left from the previous turn's
+    # reply (which may have been interrupted mid-playback).
+    s.interrupt_flag = False
+    s.barge_in_speech_ms = 0
     try:
         text, detected_lang = await sarvam_stt(pcm)
         t_stt = time.time()
@@ -712,6 +817,14 @@ async def _handle_utterance(s: Session, pcm: bytes):
             s.current_language = detected_lang
 
         s.history.append({"role":"user","content":text})
+
+        # Filler sound — fires immediately as a background task so it starts
+        # playing to the caller within a few ms of STT completing, while RAG
+        # + Gemini + first-sentence TTS all run in parallel. This is the
+        # single biggest "feels human" change: instead of 1-2 seconds of
+        # dead air after the caller finishes speaking, they hear a natural
+        # acknowledgment sound within ~50ms.
+        asyncio.create_task(s.play_random_filler())
 
         sys_for_turn = apply_language(s._sys, s.current_language)
 
