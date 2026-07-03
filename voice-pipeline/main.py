@@ -1,5 +1,5 @@
 """
-Jovio — Telugu Voice Pipeline
+Nikki — Telugu Voice Pipeline
 FastAPI + LiveKit Agents + Sarvam STT/TTS + Gemini LLM
 Run: uvicorn main:app --host 0.0.0.0 --port 8000
 """
@@ -65,13 +65,13 @@ SARVAM_KEY     = os.environ["SARVAM_API_KEY"]
 GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_SERVICE_KEY"]
-INTERNAL_SECRET= os.environ.get("INTERNAL_SECRET", "jovio-internal-secret-change-me")
+INTERNAL_SECRET= os.environ.get("INTERNAL_SECRET", "nikki-internal-secret-change-me")
 
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("jovio")
+log = logging.getLogger("nikki")
 
 # ── FASTAPI APP ──────────────────────────────────────────
-app = FastAPI(title="Jovio Voice Pipeline")
+app = FastAPI(title="Nikki Voice Pipeline")
 
 app.add_middleware(
     CORSMiddleware,
@@ -755,7 +755,7 @@ async def health():
     from app.exotel import circuit_breaker as _cb
     return {
         "status": "ok",
-        "service": "jovio-voice-pipeline",
+        "service": "nikki-voice-pipeline",
         "timestamp": datetime.now().isoformat(),
         "circuit_breakers": _cb.all_status(),
     }
@@ -830,7 +830,7 @@ async def handle_call_end(
 # ═══════════════════════════════════════════════════════════
 
 class TTSTestRequest(BaseModel):
-    text: str = "నమస్కారం! Jovio నుండి కాల్ చేస్తున్నాము."
+    text: str = "నమస్కారం! Nikki నుండి కాల్ చేస్తున్నాము."
     speaker: str = "anushka"
 
 class LLMTestRequest(BaseModel):
@@ -999,7 +999,7 @@ async def test_full(req: LLMTestRequest):
 TEST_CONSOLE_HTML = """<!DOCTYPE html>
 <html>
 <head>
-  <title>Jovio Pipeline Test Console</title>
+  <title>Nikki Pipeline Test Console</title>
   <meta charset="utf-8"/>
   <style>
     body { font-family: -apple-system, sans-serif; background: #070B19; color: #F8FAFC; padding: 40px; max-width: 900px; margin: 0 auto; }
@@ -1017,7 +1017,7 @@ TEST_CONSOLE_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>Jovio Pipeline Test Console</h1>
+  <h1>Nikki Pipeline Test Console</h1>
   <div class="sub">Verify each piece of the voice pipeline works independently</div>
 
   <div class="card">
@@ -1036,7 +1036,7 @@ TEST_CONSOLE_HTML = """<!DOCTYPE html>
 
   <div class="card">
     <h2>2. Gemini LLM — Business Response</h2>
-    <p>Simulate a caller message. Get Jovio Telugu response.</p>
+    <p>Simulate a caller message. Get Nikki Telugu response.</p>
     <input id="llm-text" value="డాక్టర్ కి appointment కావాలి, రేపు available ఉందా?" />
     <select id="llm-profile">
       <option value="clinic">Clinic</option>

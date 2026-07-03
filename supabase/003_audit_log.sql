@@ -1,5 +1,5 @@
 -- ============================================================
--- JOVIO — audit_log table (DPDP Section 8 compliance)
+-- NIKKI — audit_log table (DPDP Section 8 compliance)
 -- ============================================================
 -- DPDP Act 2023 Section 8(7): data fiduciaries must maintain records
 -- of personal data processing activities, especially:

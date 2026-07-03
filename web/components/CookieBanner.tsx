@@ -17,7 +17,7 @@ export default function CookieBanner() {
 
   useEffect(() => {
     try {
-      setAck(localStorage.getItem("jovio-cookie-ack") === "1");
+      setAck(localStorage.getItem("nikki-cookie-ack") === "1");
     } catch {
       // localStorage blocked (private mode / disabled cookies). Show banner
       // but accept clicks won't persist — that's fine, just shows again next visit.
@@ -26,7 +26,7 @@ export default function CookieBanner() {
   }, []);
 
   const accept = () => {
-    try { localStorage.setItem("jovio-cookie-ack", "1"); } catch {}
+    try { localStorage.setItem("nikki-cookie-ack", "1"); } catch {}
     setAck(true);
   };
 

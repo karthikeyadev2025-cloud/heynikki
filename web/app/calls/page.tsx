@@ -186,7 +186,7 @@ function exportCsv(rows: CallRecord[]) {
 
   const a = document.createElement("a");
   a.href     = url;
-  a.download = `jovio-calls-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `nikki-calls-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

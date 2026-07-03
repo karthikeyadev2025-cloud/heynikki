@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import JovioLogo from "../../components/JovioLogo";
+import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
   bg: "#070B19", vault: "#111827", surface: "#1A2235",
@@ -43,14 +43,14 @@ export default function LoginPage() {
 
         <div style={{ textAlign: "center", marginBottom: 36 }}>
           <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <JovioLogo size={84} variant="stacked" />
+            <NikkiLogo size={84} variant="stacked" />
           </div>
           <h1 style={{
             fontSize: 22, fontWeight: 800, color: J.chandra,
             margin: "0 0 6px", letterSpacing: -0.5,
           }}>Welcome back</h1>
           <div style={{ color: J.textMid, fontSize: 14 }}>
-            Sign in to your Jovio account
+            Sign in to your Nikki account
           </div>
         </div>
 
@@ -133,7 +133,7 @@ export default function LoginPage() {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: J.textMid }}>
-          New to Jovio?{" "}
+          New to Nikki?{" "}
           <Link href="/signup" style={{ color: J.mercury, fontWeight: 700, textDecoration: "none" }}>
             Start free trial →
           </Link>

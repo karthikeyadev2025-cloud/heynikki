@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import JovioLogo from "../components/JovioLogo";
+import NikkiLogo from "../components/NikkiLogo";
 
 const J = {
   bg: "#070B19",
@@ -18,7 +18,7 @@ const J = {
 };
 
 function Logo({ size = 40, showText = true }: { size?: number; showText?: boolean }) {
-  return <JovioLogo size={size} showText={showText} variant="horizontal" />;
+  return <NikkiLogo size={size} showText={showText} variant="horizontal" />;
 }
 
 /**
@@ -190,8 +190,8 @@ function useIsMobile() {
 }
 
 /**
- * The "why Jovio" comparison — deliberately NOT a stat table with invented
- * numbers. A generic voice bot vs Jovio, same caller question, shown as an
+ * The "why Nikki" comparison — deliberately NOT a stat table with invented
+ * numbers. A generic voice bot vs Nikki, same caller question, shown as an
  * actual call transcript. Every difference marked here is something built
  * and verified today (conversational fillers instead of dead air, natural
  * Telugu/English code-switching instead of a stilted single-language
@@ -283,7 +283,7 @@ function ComparisonSection() {
           />
         </div>
 
-        {/* Jovio */}
+        {/* Nikki */}
         <div style={{
           background: J.vault, border: `1px solid ${J.mercury}55`, borderRadius: 16,
           padding: isMobile ? 20 : 24, boxShadow: `0 0 0 1px ${J.mercury}22`,
@@ -291,7 +291,7 @@ function ComparisonSection() {
           <div style={{
             fontSize: 12, fontWeight: 700, color: J.mercury, letterSpacing: 1,
             textTransform: "uppercase", marginBottom: 16, fontFamily: "var(--font-mono)",
-          }}>Jovio</div>
+          }}>Nikki</div>
           <div style={{
             background: `${J.mercury}11`, border: `1px solid ${J.mercury}33`, borderRadius: 10,
             padding: "16px", marginBottom: 12, textAlign: "center",
@@ -313,7 +313,7 @@ function ComparisonSection() {
       <p style={{
         textAlign: "center", color: J.textDim, fontSize: 13, marginTop: 24,
       }}>
-        Real behavior from Jovio's production pipeline, July 2026 — not a mockup.
+        Real behavior from Nikki's production pipeline, July 2026 — not a mockup.
       </p>
     </section>
   );
@@ -366,7 +366,7 @@ export default function Home() {
           fontSize: mobile ? 16 : 20, color: J.textMid, maxWidth: 700,
           margin: "0 auto 36px", lineHeight: 1.6,
         }}>
-          Jovio is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7
+          Nikki is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7
           and books appointments — with WhatsApp confirmations coming soon.
         </p>
         <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
@@ -391,7 +391,7 @@ export default function Home() {
         <h2 style={{
           fontSize: 36, fontWeight: 900, color: J.chandra, marginBottom: 12, lineHeight: 1.2,
         }}>
-          Hear Jovio handle a real call
+          Hear Nikki handle a real call
         </h2>
         <p style={{ fontSize: 16, color: J.textMid, marginBottom: 40, lineHeight: 1.6 }}>
           A 60-second sample of an inbound call to a clinic — appointment booked,
@@ -487,7 +487,7 @@ export default function Home() {
             {[
               { n: 1, t: "Sign Up", d: "Email + business name. 14-day free trial starts immediately." },
               { n: 2, t: "Configure", d: "Pick voice profile, opening hours, services. Done in 30 seconds." },
-              { n: 3, t: "Connect Number", d: "Forward your business phone to Jovio. Or get a new Jovio number." },
+              { n: 3, t: "Connect Number", d: "Forward your business phone to Nikki. Or get a new Nikki number." },
               { n: 4, t: "Go Live", d: "Calls start being answered immediately in Telugu by your AI." },
             ].map(s => (
               <div key={s.n} style={{ textAlign: "center" }}>
@@ -570,7 +570,7 @@ export default function Home() {
           <span style={{
             background: J.grad, WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
-          }}>Jovio</span>.
+          }}>Nikki</span>.
         </h2>
         <p style={{ fontSize: 18, color: J.textMid, marginBottom: 40 }}>
           Free for 14 days. No credit card required.

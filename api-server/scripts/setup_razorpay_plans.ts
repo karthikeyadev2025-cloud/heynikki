@@ -1,5 +1,5 @@
 /**
- * One-shot script to create Jovio's 3 Razorpay subscription plans.
+ * One-shot script to create Nikki's 3 Razorpay subscription plans.
  *
  * Run AFTER you've created the Razorpay account and added keys to .env:
  *   cd api-server
@@ -31,21 +31,21 @@ const PLANS = [
   {
     code: "starter",
     period: "monthly", interval: 1,
-    item: { name: "Jovio Starter",
+    item: { name: "Nikki Starter",
             description: "200 mins/mo · 1 voice profile · Telugu AI receptionist",
             amount: 199900, currency: "INR" },
   },
   {
     code: "growth",
     period: "monthly", interval: 1,
-    item: { name: "Jovio Growth",
+    item: { name: "Nikki Growth",
             description: "600 mins/mo · 3 voice profiles · custom greetings · appointment booking",
             amount: 499900, currency: "INR" },
   },
   {
     code: "scale",
     period: "monthly", interval: 1,
-    item: { name: "Jovio Scale",
+    item: { name: "Nikki Scale",
             description: "1,500 mins/mo · 10 voice profiles · multi-branch · dedicated manager",
             amount: 999900, currency: "INR" },
   },

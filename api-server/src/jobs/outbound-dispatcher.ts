@@ -9,7 +9,7 @@
  *   4. For 'queued': dispatches to the voice-pipeline /outbound endpoint
  *   5. Marks completed when all recipients are settled
  *
- * Run as a systemd service (jovio-outbound-dispatcher.service) — single
+ * Run as a systemd service (nikki-outbound-dispatcher.service) — single
  * long-lived process. Multi-instance dispatching is NOT safe yet because
  * we don't lock recipient rows during pickup; that's a future enhancement
  * via SELECT FOR UPDATE SKIP LOCKED.

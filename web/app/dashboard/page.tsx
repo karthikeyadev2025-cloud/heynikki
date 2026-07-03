@@ -180,7 +180,7 @@ export default function DashboardPage() {
                            borderColor: C.glow + "44" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
               <div style={{ color: C.txt, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-                Welcome to Jovio
+                Welcome to Nikki
               </div>
               <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.6, maxWidth: 480, margin: "0 auto 20px" }}>
                 Your AI receptionist isn't taking calls yet. Two quick steps to go live:
@@ -202,7 +202,7 @@ export default function DashboardPage() {
                 }}>
                   <div style={{ color: C.grn, fontSize: 11, fontWeight: 800, marginBottom: 4 }}>STEP 2</div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>Forward your number</div>
-                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the Jovio DID to your business line →</div>
+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the Nikki DID to your business line →</div>
                 </a>
               </div>
               <div style={{ color: C.dim, fontSize: 11, marginTop: 20 }}>

@@ -35,7 +35,7 @@ if not SARVAM_KEY:
 # A test sentence with a bit of emotional variety — question + statement +
 # warmth marker. Long enough to hear prosody, short enough not to cost much.
 TEST_TEXT_TE = (
-    "నమస్కారం! Jovio నుండి కాల్ చేస్తున్నాను. "
+    "నమస్కారం! Nikki నుండి కాల్ చేస్తున్నాను. "
     "మీ appointment book చేయమని అనుకుంటున్నారా?"
 )
 
@@ -119,7 +119,7 @@ def main():
     print("\n" + "=" * 60)
     print("Next step: download and listen locally. From your Windows machine:")
     print()
-    print(f'  scp -i "C:\\Users\\karthikeya\\Downloads\\jovio-key.pem" -r \\')
+    print(f'  scp -i "C:\\Users\\karthikeya\\Downloads\\nikki-key.pem" -r \\')
     print(f'    ubuntu@98.130.119.138:~/jovi/voice-pipeline/assets/voice_samples/ \\')
     print(f'    C:\\Users\\karthikeya\\Downloads\\')
     print()

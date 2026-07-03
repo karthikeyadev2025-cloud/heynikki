@@ -6,12 +6,25 @@ interface Props {
   variant?: "horizontal" | "icon" | "stacked";
 }
 
-export default function JovioLogo({ size = 48, showText = true, variant = "horizontal" }: Props) {
+/**
+ * Nikki logo — replaces the old Jovio "J" monogram (2026-07-02 rebrand).
+ *
+ * Design note: the mark is built from three thick, rounded-cap strokes
+ * forming an "N" monogram, rather than a hand-computed filled path like
+ * the old logo's custom "J" curves. This is deliberate — I can't visually
+ * render/preview SVG output from this environment, and a stroke-based
+ * geometric construction (line, line, line) is far more likely to render
+ * correctly on the first try than hand-computed bezier/polygon path data
+ * I can't check by eye. Same gradient/glow treatment as before (surya
+ * amber + mercury green), so it stays visually consistent with the rest
+ * of the brand system — only the letterform and wordmark text changed.
+ */
+export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal" }: Props) {
   const SURYA = "#F59E0B";
   const MERCURY = "#00E676";
   const CHANDRA = "#F8FAFC";
 
-  const JMark = (
+  const NMark = (
     <svg
       width={size} height={size}
       viewBox="0 0 100 100"
@@ -19,17 +32,17 @@ export default function JovioLogo({ size = 48, showText = true, variant = "horiz
       style={{ flexShrink: 0 }}
     >
       <defs>
-        <linearGradient id="surya-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="surya-grad-n" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#FCD34D"/>
           <stop offset="60%" stopColor={SURYA}/>
           <stop offset="100%" stopColor="#D97706"/>
         </linearGradient>
-        <linearGradient id="mercury-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="mercury-grad-n" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#34F39A"/>
           <stop offset="60%" stopColor={MERCURY}/>
           <stop offset="100%" stopColor="#00B358"/>
         </linearGradient>
-        <filter id="glow-mark">
+        <filter id="glow-mark-n">
           <feGaussianBlur stdDeviation="1.5" result="blur"/>
           <feMerge>
             <feMergeNode in="blur"/>
@@ -38,34 +51,27 @@ export default function JovioLogo({ size = 48, showText = true, variant = "horiz
         </filter>
       </defs>
 
-      <path
-        d="M 38 12 L 68 12 L 68 22 L 48 30 L 38 22 Z"
-        fill="url(#surya-grad)"
-        filter="url(#glow-mark)"
-      />
-
-      <path
-        d="M 50 30
-           L 58 30
-           L 58 68
-           Q 58 82, 46 86
-           Q 32 90, 22 78
-           L 28 70
-           Q 34 76, 42 74
-           Q 50 72, 50 64
-           Z"
-        fill="url(#mercury-grad)"
-        filter="url(#glow-mark)"
-      />
+      {/* Left stroke of the N */}
+      <line x1="26" y1="18" x2="26" y2="82"
+            stroke="url(#surya-grad-n)" strokeWidth="15" strokeLinecap="round"
+            filter="url(#glow-mark-n)" />
+      {/* Right stroke of the N */}
+      <line x1="74" y1="18" x2="74" y2="82"
+            stroke="url(#mercury-grad-n)" strokeWidth="15" strokeLinecap="round"
+            filter="url(#glow-mark-n)" />
+      {/* Diagonal connecting stroke */}
+      <line x1="26" y1="22" x2="74" y2="78"
+            stroke="url(#mercury-grad-n)" strokeWidth="13" strokeLinecap="round"
+            filter="url(#glow-mark-n)" />
     </svg>
   );
 
-  if (variant === "icon") return JMark;
+  if (variant === "icon") return NMark;
 
   if (variant === "stacked") {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-        {JMark}
+        {NMark}
         {showText && (
           <div style={{ textAlign: "center" }}>
             <div style={{
@@ -75,7 +81,7 @@ export default function JovioLogo({ size = 48, showText = true, variant = "horiz
               letterSpacing: size * 0.04,
               lineHeight: 1,
             }}>
-              JOV<span style={{ color: SURYA }}>I</span><span style={{ color: SURYA }}>O</span>
+              NIK<span style={{ color: SURYA }}>K</span><span style={{ color: SURYA }}>I</span>
             </div>
             <div style={{
               fontSize: size * 0.13,
@@ -95,7 +101,7 @@ export default function JovioLogo({ size = 48, showText = true, variant = "horiz
 
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.25 }}>
-      {JMark}
+      {NMark}
       {showText && (
         <div style={{ lineHeight: 1.1 }}>
           <div style={{
@@ -104,7 +110,7 @@ export default function JovioLogo({ size = 48, showText = true, variant = "horiz
             color: CHANDRA,
             letterSpacing: size * 0.02,
           }}>
-            JOV<span style={{ color: SURYA }}>IO</span>
+            NIK<span style={{ color: SURYA }}>KI</span>
           </div>
           <div style={{
             fontSize: size * 0.14,

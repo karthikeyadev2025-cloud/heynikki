@@ -33,30 +33,30 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://jovio.in"),
-  title: "Jovio — Telugu AI Receptionist for Indian Businesses",
-  description: "Your business never misses a call. Jovio answers in Telugu, books appointments, sends WhatsApp confirmations — 24/7.",
+  title: "Nikki — Telugu AI Receptionist for Indian Businesses",
+  description: "Your business never misses a call. Nikki answers in Telugu, books appointments, sends WhatsApp confirmations — 24/7.",
   keywords: "Telugu AI, voice agent, receptionist, India, SMB, automation, WhatsApp, AI",
   authors: [{ name: "Jovio Global Technologies" }],
   alternates: {
     canonical: "https://jovio.in",
   },
   openGraph: {
-    title: "Jovio — Telugu AI Receptionist",
+    title: "Nikki — Telugu AI Receptionist",
     description: "Your business never misses a call. 24/7 Telugu AI receptionist for Indian SMBs.",
     url: "https://jovio.in",
-    siteName: "Jovio",
+    siteName: "Nikki",
     locale: "en_IN",
     type: "website",
     images: [{
       url: "/og-image.png",
       width: 1200,
       height: 630,
-      alt: "Jovio — Telugu AI Receptionist",
+      alt: "Nikki — Telugu AI Receptionist",
     }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Jovio — Telugu AI Receptionist",
+    title: "Nikki — Telugu AI Receptionist",
     description: "Your business never misses a call.",
     images: ["/og-image.png"],
   },

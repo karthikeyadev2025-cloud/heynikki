@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import JovioLogo from "../../components/JovioLogo";
+import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
   bg: "#070B19", vault: "#111827", surface: "#1A2235",
@@ -51,7 +51,7 @@ export default function SignupPage() {
           borderRadius: 16, padding: 40, maxWidth: 420, textAlign: "center",
         }}>
           <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <JovioLogo size={64} variant="icon" />
+            <NikkiLogo size={64} variant="icon" />
           </div>
           <div style={{ fontSize: 52, marginBottom: 16 }}>📧</div>
           <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, color: J.chandra }}>
@@ -81,7 +81,7 @@ export default function SignupPage() {
 
         <div style={{ textAlign: "center", marginBottom: 36 }}>
           <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <JovioLogo size={84} variant="stacked" />
+            <NikkiLogo size={84} variant="stacked" />
           </div>
           <h1 style={{
             fontSize: 22, fontWeight: 800, color: J.chandra,
@@ -155,7 +155,7 @@ export default function SignupPage() {
             </button>
 
             <p style={{ fontSize: 11, color: J.textDim, textAlign: "center", margin: 0 }}>
-              By signing up you agree to Jovio's Terms and Privacy Policy.
+              By signing up you agree to Nikki's Terms and Privacy Policy.
             </p>
           </form>
         </div>

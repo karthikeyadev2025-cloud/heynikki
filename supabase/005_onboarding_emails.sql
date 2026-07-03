@@ -1,5 +1,5 @@
 -- ============================================================
--- JOVIO — onboarding_emails_sent (idempotent tracking)
+-- NIKKI — onboarding_emails_sent (idempotent tracking)
 -- ============================================================
 -- The onboarding sequence runs as a daily cron job (via pg_cron or
 -- Railway/EC2 cron). To prevent double-sending, we record each email

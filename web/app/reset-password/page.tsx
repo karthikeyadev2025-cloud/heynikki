@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import JovioLogo from "../../components/JovioLogo";
+import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
   bg: "#070B19", vault: "#111827", surface: "#1A2235",
@@ -70,7 +70,7 @@ export default function ResetPasswordPage() {
                   alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 32 }}>
-          <Link href="/"><JovioLogo size={48} variant="stacked" /></Link>
+          <Link href="/"><NikkiLogo size={48} variant="stacked" /></Link>
         </div>
 
         <div style={{ background: J.vault, border: `1px solid ${J.border}`,

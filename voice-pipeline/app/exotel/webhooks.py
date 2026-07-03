@@ -1,10 +1,10 @@
 """
-Outbound webhooks — lets a tenant wire Jovio into Zapier, Make, n8n, or
+Outbound webhooks — lets a tenant wire Nikki into Zapier, Make, n8n, or
 any custom endpoint without needing a named CRM integration built for
 them specifically. This is the honest, buildable version of "CRM
 integration": instead of guessing which specific CRM to prioritize
 (Salesforce? HubSpot? something else?), any tenant can point ANY tool
-that accepts webhooks at Jovio.
+that accepts webhooks at Nikki.
 
 Scope, deliberately limited to what's real: only `call.completed` fires
 today. There is currently no appointment-booking step anywhere in the
@@ -19,10 +19,10 @@ block or delay call teardown — this always runs after the call has
 already been finalized in the database, never in the critical path.
 
 Signing: HMAC-SHA256 over the raw JSON body, sent as
-`X-Jovio-Signature: sha256=<hex>`, using the tenant's own per-webhook
+`X-Nikki-Signature: sha256=<hex>`, using the tenant's own per-webhook
 secret (generated when they create the webhook config, never chosen by
-Jovio). Lets the receiving end (Zapier's "Webhooks by Zapier", a custom
-endpoint, whatever) verify the payload genuinely came from Jovio and
+Nikki). Lets the receiving end (Zapier's "Webhooks by Zapier", a custom
+endpoint, whatever) verify the payload genuinely came from Nikki and
 wasn't spoofed by a third party who found the URL.
 """
 import hashlib
@@ -96,8 +96,8 @@ async def dispatch_event(tenant_id: str, event: str, payload: dict):
                     r = await c.post(w["url"], content=body_bytes,
                         headers={
                             "Content-Type": "application/json",
-                            "X-Jovio-Event": event,
-                            "X-Jovio-Signature": f"sha256={signature}",
+                            "X-Nikki-Event": event,
+                            "X-Nikki-Signature": f"sha256={signature}",
                         })
                     log.info("webhook dispatched: event=%s url=%s status=%d",
                               event, w["url"], r.status_code)

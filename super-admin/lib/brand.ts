@@ -1,5 +1,5 @@
-// lib/brand.ts — Jovio Official Brand System
-export const JOVIO = {
+// lib/brand.ts — Nikki Official Brand System
+export const NIKKI = {
   // Official brand colors (locked)
   background: "#070B19",  // Deep navy black
   vault:      "#111827",  // Surface

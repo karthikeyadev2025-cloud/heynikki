@@ -1,4 +1,4 @@
-# Jovio — 2-Day Presentation Sprint
+# Nikki — 2-Day Presentation Sprint
 # READ THIS FIRST. DO EXACTLY IN ORDER.
 # ══════════════════════════════════════
 
@@ -6,7 +6,7 @@
 
 ### 1. Supabase (FREE — 5 min)
 - Go to: supabase.com/dashboard
-- New project → name: jovio → region: Southeast Asia (Singapore)
+- New project → name: nikki → region: Southeast Asia (Singapore)
 - Settings → API → copy: Project URL + anon key + service_role key
 - SAVE THESE 3 VALUES
 
@@ -18,7 +18,7 @@
 
 ### 3. LiveKit Cloud (FREE tier — 5 min)
 - Go to: cloud.livekit.io
-- Sign up → Create project → name: jovio
+- Sign up → Create project → name: nikki
 - Settings → copy: URL (wss://...) + API Key + API Secret
 
 ### 4. Google AI Studio (FREE — 3 min)
@@ -38,14 +38,14 @@
 
 ### 7. Domain (OPTIONAL for presentation)
 - namecheap.com → search jovio.in → buy (~₹800/year)
-- OR use free Vercel subdomain: jovio.vercel.app
+- OR use free Vercel subdomain: nikki.vercel.app
 
 ---
 
 ## HOUR 2 — Database Setup
 
 ### Run schema in Supabase:
-1. Open Supabase dashboard → your jovio project
+1. Open Supabase dashboard → your nikki project
 2. SQL Editor → New Query
 3. Paste contents of: supabase/001_schema.sql
 4. Click RUN
@@ -73,12 +73,12 @@ python main.py
 1. railway.app → New Project → Deploy from GitHub
 2. Add repo, select voice-pipeline folder
 3. Add all env vars from .env
-4. Deploy → get URL like: jovio-pipeline.railway.app
+4. Deploy → get URL like: nikki-pipeline.railway.app
 
 ### Test the pipeline:
 ```bash
 curl http://localhost:8000/health
-# Should return: {"status":"ok","service":"jovio-voice-pipeline"}
+# Should return: {"status":"ok","service":"nikki-voice-pipeline"}
 ```
 
 ---
@@ -87,8 +87,8 @@ curl http://localhost:8000/health
 
 ### Create Next.js app:
 ```bash
-npx create-next-app@latest jovio-web --typescript --tailwind --app --no-src-dir
-cd jovio-web
+npx create-next-app@latest nikki-web --typescript --tailwind --app --no-src-dir
+cd nikki-web
 # Replace app/page.tsx with contents of web/page.tsx
 npm run dev
 # Opens at http://localhost:3000
@@ -97,14 +97,14 @@ npm run dev
 ### Deploy to Vercel:
 ```bash
 # Push to GitHub first
-git init && git add . && git commit -m "Jovio website"
+git init && git add . && git commit -m "Nikki website"
 # Then: vercel.com → New Project → Import from GitHub
 # OR:
 npm i -g vercel
 vercel --prod
 ```
 
-### Your website is LIVE at: https://jovio.vercel.app
+### Your website is LIVE at: https://nikki.vercel.app
 
 ---
 
@@ -135,7 +135,7 @@ Use this demo script instead:
 
 ### Fastest approach — use Supabase + Next.js:
 ```bash
-cd jovio-web
+cd nikki-web
 npm install @supabase/supabase-js @supabase/ssr recharts lucide-react
 ```
 
@@ -153,11 +153,11 @@ npm install @supabase/supabase-js @supabase/ssr recharts lucide-react
 
 ## PRESENTATION SCRIPT (2 minutes demo)
 
-"Jovio gives any Telugu business a fully automated AI receptionist.
+"Nikki gives any Telugu business a fully automated AI receptionist.
 
 [SHOW WEBSITE]
 Client opens our website, signs up, takes 60 seconds.
-They pick 'Jovio Telugu Receptionist — Clinic'. 
+They pick 'Nikki Telugu Receptionist — Clinic'. 
 Enter their clinic name, hours, services. Done.
 
 [MAKE LIVE CALL — call your Exotel DID]

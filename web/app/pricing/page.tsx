@@ -1,12 +1,12 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Pricing — Jovio" };
+export const metadata = { title: "Pricing — Nikki" };
 
 export default function Pricing() {
   return (
     <LegalLayout title="Pricing" lastUpdated="29 June 2026">
       <p>
-        Simple INR pricing. All plans include the core Jovio Telugu AI receptionist, the
+        Simple INR pricing. All plans include the core Nikki Telugu AI receptionist, the
         dashboard, mobile app, and TRAI-compliant call disclosure. GST (18%) is added at
         checkout.
       </p>

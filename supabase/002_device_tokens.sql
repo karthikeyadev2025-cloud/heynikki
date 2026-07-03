@@ -1,5 +1,5 @@
 -- ============================================================
--- JOVIO — device_tokens table (FCM push registration)
+-- NIKKI — device_tokens table (FCM push registration)
 -- ============================================================
 -- Stores Firebase Cloud Messaging tokens per (user, platform) so the
 -- api-server can push notifications to a specific user's active devices.

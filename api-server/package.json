@@ -1,5 +1,5 @@
 {
-  "name": "jovio-api-server",
+  "name": "nikki-api-server",
   "version": "1.0.0",
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",

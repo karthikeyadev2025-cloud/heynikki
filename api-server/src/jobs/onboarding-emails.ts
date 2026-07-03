@@ -30,22 +30,22 @@ const STEPS: OnboardingStep[] = [
   {
     id:        "welcome",
     daysAfter: 0,
-    subject:   () => "Welcome to Jovio — let's get your AI receptionist live",
+    subject:   () => "Welcome to Nikki — let's get your AI receptionist live",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Welcome to Jovio. Your 14-day free trial just started — no card required.
+Welcome to Nikki. Your 14-day free trial just started — no card required.
 
 Three things to do in the next 5 minutes:
 
   1. Pick a voice profile (Standard / Clinic / Real Estate / Premium)
        → ${dashboardUrl}/setup
-  2. Forward your business number to the Jovio DID we set up
+  2. Forward your business number to the Nikki DID we set up
   3. Make a test call to see it in action
 
 If you get stuck, just reply to this email. I read every one.
 
 — Karthikeya
-Jovio Global Technologies`,
+Nikki Global Technologies`,
   },
   {
     id:        "day3_check_in",
@@ -53,7 +53,7 @@ Jovio Global Technologies`,
     subject:   () => "How's the AI receptionist going?",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Day 3 of your Jovio trial. Quick check-in — has the AI handled any
+Day 3 of your Nikki trial. Quick check-in — has the AI handled any
 real calls yet?
 
   • If yes: take a peek at the call recordings + transcripts at
@@ -69,16 +69,16 @@ Any questions, just reply.
   {
     id:        "day10_trial_ending",
     daysAfter: 10,
-    subject:   () => "Your Jovio trial ends in 4 days",
+    subject:   () => "Your Nikki trial ends in 4 days",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Heads up — your 14-day Jovio trial ends in 4 days.
+Heads up — your 14-day Nikki trial ends in 4 days.
 
 To keep your AI receptionist running without interruption, pick a plan:
   → ${dashboardUrl}/billing
 
 Plans start at ₹1,999/month (Starter — 200 mins). The first month is
-fully refundable within 7 days if Jovio doesn't fit.
+fully refundable within 7 days if Nikki doesn't fit.
 
 If you'd rather not continue, no action needed — your account becomes
 read-only and is deleted after 30 days. All your call data is exportable
@@ -92,14 +92,14 @@ from the dashboard until then.
     subject:   () => "Your trial ended — what now?",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Your 14-day Jovio trial ended today. Your AI receptionist has stopped
+Your 14-day Nikki trial ended today. Your AI receptionist has stopped
 accepting calls, but your data is safe and exportable for 30 days at
 ${dashboardUrl}.
 
 To pick up where you left off:
   → ${dashboardUrl}/billing
 
-If Jovio wasn't a fit, I'd love to know why — just reply with a
+If Nikki wasn't a fit, I'd love to know why — just reply with a
 sentence. It's the single most valuable feedback we get.
 
 — Karthikeya`,

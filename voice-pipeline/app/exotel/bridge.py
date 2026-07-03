@@ -1,5 +1,5 @@
 """
-Exotel <-> Jovio voice bridge — Phase 2 with pre-cached greeting.
+Exotel <-> Nikki voice bridge — Phase 2 with pre-cached greeting.
 Greeting is pre-baked to mu-law and streamed within ~50ms of 'start'.
 Sarvam is only called mid-conversation for dynamic replies.
 
@@ -24,6 +24,7 @@ except ImportError:
 from app.exotel import knowledge
 from app.exotel import circuit_breaker as cb
 from app.exotel import webhooks
+from app.exotel import outbound as ob
 
 log = logging.getLogger("exotel-bridge")
 logging.basicConfig(level=logging.INFO,
@@ -42,12 +43,12 @@ VAD_THRESHOLD = 500
 SILENCE_MS    = 1200
 MIN_SPEECH_MS = 300
 
-# ─── Barge-in (interrupt while Jovio is speaking) ────────────
-# Higher threshold + longer sustained-speech requirement while Jovio is
-# talking, to reduce the risk of Jovio self-interrupting from echo of its
+# ─── Barge-in (interrupt while Nikki is speaking) ────────────
+# Higher threshold + longer sustained-speech requirement while Nikki is
+# talking, to reduce the risk of Nikki self-interrupting from echo of its
 # own audio being picked up by the caller's phone mic. Exotel's WebSocket
 # doesn't provide echo cancellation, so this trade-off is unavoidable:
-# set BARGE_IN_THRESHOLD too low and Jovio interrupts itself from its own
+# set BARGE_IN_THRESHOLD too low and Nikki interrupts itself from its own
 # playback echo; set it too high and quiet-speaking callers can't
 # interrupt at all. 2000 RMS + 400ms of sustained speech is a conservative
 # starting point — most legitimate interruption attempts ("wait...",
@@ -58,9 +59,14 @@ BARGE_IN_MIN_MS    = 400
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "assets")
 CACHED_DIR = os.path.join(ASSETS_DIR, "cached_pcm")
-DEFAULT_VOICE = "anushka"
+DEFAULT_VOICE = "priya"  # confirmed valid for bulbul:v3 via live API error response
+                         # (2026-07-02) -- v2's "anushka" is NOT valid on v3, entirely
+                         # different speaker roster. This is a placeholder pick, not a
+                         # verified "best" choice -- swap once real listening happens
+                         # (scripts/compare_voices.py already generated 38 real v3
+                         # samples earlier, never actually listened to).
 
-SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు Jovio.
+SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు Nikki.
 Business: {business_name} ({business_type}).
 Rules:
 __LANGUAGE_RULE__
@@ -73,18 +79,29 @@ __LANGUAGE_RULE__
 """
 
 # ─── Voice Profile SKUs ─────────────────────────────────────
-# Voice IDs MUST come from bulbul:v2's actual speaker catalog — that's the
-# model bridge.py calls (see sarvam_tts below, "model":"bulbul:v2"). Verified
-# valid speakers for that model: anushka, manisha, vidya, arya (female),
-# abhilash, karun, hitesh (male). Speaker names are NOT interchangeable with
-# bulbul:v3 — a v3-only name here would silently 400 every TTS call for that
-# SKU. (The dashboard's old SKU list used meera/pavithra/arvind, none of
-# which exist in either catalog — fixed alongside this.)
+# Voice IDs MUST come from bulbul:v3's actual speaker catalog — that's the
+# model bridge.py calls now (see sarvam_tts below, "model":"bulbul:v3",
+# upgraded from v2 on 2026-07-02). v3 has an ENTIRELY DIFFERENT speaker
+# roster than v2 — none of v2's names (anushka, manisha, vidya, arya,
+# abhilash, karun, hitesh) are valid on v3, confirmed via a real live 400
+# error the first time this upgrade shipped. Speaker names are not
+# interchangeable between model versions — a v2-only name here silently
+# 400s every TTS call for that SKU. (The dashboard's old SKU list once
+# used meera/pavithra/arvind, none of which ever existed in any catalog —
+# fixed earlier today, before the v2->v3 upgrade.)
 SKU_VOICE = {
-    "standard":    "anushka",   # proven in production since today's earlier calls
-    "clinic":      "vidya",     # formal female tone
-    "real_estate": "karun",     # assertive male tone
-    "premium":     "manisha",   # distinct, refined female tone
+    # All 4 changed from v2 names (anushka/vidya/karun/manisha, all INVALID
+    # on v3) to the only 4 names directly confirmed valid via the real
+    # Sarvam API error response on 2026-07-02: aditya, ritu, ashutosh, priya.
+    # This is a stopgap to unblock the pipeline, NOT a considered voice
+    # choice -- only 2 confirmed-valid female-sounding names exist in this
+    # set (priya, ritu), so "premium" ended up male by necessity, breaking
+    # its original "distinct female tone" intent. Fix properly once
+    # scripts/compare_voices.py's 38 real v3 samples get listened to.
+    "standard":    "priya",
+    "clinic":      "ritu",
+    "real_estate": "aditya",
+    "premium":     "ashutosh",  # was female-toned by design; temporarily male, see note above
 }
 
 # ─── Live language switching ────────────────────────────────
@@ -97,7 +114,7 @@ SKU_VOICE = {
 # auto-detects the spoken language and returns it in the response. That
 # detected code becomes the language for both Gemini's reply instruction
 # and the matching Sarvam TTS call for that turn. The SAME configured SKU
-# voice (e.g. "vidya" for Clinic) speaks across all 3 languages — Sarvam's
+# voice (e.g. "ritu" for Clinic) speaks across all 3 languages — Sarvam's
 # target_language_code affects pronunciation/normalization, not which
 # speaker names are valid, so the caller hears one consistent "person"
 # regardless of which language they're using.
@@ -123,14 +140,14 @@ def apply_language(prompt: str, lang_code: str) -> str:
     return prompt.replace(LANGUAGE_MARKER, language_instruction(lang_code))
 
 SKU_SYSTEM_PROMPTS = {
-    "standard": """మీరు ఒక professional Telugu AI receptionist. మీ పేరు Jovio.
+    "standard": """మీరు ఒక professional Telugu AI receptionist. మీ పేరు Nikki.
 Business: {business_name} — general business / retail / coaching.
 Rules:
 __LANGUAGE_RULE__
 - SHORT responses (1-2 sentences). Phone call, not chat.
 - Warm, friendly, approachable tone.
 {shared_rules}""",
-    "clinic": """మీరు ఒక professional Telugu AI receptionist ఒక clinic/hospital కోసం. మీ పేరు Jovio.
+    "clinic": """మీరు ఒక professional Telugu AI receptionist ఒక clinic/hospital కోసం. మీ పేరు Nikki.
 Business: {business_name} — hospital / clinic / diagnostic lab.
 Rules:
 __LANGUAGE_RULE__
@@ -140,7 +157,7 @@ __LANGUAGE_RULE__
   questions to "డాక్టర్ గారు call back చేస్తారు" (translate that redirect into whichever
   language the caller is using).
 {shared_rules}""",
-    "real_estate": """మీరు ఒక professional Telugu AI receptionist ఒక real estate business కోసం. మీ పేరు Jovio.
+    "real_estate": """మీరు ఒక professional Telugu AI receptionist ఒక real estate business కోసం. మీ పేరు Nikki.
 Business: {business_name} — real estate, site visits, property enquiries.
 Rules:
 __LANGUAGE_RULE__
@@ -148,7 +165,7 @@ __LANGUAGE_RULE__
 - SHORT responses (1-2 sentences). Phone call, not chat.
 - If caller mentions budget or location preference, acknowledge it and note it's passed to the team.
 {shared_rules}""",
-    "premium": """మీరు ఒక professional Telugu AI receptionist ఒక premium/luxury business కోసం. మీ పేరు Jovio.
+    "premium": """మీరు ఒక professional Telugu AI receptionist ఒక premium/luxury business కోసం. మీ పేరు Nikki.
 Business: {business_name} — premium, high-value clientele.
 Rules:
 __LANGUAGE_RULE__
@@ -182,6 +199,26 @@ def build_sku_prompt(profile: dict) -> str:
         business_name=profile.get("business_name") or "this business",
         shared_rules=shared,
     )
+
+
+def build_outbound_prompt(script: str, first_name: str = None) -> str:
+    """System prompt for an outbound campaign call — wraps the campaign's
+    script with the language marker and compliance rules. The TRAI
+    disclosure ("this call is handled by an automated AI assistant") is
+    played as audio BEFORE the conversation starts (see the outbound
+    branch in handle_exotel_ws), so this prompt reinforces it rather than
+    repeating it every turn — but the AI must never claim to be human if
+    asked directly, regardless of what the script says."""
+    name_line = f"- The recipient's name is {first_name}, use it naturally.\n" if first_name else ""
+    return f"""మీరు ఒక professional Telugu AI voice assistant, ఔట్‌బౌండ్ కాల్ చేస్తున్నారు.
+Rules:
+__LANGUAGE_RULE__
+- SHORT responses (1-2 sentences). Phone call, not chat.
+- The caller already heard a disclosure that this call is automated before you started talking — don't repeat that yourself, but if asked directly whether you're human or AI, always say AI assistant, never claim otherwise.
+- If the recipient asks to be removed from future calls, sounds unwilling to talk, or asks you to stop, acknowledge respectfully and end the call — do not persist or re-pitch.
+{name_line}Your goal for this call:
+{script}
+"""
 
 
 async def sarvam_stt(pcm_16k: bytes) -> tuple:
@@ -219,29 +256,52 @@ async def sarvam_stt(pcm_16k: bytes) -> tuple:
 
 
 async def sarvam_tts(text: str, voice: str = DEFAULT_VOICE,
-                      target_language_code: str = DEFAULT_LANGUAGE) -> bytes:
+                      target_language_code: str = DEFAULT_LANGUAGE) -> tuple:
+    """Returns (pcm_bytes, sample_rate). (b"", 0) on failure.
+
+    Upgraded to bulbul:v3 with tuned parameters 2026-07-02 (pace/loudness/
+    pitch tuning + speech_sample_rate=8000 requests audio already at
+    Exotel's target rate, skipping a resample step).
+
+    Always returns the REAL sample rate read from the WAV response header
+    rather than assuming a fixed constant — this matters specifically
+    because requesting speech_sample_rate=8000 makes Sarvam return audio
+    at a different rate than the old bulbul:v2 default (22050Hz). A
+    hardcoded rate assumption here would silently corrupt audio (wrong
+    pitch/speed) the moment this config changed — see _synthesize_
+    sentence_pcm8k, which resamples only if the actual rate isn't
+    already what's needed, never assuming."""
     if not cb.sarvam_tts_breaker.allow_request():
         log.warning("sarvam_tts: circuit OPEN, skipping live call")
-        return b""
+        return b"", 0
 
     async with httpx.AsyncClient(timeout=30) as c:
         try:
             r = await c.post("https://api.sarvam.ai/text-to-speech",
                 headers={"api-subscription-key": SARVAM_KEY},
                 json={"inputs":[text], "target_language_code":target_language_code,
-                      "speaker":voice, "model":"bulbul:v2"})
+                      "speaker":voice, "model":"bulbul:v3",
+                      # NOTE: pitch/loudness deliberately NOT sent — Sarvam's
+                      # real API rejects them for bulbul:v3 with an explicit
+                      # 400 error ("Pitch and loudness parameters are
+                      # currently not supported for the Bulbul V3 model"),
+                      # discovered live 2026-07-02 after every single reply
+                      # was silently falling back to the cached error clip.
+                      "pace": 1.1,
+                      "speech_sample_rate": 8000, "enable_preprocessing": True,
+                      "eng_interpolation_wt": 100})
         except Exception as e:
             log.error("TTS request failed: %s", e)
             cb.sarvam_tts_breaker.record_failure()
-            return b""
+            return b"", 0
         if r.status_code != 200:
             log.error("TTS %s: %s", r.status_code, r.text[:150])
             cb.sarvam_tts_breaker.record_failure()
-            return b""
+            return b"", 0
         cb.sarvam_tts_breaker.record_success()
         wav = base64.b64decode(r.json()["audios"][0])
         with wave.open(io.BytesIO(wav), "rb") as wf:
-            return wf.readframes(wf.getnframes())
+            return wf.readframes(wf.getnframes()), wf.getframerate()
 
 
 MAX_HISTORY_TURNS = 4  # matches the plan's own "4-turn cap" / "rolling 4-turn
@@ -356,7 +416,7 @@ async def lookup_tenant(caller: str) -> dict:
                 return r.json()[0]
         except Exception as e:
             log.warning("tenant lookup failed: %s", e)
-    return {"name":"Jovio Demo", "business_type":"general", "voice_profile":DEFAULT_VOICE}
+    return {"name":"Hey Nikki", "business_type":"general", "voice_profile":DEFAULT_VOICE}
 
 
 # ─── Call row + recording persistence ─────────────────────
@@ -526,7 +586,7 @@ class Session:
         self.current_language: str = DEFAULT_LANGUAGE
         self.started_at: Optional[float] = None
         # Barge-in state. interrupt_flag is set by feed_caller_audio when the
-        # caller speaks over Jovio's reply; send_pcm and speak_dynamic both
+        # caller speaks over Nikki's reply; send_pcm and speak_dynamic both
         # check it between frames/sentences and stop cleanly. barge_in_speech_ms
         # tracks how long the caller has been continuously above BARGE_IN_THRESHOLD,
         # so a single loud noise doesn't trigger a false interrupt.
@@ -537,6 +597,9 @@ class Session:
         # language switching) is identical regardless of transport; only
         # how audio physically gets sent/received differs.
         self.transport = "exotel"
+        # Set only when this call was matched to a dispatched outbound
+        # campaign recipient — see the outbound branch in handle_exotel_ws.
+        self.outbound_recipient_id: Optional[str] = None
 
     async def send_pcm(self, pcm_bytes: bytes):
         """Send 16-bit PCM audio to the caller. Exotel needs its specific
@@ -638,14 +701,19 @@ class Session:
 
 
     async def _synthesize_sentence_pcm8k(self, text: str) -> Optional[bytes]:
-        """Synthesize one sentence, downsample to 8k PCM. None on failure —
-        caller skips that sentence rather than aborting the whole reply."""
-        pcm_22k = await sarvam_tts(text, self.tenant.get("voice_profile", DEFAULT_VOICE),
-                                   self.current_language)
-        if not pcm_22k:
+        """Synthesize one sentence, ensure 8k PCM output. None on failure —
+        caller skips that sentence rather than aborting the whole reply.
+        Resamples only if Sarvam's actual returned rate isn't already
+        8kHz — with speech_sample_rate=8000 requested, this is normally
+        a no-op, but always checks the real rate rather than assuming."""
+        pcm, actual_sr = await sarvam_tts(text, self.tenant.get("voice_profile", DEFAULT_VOICE),
+                                           self.current_language)
+        if not pcm:
             return None
+        if actual_sr == EXOTEL_SR:
+            return pcm
         pcm_8k, self.downsample_state = audioop.ratecv(
-            pcm_22k, 2, 1, TTS_SR, EXOTEL_SR, self.downsample_state)
+            pcm, 2, 1, actual_sr, EXOTEL_SR, self.downsample_state)
         return pcm_8k
 
     async def speak_dynamic(self, text: str):
@@ -661,7 +729,7 @@ class Session:
         blocking request per turn.
 
         speaking_back is held True for the whole call (synthesis included,
-        not just sending) — caller audio arriving while Jovio is about to
+        not just sending) — caller audio arriving while Nikki is about to
         speak shouldn't be treated as a fresh utterance.
         """
         if not text:
@@ -728,12 +796,12 @@ class Session:
         chunk_ms = int(len(pcm_16k) / 2 / PIPE_SR * 1000)
 
         if self.speaking_back:
-            # Jovio is currently speaking. Watch for the caller talking
+            # Nikki is currently speaking. Watch for the caller talking
             # over the top — but require louder + more sustained speech
             # than the normal VAD threshold, because the caller's phone
-            # mic can pick up echo of Jovio's own playback. Only trigger
+            # mic can pick up echo of Nikki's own playback. Only trigger
             # the interrupt after BARGE_IN_MIN_MS of continuous loud speech,
-            # so a single spike (car horn, cough) doesn't cut Jovio off.
+            # so a single spike (car horn, cough) doesn't cut Nikki off.
             if rms > BARGE_IN_THRESHOLD:
                 self.barge_in_speech_ms += chunk_ms
                 if (self.barge_in_speech_ms >= BARGE_IN_MIN_MS
@@ -745,14 +813,14 @@ class Session:
                 # speak *continuously* above threshold to interrupt, not
                 # just briefly.
                 self.barge_in_speech_ms = 0
-            # Do not buffer speech for utterance-processing while Jovio
+            # Do not buffer speech for utterance-processing while Nikki
             # is still speaking. Once send_pcm / speak_dynamic notice the
             # interrupt flag, playback stops, speaking_back flips to False,
             # and this function's normal (non-playback) path takes over
             # for the caller's actual utterance.
             return None
 
-        # Normal path: Jovio is not speaking, so any speech is a real
+        # Normal path: Nikki is not speaking, so any speech is a real
         # utterance to transcribe.
         is_speech = rms > VAD_THRESHOLD
         if is_speech:
@@ -802,30 +870,61 @@ async def handle_exotel_ws(ws: WebSocket):
                 s.did    = cp.get("To")   or start.get("to")   or ""
                 s.started_at = time.time()
                 log.info("start call=%s from=%s to=%s", s.call_sid, s.caller, s.did)
-                asyncio.create_task(s.play_cached("default"))
+
                 async def _setup():
-                    vp = await lookup_voice_profile(s.did)
-                    if vp:
-                        s.tenant = {
-                            "id": vp.get("tenant_id"),
-                            "name": vp.get("business_name") or "Jovio Client",
-                            "voice_profile": SKU_VOICE.get(
-                                vp.get("profile_sku") or "standard", DEFAULT_VOICE),
-                        }
-                        s.voice_profile_id = vp.get("id")
-                        s._sys = build_sku_prompt(vp)
-                        log.info("voice profile matched: sku=%s business=%s",
-                                 vp.get("profile_sku"), vp.get("business_name"))
+                    # Outbound correlation check FIRST — one fast, indexed
+                    # lookup by call_sid. Deliberate trade-off: the original
+                    # "play greeting instantly, before any DB call" fix
+                    # (earlier today, fixed Exotel hanging up before Nikki
+                    # said anything) is relaxed here by this one lookup's
+                    # latency, in exchange for correctness — an outbound
+                    # call's FIRST audio must legally be the TRAI automated-
+                    # call disclosure, not a generic greeting, so we can't
+                    # fire the greeting blind before knowing which call this is.
+                    outbound_match = await ob.correlate_outbound_call(s.call_sid)
+
+                    if outbound_match:
+                        campaign = outbound_match.get("outbound_campaigns") or {}
+                        s.tenant = {"id": outbound_match.get("tenant_id"),
+                                    "name": "Outbound Campaign",
+                                    "voice_profile": DEFAULT_VOICE}
+                        s.voice_profile_id = campaign.get("voice_profile_id")
+                        s._sys = build_outbound_prompt(
+                            campaign.get("script") or "Introduce yourself and ask how you can help.",
+                            first_name=outbound_match.get("first_name"))
+                        s.outbound_recipient_id = outbound_match.get("id")
+                        log.info("outbound call matched: recipient=%s campaign=%s",
+                                 outbound_match.get("id"), outbound_match.get("campaign_id"))
+                        await ob.mark_recipient_status(outbound_match["id"], "in_progress")
+                        # TRAI-mandated disclosure, not the generic greeting —
+                        # legally required first audio on an automated outbound call.
+                        asyncio.create_task(s.play_cached("trai_disclosure_anushka"))
                     else:
-                        s.tenant = await lookup_tenant(s.caller)
-                        s._sys = SYSTEM_PROMPT.format(
-                            business_type=s.tenant.get("business_type","general"),
-                            business_name=s.tenant.get("name","this business"))
-                        log.info("tenant ready (demo fallback): %s", s.tenant.get("name"))
+                        # Normal inbound path — completely unchanged from before.
+                        asyncio.create_task(s.play_cached("default"))
+                        vp = await lookup_voice_profile(s.did)
+                        if vp:
+                            s.tenant = {
+                                "id": vp.get("tenant_id"),
+                                "name": vp.get("business_name") or "Nikki Client",
+                                "voice_profile": SKU_VOICE.get(
+                                    vp.get("profile_sku") or "standard", DEFAULT_VOICE),
+                            }
+                            s.voice_profile_id = vp.get("id")
+                            s._sys = build_sku_prompt(vp)
+                            log.info("voice profile matched: sku=%s business=%s",
+                                     vp.get("profile_sku"), vp.get("business_name"))
+                        else:
+                            s.tenant = await lookup_tenant(s.caller)
+                            s._sys = SYSTEM_PROMPT.format(
+                                business_type=s.tenant.get("business_type","general"),
+                                business_name=s.tenant.get("name","this business"))
+                            log.info("tenant ready (demo fallback): %s", s.tenant.get("name"))
+
                     s.call_row_id = await save_call_row({
                         "tenant_id": s.tenant.get("id"),
                         "caller_number": s.caller,
-                        "direction": "inbound",
+                        "direction": "outbound" if outbound_match else "inbound",
                         "status": "active",
                         "exotel_call_sid": s.call_sid,
                     })
@@ -867,7 +966,7 @@ async def handle_exotel_ws(ws: WebSocket):
 
 async def handle_widget_ws(ws: WebSocket):
     """Website widget entry point — lets a visitor on jovio.in talk to
-    Jovio directly through their browser microphone, no phone call
+    Nikki directly through their browser microphone, no phone call
     needed. Reuses the exact same Session/VAD/STT/Gemini/TTS/barge-in/
     filler pipeline already built and tested for Exotel calls (this
     session, earlier today) — only the transport differs. If barge-in,
@@ -906,9 +1005,9 @@ async def handle_widget_ws(ws: WebSocket):
     s.transport = "widget"
     s.started_at = time.time()
     # Same demo persona heard on the phone line — a website visitor and a
-    # phone caller should get a consistent first impression of Jovio.
-    s.tenant = {"name": "Jovio Demo", "voice_profile": DEFAULT_VOICE}
-    s._sys = SYSTEM_PROMPT.format(business_type="general", business_name="Jovio Demo")
+    # phone caller should get a consistent first impression of Nikki.
+    s.tenant = {"name": "Hey Nikki", "voice_profile": DEFAULT_VOICE}
+    s._sys = SYSTEM_PROMPT.format(business_type="general", business_name="Hey Nikki")
     log.info("widget WS accepted")
 
     asyncio.create_task(s.play_cached("default"))
@@ -990,7 +1089,7 @@ async def _handle_utterance(s: Session, pcm: bytes):
 
         # Real per-turn latency breakdown — this did not exist before today.
         # "total" is what the caller actually experiences: silence after
-        # their sentence ends until Jovio's reply starts playing.
+        # their sentence ends until Nikki's reply starts playing.
         log.info(
             "LATENCY turn: stt=%dms rag=%dms llm=%dms tts=%dms total=%dms",
             int((t_stt - t_start) * 1000),

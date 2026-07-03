@@ -1,6 +1,6 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Refund Policy — Jovio" };
+export const metadata = { title: "Refund Policy — Nikki" };
 
 export default function Refund() {
   return (
@@ -24,13 +24,13 @@ export default function Refund() {
       <ul>
         <li>
           <strong>Within 7 days of first paid subscription:</strong> if you signed up for a
-          paid plan and find Jovio doesn't fit your needs, email
+          paid plan and find Nikki doesn't fit your needs, email
           <a href="mailto:support@jovio.in"> support@jovio.in</a> within 7 days of the first
           charge for a full refund. This applies only to the very first monthly charge
           and is available once per customer.
         </li>
         <li>
-          <strong>Service outage:</strong> if Jovio is unavailable for more than 8 hours in
+          <strong>Service outage:</strong> if Nikki is unavailable for more than 8 hours in
           a single billing month, you can claim a 10% credit toward the next month's bill
           by emailing us within 30 days.
         </li>

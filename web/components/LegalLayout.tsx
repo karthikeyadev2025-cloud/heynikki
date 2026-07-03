@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import JovioLogo from "./JovioLogo";
+import NikkiLogo from "./NikkiLogo";
 
 const J = {
   bg: "#070B19", vault: "#111827", border: "#1F2937",
@@ -21,7 +21,7 @@ export default function LegalLayout({
         justifyContent: "space-between", alignItems: "center",
       }}>
         <Link href="/" style={{ textDecoration: "none" }}>
-          <JovioLogo size={36} variant="horizontal" />
+          <NikkiLogo size={36} variant="horizontal" />
         </Link>
         <Link href="/" style={{
           color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none",

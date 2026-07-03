@@ -1,6 +1,6 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Contact — Jovio" };
+export const metadata = { title: "Contact — Nikki" };
 
 export default function Contact() {
   return (
@@ -33,7 +33,7 @@ export default function Contact() {
       <h2>Business hours</h2>
       <p>
         Monday – Friday, 10:00 – 19:00 IST.<br />
-        The Jovio AI receptionist itself operates 24/7 — these hours are for human
+        The Nikki AI receptionist itself operates 24/7 — these hours are for human
         support and sales conversations.
       </p>
 

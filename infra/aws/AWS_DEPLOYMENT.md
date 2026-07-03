@@ -1,4 +1,4 @@
-# Jovio — AWS Production Deployment Guide
+# Nikki — AWS Production Deployment Guide
 
 **Target:** Ubuntu 24.04 EC2 (`t3.small` or larger) in `ap-south-1` (Mumbai), with
 Nginx fronting the API + voice pipeline, CloudWatch for logs/metrics, certbot for TLS.
@@ -53,9 +53,9 @@ In **IAM Console → Roles → Create role**:
 
 - Trusted entity: AWS service → EC2
 - Permissions: attach AWS-managed policy **CloudWatchAgentServerPolicy**
-- Role name: `jovio-ec2-cloudwatch`
+- Role name: `nikki-ec2-cloudwatch`
 
-Then **EC2 Console → Instance → Actions → Security → Modify IAM role** → select `jovio-ec2-cloudwatch`.
+Then **EC2 Console → Instance → Actions → Security → Modify IAM role** → select `nikki-ec2-cloudwatch`.
 
 ### 3. Bootstrap the instance
 
@@ -73,21 +73,21 @@ The systemd units read secrets from files outside the repo so they never get
 committed accidentally.
 
 ```bash
-sudo mkdir -p /etc/jovio
-sudo chown root:ubuntu /etc/jovio
-sudo chmod 0750 /etc/jovio
+sudo mkdir -p /etc/nikki
+sudo chown root:ubuntu /etc/nikki
+sudo chmod 0750 /etc/nikki
 
-sudo nano /etc/jovio/voice-pipeline.env
+sudo nano /etc/nikki/voice-pipeline.env
 # Paste — see voice-pipeline/.env.example for the full list.
 # Critical: JOVIO_RECORDING_KEY, SARVAM_API_KEY, GEMINI_API_KEY, LIVEKIT_*
 
-sudo nano /etc/jovio/api-server.env
+sudo nano /etc/nikki/api-server.env
 # Paste — see api-server/.env.example for the full list.
 # Critical: RAZORPAY_*, EXOTEL_WEBHOOK_TOKEN, SUPABASE_SERVICE_KEY,
 # WATI_*, INTERNAL_SECRET
 
-sudo chmod 0640 /etc/jovio/*.env
-sudo chown root:ubuntu /etc/jovio/*.env
+sudo chmod 0640 /etc/nikki/*.env
+sudo chown root:ubuntu /etc/nikki/*.env
 ```
 
 **Generate the secrets:**
@@ -108,21 +108,21 @@ openssl rand -hex 32
 Stop Supervisor's old configs first (if you ran the original setup script):
 
 ```bash
-sudo supervisorctl stop jovio-pipeline jovio-api 2>/dev/null || true
-sudo rm -f /etc/supervisor/conf.d/jovio-pipeline.conf /etc/supervisor/conf.d/jovio-api.conf
+sudo supervisorctl stop nikki-pipeline nikki-api 2>/dev/null || true
+sudo rm -f /etc/supervisor/conf.d/nikki-pipeline.conf /etc/supervisor/conf.d/nikki-api.conf
 sudo supervisorctl reread && sudo supervisorctl update
 ```
 
 Install systemd units:
 
 ```bash
-sudo cp infra/systemd/jovio-pipeline.service /etc/systemd/system/
-sudo cp infra/systemd/jovio-api.service      /etc/systemd/system/
+sudo cp infra/systemd/nikki-pipeline.service /etc/systemd/system/
+sudo cp infra/systemd/nikki-api.service      /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now jovio-pipeline jovio-api
+sudo systemctl enable --now nikki-pipeline nikki-api
 
 # Verify
-sudo systemctl status jovio-pipeline jovio-api
+sudo systemctl status nikki-pipeline nikki-api
 curl -fsS http://127.0.0.1:4000/health
 curl -fsS http://127.0.0.1:8000/health  # if pipeline exposes one
 ```
@@ -130,8 +130,8 @@ curl -fsS http://127.0.0.1:8000/health  # if pipeline exposes one
 ### 6. Nginx
 
 ```bash
-sudo cp infra/nginx/jovio.conf /etc/nginx/sites-available/jovio
-sudo ln -sf /etc/nginx/sites-available/jovio /etc/nginx/sites-enabled/jovio
+sudo cp infra/nginx/nikki.conf /etc/nginx/sites-available/nikki
+sudo ln -sf /etc/nginx/sites-available/nikki /etc/nginx/sites-enabled/nikki
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -153,14 +153,14 @@ bash infra/aws/setup-cloudwatch.sh
 sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status
 ```
 
-Logs appear in CloudWatch under log groups starting with `/jovio/`. Metrics
-under the `Jovio/EC2` namespace.
+Logs appear in CloudWatch under log groups starting with `/nikki/`. Metrics
+under the `Nikki/EC2` namespace.
 
 ### 9. Route 53 health checks
 
 In **Route 53 → Health checks → Create**:
 
-- Name: `jovio-api-health`
+- Name: `nikki-api-health`
 - What to monitor: Endpoint by domain name
 - Domain: `api.jovio.in`
 - Path: `/health`
@@ -179,11 +179,11 @@ phone/email when these fail.
 
 ```bash
 # Live tail on the box
-sudo journalctl -u jovio-pipeline -f
-sudo journalctl -u jovio-api -f
+sudo journalctl -u nikki-pipeline -f
+sudo journalctl -u nikki-api -f
 
 # Or the file form (what CloudWatch ingests)
-sudo tail -f /var/log/jovio-api.out.log /var/log/jovio-pipeline.err.log
+sudo tail -f /var/log/nikki-api.out.log /var/log/nikki-pipeline.err.log
 ```
 
 ### Restart after deploying new code
@@ -193,7 +193,7 @@ cd /home/ubuntu/jovi
 git pull
 cd api-server     && npm install --omit=dev
 cd ../voice-pipeline && source venv/bin/activate && pip install -r requirements.txt && deactivate
-sudo systemctl restart jovio-pipeline jovio-api
+sudo systemctl restart nikki-pipeline nikki-api
 ```
 
 ### Rolling back
@@ -202,7 +202,7 @@ sudo systemctl restart jovio-pipeline jovio-api
 cd /home/ubuntu/jovi
 git log --oneline -5
 git checkout <commit-sha>
-sudo systemctl restart jovio-pipeline jovio-api
+sudo systemctl restart nikki-pipeline nikki-api
 ```
 
 ---
@@ -260,7 +260,7 @@ Supabase (Pro tier): ₹2,100/mo separately if you outgrow Free.
 ## Security checklist
 
 - [ ] SSH only from your IP (or set up AWS Session Manager and disable SSH)
-- [ ] All secrets in `/etc/jovio/*.env`, mode 0640, owner root:ubuntu — NEVER in repo
+- [ ] All secrets in `/etc/nikki/*.env`, mode 0640, owner root:ubuntu — NEVER in repo
 - [ ] `JOVIO_RECORDING_KEY` backed up to encrypted password manager (losing it = unrecoverable recordings)
 - [ ] `EXOTEL_WEBHOOK_TOKEN` configured in Exotel dashboard webhook URLs
 - [ ] CloudWatch alarms on: `/health` failures, CPU > 80%, disk > 80%, memory > 80%

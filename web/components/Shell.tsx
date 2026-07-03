@@ -61,7 +61,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.glow,
             boxShadow: "0 0 8px " + C.glow, flexShrink: 0 }} />
-          <span style={{ color: C.txt, fontSize: 15, fontWeight: 900 }}>Jovio</span>
+          <span style={{ color: C.txt, fontSize: 15, fontWeight: 900 }}>Nikki</span>
         </div>
         {tenant && (
           <div style={{ color: C.dim, fontSize: 11, marginTop: 4, paddingLeft: 16 }}>

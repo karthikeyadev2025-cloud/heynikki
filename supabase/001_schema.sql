@@ -1,6 +1,6 @@
 -- ============================================================
--- JOVIO — Complete Database Schema
--- Powered by Jovio Tech Labs
+-- NIKKI — Complete Database Schema
+-- Powered by Nikki Tech Labs
 --
 -- Run in: Supabase SQL Editor → New Query → Run All
 -- Project: wnawozdmmxuziucavngw
@@ -658,7 +658,7 @@ create policy "docs_tenant_access" on storage.objects for all
 
 -- ══════════════════════════════════════════════════════════════
 -- DONE
--- Jovio — Telugu AI Receptionist
--- Powered by Jovio Tech Labs
+-- Nikki — Telugu AI Receptionist
+-- Powered by Nikki Tech Labs
 -- © 2026 Jovio Global Technologies
 -- ══════════════════════════════════════════════════════════════

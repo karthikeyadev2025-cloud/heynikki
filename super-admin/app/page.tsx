@@ -93,7 +93,7 @@ export default function SuperAdminPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red,
               boxShadow: "0 0 8px " + C.red }} />
-            <span style={{ fontSize: 14, fontWeight: 900 }}>Jovio — Super Admin</span>
+            <span style={{ fontSize: 14, fontWeight: 900 }}>Nikki — Super Admin</span>
             <Pill label="RESTRICTED ACCESS" color={C.red} />
           </div>
           <button onClick={() => sb.auth.signOut().then(() => window.location.reload())}

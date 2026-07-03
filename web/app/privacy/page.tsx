@@ -1,12 +1,12 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Privacy Policy — Jovio" };
+export const metadata = { title: "Privacy Policy — Nikki" };
 
 export default function Privacy() {
   return (
     <LegalLayout title="Privacy Policy" lastUpdated="29 June 2026">
       <p>
-        Jovio Global Technologies ("<strong>Jovio</strong>", "we", "us", "our") respects
+        Jovio Global Technologies ("<strong>Nikki</strong>", "we", "us", "our") respects
         your privacy and is committed to protecting your personal data. This Privacy Policy
         explains what data we collect, why, how we use it, and the rights you have over it
         under the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong> of
@@ -17,7 +17,7 @@ export default function Privacy() {
       <h3>Account data</h3>
       <ul>
         <li><strong>From you:</strong> name, business name, email address, phone number, GSTIN (if provided).</li>
-        <li><strong>From your use of Jovio:</strong> business hours, voice profile selection, billing plan.</li>
+        <li><strong>From your use of Nikki:</strong> business hours, voice profile selection, billing plan.</li>
       </ul>
 
       <h3>Call data (from callers to your business)</h3>
@@ -79,7 +79,7 @@ export default function Privacy() {
 
       <h2>6. TRAI compliance for callers</h2>
       <p>
-        Every inbound call answered by Jovio begins with a mandatory non-skippable
+        Every inbound call answered by Nikki begins with a mandatory non-skippable
         disclosure stating that the caller is speaking to an automated AI system. Callers
         can request transfer to a human at any time by saying "human" or "operator", which
         will end the AI session and forward to the configured fallback number.
@@ -94,7 +94,7 @@ export default function Privacy() {
 
       <h2>8. Children</h2>
       <p>
-        Jovio is a B2B service intended for businesses. We do not knowingly collect data
+        Nikki is a B2B service intended for businesses. We do not knowingly collect data
         from children under 18. If you believe a minor has signed up, email us and we'll
         delete the account.
       </p>
@@ -113,7 +113,7 @@ export default function Privacy() {
 
       <h2>10. Changes to this policy</h2>
       <p>
-        We'll email you 30 days before any material change. Continued use of Jovio after a
+        We'll email you 30 days before any material change. Continued use of Nikki after a
         change means you accept the updated policy.
       </p>
 

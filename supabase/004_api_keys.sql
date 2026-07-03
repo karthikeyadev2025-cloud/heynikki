@@ -1,5 +1,5 @@
 -- ============================================================
--- JOVIO — tenant API keys
+-- NIKKI — tenant API keys
 -- ============================================================
 -- Public REST API access is a Scale-plan feature. Each tenant can
 -- issue multiple keys; we store ONLY the bcrypt hash + a short prefix

@@ -149,7 +149,7 @@ export default function ApiKeysPage() {
               API Keys
             </h1>
             <p style={{ color: J.textMid, fontSize: 14, marginTop: 4 }}>
-              For integrating Jovio with your CRM, Zapier, or custom backend.
+              For integrating Nikki with your CRM, Zapier, or custom backend.
             </p>
           </div>
           {!showIssueForm && !newKey && (

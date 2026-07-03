@@ -2,7 +2,7 @@
 Generate the landing page's demo call clip via Sarvam TTS — a short,
 scripted Telugu clinic-booking call matching exactly what the landing page
 copy promises ("appointment booked, WhatsApp confirmation sent, all in
-Telugu"). Two distinct voices (caller vs. Jovio) so it sounds like an
+Telugu"). Two distinct voices (caller vs. Nikki) so it sounds like an
 actual conversation, not one voice talking to itself.
 
 This is a SCRIPTED demo, not a captured real call — today's real test
@@ -39,7 +39,7 @@ SARVAM_KEY = os.getenv("SARVAM_API_KEY")
 if not SARVAM_KEY:
     sys.exit("ERROR: SARVAM_API_KEY not set — source the pipeline env file first.")
 
-# (speaker_voice, text) — caller uses a distinct male voice from Jovio's
+# (speaker_voice, text) — caller uses a distinct male voice from Nikki's
 # Clinic persona (vidya) so the two sides are clearly different people.
 SCRIPT = [
     ("hitesh", "నమస్కారం, నాకు రేపు ఉదయం అపాయింట్‌మెంట్ కావాలి."),

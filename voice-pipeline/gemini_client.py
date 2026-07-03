@@ -6,7 +6,7 @@ import os
 import httpx
 import logging
 
-log = logging.getLogger("jovio.gemini")
+log = logging.getLogger("nikki.gemini")
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 

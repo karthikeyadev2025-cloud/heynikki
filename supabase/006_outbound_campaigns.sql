@@ -1,5 +1,5 @@
 -- ============================================================
--- JOVIO — Outbound calling campaigns (Growth + Scale plans)
+-- NIKKI — Outbound calling campaigns (Growth + Scale plans)
 -- ============================================================
 -- TRAI COMPLIANCE NOTES — READ BEFORE BUILDING ON THIS:
 --

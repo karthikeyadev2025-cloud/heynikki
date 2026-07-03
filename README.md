@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/jovio-logo.jpg" width="120" alt="Jovio Logo" />
+  <img src="assets/nikki-logo.jpg" width="120" alt="Nikki Logo" />
 </p>
 
-<h1 align="center">Jovio — Telugu AI Receptionist</h1>
+<h1 align="center">Nikki — Telugu AI Receptionist</h1>
 <p align="center">
-  <strong>Powered by Jovio Tech Labs</strong><br/>
+  <strong>Powered by Nikki Tech Labs</strong><br/>
   Your business never misses a call.
 </p>
 
@@ -18,21 +18,21 @@
 ---
 
 > Upload your number. Pick a voice profile. Go live in 60 seconds.
-> Jovio answers every call in Telugu, books appointments, and sends
+> Nikki answers every call in Telugu, books appointments, and sends
 > WhatsApp confirmations — fully automated. The entire AI engine is invisible to your clients.
 
 ## Project Structure
 
 ```
-jovio/
+nikki/
 ├── voice-pipeline/     # Python FastAPI — Sarvam STT/TTS + Gemini LLM + LiveKit
 ├── api-server/         # Node.js — Webhooks, Razorpay, WhatsApp, Tenant APIs
 ├── dashboard/          # Next.js 14 — Customer web dashboard
-├── super-admin/        # Next.js 14 — Jovio Super Admin control panel
+├── super-admin/        # Next.js 14 — Nikki Super Admin control panel
 ├── web/                # Next.js 14 — Marketing website (jovio.in)
 ├── flutter-app/        # Flutter 3.x — iOS + Android customer app
 ├── supabase/           # SQL schema + migrations
-└── assets/             # Jovio brand assets + logo
+└── assets/             # Nikki brand assets + logo
 ```
 
 ## Quick Start
@@ -143,5 +143,5 @@ Caller → Exotel (inbound) / Plivo (outbound)
 
 <p align="center">
   <strong>© 2026 Jovio Global Technologies</strong><br/>
-  <em>Powered by Jovio Tech Labs</em>
+  <em>Powered by Nikki Tech Labs</em>
 </p>

@@ -3,7 +3,7 @@
 -- Outbound webhooks — the honest, buildable version of "CRM integration."
 -- Instead of guessing which named CRM to build first (Salesforce? HubSpot?
 -- something else entirely?), any tenant can point ANY tool that accepts
--- webhooks (Zapier, Make, n8n, their own backend) at Jovio and receive
+-- webhooks (Zapier, Make, n8n, their own backend) at Nikki and receive
 -- events as they happen.
 --
 -- Only `call.completed` is a real event today — see the comment block in

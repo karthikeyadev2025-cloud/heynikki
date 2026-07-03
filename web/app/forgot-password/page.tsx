@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import JovioLogo from "../../components/JovioLogo";
+import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
   bg: "#070B19", vault: "#111827", surface: "#1A2235",
@@ -54,7 +54,7 @@ export default function ForgotPasswordPage() {
                   alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 32 }}>
-          <Link href="/"><JovioLogo size={48} variant="stacked" /></Link>
+          <Link href="/"><NikkiLogo size={48} variant="stacked" /></Link>
         </div>
 
         <div style={{ background: J.vault, border: `1px solid ${J.border}`,
@@ -66,7 +66,7 @@ export default function ForgotPasswordPage() {
           <p style={{ fontSize: 13, color: J.textMid, marginBottom: 24, lineHeight: 1.5 }}>
             {sent
               ? "If an account exists for that email, we've sent a password reset link. Check your inbox — including spam."
-              : "Enter the email on your Jovio account and we'll send you a reset link."}
+              : "Enter the email on your Nikki account and we'll send you a reset link."}
           </p>
 
           {!sent && (
