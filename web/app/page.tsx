@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import NikkiLogo from "../components/NikkiLogo";
+import VoiceWidget from "../components/VoiceWidget";
 
 const J = {
   bg: "#070B19",
@@ -592,6 +593,8 @@ export default function Home() {
           <a href="mailto:hello@jovio.in" style={{ color: J.textMid, textDecoration: "none" }}>hello@jovio.in</a>
         </div>
       </footer>
+
+      <VoiceWidget />
 
     </div>
   );
