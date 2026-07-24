@@ -104,7 +104,7 @@ function DemoPlayer() {
           border: "none", fontSize: 22, fontWeight: 800,
           cursor: errored ? "not-allowed" : "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: errored ? "none" : "0 8px 20px rgba(245, 158, 11, 0.3)",
+          boxShadow: errored ? "none" : "0 8px 20px rgba(232, 98, 61, 0.3)",
         }}>
         {errored ? "✕" : playing ? "❚❚" : "▶"}
       </button>
@@ -327,7 +327,7 @@ export default function Home() {
 
       <nav style={{
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(7, 11, 25, 0.85)", backdropFilter: "blur(12px)",
+        background: "rgba(250, 246, 239, 0.85)", backdropFilter: "blur(12px)",
         borderBottom: `1px solid ${J.border}`,
         padding: mobile ? "12px 16px" : "16px 5%", display: "flex",
         justifyContent: "space-between", alignItems: "center",

@@ -15,7 +15,7 @@ export default function LegalLayout({
     <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra }}>
       <nav style={{
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(7, 11, 25, 0.85)", backdropFilter: "blur(12px)",
+        background: "rgba(250, 246, 239, 0.85)", backdropFilter: "blur(12px)",
         borderBottom: `1px solid ${J.border}`,
         padding: "16px 5%", display: "flex",
         justifyContent: "space-between", alignItems: "center",
