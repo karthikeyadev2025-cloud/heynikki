@@ -5,17 +5,17 @@ import NikkiLogo from "../components/NikkiLogo";
 import VoiceWidget from "../components/VoiceWidget";
 
 const J = {
-  bg: "#FDFBF7",
-  vault: "#F5EFE5",
+  bg: "#FFFFFF",
+  vault: "#F6F8FB",
   surface: "#FFFFFF",
-  border: "#E8DFD1",
-  borderHi: "#C9B9A2",
-  mercury: "#0F5F52",
+  border: "#E2E8F0",
+  borderHi: "#CBD5E1",
+  mercury: "#12457A",
   surya: "#E5533D",
-  chandra: "#1F1915",
-  textMid: "#6B6055",
-  textDim: "#9A8D7E",
-  grad: "linear-gradient(135deg, #F97316 0%, #E5533D 100%)",
+  chandra: "#0F172A",
+  textMid: "#475569",
+  textDim: "#94A3B8",
+  grad: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
 };
 
 function Logo({ size = 40, showText = true }: { size?: number; showText?: boolean }) {
@@ -327,7 +327,7 @@ export default function Home() {
 
       <nav style={{
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(253, 251, 247, 0.88)", backdropFilter: "blur(12px)",
+        background: "rgba(255, 255, 255, 0.90)", backdropFilter: "blur(12px)",
         borderBottom: `1px solid ${J.border}`,
         padding: mobile ? "12px 16px" : "16px 5%", display: "flex",
         justifyContent: "space-between", alignItems: "center",

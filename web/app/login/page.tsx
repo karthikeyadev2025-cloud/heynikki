@@ -5,11 +5,11 @@ import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
-  bg: "#FDFBF7", vault: "#F5EFE5", surface: "#FFFFFF",
-  border: "#E8DFD1", borderHi: "#C9B9A2",
-  mercury: "#0F5F52", surya: "#E5533D", chandra: "#1F1915",
-  textMid: "#6B6055", textDim: "#9A8D7E", red: "#EF4444",
-  grad: "linear-gradient(135deg, #F97316 0%, #E5533D 100%)",
+  bg: "#FFFFFF", vault: "#F6F8FB", surface: "#FFFFFF",
+  border: "#E2E8F0", borderHi: "#CBD5E1",
+  mercury: "#12457A", surya: "#E5533D", chandra: "#0F172A",
+  textMid: "#475569", textDim: "#94A3B8", red: "#EF4444",
+  grad: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
 };
 
 export default function LoginPage() {
