@@ -7,11 +7,11 @@ import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
-  bg: "#FAF6EF", vault: "#F3ECE1", surface: "#FFFFFF",
-  border: "#E5DDD0", borderHi: "#D4C7B4",
-  mercury: "#1A5C54", surya: "#E8623D", chandra: "#2B2420",
-  textMid: "#8A7F73", textDim: "#B5A996", red: "#EF4444",
-  grad: "linear-gradient(135deg, #E8623D 0%, #1A5C54 100%)",
+  bg: "#FDFBF7", vault: "#F5EFE5", surface: "#FFFFFF",
+  border: "#E8DFD1", borderHi: "#C9B9A2",
+  mercury: "#0F5F52", surya: "#E5533D", chandra: "#1F1915",
+  textMid: "#6B6055", textDim: "#9A8D7E", red: "#EF4444",
+  grad: "linear-gradient(135deg, #F97316 0%, #E5533D 100%)",
 };
 
 export default function ResetPasswordPage() {

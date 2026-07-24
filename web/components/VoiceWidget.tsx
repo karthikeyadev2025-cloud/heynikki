@@ -3,16 +3,16 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
 const J = {
-  bg: "#FAF6EF",
-  vault: "#F3ECE1",
+  bg: "#FDFBF7",
+  vault: "#F5EFE5",
   surface: "#FFFFFF",
-  border: "#E5DDD0",
-  borderHi: "#D4C7B4",
-  mercury: "#1A5C54",
-  surya: "#E8623D",
-  chandra: "#2B2420",
-  textMid: "#8A7F73",
-  textDim: "#B5A996",
+  border: "#E8DFD1",
+  borderHi: "#C9B9A2",
+  mercury: "#0F5F52",
+  surya: "#E5533D",
+  chandra: "#1F1915",
+  textMid: "#6B6055",
+  textDim: "#9A8D7E",
 };
 
 type CallState = "idle" | "connecting" | "listening" | "error" | "ended";

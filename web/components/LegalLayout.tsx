@@ -3,9 +3,9 @@ import Link from "next/link";
 import NikkiLogo from "./NikkiLogo";
 
 const J = {
-  bg: "#FAF6EF", vault: "#F3ECE1", border: "#E5DDD0",
-  mercury: "#1A5C54", surya: "#E8623D", chandra: "#2B2420",
-  textMid: "#8A7F73", textDim: "#B5A996",
+  bg: "#FDFBF7", vault: "#F5EFE5", border: "#E8DFD1",
+  mercury: "#0F5F52", surya: "#E5533D", chandra: "#1F1915",
+  textMid: "#6B6055", textDim: "#9A8D7E",
 };
 
 export default function LegalLayout({
@@ -15,7 +15,7 @@ export default function LegalLayout({
     <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra }}>
       <nav style={{
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(250, 246, 239, 0.85)", backdropFilter: "blur(12px)",
+        background: "rgba(253, 251, 247, 0.88)", backdropFilter: "blur(12px)",
         borderBottom: `1px solid ${J.border}`,
         padding: "16px 5%", display: "flex",
         justifyContent: "space-between", alignItems: "center",

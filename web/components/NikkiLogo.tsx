@@ -20,10 +20,10 @@ interface Props {
  * away from the earlier dark-navy + neon-green scheme, which read as a
  * generic "AI startup" template rather than a distinct brand.
  */
-const TERRACOTTA = "#E8623D";
-const TEAL = "#1A5C54";
-const ESPRESSO = "#2B2420";
-const CREAM = "#FAF6EF";
+const TERRACOTTA = "#E5533D";
+const TEAL = "#0F5F52";
+const ESPRESSO = "#1F1915";
+const CREAM = "#FDFBF7";
 
 export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal", dark = false }: Props) {
   const textColor = dark ? CREAM : ESPRESSO;
