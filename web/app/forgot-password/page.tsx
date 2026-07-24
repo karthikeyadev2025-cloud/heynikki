@@ -6,11 +6,11 @@ import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
 
 const J = {
-  bg: "#070B19", vault: "#111827", surface: "#1A2235",
-  border: "#1F2937", borderHi: "#374151",
-  mercury: "#00E676", surya: "#F59E0B", chandra: "#F8FAFC",
-  textMid: "#9CA3AF", textDim: "#4B5563", red: "#EF4444",
-  grad: "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
+  bg: "#FAF6EF", vault: "#F3ECE1", surface: "#FFFFFF",
+  border: "#E5DDD0", borderHi: "#D4C7B4",
+  mercury: "#1A5C54", surya: "#E8623D", chandra: "#2B2420",
+  textMid: "#8A7F73", textDim: "#B5A996", red: "#EF4444",
+  grad: "linear-gradient(135deg, #E8623D 0%, #1A5C54 100%)",
 };
 
 export default function ForgotPasswordPage() {
@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: J.bg, display: "flex",
+    <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, display: "flex",
                   alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 420 }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 32 }}>

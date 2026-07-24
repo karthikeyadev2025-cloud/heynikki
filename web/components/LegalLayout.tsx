@@ -3,9 +3,9 @@ import Link from "next/link";
 import NikkiLogo from "./NikkiLogo";
 
 const J = {
-  bg: "#070B19", vault: "#111827", border: "#1F2937",
-  mercury: "#00E676", surya: "#F59E0B", chandra: "#F8FAFC",
-  textMid: "#9CA3AF", textDim: "#4B5563",
+  bg: "#FAF6EF", vault: "#F3ECE1", border: "#E5DDD0",
+  mercury: "#1A5C54", surya: "#E8623D", chandra: "#2B2420",
+  textMid: "#8A7F73", textDim: "#B5A996",
 };
 
 export default function LegalLayout({
