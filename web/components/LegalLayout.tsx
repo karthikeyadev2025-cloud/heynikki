@@ -50,7 +50,7 @@ export default function LegalLayout({
           .legal p  { margin: 0 0 14px; }
           .legal ul { margin: 0 0 14px; padding-left: 24px; }
           .legal li { margin-bottom: 6px; }
-          .legal a  { color: #00E676; text-decoration: none; }
+          .legal a  { color: #12457A; text-decoration: underline; }
           .legal a:hover { text-decoration: underline; }
           .legal strong { color: #F8FAFC; }
           .legal hr { border: 0; border-top: 1px solid #1F2937; margin: 32px 0; }

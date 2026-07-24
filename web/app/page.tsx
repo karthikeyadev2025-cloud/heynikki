@@ -344,8 +344,8 @@ export default function Home() {
               </a>
             </>
           )}
-          <Button href="https://jovi-smoky.vercel.app/login">Sign In</Button>
-          {!mobile && <Button primary href="https://jovi-smoky.vercel.app/signup">Get Started</Button>}
+          <Button href="/login">Sign In</Button>
+          {!mobile && <Button primary href="/signup">Get Started</Button>}
         </div>
       </nav>
 
@@ -384,7 +384,7 @@ export default function Home() {
             display: "flex", gap: 12, flexWrap: "wrap",
             justifyContent: mobile ? "center" : "flex-start",
           }}>
-            <Button primary href="https://jovi-smoky.vercel.app/signup">Start 14-day Free Trial →</Button>
+            <Button primary href="/signup">Start 14-day Free Trial →</Button>
             <Button href="#demo">▶ Hear a real call</Button>
           </div>
           <div style={{
@@ -497,7 +497,7 @@ export default function Home() {
         </h2>
         <p style={{ fontSize: 16, color: J.textMid, marginBottom: 40, lineHeight: 1.6 }}>
           A 60-second sample of an inbound call to a clinic — appointment booked,
-          WhatsApp confirmation sent, all in Telugu. Press play.
+          handled start to finish in Telugu. Press play.
         </p>
 
         <DemoPlayer />
@@ -557,7 +557,7 @@ export default function Home() {
           {[
             { i: "🗣️", t: "Native Telugu", d: "Understands Tanglish, polite phrasing, age-appropriate responses", c: J.mercury },
             { i: "📅", t: "Books Appointments", d: "Smart slot management, calendar sync, conflict resolution", c: J.surya },
-            { i: "💬", t: "WhatsApp Auto", d: "Confirmation messages sent immediately after every call", c: J.mercury },
+            { i: "💬", t: "WhatsApp Auto", d: "Confirmation messages after every call — coming soon", c: J.textMid },
             { i: "📞", t: "24/7 Live", d: "Never miss a call. Works during lunch, holidays, midnight", c: J.surya },
             { i: "📊", t: "Live Dashboard", d: "Real-time analytics, intent classification, conversion tracking", c: J.mercury },
             { i: "🔒", t: "DPDP Compliant", d: "Data stays in India. AWS Mumbai. TRAI disclosure on every call", c: J.surya },
@@ -622,7 +622,7 @@ export default function Home() {
           gap: 24, maxWidth: 1100, margin: "0 auto",
         }}>
           {[
-            { name: "Starter", price: 1999, mins: 200, popular: false, features: ["1 voice profile", "200 min/month", "WhatsApp confirmations", "Email support"], color: J.textMid },
+            { name: "Starter", price: 1999, mins: 200, popular: false, features: ["1 voice profile", "200 min/month", "WhatsApp confirmations (coming soon)", "Email support"], color: J.textMid },
             { name: "Growth", price: 4999, mins: 600, popular: true, features: ["3 voice profiles", "600 min/month", "Outbound campaigns", "Priority support", "Analytics dashboard"], color: J.mercury },
             { name: "Scale", price: 9999, mins: 1500, popular: false, features: ["10 voice profiles", "1500 min/month", "API access", "Custom integrations", "Dedicated CSM"], color: J.surya },
           ].map(p => (
@@ -659,7 +659,7 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
-              <Button primary={p.popular} href="https://jovi-smoky.vercel.app/signup">
+              <Button primary={p.popular} href="/signup">
                 Start Free Trial
               </Button>
             </div>
@@ -679,7 +679,7 @@ export default function Home() {
         <p style={{ fontSize: 18, color: J.textMid, marginBottom: 40 }}>
           Free for 14 days. No credit card required.
         </p>
-        <Button primary href="https://jovi-smoky.vercel.app/signup">Start Free Trial →</Button>
+        <Button primary href="/signup">Start Free Trial →</Button>
       </section>
 
       <footer style={{

@@ -52,7 +52,7 @@ export default function CookieBanner() {
       <div style={{ flex: "1 1 320px" }}>
         We use only <strong style={{ color: "#F8FAFC" }}>essential cookies</strong> —
         for login session and CSRF protection. No ads, no third-party tracking.{" "}
-        <Link href="/privacy" style={{ color: "#00E676", textDecoration: "none" }}>
+        <Link href="/privacy" style={{ color: "#12457A", textDecoration: "none" }}>
           Read our privacy policy →
         </Link>
       </div>
@@ -60,8 +60,8 @@ export default function CookieBanner() {
         onClick={accept}
         style={{
           padding: "10px 18px",
-          background: "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
-          color: "#070B19",
+          background: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
+          color: "#FFFFFF",
           border: "none", borderRadius: 8,
           fontWeight: 800, fontSize: 13,
           cursor: "pointer",
