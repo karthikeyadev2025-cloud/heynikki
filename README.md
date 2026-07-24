@@ -142,6 +142,6 @@ Caller → Exotel (inbound) / Plivo (outbound)
 ---
 
 <p align="center">
-  <strong>© 2026 Jovio Global Technologies</strong><br/>
+  <strong>© 2026 Nikki Technologies</strong><br/>
   <em>Powered by Nikki Tech Labs</em>
 </p>

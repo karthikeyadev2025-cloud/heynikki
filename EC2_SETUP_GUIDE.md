@@ -177,4 +177,4 @@ EC2 t3.micro (Mumbai ap-south-1)
 
 ---
 
-*Jovio Global Technologies · Powered by Nikki Tech Labs*
+*Nikki Technologies · Powered by Nikki Tech Labs*

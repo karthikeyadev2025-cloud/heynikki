@@ -6,7 +6,7 @@ export default function Privacy() {
   return (
     <LegalLayout title="Privacy Policy" lastUpdated="29 June 2026">
       <p>
-        Jovio Global Technologies ("<strong>Nikki</strong>", "we", "us", "our") respects
+        Nikki Technologies ("<strong>Nikki</strong>", "we", "us", "our") respects
         your privacy and is committed to protecting your personal data. This Privacy Policy
         explains what data we collect, why, how we use it, and the rights you have over it
         under the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong> of
@@ -122,7 +122,7 @@ export default function Privacy() {
       <h2>Grievance Officer</h2>
       <p>
         <strong>Karthikeya</strong><br />
-        Jovio Global Technologies<br />
+        Nikki Technologies<br />
         Hyderabad, Telangana, India<br />
         Email: <a href="mailto:privacy@jovio.in">privacy@jovio.in</a>
       </p>

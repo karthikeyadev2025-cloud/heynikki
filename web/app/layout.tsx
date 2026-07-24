@@ -36,7 +36,7 @@ export const metadata: Metadata = {
   title: "Nikki — Telugu AI Receptionist for Indian Businesses",
   description: "Your business never misses a call. Nikki answers in Telugu, books appointments, sends WhatsApp confirmations — 24/7.",
   keywords: "Telugu AI, voice agent, receptionist, India, SMB, automation, WhatsApp, AI",
-  authors: [{ name: "Jovio Global Technologies" }],
+  authors: [{ name: "Nikki Technologies" }],
   alternates: {
     canonical: "https://jovio.in",
   },

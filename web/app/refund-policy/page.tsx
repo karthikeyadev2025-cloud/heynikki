@@ -6,7 +6,7 @@ export default function Refund() {
   return (
     <LegalLayout title="Refund & Cancellation Policy" lastUpdated="29 June 2026">
       <p>
-        This Refund Policy describes when and how Jovio Global Technologies issues refunds
+        This Refund Policy describes when and how Nikki Technologies issues refunds
         for subscription fees and related charges.
       </p>
 

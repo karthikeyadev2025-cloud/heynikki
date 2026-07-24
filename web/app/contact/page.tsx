@@ -22,7 +22,7 @@ export default function Contact() {
 
       <h2>Registered office</h2>
       <p>
-        <strong>Jovio Global Technologies</strong><br />
+        <strong>Nikki Technologies</strong><br />
         Hyderabad, Telangana, India
       </p>
       <p style={{ fontSize: 13, color: "#9CA3AF" }}>

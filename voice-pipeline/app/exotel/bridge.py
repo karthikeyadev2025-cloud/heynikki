@@ -66,7 +66,31 @@ DEFAULT_VOICE = "priya"  # confirmed valid for bulbul:v3 via live API error resp
                          # (scripts/compare_voices.py already generated 38 real v3
                          # samples earlier, never actually listened to).
 
-SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు Nikki.
+# ─── Voice expressiveness tuning (bulbul:v3 only) ───────────
+# Per Sarvam's own best-practices docs, pace and temperature are "the single
+# most impactful tuning lever available to developers" for how the voice
+# actually sounds. Until 2026-07-02 we never set temperature at all, meaning
+# every call ran on Sarvam's default (0.6) -- the "emotional colour" knob was
+# sitting untouched the entire time we were trying to make the voice sound
+# more human.
+#
+#   temperature: expressiveness / prosodic variation. Sarvam's docs: "Lower
+#     values produce consistent, predictable delivery; higher values introduce
+#     more natural pitch variation and emotional colour." Range 0.01-2.0,
+#     default 0.6. Higher is warmer/more human BUT Sarvam explicitly warns it
+#     "may introduce artifacts or errors" -- so 0.85 here is a deliberate lean
+#     toward warmth while staying well clear of the risky end. This has NOT
+#     been ear-tested; it's a reasoned starting point, not a verified optimum.
+#
+#   pace: 1.1 matches Sarvam's own recommendation for "brisk, professional
+#     contexts" (their words). Unchanged from before.
+#
+# Both are env-overridable specifically so these can be tuned by ear on the
+# live box without needing a code patch + redeploy cycle for each experiment.
+TTS_PACE = float(os.getenv("TTS_PACE", "1.1"))
+TTS_TEMPERATURE = float(os.getenv("TTS_TEMPERATURE", "0.85"))
+
+SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు Hey Nikki.
 Business: {business_name} ({business_type}).
 Rules:
 __LANGUAGE_RULE__
@@ -140,14 +164,14 @@ def apply_language(prompt: str, lang_code: str) -> str:
     return prompt.replace(LANGUAGE_MARKER, language_instruction(lang_code))
 
 SKU_SYSTEM_PROMPTS = {
-    "standard": """మీరు ఒక professional Telugu AI receptionist. మీ పేరు Nikki.
+    "standard": """మీరు ఒక professional Telugu AI receptionist. మీ పేరు Hey Nikki.
 Business: {business_name} — general business / retail / coaching.
 Rules:
 __LANGUAGE_RULE__
 - SHORT responses (1-2 sentences). Phone call, not chat.
 - Warm, friendly, approachable tone.
 {shared_rules}""",
-    "clinic": """మీరు ఒక professional Telugu AI receptionist ఒక clinic/hospital కోసం. మీ పేరు Nikki.
+    "clinic": """మీరు ఒక professional Telugu AI receptionist ఒక clinic/hospital కోసం. మీ పేరు Hey Nikki.
 Business: {business_name} — hospital / clinic / diagnostic lab.
 Rules:
 __LANGUAGE_RULE__
@@ -157,7 +181,7 @@ __LANGUAGE_RULE__
   questions to "డాక్టర్ గారు call back చేస్తారు" (translate that redirect into whichever
   language the caller is using).
 {shared_rules}""",
-    "real_estate": """మీరు ఒక professional Telugu AI receptionist ఒక real estate business కోసం. మీ పేరు Nikki.
+    "real_estate": """మీరు ఒక professional Telugu AI receptionist ఒక real estate business కోసం. మీ పేరు Hey Nikki.
 Business: {business_name} — real estate, site visits, property enquiries.
 Rules:
 __LANGUAGE_RULE__
@@ -165,7 +189,7 @@ __LANGUAGE_RULE__
 - SHORT responses (1-2 sentences). Phone call, not chat.
 - If caller mentions budget or location preference, acknowledge it and note it's passed to the team.
 {shared_rules}""",
-    "premium": """మీరు ఒక professional Telugu AI receptionist ఒక premium/luxury business కోసం. మీ పేరు Nikki.
+    "premium": """మీరు ఒక professional Telugu AI receptionist ఒక premium/luxury business కోసం. మీ పేరు Hey Nikki.
 Business: {business_name} — premium, high-value clientele.
 Rules:
 __LANGUAGE_RULE__
@@ -287,7 +311,8 @@ async def sarvam_tts(text: str, voice: str = DEFAULT_VOICE,
                       # currently not supported for the Bulbul V3 model"),
                       # discovered live 2026-07-02 after every single reply
                       # was silently falling back to the cached error clip.
-                      "pace": 1.1,
+                      "pace": TTS_PACE,
+                      "temperature": TTS_TEMPERATURE,
                       "speech_sample_rate": 8000, "enable_preprocessing": True,
                       "eng_interpolation_wt": 100})
         except Exception as e:

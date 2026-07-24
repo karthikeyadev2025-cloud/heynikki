@@ -64,7 +64,7 @@ export default function LegalLayout({
         color: J.textMid, fontSize: 13,
       }}>
         <div style={{ marginBottom: 12 }}>
-          © {new Date().getFullYear()} Jovio Global Technologies. Made in India 🇮🇳
+          © {new Date().getFullYear()} Nikki Technologies. Made in India 🇮🇳
         </div>
         <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap" }}>
           <Link href="/privacy"        style={{ color: J.textMid, textDecoration: "none" }}>Privacy</Link>

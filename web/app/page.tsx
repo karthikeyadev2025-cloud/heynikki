@@ -5,17 +5,17 @@ import NikkiLogo from "../components/NikkiLogo";
 import VoiceWidget from "../components/VoiceWidget";
 
 const J = {
-  bg: "#070B19",
-  vault: "#111827",
-  surface: "#1A2235",
-  border: "#1F2937",
-  borderHi: "#374151",
-  mercury: "#00E676",
-  surya: "#F59E0B",
-  chandra: "#F8FAFC",
-  textMid: "#9CA3AF",
-  textDim: "#4B5563",
-  grad: "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
+  bg: "#FAF6EF",
+  vault: "#F3ECE1",
+  surface: "#FFFFFF",
+  border: "#E5DDD0",
+  borderHi: "#D4C7B4",
+  mercury: "#1A5C54",
+  surya: "#E8623D",
+  chandra: "#2B2420",
+  textMid: "#8A7F73",
+  textDim: "#B5A996",
+  grad: "linear-gradient(135deg, #E8623D 0%, #1A5C54 100%)",
 };
 
 function Logo({ size = 40, showText = true }: { size?: number; showText?: boolean }) {
@@ -585,7 +585,7 @@ export default function Home() {
       }}>
         <Logo size={36} />
         <p style={{ fontSize: 13, color: J.textDim, marginTop: 20 }}>
-          © 2026 Jovio Global Technologies · Made in India 🇮🇳 · jovio.in
+          © 2026 Nikki Technologies · Made in India 🇮🇳 · jovio.in
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, fontSize: 13 }}>
           <a href="#" style={{ color: J.textMid, textDecoration: "none" }}>Privacy</a>

@@ -7,7 +7,7 @@ export default function Terms() {
     <LegalLayout title="Terms of Service" lastUpdated="29 June 2026">
       <p>
         These Terms govern your use of Nikki (the "<strong>Service</strong>"), provided by
-        Jovio Global Technologies ("<strong>Nikki</strong>", "we", "us"). By creating an
+        Nikki Technologies ("<strong>Nikki</strong>", "we", "us"). By creating an
         account, you agree to these Terms. If you don't agree, don't use the Service.
       </p>
 

@@ -4,94 +4,72 @@ interface Props {
   size?: number;
   showText?: boolean;
   variant?: "horizontal" | "icon" | "stacked";
+  dark?: boolean;
 }
 
 /**
- * Nikki logo — replaces the old Jovio "J" monogram (2026-07-02 rebrand).
+ * Hey Nikki logo (2026-07-02 redesign, replacing the earlier "N" monogram).
+ * Wordmark-forward rather than a monogram -- "Hey Nikki" is a spoken product
+ * name in the Siri/Alexa mold, not an abstract initial. The mark is a small
+ * voice-pulse (audio equalizer bars), directly representing the product
+ * category rather than an arbitrary letterform. Built from simple filled
+ * rects at varying heights -- safe, predictable geometry since this
+ * environment can't render/preview SVG output before shipping it.
  *
- * Design note: the mark is built from three thick, rounded-cap strokes
- * forming an "N" monogram, rather than a hand-computed filled path like
- * the old logo's custom "J" curves. This is deliberate — I can't visually
- * render/preview SVG output from this environment, and a stroke-based
- * geometric construction (line, line, line) is far more likely to render
- * correctly on the first try than hand-computed bezier/polygon path data
- * I can't check by eye. Same gradient/glow treatment as before (surya
- * amber + mercury green), so it stays visually consistent with the rest
- * of the brand system — only the letterform and wordmark text changed.
+ * Palette: warm terracotta + deep teal on a cream/espresso base -- moved
+ * away from the earlier dark-navy + neon-green scheme, which read as a
+ * generic "AI startup" template rather than a distinct brand.
  */
-export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal" }: Props) {
-  const SURYA = "#F59E0B";
-  const MERCURY = "#00E676";
-  const CHANDRA = "#F8FAFC";
+const TERRACOTTA = "#E8623D";
+const TEAL = "#1A5C54";
+const ESPRESSO = "#2B2420";
+const CREAM = "#FAF6EF";
 
-  const NMark = (
+export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal", dark = false }: Props) {
+  const textColor = dark ? CREAM : ESPRESSO;
+
+  const PulseMark = (
     <svg
       width={size} height={size}
       viewBox="0 0 100 100"
       xmlns="http://www.w3.org/2000/svg"
       style={{ flexShrink: 0 }}
+      role="img"
+      aria-label="Hey Nikki voice pulse mark"
     >
-      <defs>
-        <linearGradient id="surya-grad-n" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#FCD34D"/>
-          <stop offset="60%" stopColor={SURYA}/>
-          <stop offset="100%" stopColor="#D97706"/>
-        </linearGradient>
-        <linearGradient id="mercury-grad-n" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#34F39A"/>
-          <stop offset="60%" stopColor={MERCURY}/>
-          <stop offset="100%" stopColor="#00B358"/>
-        </linearGradient>
-        <filter id="glow-mark-n">
-          <feGaussianBlur stdDeviation="1.5" result="blur"/>
-          <feMerge>
-            <feMergeNode in="blur"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
-      </defs>
-
-      {/* Left stroke of the N */}
-      <line x1="26" y1="18" x2="26" y2="82"
-            stroke="url(#surya-grad-n)" strokeWidth="15" strokeLinecap="round"
-            filter="url(#glow-mark-n)" />
-      {/* Right stroke of the N */}
-      <line x1="74" y1="18" x2="74" y2="82"
-            stroke="url(#mercury-grad-n)" strokeWidth="15" strokeLinecap="round"
-            filter="url(#glow-mark-n)" />
-      {/* Diagonal connecting stroke */}
-      <line x1="26" y1="22" x2="74" y2="78"
-            stroke="url(#mercury-grad-n)" strokeWidth="13" strokeLinecap="round"
-            filter="url(#glow-mark-n)" />
+      <rect x="12" y="35" width="14" height="30" rx="7" fill={TEAL} />
+      <rect x="32" y="18" width="14" height="64" rx="7" fill={TERRACOTTA} />
+      <rect x="52" y="8"  width="14" height="84" rx="7" fill={TERRACOTTA} />
+      <rect x="72" y="28" width="14" height="44" rx="7" fill={TEAL} />
     </svg>
   );
 
-  if (variant === "icon") return NMark;
+  if (variant === "icon") return PulseMark;
 
   if (variant === "stacked") {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-        {NMark}
+        {PulseMark}
         {showText && (
           <div style={{ textAlign: "center" }}>
             <div style={{
-              fontSize: size * 0.42,
-              fontWeight: 900,
-              color: CHANDRA,
-              letterSpacing: size * 0.04,
+              fontSize: size * 0.4,
+              fontWeight: 800,
+              color: textColor,
+              letterSpacing: -size * 0.01,
               lineHeight: 1,
             }}>
-              NIK<span style={{ color: SURYA }}>K</span><span style={{ color: SURYA }}>I</span>
+              hey <span style={{ color: TERRACOTTA }}>nikki</span>
             </div>
             <div style={{
-              fontSize: size * 0.13,
-              color: MERCURY,
-              letterSpacing: size * 0.05,
+              fontSize: size * 0.12,
+              color: TEAL,
+              letterSpacing: size * 0.04,
               fontWeight: 600,
               marginTop: size * 0.08,
               textTransform: "uppercase",
             }}>
-              Global Technologies
+              Nikki Technologies
             </div>
           </div>
         )}
@@ -100,27 +78,27 @@ export default function NikkiLogo({ size = 48, showText = true, variant = "horiz
   }
 
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.25 }}>
-      {NMark}
+    <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.22 }}>
+      {PulseMark}
       {showText && (
         <div style={{ lineHeight: 1.1 }}>
           <div style={{
-            fontSize: size * 0.55,
-            fontWeight: 900,
-            color: CHANDRA,
-            letterSpacing: size * 0.02,
+            fontSize: size * 0.5,
+            fontWeight: 800,
+            color: textColor,
+            letterSpacing: -size * 0.008,
           }}>
-            NIK<span style={{ color: SURYA }}>KI</span>
+            hey <span style={{ color: TERRACOTTA }}>nikki</span>
           </div>
           <div style={{
-            fontSize: size * 0.14,
-            color: MERCURY,
-            letterSpacing: size * 0.06,
+            fontSize: size * 0.13,
+            color: TEAL,
+            letterSpacing: size * 0.05,
             fontWeight: 600,
-            marginTop: size * 0.06,
+            marginTop: size * 0.05,
             textTransform: "uppercase",
           }}>
-            Global Technologies
+            Nikki Technologies
           </div>
         </div>
       )}
