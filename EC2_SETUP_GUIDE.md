@@ -50,7 +50,7 @@ ssh -i nikki-key.pem ubuntu@13.233.xx.xx
 # Once inside EC2:
 
 # Download and run the setup script
-curl -o setup_ec2.sh https://raw.githubusercontent.com/jovioglobaltechnologies/jovi/main/voice-pipeline/setup_ec2.sh
+curl -o setup_ec2.sh https://raw.githubusercontent.com/karthikeyadev2025-cloud/heynikki/main/voice-pipeline/setup_ec2.sh
 bash setup_ec2.sh
 
 # This installs: Python 3.11, Node.js 20, Nginx, Supervisor, Docker, UFW

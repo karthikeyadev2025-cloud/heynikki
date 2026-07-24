@@ -1,17 +1,7 @@
 <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="s" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FCD34D"/>
-      <stop offset="60%" stop-color="#F59E0B"/>
-      <stop offset="100%" stop-color="#D97706"/>
-    </linearGradient>
-    <linearGradient id="m" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#34F39A"/>
-      <stop offset="60%" stop-color="#00E676"/>
-      <stop offset="100%" stop-color="#00B358"/>
-    </linearGradient>
-  </defs>
-  <rect width="100" height="100" rx="22" fill="#070B19"/>
-  <path d="M 38 24 L 68 24 L 68 34 L 48 42 L 38 34 Z" fill="url(#s)"/>
-  <path d="M 50 42 L 58 42 L 58 72 Q 58 84, 46 86 Q 32 88, 24 78 L 30 70 Q 36 76, 42 74 Q 50 72, 50 64 Z" fill="url(#m)"/>
+  <rect width="100" height="100" rx="22" fill="#12457A"/>
+  <rect x="19" y="40" width="12" height="20" rx="6" fill="#FFFFFF"/>
+  <rect x="36" y="28" width="12" height="44" rx="6" fill="#E5533D"/>
+  <rect x="53" y="22" width="12" height="56" rx="6" fill="#E5533D"/>
+  <rect x="70" y="36" width="12" height="28" rx="6" fill="#FFFFFF"/>
 </svg>

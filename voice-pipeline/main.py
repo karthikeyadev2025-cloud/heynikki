@@ -506,7 +506,7 @@ async def send_whatsapp(to: str, message: str, wa_number: str, tenant_id: str):
 
 
 # ── VOICE AGENT SESSION ───────────────────────────────────
-class JovioAgent:
+class NikkiAgent:
     """Complete Telugu voice agent session handler."""
 
     TRAI_DISCLOSURE = "నమస్కారం. ఈ call automated assistant ద్వారా handle అవుతోంది."
@@ -772,7 +772,7 @@ async def handle_inbound(req: InboundCallRequest, x_internal_secret: str = Heade
         log.warning(f"No voice profile for DID: {req.did_number}")
         raise HTTPException(status_code=404, detail="Voice profile not found for this number")
 
-    agent = JovioAgent(profile, req.caller_number)
+    agent = NikkiAgent(profile, req.caller_number)
     disclosure_audio = await agent.on_call_start()
 
     import base64
@@ -795,7 +795,7 @@ async def handle_speech(req: SpeechRequest, x_internal_secret: str = Header(None
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    agent = JovioAgent(profile, req.caller_number)
+    agent = NikkiAgent(profile, req.caller_number)
     agent.call_id = req.call_id
 
     audio_bytes = base64.b64decode(req.audio_b64)
