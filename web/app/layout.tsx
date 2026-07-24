@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Fraunces, Manrope, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import CookieBanner from "../components/CookieBanner";
@@ -75,6 +76,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${fraunces.variable} ${manrope.variable} ${jetbrainsMono.variable}`}>
         {children}
         <CookieBanner />
+        {/* Razorpay checkout. Until 2026-07-24 this was never loaded, so the
+            billing page always fell through to an alert reading "Razorpay not
+            loaded" -- payment was impossible for every customer. Razorpay
+            requires their hosted script (it can't be bundled), so it's loaded
+            site-wide here; the widget only renders when checkout is opened. */}
+        <Script
+          src="https://checkout.razorpay.com/v1/checkout.js"
+          strategy="lazyOnload"
+        />
       </body>
     </html>
   );

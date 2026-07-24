@@ -5,6 +5,8 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { Tenant, CallMinutes } from "../../lib/supabase";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
+
 const C = {
   surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
   glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
@@ -91,36 +93,91 @@ export default function BillingPage() {
 
   const handleUpgrade = async (planId: string) => {
     setUpgrading(planId);
-    // In production: POST /api/billing/create-subscription → Razorpay checkout
-    const plan = PLANS.find(p => p.id === planId);
-    if (!plan) return;
-    const amount = annual ? plan.annual * 12 * 100 : plan.price * 100;
+    try {
+      const plan = PLANS.find(p => p.id === planId);
+      if (!plan) return;
 
-    const options = {
-      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_placeholder",
-      amount,
-      currency: "INR",
-      name: "Nikki",
-      description: `${plan.name} Plan — ${annual ? "Annual" : "Monthly"}`,
-      prefill: { email: "", contact: "" },
-      theme: { color: C.glow },
-      handler: async (response: any) => {
-        const sb = createClient();
-        const { data: { user } } = await sb.auth.getUser();
-        if (!user) return;
-        // Verify on server in production
-        alert(`Payment successful! Plan upgraded to ${plan.name}. Refreshing...`);
-        window.location.reload();
-      },
-    };
+      if (typeof window === "undefined" || !(window as any).Razorpay) {
+        alert("Payment system is still loading — please try again in a moment.");
+        return;
+      }
 
-    if (typeof window !== "undefined" && (window as any).Razorpay) {
-      const rzp = new (window as any).Razorpay(options);
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { window.location.href = "/login"; return; }
+
+      // STEP 1 — create a real order server-side.
+      // Previously the amount was computed in the browser and no order was
+      // ever created, which meant Razorpay had nothing to reconcile against.
+      // Amounts live on the server (api-server/src/index.ts planAmounts) so
+      // a tampered client can't pay ₹1 for the Scale plan.
+      const createRes = await fetch(`${API_URL}/api/billing/create-subscription`, {
+        method:  "POST",
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ plan_id: planId, annual }),
+      });
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}));
+        alert(err.error || "Could not start checkout. Please try again.");
+        return;
+      }
+      const order = await createRes.json();
+
+      // STEP 2 — open Razorpay checkout against that real order.
+      const rzp = new (window as any).Razorpay({
+        key:      order.key_id,
+        order_id: order.order_id,
+        amount:   order.amount,
+        currency: order.currency,
+        name:        "Hey Nikki",
+        description: `${plan.name} plan — ${annual ? "annual" : "monthly"}`,
+        theme: { color: C.glow },
+        // STEP 3 — verify server-side before granting anything.
+        // The old code simply alert()ed "Payment successful!" and reloaded,
+        // trusting the browser. Anyone could have called that handler
+        // directly and upgraded themselves for free. /api/billing/verify
+        // recomputes the HMAC signature with the Razorpay secret (which
+        // never leaves the server) and only then updates the plan.
+        handler: async (response: any) => {
+          const verifyRes = await fetch(`${API_URL}/api/billing/verify`, {
+            method:  "POST",
+            headers: {
+              "Content-Type":  "application/json",
+              "Authorization": `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              razorpay_order_id:   response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature:  response.razorpay_signature,
+              plan_id:             planId,
+            }),
+          });
+          if (verifyRes.ok) {
+            window.location.reload();
+          } else {
+            // Money may still have been captured -- Razorpay's webhook is the
+            // backstop and will reconcile. Never silently swallow this.
+            alert(
+              "Payment went through but we couldn't confirm it automatically. " +
+              "Please contact support@jovio.in with your payment ID: " +
+              response.razorpay_payment_id
+            );
+          }
+        },
+        modal: {
+          ondismiss: () => setUpgrading(null),
+        },
+      });
       rzp.open();
-    } else {
-      alert("Razorpay not loaded. Add <script src='https://checkout.razorpay.com/v1/checkout.js'></script> to your layout.");
+    } catch (err) {
+      console.error("[billing] checkout failed", err);
+      alert("Something went wrong starting checkout. Please try again.");
+    } finally {
+      setUpgrading(null);
     }
-    setUpgrading(null);
   };
 
   const daysLeft = tenant?.trial_ends_at
