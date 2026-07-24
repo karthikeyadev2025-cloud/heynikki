@@ -349,37 +349,138 @@ export default function Home() {
         </div>
       </nav>
 
-      <section style={{ padding: mobile ? "48px 20px 40px" : "100px 5% 80px", textAlign: "center", maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ marginBottom: 36 }}>
-          <LiveCounter />
+      <section style={{
+        padding: mobile ? "40px 20px 32px" : "72px 5% 64px",
+        maxWidth: 1240, margin: "0 auto",
+        display: "grid",
+        gridTemplateColumns: mobile ? "1fr" : "1.05fr 0.95fr",
+        gap: mobile ? 40 : 56, alignItems: "center",
+      }}>
+        {/* ── Left: the pitch ── */}
+        <div style={{ textAlign: mobile ? "center" : "left" }}>
+          <div style={{ marginBottom: 24, display: mobile ? "block" : "inline-block" }}>
+            <LiveCounter />
+          </div>
+          <h1 style={{
+            fontSize: mobile ? 36 : 58, fontWeight: 900, lineHeight: 1.08,
+            margin: "0 0 20px", letterSpacing: mobile ? -1 : -2,
+          }}>
+            Your business never misses a call in{" "}
+            <span style={{
+              background: J.grad, WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}>Telugu</span>
+          </h1>
+          <p style={{
+            fontSize: mobile ? 16 : 18, color: J.textMid,
+            margin: mobile ? "0 auto 28px" : "0 0 28px",
+            maxWidth: 520, lineHeight: 1.6,
+          }}>
+            Hey Nikki answers your business calls 24/7 in Telugu, Hindi and
+            English — switching language mid-sentence, just like a real
+            receptionist would.
+          </p>
+          <div style={{
+            display: "flex", gap: 12, flexWrap: "wrap",
+            justifyContent: mobile ? "center" : "flex-start",
+          }}>
+            <Button primary href="https://jovi-smoky.vercel.app/signup">Start 14-day Free Trial →</Button>
+            <Button href="#demo">▶ Hear a real call</Button>
+          </div>
+          <div style={{
+            marginTop: 20, fontSize: 13, color: J.textDim,
+            display: "flex", gap: 16, flexWrap: "wrap",
+            justifyContent: mobile ? "center" : "flex-start",
+          }}>
+            <span>✓ No credit card</span>
+            <span>✓ Cancel anytime</span>
+            <span>✓ Calls encrypted</span>
+          </div>
         </div>
-        <h1 style={{
-          fontSize: mobile ? 38 : 72, fontWeight: 900, lineHeight: 1.1,
-          margin: "0 0 28px", letterSpacing: mobile ? -1 : -2.5,
+
+        {/* ── Right: the product itself ──
+            A voice AI's product IS the conversation, so the hero shows one
+            rather than an abstract illustration. Every line here is real
+            output from the live pipeline (Telugu with natural English
+            code-switching), not invented marketing copy. This replaces a
+            hero that was previously just centred text in empty space, which
+            read as "basic" because nothing demonstrated the product. */}
+        <div style={{
+          background: J.surface, border: `1px solid ${J.border}`,
+          borderRadius: 16, overflow: "hidden",
+          boxShadow: "0 12px 40px rgba(15, 23, 42, 0.08)",
         }}>
-          Your business never misses a call in{" "}
-          <span style={{
-            background: J.grad, WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-          }}>Telugu</span>
-        </h1>
-        <p style={{
-          fontSize: mobile ? 16 : 20, color: J.textMid, maxWidth: 700,
-          margin: "0 auto 36px", lineHeight: 1.6,
-        }}>
-          Nikki is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7
-          and books appointments — with WhatsApp confirmations coming soon.
-        </p>
-        <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
-          <Button primary href="https://jovi-smoky.vercel.app/signup">Start 14-day Free Trial →</Button>
-          <Button href="#demo">▶ Watch 60s Demo</Button>
-        </div>
-        <div style={{ marginTop: 28, fontSize: 13, color: J.textDim }}>
-          No credit card · Cancel anytime
+          {/* call header */}
+          <div style={{
+            background: J.vault, borderBottom: `1px solid ${J.border}`,
+            padding: "14px 18px", display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span style={{
+              width: 9, height: 9, borderRadius: "50%", background: "#16A34A",
+              animation: "pulse 2s infinite", flexShrink: 0,
+            }} />
+            <span style={{
+              fontSize: 13, fontWeight: 700, color: J.chandra,
+              fontFamily: "var(--font-mono)",
+            }}>Call in progress</span>
+            <span style={{
+              marginLeft: "auto", fontSize: 12, color: J.textMid,
+              fontFamily: "var(--font-mono)",
+            }}>00:24</span>
+          </div>
+
+          {/* transcript */}
+          <div style={{ padding: mobile ? "16px" : "20px" }}>
+            {[
+              { who: "caller", label: "Caller",
+                text: "హలో, రేపు appointment దొరుకుతుందా?" },
+              { who: "nikki", label: "Hey Nikki",
+                text: "నమస్కారం! తప్పకుండా. రేపు ఉదయం 10:30కి slot ఖాళీగా ఉంది — అది సరిపోతుందా?" },
+              { who: "caller", label: "Caller",
+                text: "Perfect. My name is Karthikeya." },
+              { who: "nikki", label: "Hey Nikki",
+                text: "Thank you Karthikeya garu — booked for 10:30 AM tomorrow. మరేమైనా కావాలా?" },
+            ].map((m, i) => (
+              <div key={i} style={{
+                marginBottom: i === 3 ? 0 : 14,
+                display: "flex",
+                justifyContent: m.who === "nikki" ? "flex-end" : "flex-start",
+              }}>
+                <div style={{ maxWidth: "88%" }}>
+                  <div style={{
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.8,
+                    textTransform: "uppercase", marginBottom: 5,
+                    color: m.who === "nikki" ? J.mercury : J.textDim,
+                    textAlign: m.who === "nikki" ? "right" : "left",
+                    fontFamily: "var(--font-mono)",
+                  }}>{m.label}</div>
+                  <div style={{
+                    background: m.who === "nikki" ? J.mercury : J.vault,
+                    color: m.who === "nikki" ? "#FFFFFF" : J.chandra,
+                    border: m.who === "nikki" ? "none" : `1px solid ${J.border}`,
+                    borderRadius: 12, padding: "10px 14px",
+                    fontSize: mobile ? 13 : 14, lineHeight: 1.5,
+                  }}>{m.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* footer proof */}
+          <div style={{
+            borderTop: `1px solid ${J.border}`, padding: "12px 18px",
+            display: "flex", gap: 14, flexWrap: "wrap",
+            fontSize: 11, color: J.textMid, fontFamily: "var(--font-mono)",
+          }}>
+            <span>TELUGU → ENGLISH mid-call</span>
+            <span>·</span>
+            <span>INTERRUPTIBLE</span>
+          </div>
         </div>
       </section>
 
       {/* ── Demo audio player ── */}
+      <div style={{ background: J.vault, borderTop: `1px solid ${J.border}`, borderBottom: `1px solid ${J.border}` }}>
       <section id="demo" style={{ scrollMarginTop: 72,
         padding: mobile ? "48px 20px" : "80px 5%", maxWidth: 900, margin: "0 auto", textAlign: "center",
       }}>
@@ -401,6 +502,8 @@ export default function Home() {
 
         <DemoPlayer />
       </section>
+
+      </div>
 
       <ComparisonSection />
 
