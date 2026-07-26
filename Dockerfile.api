@@ -1,0 +1,16 @@
+# ─────────────────────────────────────────────────────────────
+# Hey Nikki API SERVER — root-level Dockerfile.
+# On its Railway service set "Dockerfile Path" = Dockerfile.api
+# ─────────────────────────────────────────────────────────────
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY api-server/package*.json ./
+RUN npm install
+
+COPY api-server/ .
+
+RUN npm run build
+
+CMD ["node", "dist/index.js"]

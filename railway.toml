@@ -1,0 +1,17 @@
+# Root Railway config — forces the Dockerfile builder instead of Railpack
+# auto-detection, which cannot make sense of a monorepo root and fails with
+# "could not determine how to build the app".
+#
+# This config serves the VOICE PIPELINE service (root Dockerfile).
+# For the API server service, set "Dockerfile Path" = Dockerfile.api in that
+# service's Railway settings.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30

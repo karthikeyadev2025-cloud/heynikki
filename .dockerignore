@@ -1,0 +1,29 @@
+# Keep the Docker build context small and fast. Without this, every build
+# uploads the whole monorepo — including web/, flutter-app/, node_modules,
+# and the old root-level .patch files — even though the pipeline image only
+# needs voice-pipeline/.
+.git
+.github
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/__pycache__
+**/*.pyc
+web
+super-admin
+flutter-app
+assets
+infra
+supabase
+*.patch
+*.md
+DEPLOY.sh
+test_keys.py
+
+# Large assets never loaded at runtime — only produced by scripts/.
+# voice_samples (12M) is pick_voice.py output; landing_demo (1.2M) is served
+# by the website, not the pipeline. cached_pcm and the TRAI disclosure wavs
+# ARE needed and stay in.
+voice-pipeline/assets/voice_samples
+voice-pipeline/assets/landing_demo
