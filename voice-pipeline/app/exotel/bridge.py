@@ -26,6 +26,7 @@ from app.exotel import circuit_breaker as cb
 from app.exotel import webhooks
 from app.exotel import outbound as ob
 from app.exotel import appointments
+from app.exotel import providers
 
 log = logging.getLogger("exotel-bridge")
 logging.basicConfig(level=logging.INFO,
@@ -635,6 +636,10 @@ class Session:
         # language switching) is identical regardless of transport; only
         # how audio physically gets sent/received differs.
         self.transport = "exotel"
+        # Which telephony provider's wire format this call uses ("exotel"
+        # or "plivo"). Set by handle_exotel_ws from the endpoint. Audio
+        # content is identical across providers; only the envelope differs.
+        self.provider = "exotel"
         # Set only when this call was matched to a dispatched outbound
         # campaign recipient — see the outbound branch in handle_exotel_ws.
         self.outbound_recipient_id: Optional[str] = None
@@ -661,14 +666,14 @@ class Session:
                     return
             return
 
-        # Exotel path: JSON media-event envelope, base64, fixed 100ms
-        # frames, paced in real-time (asyncio.sleep below) since Exotel
-        # expects audio delivered at playback speed. The widget path above
-        # deliberately skips that pacing — a raw binary WS stream sends as
-        # fast as possible and lets the browser's own Web Audio scheduling
-        # handle playback timing, which is the more standard pattern for
-        # browser-based audio streaming.
-        FRAME = 3200  # 100ms of 16-bit @ 8kHz per Exotel docs
+        # Telephony path (Exotel or Plivo): JSON envelope, base64, fixed
+        # 100ms frames, paced in real-time since the provider expects audio
+        # at playback speed. The envelope differs per provider (Exotel
+        # "media" vs Plivo "playAudio") so it's produced by the provider
+        # adapter rather than hard-coded. Audio bytes are identical either
+        # way (L16 PCM 8kHz).
+        adapter = providers.get_adapter(getattr(self, "provider", "exotel"))
+        FRAME = 3200  # 100ms of 16-bit @ 8kHz
         for i in range(0, len(pcm_bytes), FRAME):
             if not self.socket_open:
                 return
@@ -679,11 +684,7 @@ class Session:
             if len(chunk) < FRAME:
                 chunk = chunk + b"\x00" * (FRAME - len(chunk))
             try:
-                await self.ws.send_text(json.dumps({
-                    "event":"media",
-                    "stream_sid": self.stream_sid,
-                    "media": {"payload": base64.b64encode(chunk).decode()},
-                }))
+                await self.ws.send_text(adapter.encode_audio(chunk, self.stream_sid))
             except Exception as e:
                 log.info("send_pcm stopped: %s", e)
                 self.socket_open = False
@@ -881,10 +882,16 @@ class Session:
         return None
 
 
-async def handle_exotel_ws(ws: WebSocket):
-    log.info("INCOMING WS attempt")
+async def handle_exotel_ws(ws: WebSocket, provider: str = "exotel"):
+    # `provider` selects the wire-format adapter. Defaults to "exotel" so the
+    # existing /ws/exotel entry point behaves exactly as before. The Plivo
+    # endpoint passes provider="plivo". All provider-specific message shaping
+    # goes through `adapter`; everything else here is provider-neutral.
+    adapter = providers.get_adapter(provider)
+    log.info("INCOMING WS attempt (provider=%s)", adapter.name)
     await ws.accept()
     s = Session(ws)
+    s.provider = adapter.name
     log.info("WS accepted")
 
     try:
@@ -900,12 +907,11 @@ async def handle_exotel_ws(ws: WebSocket):
                 log.info("connected")
 
             elif ev == "start":
-                start = msg.get("start", {})
-                s.stream_sid = msg.get("stream_sid") or start.get("stream_sid")
-                s.call_sid = start.get("call_sid", "")
-                cp = start.get("custom_parameters") or {}
-                s.caller = cp.get("From") or start.get("from") or ""
-                s.did    = cp.get("To")   or start.get("to")   or ""
+                info = adapter.parse_start(msg)
+                s.stream_sid = info["stream_id"]
+                s.call_sid = info["call_sid"]
+                s.caller = info["caller"]
+                s.did    = info["did"]
                 s.started_at = time.time()
                 log.info("start call=%s from=%s to=%s", s.call_sid, s.caller, s.did)
 
@@ -971,10 +977,9 @@ async def handle_exotel_ws(ws: WebSocket):
                 asyncio.create_task(_setup())
 
             elif ev == "media":
-                payload = msg.get("media", {}).get("payload", "")
-                if not payload:
+                pcm_8k = adapter.parse_media(msg)
+                if not pcm_8k:
                     continue
-                pcm_8k = base64.b64decode(payload)
                 s.recording_buf.extend(pcm_8k)
                 pcm_16k, s.upsample_state = audioop.ratecv(
                     pcm_8k, 2, 1, EXOTEL_SR, PIPE_SR, s.upsample_state)

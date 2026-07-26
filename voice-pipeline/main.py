@@ -1162,6 +1162,13 @@ from fastapi import WebSocket as _WebSocket
 async def exotel_ws(ws: _WebSocket):
     await handle_exotel_ws(ws)
 
+@app.websocket("/ws/plivo")
+async def plivo_ws(ws: _WebSocket):
+    # Same handler, Plivo wire-format adapter. Point a Plivo number's
+    # <Stream> answer-URL XML at wss://<host>/ws/plivo to route its calls
+    # here. Exotel calls continue to hit /ws/exotel untouched.
+    await handle_exotel_ws(ws, provider="plivo")
+
 @app.websocket("/ws/widget")
 async def widget_ws(ws: _WebSocket):
     await handle_widget_ws(ws)
