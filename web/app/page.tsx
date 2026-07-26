@@ -157,6 +157,36 @@ function Pill({ children, color }: { children: React.ReactNode; color: string })
   );
 }
 
+/* ── Icons ──
+   Replaces the emoji that previously headed each feature card. Emoji render
+   differently on every OS (and look consumer-grade next to enterprise
+   software), so these are inline stroke SVGs instead: one consistent visual
+   weight, they inherit brand colour via currentColor, and they stay crisp at
+   any size. 1.5px strokes on a 24px grid — the standard "corporate SaaS"
+   icon proportions. */
+function Icon({ name, color, size = 26 }: { name: string; color: string; size?: number }) {
+  const common = {
+    width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+    stroke: color, strokeWidth: 1.6,
+    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
+  };
+  const paths: Record<string, React.ReactNode> = {
+    // speech / language
+    speech: <><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></>,
+    // calendar
+    calendar: <><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></>,
+    // chat bubble
+    chat: <><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></>,
+    // phone
+    phone: <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z"/>,
+    // analytics
+    chart: <><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>,
+    // shield / security
+    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></>,
+  };
+  return <svg {...common} aria-hidden="true">{paths[name] || paths.phone}</svg>;
+}
+
 function LiveCounter() {
   // Was a fake auto-incrementing "calls answered today" number
   // (Math.random() every 4s) — removed 2026-07-02. Replaced with a claim
@@ -555,18 +585,25 @@ export default function Home() {
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
         }}>
           {[
-            { i: "🗣️", t: "Native Telugu", d: "Understands Tanglish, polite phrasing, age-appropriate responses", c: J.mercury },
-            { i: "📅", t: "Books Appointments", d: "Smart slot management, calendar sync, conflict resolution", c: J.surya },
-            { i: "💬", t: "WhatsApp Auto", d: "Confirmation messages after every call — coming soon", c: J.textMid },
-            { i: "📞", t: "24/7 Live", d: "Never miss a call. Works during lunch, holidays, midnight", c: J.surya },
-            { i: "📊", t: "Live Dashboard", d: "Real-time analytics, intent classification, conversion tracking", c: J.mercury },
-            { i: "🔒", t: "DPDP Compliant", d: "Data stays in India. AWS Mumbai. TRAI disclosure on every call", c: J.surya },
+            { i: "speech",   t: "Native Telugu",      d: "Understands Tanglish, polite phrasing, age-appropriate responses", c: J.mercury },
+            // was: "Smart slot management, calendar sync, conflict resolution".
+            // Calendar sync and conflict resolution don't exist in the code.
+            // What DOES work: extraction from the call + a dashboard to manage it.
+            { i: "calendar", t: "Books Appointments", d: "Captures the booking on the call and files it to your dashboard", c: J.surya },
+            { i: "chat",     t: "WhatsApp Auto",      d: "Confirmation messages after every call — coming soon", c: J.textMid },
+            { i: "phone",    t: "24/7 Live",          d: "Never miss a call. Works during lunch, holidays, midnight", c: J.surya },
+            { i: "chart",    t: "Live Dashboard",     d: "Real-time analytics, intent classification, conversion tracking", c: J.mercury },
+            // was: "Data stays in India. AWS Mumbai." — no longer true after the
+            // infrastructure move, and data-residency is a claim businesses
+            // actually rely on. Reduced to what is verifiably true today.
+            { i: "shield",   t: "Encrypted & Compliant", d: "AES-256 on every recording. TRAI disclosure on every call", c: J.surya },
           ].map((f, i) => (
             <div key={i} style={{
-              background: J.vault, border: `1px solid ${J.border}`,
-              borderRadius: 16, padding: 28, borderTop: `3px solid ${f.c}`,
+              background: J.surface, border: `1px solid ${J.border}`,
+              borderRadius: 14, padding: 28, borderTop: `3px solid ${f.c}`,
+              boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.04)",
             }}>
-              <div style={{ fontSize: 36, marginBottom: 16 }}>{f.i}</div>
+              <div style={{ marginBottom: 16, lineHeight: 0 }}><Icon name={f.i} color={f.c} /></div>
               <h3 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 12px", color: J.chandra }}>
                 {f.t}
               </h3>
@@ -691,8 +728,9 @@ export default function Home() {
           © 2026 Nikki Technologies · Made in India 🇮🇳 · jovio.in
         </p>
         <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, fontSize: 13 }}>
-          <a href="#" style={{ color: J.textMid, textDecoration: "none" }}>Privacy</a>
-          <a href="#" style={{ color: J.textMid, textDecoration: "none" }}>Terms</a>
+          <a href="/privacy" style={{ color: J.textMid, textDecoration: "none" }}>Privacy</a>
+          <a href="/terms" style={{ color: J.textMid, textDecoration: "none" }}>Terms</a>
+          <a href="/refund-policy" style={{ color: J.textMid, textDecoration: "none" }}>Refunds</a>
           <a href="mailto:hello@jovio.in" style={{ color: J.textMid, textDecoration: "none" }}>hello@jovio.in</a>
         </div>
       </footer>
