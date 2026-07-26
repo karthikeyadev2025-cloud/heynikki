@@ -14,6 +14,7 @@ const C = {
 const NAV_ITEMS = [
   { href: "/dashboard",   icon: "📟", label: "Reception"   },
   { href: "/calls",       icon: "📞", label: "All Calls"   },
+  { href: "/appointments",icon: "📅", label: "Appointments"},
   { href: "/campaigns",   icon: "📢", label: "Campaigns"   },
   { href: "/analytics",   icon: "📊", label: "Analytics"   },
   // "/whatsapp" was listed here but web/app/whatsapp/ does not exist --

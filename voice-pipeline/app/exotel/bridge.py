@@ -25,6 +25,7 @@ from app.exotel import knowledge
 from app.exotel import circuit_breaker as cb
 from app.exotel import webhooks
 from app.exotel import outbound as ob
+from app.exotel import appointments
 
 log = logging.getLogger("exotel-bridge")
 logging.basicConfig(level=logging.INFO,
@@ -572,6 +573,18 @@ async def finalize_call_recording(s: "Session", duration_s: int):
             "transcript": s.history,
         },
     )
+
+    # Appointment extraction — best-effort, at call end so it never touches
+    # live-turn latency. Only writes a row if a real booking is detected;
+    # on any failure it logs and writes nothing (a wrong record is worse
+    # than a missing one). See appointments.extract_and_save.
+    try:
+        from datetime import datetime, timezone, timedelta
+        # IST call date so "tomorrow" resolves against the caller's day.
+        ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        await appointments.extract_and_save(s, ist_now.strftime("%Y-%m-%d"))
+    except Exception as e:
+        log.warning("appointment extraction skipped: %s", e)
 
 
 def split_sentences(text: str) -> list:
