@@ -1,0 +1,12 @@
+# Railway service config for the Hey Nikki API server.
+# Set the Railway service "root directory" to api-server/ so this is found.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30

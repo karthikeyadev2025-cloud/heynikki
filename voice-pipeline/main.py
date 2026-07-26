@@ -52,15 +52,18 @@ from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from livekit import rtc
-from livekit.agents import JobContext, WorkerOptions, cli
-# VoicePipelineAgent not used directly in HTTP mode
-# silero VAD not needed in HTTP mode
+# NOTE: livekit imports removed 2026-07-25. They were dead weight — imported
+# but never called (VAD is a custom RMS threshold in bridge.py, not silero;
+# the pipeline runs over raw WebSocket audio, not LiveKit rooms). They were
+# also the most install-fragile dependency (documented version-pin conflict
+# in the old requirements.txt) and broke fresh builds. Removing them makes
+# the Railway container build cleanly and start faster.
 
 # ── ENV ──────────────────────────────────────────────────
-LIVEKIT_URL    = os.environ["LIVEKIT_URL"]
-LIVEKIT_KEY    = os.environ["LIVEKIT_API_KEY"]
-LIVEKIT_SECRET = os.environ["LIVEKIT_API_SECRET"]
+# LIVEKIT_* env vars removed 2026-07-25 — were required at startup
+# (os.environ[...]) but never used, so they crashed boot on any host that
+# didn't have the old LiveKit vars set (e.g. a fresh Railway deploy).
+
 SARVAM_KEY     = os.environ["SARVAM_API_KEY"]
 GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 SUPABASE_URL   = os.environ["SUPABASE_URL"]

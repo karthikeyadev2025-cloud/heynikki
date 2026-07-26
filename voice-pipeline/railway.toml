@@ -1,0 +1,17 @@
+# Railway service config for the Hey Nikki voice pipeline.
+# Place the Railway service "root directory" at voice-pipeline/ so this file
+# and the Dockerfile are found.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Restart the container if it crashes, with a sane cap.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# Railway waits for this path to return 200 before routing traffic, so a
+# bad deploy doesn't take live calls. /health already exists in main.py.
+healthcheckPath = "/health"
+healthcheckTimeout = 30
