@@ -55,6 +55,11 @@ export type VoiceProfile = {
   whatsapp_number: string | null;
   did_number: string | null;
   status: string;
+  dialect_region?: string | null;
+  capture_token?: string | null;
+  auto_whatsapp_new_leads?: boolean;
+  auto_call_new_leads?: boolean;
+  skip_dnd_for_instant_leads?: boolean;
 };
 
 export type Tenant = {

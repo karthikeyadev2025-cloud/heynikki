@@ -204,7 +204,71 @@ SKU_SHARED_RULES = """- Appointment: collect name, phone, time. Confirm via What
 - Business hours: {open_time}-{close_time}, {open_days}.
 {services_line}{appt_types_line}- Unknown info: "team check చేసి call back చేస్తారు".
 - Never invent prices/addresses.
-- End when caller says ధన్యవాదాలు/thank you/bye."""
+- End when caller says ధన్యవాదాలు/thank you/bye.
+{register_rules}"""
+
+# ── Telugu register: honorifics + natural code-switching ──────────
+# This is the difference between "translated English" and "sounds like the
+# receptionist at a real Guntur clinic". Generic multilingual models get the
+# words right and the REGISTER wrong, which to a Telugu ear reads as rude or
+# robotic — especially with older callers, where wrong honorifics are the
+# fastest way to lose trust on a business call.
+#
+# Two things matter most:
+#  1. Honorifics. మీరు (respectful) vs నువ్వు (familiar) is not
+#     interchangeable. Defaulting to నువ్వు with an elder is genuinely
+#     offensive. "గారు" after a name is near-mandatory in business speech.
+#  2. Register. Real Telugu business calls are NOT pure Telugu — numbers,
+#     times, money and technical words are habitually said in English.
+#     "రెండు వేల ఐదు వందలు" is textbook-correct and sounds unnatural;
+#     "two thousand five hundred rupees" is what people actually say.
+TELUGU_REGISTER_RULES = """
+Telugu register (very important — this is how you sound like a real person, not a translation):
+- ALWAYS address the caller with మీరు (respectful). NEVER use నువ్వు — it is
+  disrespectful to a customer and especially to an elder.
+- Add "గారు" after the caller's name whenever you use it: "Ramesh గారు",
+  "Lakshmi గారు". This is normal, expected politeness in Telugu business speech.
+- Numbers, times, money, dates and technical words: say them in ENGLISH, the way
+  Telugu speakers actually talk. Say "ten thirty AM", "two thousand rupees",
+  "Monday" — NOT "పది ముప్పై", "రెండు వేలు", "సోమవారం". Textbook Telugu numerals
+  sound stilted on a phone call.
+- Keep the sentence frame Telugu and let English words sit inside it naturally.
+  Good: "రేపు morning ten thirty కి slot ఉంది." Bad: "Tomorrow morning at 10:30
+  there is a slot available."
+- Use natural fillers the way a person does — "అలాగే", "సరే", "ఒక్క నిమిషం" —
+  rather than formal written connectors.
+- Never machine-translate an English sentence into Telugu word-for-word. If a
+  phrase is normally said in English, just say it in English."""
+
+# Regional variation. Telangana and coastal Andhra/Rayalaseema Telugu differ
+# enough that a caller notices immediately — vocabulary, verb endings, and
+# everyday politeness forms. Getting this right is a moat: no US-built voice
+# product will ever bother, and a Warangal caller hearing Guntur Telugu (or
+# vice versa) registers it as "not from here".
+TELUGU_DIALECTS = {
+    "andhra": """
+- Speak coastal Andhra Telugu (Guntur / Vijayawada / Krishna-Godavari register).
+- Use ఉన్నారు / చేస్తున్నారు verb endings. "ఏమిటి", "అలాగే", "వస్తారా".""",
+    "telangana": """
+- Speak Telangana Telugu (Hyderabad / Warangal register), not coastal Andhra Telugu.
+- Use ఉన్నరు / చేస్తున్నరు verb endings. "ఏంది", "అట్ల", "వస్తరా", "ఇగ".
+- Telangana speech uses more Urdu-origin everyday words than coastal Telugu —
+  this is normal and expected, not a mistake.""",
+    "rayalaseema": """
+- Speak Rayalaseema Telugu (Kurnool / Anantapur / Kadapa / Tirupati register).
+- Closer to coastal Telugu than Telangana, but with local vocabulary —
+  "ఏమి", "అట్ట", and a slightly slower, more deliberate phrasing.""",
+    "neutral": """
+- Use standard/neutral Telugu understood across all regions. Avoid strongly
+  region-marked vocabulary in either direction.""",
+}
+
+
+def dialect_rules(region: str | None) -> str:
+    """Region-specific Telugu guidance. Defaults to neutral when a tenant
+    hasn't set one, so nothing regresses for existing profiles."""
+    return TELUGU_DIALECTS.get((region or "neutral").lower().strip(),
+                               TELUGU_DIALECTS["neutral"])
 
 
 def build_sku_prompt(profile: dict) -> str:
@@ -220,6 +284,9 @@ def build_sku_prompt(profile: dict) -> str:
         open_days=", ".join(open_days),
         services_line=(f"- Services: {', '.join(services)}.\n" if services else ""),
         appt_types_line=(f"- Appointment types: {', '.join(appt_types)}.\n" if appt_types else ""),
+        # Honorifics + natural code-switching, then the tenant's region.
+        # dialect_region is optional — absent profiles get neutral Telugu.
+        register_rules=TELUGU_REGISTER_RULES + dialect_rules(profile.get("dialect_region")),
     )
     return template.format(
         business_name=profile.get("business_name") or "this business",
@@ -335,6 +402,114 @@ MAX_HISTORY_TURNS = 4  # matches the plan's own "4-turn cap" / "rolling 4-turn
                         # memory window" design — without this, s.history grows
                         # unbounded for the whole call and every turn re-sends
                         # the entire growing transcript to Gemini.
+
+
+async def gemini_reply_streaming(history: list, system: str):
+    """Streaming variant of gemini_reply — yields COMPLETE SENTENCES as the
+    model produces them, instead of returning only once the whole reply is
+    finished.
+
+    WHY THIS EXISTS (latency)
+    speak_dynamic already pipelines TTS sentence-by-sentence, but it could
+    not start until Gemini had finished generating everything. So a
+    three-sentence reply meant: wait for all three to generate, THEN start
+    synthesising the first. On measured turns the LLM step was a large,
+    irreducible-looking block of dead air.
+
+    With streaming, sentence 1 goes to TTS while sentences 2 and 3 are still
+    being generated by the model. The caller starts hearing the answer as
+    soon as the first sentence exists. On multi-sentence replies this removes
+    most of the LLM wait from what the caller actually experiences.
+
+    Yields str (one complete sentence at a time). Falls back to a single
+    yield of the full text if streaming is unavailable, so behaviour never
+    regresses to worse than before.
+    """
+    trimmed = history[-(MAX_HISTORY_TURNS * 2):]
+    contents = [{"role": "user" if m["role"] == "user" else "model",
+                 "parts": [{"text": m["content"]}]} for m in trimmed]
+    # streamGenerateContent + alt=sse gives incremental server-sent events.
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           "gemini-2.5-flash:streamGenerateContent?alt=sse&key=" + GEMINI_KEY)
+
+    if not cb.gemini_breaker.allow_request():
+        log.warning("gemini_reply_streaming: circuit OPEN")
+        yield "క్షమించండి, technical issue."
+        return
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "generationConfig": {
+            "maxOutputTokens": 150, "temperature": 0.7,
+            # Same reasoning as the non-streaming path: thinking mode leaks
+            # the model's reasoning into spoken output and balloons TTS time.
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }
+
+    buffer = ""
+    emitted_any = False
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            async with c.stream("POST", url,
+                                headers={"Content-Type": "application/json"},
+                                json=payload) as r:
+                if r.status_code != 200:
+                    body = (await r.aread()).decode("utf-8", "replace")[:300]
+                    log.error("Gemini stream %s: %s", r.status_code, body)
+                    cb.gemini_breaker.record_failure()
+                    yield "క్షమించండి, technical issue."
+                    return
+
+                async for raw_line in r.aiter_lines():
+                    if not raw_line or not raw_line.startswith("data:"):
+                        continue
+                    chunk = raw_line[5:].strip()
+                    if not chunk or chunk == "[DONE]":
+                        continue
+                    try:
+                        obj = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+                    try:
+                        parts = obj["candidates"][0]["content"]["parts"]
+                    except (KeyError, IndexError):
+                        continue
+                    for p in parts:
+                        # Skip any thought parts defensively — thinkingBudget 0
+                        # should prevent them, but a leaked thought spoken to a
+                        # real caller is the exact bug we fixed once already.
+                        if p.get("thought"):
+                            continue
+                        buffer += p.get("text", "")
+
+                    # Emit whole sentences as soon as they're complete.
+                    while True:
+                        m = re.search(r'[.!?।]\s', buffer)
+                        if not m:
+                            break
+                        sentence, buffer = buffer[:m.end()].strip(), buffer[m.end():]
+                        if sentence:
+                            emitted_any = True
+                            yield sentence
+
+        # whatever's left after the stream closes
+        tail = buffer.strip()
+        if tail:
+            emitted_any = True
+            yield tail
+
+        if emitted_any:
+            cb.gemini_breaker.record_success()
+        else:
+            log.warning("Gemini stream produced no text")
+            yield "క్షమించండి, మళ్ళీ చెప్పండి?"
+    except Exception as e:
+        log.error("Gemini stream failed: %s", e)
+        cb.gemini_breaker.record_failure()
+        if not emitted_any:
+            yield "క్షమించండి, technical issue."
 
 
 async def gemini_reply(history: list, system: str) -> str:
@@ -1117,17 +1292,50 @@ async def _handle_utterance(s: Session, pcm: bytes):
         # this turn — never blocks or delays the call beyond the lookup.
         t_rag_start = time.time()
         if s.voice_profile_id:
-            snippets = await knowledge.retrieve_context(s.voice_profile_id, text)
+            # Hard 900ms cap. A knowledge lookup that takes longer than this
+            # costs more in dead air than the extra context is worth on a
+            # live phone call — better to answer promptly from the base
+            # prompt than to answer well after the caller has said "hello?".
+            try:
+                snippets = await asyncio.wait_for(
+                    knowledge.retrieve_context(s.voice_profile_id, text),
+                    timeout=0.9)
+            except asyncio.TimeoutError:
+                log.info("knowledge base: lookup exceeded 900ms, skipping for this turn")
+                snippets = None
+            except Exception as e:
+                log.warning("knowledge base lookup failed: %s", e)
+                snippets = None
             if snippets:
                 log.info("knowledge base: %d snippet(s) matched", len(snippets))
                 sys_for_turn = knowledge.augment_prompt(sys_for_turn, snippets)
         t_rag = time.time()
 
-        reply = await gemini_reply(s.history, sys_for_turn)
-        t_llm = time.time()
+        # ── Streamed reply ──
+        # Sentences are spoken as they arrive from the model rather than
+        # after the whole reply is generated. Combined with the existing
+        # sentence-pipelined TTS, the caller now hears sentence 1 while the
+        # model is still writing sentence 2 — this removes most of the LLM
+        # wait from the caller's experienced latency on multi-sentence
+        # replies. RAG capped above so a slow lookup can't stall the turn.
+        reply_parts: list[str] = []
+        first_sentence_at = None
+        async for sentence in gemini_reply_streaming(s.history, sys_for_turn):
+            if s.interrupt_flag:
+                # Caller started talking over Nikki — stop generating and
+                # speaking immediately; don't queue more audio at them.
+                log.info("barge-in during streamed reply, stopping")
+                break
+            if first_sentence_at is None:
+                first_sentence_at = time.time()
+            reply_parts.append(sentence)
+            await s.speak_dynamic(sentence)
+
+        reply = " ".join(reply_parts).strip()
+        t_llm = first_sentence_at or time.time()
         log.info("ai: %s", reply)
-        s.history.append({"role":"assistant","content":reply})
-        await s.speak_dynamic(reply)
+        if reply:
+            s.history.append({"role": "assistant", "content": reply})
         t_tts = time.time()
 
         # Real per-turn latency breakdown — this did not exist before today.

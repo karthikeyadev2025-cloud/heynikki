@@ -14,12 +14,14 @@ const C = {
 const NAV_ITEMS = [
   { href: "/dashboard",   icon: "📟", label: "Reception"   },
   { href: "/calls",       icon: "📞", label: "All Calls"   },
+  { href: "/leads",       icon: "👥", label: "Leads"       },
   { href: "/appointments",icon: "📅", label: "Appointments"},
   { href: "/campaigns",   icon: "📢", label: "Campaigns"   },
   { href: "/analytics",   icon: "📊", label: "Analytics"   },
   // "/whatsapp" was listed here but web/app/whatsapp/ does not exist --
   // clicking it produced a 404. Removed 2026-07-24; restore when the page
   // is actually built (WhatsApp isn't wired to the call pipeline yet either).
+  { href: "/knowledge",   icon: "🧠", label: "Teach Nikki" },
   { href: "/setup",       icon: "⚙️",  label: "Setup"       },
   { href: "/billing",     icon: "💳", label: "Billing"     },
 ];

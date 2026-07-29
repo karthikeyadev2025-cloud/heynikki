@@ -5,6 +5,8 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { VoiceProfile } from "../../lib/supabase";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
+
 const C = {
   bg:"#07070D", surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
   glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
@@ -83,6 +85,10 @@ export default function SetupPage() {
     appointment_types:  "",
     whatsapp_number:    "",
     did_number:         "",
+    dialect_region:     "neutral",
+    auto_whatsapp_new_leads: true,
+    auto_call_new_leads:     false,
+    skip_dnd_for_instant_leads: false,
   });
 
   useEffect(() => {
@@ -108,6 +114,10 @@ export default function SetupPage() {
           appointment_types: vp.appointment_types?.join(", ") || "",
           whatsapp_number:   vp.whatsapp_number || "",
           did_number:        vp.did_number || "",
+          dialect_region:    vp.dialect_region || "neutral",
+          auto_whatsapp_new_leads: vp.auto_whatsapp_new_leads ?? true,
+          auto_call_new_leads:     vp.auto_call_new_leads ?? false,
+          skip_dnd_for_instant_leads: vp.skip_dnd_for_instant_leads ?? false,
         });
       }
     });
@@ -140,6 +150,10 @@ export default function SetupPage() {
       appointment_types: form.appointment_types.split(",").map(s => s.trim()).filter(Boolean),
       whatsapp_number:   form.whatsapp_number || null,
       did_number:        form.did_number || null,
+      dialect_region:    form.dialect_region || "neutral",
+      auto_whatsapp_new_leads: form.auto_whatsapp_new_leads,
+      auto_call_new_leads:     form.auto_call_new_leads,
+      skip_dnd_for_instant_leads: form.skip_dnd_for_instant_leads,
       status:            "active",
     };
 
@@ -283,10 +297,139 @@ export default function SetupPage() {
           </FieldGroup>
         </Card>
 
-        {/* Phone & WhatsApp */}
+        {/* ── Telugu register ──
+            Regional variation is one of the few things a US-built voice
+            product will never model, so it's worth surfacing prominently
+            rather than burying in advanced settings. Wrong verb endings are
+            noticed by a local caller within one sentence. */}
+        <Card style={{ marginBottom: 20 }}>
+          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+            Telugu Region
+          </div>
+          <div style={{ color: C.mid, fontSize: 12, marginBottom: 14, lineHeight: 1.5 }}>
+            Telugu isn&apos;t the same everywhere. Pick the region your callers are from
+            and Nikki will use the right words and verb endings — a Warangal caller
+            and a Guntur caller expect different Telugu.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+            {[
+              { id: "neutral",     t: "Standard",    d: "Understood everywhere" },
+              { id: "andhra",      t: "Coastal Andhra", d: "Guntur, Vijayawada, Godavari" },
+              { id: "telangana",   t: "Telangana",   d: "Hyderabad, Warangal" },
+              { id: "rayalaseema", t: "Rayalaseema", d: "Kurnool, Tirupati, Kadapa" },
+            ].map(r => (
+              <button key={r.id} type="button"
+                onClick={() => setForm(f => ({ ...f, dialect_region: r.id }))}
+                style={{
+                  background: form.dialect_region === r.id ? C.glow + "22" : C.hi,
+                  border: `1px solid ${form.dialect_region === r.id ? C.glow : C.bord}`,
+                  borderRadius: 10, padding: "12px 14px", cursor: "pointer",
+                  textAlign: "left", fontFamily: "inherit",
+                }}>
+                <div style={{
+                  color: form.dialect_region === r.id ? C.glow : C.txt,
+                  fontSize: 14, fontWeight: 700,
+                }}>{r.t}</div>
+                <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>{r.d}</div>
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        {/* ── Instant Lead Capture ──
+            "Before they close their browser" — a website form, Facebook
+            Lead Ad, or Google Form posts to this URL and Nikki can WhatsApp
+            an instant ack and/or call them back within ~30 seconds. */}
+        <Card style={{ marginBottom: 20 }}>
+          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+            Instant Lead Capture
+          </div>
+          <div style={{ color: C.mid, fontSize: 12, marginBottom: 14, lineHeight: 1.5 }}>
+            Connect your website form, Facebook Lead Ads, or Google Form to this
+            link. The moment someone submits it, they become a lead — and Nikki
+            can follow up automatically.
+          </div>
+
+          {profile?.capture_token && (
+            <div style={{ marginBottom: 16 }}>
+              <Label>Your capture link</Label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input readOnly
+                  value={`${API_URL}/webhooks/lead-capture/${profile.capture_token}`}
+                  style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
+                  onClick={e => (e.target as HTMLInputElement).select()} />
+                <button type="button" onClick={() => {
+                  navigator.clipboard.writeText(
+                    `${API_URL}/webhooks/lead-capture/${profile.capture_token}`);
+                }} style={{
+                  background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 8,
+                  padding: "0 16px", color: C.txt, cursor: "pointer", fontSize: 13,
+                }}>Copy</button>
+              </div>
+              <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
+                POST <code>name</code>/<code>full_name</code>, <code>phone</code>/<code>phone_number</code>,
+                and optionally <code>message</code>. Works with a plain HTML form, Zapier,
+                Make, or any tool that can send a webhook.
+              </div>
+            </div>
+          )}
+
+          <FieldGroup>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.auto_whatsapp_new_leads}
+                onChange={e => setForm(f => ({ ...f, auto_whatsapp_new_leads: e.target.checked }))} />
+              <div>
+                <div style={{ color: C.txt, fontSize: 14, fontWeight: 600 }}>
+                  Send an instant WhatsApp reply
+                </div>
+                <div style={{ color: C.dim, fontSize: 11 }}>
+                  &ldquo;We got your enquiry, we&apos;ll call you shortly&rdquo; — sent the moment they submit.
+                </div>
+              </div>
+            </label>
+          </FieldGroup>
+
+          <FieldGroup>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.auto_call_new_leads}
+                onChange={e => setForm(f => ({ ...f, auto_call_new_leads: e.target.checked }))} />
+              <div>
+                <div style={{ color: C.txt, fontSize: 14, fontWeight: 600 }}>
+                  Call new leads automatically
+                </div>
+                <div style={{ color: C.dim, fontSize: 11 }}>
+                  Nikki calls back within ~30 seconds of a form submission.
+                </div>
+              </div>
+            </label>
+          </FieldGroup>
+
+          {form.auto_call_new_leads && (
+            <div style={{
+              background: C.gold + "0D", border: `1px solid ${C.gold}33`,
+              borderRadius: 10, padding: 14, marginTop: 4,
+            }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.skip_dnd_for_instant_leads}
+                  onChange={e => setForm(f => ({ ...f, skip_dnd_for_instant_leads: e.target.checked }))}
+                  style={{ marginTop: 3 }} />
+                <div style={{ fontSize: 12, color: C.mid, lineHeight: 1.6 }}>
+                  <strong style={{ color: C.gold }}>Treat form submissions as consented.</strong>{" "}
+                  Someone who fills out your own enquiry form is commonly understood
+                  to have consented to that follow-up call — different from cold-calling
+                  a purchased list. We&apos;re not lawyers; if TRAI DND compliance matters
+                  for your business, check with someone who is before enabling this.
+                  Leave unchecked and Nikki will hold callbacks until proper DND
+                  scrubbing is configured.
+                </div>
+              </label>
+            </div>
+          )}
+        </Card>
+
         <Card style={{ marginBottom: 20 }}>
           <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
-            Phone & WhatsApp
+            Phone &amp; WhatsApp
           </div>
 
           <FieldGroup>

@@ -33,6 +33,7 @@ import re
 import httpx
 
 from app.exotel import whatsapp
+from app.exotel import leads
 
 log = logging.getLogger("exotel-bridge")
 
@@ -45,7 +46,7 @@ _EXTRACT_PROMPT = """You are analysing a phone call transcript between an AI rec
 Determine whether an appointment/booking was actually AGREED during this call.
 
 Return ONLY a JSON object, no other text, in exactly this shape:
-{{"booked": true/false, "caller_name": string or null, "service": string or null, "slot_date": "YYYY-MM-DD" or null, "slot_time": string or null, "notes": string or null}}
+{{"booked": true/false, "caller_name": string or null, "service": string or null, "slot_date": "YYYY-MM-DD" or null, "slot_time": string or null, "notes": string or null, "intent": string, "interest": string or null, "score": number}}
 
 Rules:
 - "booked" is true ONLY if a specific appointment was confirmed by both sides. A caller merely asking about availability, or saying "I'll think about it", is NOT booked.
@@ -53,6 +54,18 @@ Rules:
 - slot_time: keep the caller's phrasing ("10:30 AM", "morning"). null if not settled.
 - Never invent details. If something wasn't stated, it's null.
 - If in doubt about whether a real booking happened, return "booked": false.
+
+For the lead fields (these describe the CALLER, and are filled in for EVERY call, booked or not):
+- "intent": one of exactly these values, whichever fits best:
+  "book_appointment", "reschedule", "cancel", "pricing_enquiry",
+  "service_enquiry", "location_hours", "complaint", "follow_up",
+  "spam_or_wrong_number", "other"
+- "interest": short phrase for the specific service/product they asked about, or null.
+- "score": 0-100, how promising this caller is as business:
+  80-100 = booked or explicitly ready to buy
+  50-79  = serious enquiry, asked about price/availability, likely to return
+  20-49  = general enquiry, early interest
+  0-19   = wrong number, spam, or no business intent
 
 Call date (today): {call_date}
 
@@ -73,7 +86,7 @@ async def _gemini_extract(transcript_text: str, call_date: str) -> dict | None:
                 json={"contents": [{"role": "user", "parts": [{"text": prompt}]}],
                       "generationConfig": {
                           "temperature": 0,           # deterministic extraction
-                          "maxOutputTokens": 300,
+                          "maxOutputTokens": 400,
                           "thinkingConfig": {"thinkingBudget": 0},
                       }})
         if r.status_code != 200:
@@ -139,15 +152,41 @@ async def extract_and_save(session, call_date: str):
         )
 
         result = await _gemini_extract(transcript_text, call_date)
-        if not result or not result.get("booked"):
+        if not result:
+            return
+
+        caller_number = getattr(session, "caller", "") or ""
+        call_id = getattr(session, "call_row_id", None)
+
+        # ── LEAD: saved for EVERY call, booked or not ──
+        # This runs before the appointment branch and independently of it:
+        # a caller who asked about prices and didn't book is still a lead the
+        # business wants to see. Spam / wrong numbers score low and sort to
+        # the bottom rather than being hidden, so nothing is silently lost.
+        if caller_number:
+            try:
+                await leads.save_lead_from_call(
+                    tenant_id=tenant_id,
+                    phone=caller_number,
+                    name=result.get("caller_name"),
+                    intent=result.get("intent"),
+                    interest=result.get("interest") or result.get("service"),
+                    score=result.get("score"),
+                    call_id=call_id,
+                )
+            except Exception as e:
+                log.warning("lead save skipped: %s", e)
+
+        # ── APPOINTMENT: only when a real booking was agreed ──
+        if not result.get("booked"):
             return
 
         row = {
             "tenant_id": tenant_id,
             "voice_profile_id": getattr(session, "voice_profile_id", None),
-            "call_id": getattr(session, "call_row_id", None),
+            "call_id": call_id,
             "caller_name": result.get("caller_name"),
-            "caller_number": getattr(session, "caller", "") or "unknown",
+            "caller_number": caller_number or "unknown",
             "service": result.get("service"),
             "slot_date": result.get("slot_date"),
             "slot_time": result.get("slot_time"),

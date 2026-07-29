@@ -228,6 +228,107 @@ app.post("/webhooks/exotel/inbound/:token", async (req, res) => {
 // Exotel call status callback
 app.post("/webhooks/exotel/status/:token", async (req, res) => {
   if (!checkExotelToken(req, res)) return;
+
+// ── Instant lead capture ────────────────────────────────
+// Public webhook: a website form, Facebook Lead Ad (via Zapier/Make), or
+// Google Form submission posts here. This is Hey Nikki's answer to "the
+// AI calls before the prospect closes their browser" — the capture is
+// instant; the callback typically follows within ~30 seconds (the
+// dispatcher's poll interval), not milliseconds, but that's still fast
+// enough to be first to a fresh lead in practice.
+//
+// Auth is the token in the URL (per-tenant, in voice_profiles.capture_token),
+// same pattern as the Exotel webhooks above — a public form has no way to
+// send an internal secret header, so the token itself is the credential.
+app.post("/webhooks/lead-capture/:token", async (req, res) => {
+  try {
+    const token = req.params.token || "";
+    const { data: profile } = await sb.from("voice_profiles")
+      .select("id, tenant_id, business_name, capture_token, whatsapp_number, "
+            + "auto_whatsapp_new_leads, auto_call_new_leads")
+      .not("capture_token", "is", null)
+      .limit(500) as { data: {
+        id: string; tenant_id: string; business_name: string | null;
+        capture_token: string; whatsapp_number: string | null;
+        auto_whatsapp_new_leads: boolean; auto_call_new_leads: boolean;
+      }[] | null };
+
+    // Constant-time compare against each candidate — avoids leaking which
+    // prefix matched via response timing, same reasoning as checkExotelToken.
+    const match = (profile || []).find(p =>
+      p.capture_token.length === token.length &&
+      crypto.timingSafeEqual(Buffer.from(p.capture_token), Buffer.from(token))
+    );
+    if (!match) {
+      return res.status(404).json({ error: "Unknown or invalid capture link" });
+    }
+
+    const body = req.body as Record<string, string>;
+    // Tolerant of common field-name variants across form builders /
+    // Facebook Lead Ads / Zapier so this doesn't need per-source mapping.
+    const name  = body.name || body.full_name || body.first_name || null;
+    const phone = (body.phone || body.phone_number || body.mobile || "").trim();
+    const message = body.message || body.interest || body.enquiry || null;
+    const source = (body.source === "ad_lead" ? "ad_lead" : "web_form") as
+      "ad_lead" | "web_form";
+
+    if (!phone) {
+      return res.status(400).json({ error: "phone (or phone_number/mobile) is required" });
+    }
+
+    // Reuse the same upsert function calls use — a lead who fills the
+    // form twice, or later calls in, converges on one record either way.
+    const { data: leadId, error: leadErr } = await sb.rpc("upsert_lead_from_call", {
+      p_tenant_id: match.tenant_id,
+      p_phone:     phone,
+      p_name:      name,
+      p_intent:    "other",
+      p_interest:  message,
+      // A self-submitted enquiry is a warmer signal than an unscored cold
+      // number — starts above the "worth calling back" threshold (50) used
+      // elsewhere in the product, but below an actually-booked call (80+).
+      p_score:     55,
+      p_call_id:   null,
+    });
+    if (leadErr) {
+      console.error("[lead-capture] upsert failed:", leadErr.message);
+      return res.status(500).json({ error: "Could not save lead" });
+    }
+
+    // Respond fast — the caller is a form/webhook expecting a quick ack,
+    // not waiting on WhatsApp delivery or a call being placed.
+    res.json({ ok: true, lead_id: leadId });
+
+    // Fire-and-forget from here — failures are logged, never surfaced to
+    // the form submitter as an error (the lead is already safely saved).
+    if (match.auto_whatsapp_new_leads && match.whatsapp_number) {
+      const ackMsg = `నమస్కారం${name ? " " + name : ""}! 🙏\n` +
+        `${match.business_name || "మేము"} మీ enquiry అందుకున్నాము. ` +
+        `మా team షార్ట్‌గా మిమ్మల్ని సంప్రదిస్తుంది.\n\n` +
+        `Thanks for reaching out — we'll call you shortly.`;
+      sendWhatsApp(phone, ackMsg, match.tenant_id, match.id, "lead_capture_ack")
+        .catch(e => console.error("[lead-capture] whatsapp ack failed:", e));
+    }
+
+    if (match.auto_call_new_leads) {
+      sb.from("outbound_recipients").insert({
+        tenant_id:  match.tenant_id,
+        campaign_id: null,
+        is_instant: true,
+        phone,
+        first_name: name,
+        status:     "pending",
+        metadata:   { source, message, voice_profile_id: match.id },
+      }).then(({ error }) => {
+        if (error) console.error("[lead-capture] recipient insert failed:", error.message);
+      });
+    }
+  } catch (err: any) {
+    console.error("[lead-capture] error:", err.message);
+    if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+  }
+});
+
   try {
     const body = req.body as Record<string, string>;
     const callSid = body.CallSid || "";

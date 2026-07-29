@@ -71,15 +71,21 @@ export default function DashboardPage() {
   const [recentCalls, setRecentCalls]       = useState<CallRecord[]>([]);
   const [missedCalls, setMissedCalls]       = useState<CallRecord[]>([]);
   const [appointments, setAppointments]     = useState<Appointment[]>([]);
-  const [stats, setStats]                   = useState({ total: 0, appointments: 0, missed: 0, waSent: 0 });
+  const [stats, setStats]                   = useState({ total: 0, appointments: 0, missed: 0, afterHours: 0 });
+  const [usage, setUsage]                   = useState<{ used: number; limit: number } | null>(null);
+  const [hotLeads, setHotLeads]             = useState<any[]>([]);
+  const [monthValue, setMonthValue]         = useState({ afterHours: 0, booked: 0 });
   const [loading, setLoading]               = useState(true);
   const [tenantId, setTenantId]             = useState<string | null>(null);
 
   const fetchData = useCallback(async (tid: string) => {
     const sb = createClient();
     const today = new Date().toISOString().split("T")[0];
+    const monthStart = today.slice(0, 8) + "01";
+    const monthKey = today.slice(0, 7);           // 'YYYY-MM' for call_minutes
 
-    const [active, recent, missed, appts, todayStats] = await Promise.all([
+    const [active, recent, missed, appts, todayStats,
+           profile, minutes, leadsRes, monthCalls] = await Promise.all([
       sb.from("calls").select("*").eq("tenant_id", tid).eq("status", "active")
         .order("created_at", { ascending: false }),
       sb.from("calls").select("*").eq("tenant_id", tid).neq("status", "active")
@@ -88,21 +94,64 @@ export default function DashboardPage() {
         .order("created_at", { ascending: false }).limit(10),
       sb.from("appointments").select("*").eq("tenant_id", tid)
         .order("created_at", { ascending: false }).limit(10),
-      sb.from("calls").select("id, status, wa_sent, appointment_created")
+      sb.from("calls").select("id, status, created_at, appointment_created")
         .eq("tenant_id", tid).gte("created_at", today + "T00:00:00"),
+      // business hours — needed to work out which calls came in while closed
+      sb.from("voice_profiles").select("open_time, close_time")
+        .eq("tenant_id", tid).limit(1).maybeSingle(),
+      // plan usage for the month
+      sb.from("call_minutes").select("used_seconds, plan_limit_seconds")
+        .eq("tenant_id", tid).eq("month", monthKey).maybeSingle(),
+      // warm leads still sitting untouched — the follow-up worklist
+      sb.from("leads").select("id, name, phone, interest, score, intent")
+        .eq("tenant_id", tid).eq("stage", "new").gte("score", 50)
+        .order("score", { ascending: false }).limit(5),
+      // whole month, for the value banner
+      sb.from("calls").select("created_at, appointment_created")
+        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00"),
     ]);
 
     setActiveCalls(active.data || []);
     setRecentCalls(recent.data || []);
     setMissedCalls(missed.data || []);
     setAppointments(appts.data || []);
+    setHotLeads(leadsRes.data || []);
+
+    if (minutes.data) {
+      setUsage({
+        used:  minutes.data.used_seconds ?? 0,
+        limit: minutes.data.plan_limit_seconds ?? 12000,
+      });
+    }
+
+    // ── After-hours value ──
+    // The number an owner actually feels: calls that arrived when the shop
+    // was shut and a human would have missed them. Compared in IST, since
+    // open_time/close_time are local business hours.
+    const openH  = parseInt((profile.data?.open_time  || "09:00").split(":")[0], 10);
+    const closeH = parseInt((profile.data?.close_time || "21:00").split(":")[0], 10);
+    const isAfterHours = (iso: string) => {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return false;
+      const istHour = Number(d.toLocaleString("en-GB", {
+        timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }).slice(0, 2));
+      return istHour < openH || istHour >= closeH;
+    };
+
+    const mc = monthCalls.data || [];
+    setMonthValue({
+      afterHours: mc.filter(c => isAfterHours(c.created_at)).length,
+      booked:     mc.filter(c => c.appointment_created).length,
+    });
 
     const d = todayStats.data || [];
     setStats({
       total:        d.length,
       appointments: d.filter(c => c.appointment_created).length,
       missed:       d.filter(c => c.status === "missed").length,
-      waSent:       d.filter(c => c.wa_sent).length,
+      // was "WhatsApp Sent", which was always 0 — nothing ever sets wa_sent,
+      // so it occupied a prime dashboard slot showing a permanent zero.
+      afterHours:   d.filter(c => isAfterHours(c.created_at)).length,
     });
     setLoading(false);
   }, []);
@@ -169,8 +218,120 @@ export default function DashboardPage() {
             <StatCard icon="📞" value={stats.total}        label="Calls Today"          color={C.gbr}  />
             <StatCard icon="📅" value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
             <StatCard icon="📵" value={stats.missed}       label="Missed (handled)"     color={C.gold} />
-            <StatCard icon="💬" value={stats.waSent}       label="WhatsApp Sent"        color={C.cyn}  />
+            <StatCard icon="🌙" value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
           </div>
+
+          {/* ── Value banner ──
+              "47 calls" means nothing to a shop owner. "Nikki caught 12 calls
+              after you closed" is the number they feel, and it is the honest
+              case for the subscription. Only rendered once there is something
+              real to show. */}
+          {(monthValue.afterHours > 0 || monthValue.booked > 0) && (
+            <Card style={{
+              marginBottom: 20,
+              background: `linear-gradient(135deg, ${C.glow}14, ${C.cyn}0D)`,
+              border: `1px solid ${C.glow}44`,
+            }}>
+              <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontSize: 28 }}>✨</div>
+                <div style={{ flex: "1 1 260px" }}>
+                  <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+                    This month, Hey Nikki caught{" "}
+                    <span style={{ color: C.cyn }}>{monthValue.afterHours} calls</span>
+                    {" "}outside your business hours
+                    {monthValue.booked > 0 && <>
+                      {" "}and booked{" "}
+                      <span style={{ color: C.grn }}>{monthValue.booked} appointments</span>
+                    </>}.
+                  </div>
+                  <div style={{ color: C.mid, fontSize: 13 }}>
+                    Calls a closed shop would have missed entirely.
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* ── Plan usage ──
+              On a minute-capped plan, hitting the limit silently means calls
+              stop and the customer blames the product. A visible bar (amber at
+              80%, red at 95%) prevents that surprise and prompts an upgrade
+              before service degrades. */}
+          {usage && usage.limit > 0 && (() => {
+            const pct = Math.min(100, Math.round((usage.used / usage.limit) * 100));
+            const barColor = pct >= 95 ? C.red : pct >= 80 ? C.gold : C.grn;
+            const usedMin = Math.round(usage.used / 60);
+            const limitMin = Math.round(usage.limit / 60);
+            return (
+              <Card style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between",
+                  alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <span style={{ color: C.txt, fontSize: 14, fontWeight: 700 }}>
+                    Call minutes this month
+                  </span>
+                  <span style={{ color: barColor, fontSize: 13, fontWeight: 700,
+                    fontFamily: "monospace" }}>
+                    {usedMin} / {limitMin} min
+                  </span>
+                </div>
+                <div style={{ height: 8, background: C.hi, borderRadius: 20, overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: barColor,
+                    borderRadius: 20, transition: "width .4s ease" }} />
+                </div>
+                {pct >= 80 && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: barColor }}>
+                    {pct >= 95
+                      ? "You're almost out of minutes — calls will stop when you hit the limit."
+                      : "You've used most of this month's minutes."}
+                    {" "}
+                    <a href="/billing" style={{ color: C.gbr, fontWeight: 700 }}>Upgrade →</a>
+                  </div>
+                )}
+              </Card>
+            );
+          })()}
+
+          {/* ── Follow-up queue ──
+              Turns the dashboard from a report into a worklist: warm callers
+              (score 50+) who are still sitting untouched in "new". */}
+          {hotLeads.length > 0 && (
+            <Card style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between",
+                alignItems: "center", marginBottom: 14 }}>
+                <span style={{ color: C.txt, fontSize: 15, fontWeight: 700 }}>
+                  Worth calling back
+                </span>
+                <a href="/leads" style={{ color: C.gbr, fontSize: 13,
+                  textDecoration: "none", fontWeight: 600 }}>All leads →</a>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {hotLeads.map((l: any) => (
+                  <div key={l.id} style={{
+                    display: "flex", gap: 12, alignItems: "center",
+                    background: C.hi, borderRadius: 10, padding: "10px 12px", flexWrap: "wrap",
+                  }}>
+                    <span style={{
+                      background: (l.score >= 80 ? C.grn : C.gold) + "22",
+                      color: l.score >= 80 ? C.grn : C.gold,
+                      fontSize: 12, fontWeight: 800, padding: "3px 9px", borderRadius: 20,
+                    }}>{l.score}</span>
+                    <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                      <div style={{ color: C.txt, fontSize: 14, fontWeight: 600 }}>
+                        {l.name || "Unknown caller"}
+                      </div>
+                      {l.interest && (
+                        <div style={{ color: C.mid, fontSize: 12 }}>{l.interest}</div>
+                      )}
+                    </div>
+                    <a href={`tel:${l.phone}`} style={{
+                      color: C.gbr, fontSize: 13, fontFamily: "monospace",
+                      textDecoration: "none", fontWeight: 600,
+                    }}>{l.phone}</a>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {/* First-run empty state — shown only when no data at all exists */}
           {stats.total === 0 && activeCalls.length === 0 && recentCalls.length === 0 &&
@@ -180,7 +341,7 @@ export default function DashboardPage() {
                            borderColor: C.glow + "44" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
               <div style={{ color: C.txt, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-                Welcome to Nikki
+                Welcome to Hey Nikki
               </div>
               <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.6, maxWidth: 480, margin: "0 auto 20px" }}>
                 Your AI receptionist isn't taking calls yet. Two quick steps to go live:

@@ -31,9 +31,23 @@ const POLL_INTERVAL_MS = 30_000;
 
 // ─── DND scrubbing ────────────────────────────────────
 // TODO: replace this stub with an actual TRAI NCPR provider call.
-// Until then, only campaigns where ALL recipients have consent_call_id
-// (callback requests) should be allowed in production.
-async function scrubDnd(phone: string): Promise<{ blocked: boolean; reason?: string }> {
+//
+// CONSENT CARVE-OUT — this comment used to say "only campaigns where ALL
+// recipients have consent_call_id should be allowed in production" but
+// that carve-out was never implemented; every recipient hit the same
+// fail-safe block. isConsented finally builds it: an instant lead-capture
+// row (someone who just submitted the business's own enquiry form) can
+// skip third-party DND scrubbing IF the tenant has explicitly opted in
+// via voice_profiles.skip_dnd_for_instant_leads. Bulk campaign dialing
+// is completely untouched by this — it always requires either a real
+// DND_SCRUB_PROVIDER_URL or stays blocked, exactly as before.
+async function scrubDnd(
+  phone: string,
+  isConsented: boolean = false
+): Promise<{ blocked: boolean; reason?: string }> {
+  if (isConsented) {
+    return { blocked: false, reason: "self_submitted_enquiry_consent" };
+  }
   if (!process.env.DND_SCRUB_PROVIDER_URL) {
     console.warn(`[dispatcher] DND_SCRUB_PROVIDER_URL not set — phone ${phone} unscrubbed`);
     // Fail SAFE: if we can't scrub and it's not consent-based, block.
@@ -53,11 +67,20 @@ async function scrubDnd(phone: string): Promise<{ blocked: boolean; reason?: str
 }
 
 // ─── Pipeline dispatch ────────────────────────────────
-async function dispatchCall(recipient: any, campaign: any): Promise<string | null> {
-  // Render template variables in the script
-  const script = (campaign.script || "")
+// `campaign` is null for instant (is_instant=true) recipients — there is
+// no campaign row to pull voice_profile_id or a script from, so those
+// come from the recipient row itself for that case.
+async function dispatchCall(recipient: any, campaign: any | null): Promise<string | null> {
+  const rawScript = campaign
+    ? campaign.script
+    // Default callback script for a self-submitted enquiry — short,
+    // because this is a callback the person is expecting, not a cold
+    // pitch. Businesses can override per-lead via metadata.script later.
+    : (recipient.metadata?.script ||
+       "Hi {{first_name}}, this is Hey Nikki calling about your enquiry. Do you have a moment?");
+  const script = rawScript
     .replace(/\{\{first_name\}\}/g,    recipient.first_name || "there")
-    .replace(/\{\{business_name\}\}/g, campaign.business_name || "");
+    .replace(/\{\{business_name\}\}/g, campaign?.business_name || "");
 
   try {
     const r = await fetch(`${PIPELINE_URL}/outbound`, {
@@ -68,7 +91,7 @@ async function dispatchCall(recipient: any, campaign: any): Promise<string | nul
       },
       body: JSON.stringify({
         tenant_id:        recipient.tenant_id,
-        voice_profile_id: campaign.voice_profile_id,
+        voice_profile_id: campaign?.voice_profile_id || recipient.voice_profile_id || null,
         to_number:        recipient.phone,
         script,
         recipient_id:     recipient.id,
@@ -118,7 +141,9 @@ async function tick(): Promise<void> {
 
     for (const r of (pending || [])) {
       await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
-      const { blocked, reason } = await scrubDnd(r.phone);
+      // Campaign (bulk list) recipients are never treated as consented —
+      // that carve-out is only for is_instant rows, handled in tickInstant.
+      const { blocked, reason } = await scrubDnd(r.phone, false);
       await sb.from("outbound_recipients").update({
         status:       blocked ? "blocked_dnd" : "queued",
         scrubbed_at:  new Date().toISOString(),
@@ -166,11 +191,57 @@ async function tick(): Promise<void> {
   }
 }
 
+// ─── Instant lead-capture dispatch ─────────────────────
+// Handles is_instant=true recipients — one-off callbacks for a lead who
+// just submitted the business's own enquiry form, created by
+// POST /webhooks/lead-capture/:token. These have no campaign_id, so
+// tick() above (which is scoped per-campaign) never sees them.
+// Capped at 20 dispatches per tick (every 30s) so a burst of form
+// submissions can't overwhelm Exotel or a single tenant's concurrency.
+async function tickInstant(): Promise<void> {
+  const { data: pending } = await sb.from("outbound_recipients")
+    .select("*").eq("is_instant", true).eq("status", "pending").limit(20);
+
+  for (const r of (pending || [])) {
+    // Whether THIS tenant has opted in to skipping third-party DND
+    // scrubbing for self-submitted enquiries. Default false — the
+    // business must explicitly choose this in Setup.
+    const { data: profile } = await sb.from("voice_profiles")
+      .select("skip_dnd_for_instant_leads")
+      .eq("tenant_id", r.tenant_id).limit(1).maybeSingle();
+    const consented = !!profile?.skip_dnd_for_instant_leads;
+
+    await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
+    const { blocked, reason } = await scrubDnd(r.phone, consented);
+    if (blocked) {
+      await sb.from("outbound_recipients").update({
+        status: "blocked_dnd", scrubbed_at: new Date().toISOString(),
+        dnd_blocked: true, metadata: { ...r.metadata, scrub_reason: reason },
+      }).eq("id", r.id);
+      continue;
+    }
+
+    await sb.from("outbound_recipients").update({
+      status: "in_progress", scrubbed_at: new Date().toISOString(), dnd_blocked: false,
+    }).eq("id", r.id);
+
+    const callId = await dispatchCall(r, null);
+    if (callId) {
+      await sb.from("outbound_recipients").update({ call_id: callId }).eq("id", r.id);
+    } else {
+      // One-off leads don't get a 24h retry cycle like campaigns —
+      // the moment has passed; a failed instant callback just fails.
+      await sb.from("outbound_recipients").update({ status: "failed" }).eq("id", r.id);
+    }
+  }
+}
+
 async function main() {
   console.log("[dispatcher] started");
   while (true) {
     try {
       await tick();
+      await tickInstant();
     } catch (e) {
       console.error("[dispatcher] tick error:", e);
     }

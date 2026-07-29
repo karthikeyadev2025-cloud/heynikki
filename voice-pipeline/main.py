@@ -753,6 +753,50 @@ class SpeechRequest(BaseModel):
     did_number: str
     caller_number: str
 
+class OutboundDispatchRequest(BaseModel):
+    tenant_id: str
+    voice_profile_id: Optional[str] = None
+    to_number: str
+    script: Optional[str] = None
+    recipient_id: str
+
+@app.post("/outbound")
+async def handle_outbound_dispatch(req: OutboundDispatchRequest,
+                                    x_internal_secret: str = Header(None)):
+    """Places one outbound call and connects it to the same Voicebot
+    Applet flow inbound calls use. This is the endpoint
+    api-server/src/jobs/outbound-dispatcher.ts has always called — it
+    simply didn't exist on this side yet, so every dispatch attempt was
+    failing at the network layer before ever reaching Exotel.
+
+    Used by BOTH campaign dispatch (recipient_id -> a campaign row) and
+    instant lead-capture dispatch (recipient_id -> an is_instant row) —
+    the request shape and this handler don't need to know which.
+
+    Genuinely still blocked until Exotel enables outbound on the account
+    and EXOTEL_OUTBOUND_APP_ID is set — see app/exotel/outbound.py
+    config_status(). Until then this returns a clear 503 explaining
+    exactly what's missing, rather than a confusing generic failure.
+    """
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    status = ob.config_status()
+    if not status["ready"]:
+        missing = [k for k, v in status["fields"].items() if not v]
+        raise HTTPException(status_code=503,
+            detail=f"Outbound calling not configured yet. Missing: {', '.join(missing)}")
+
+    result = await ob.place_outbound_call(req.to_number)
+
+    if result["success"]:
+        await ob.mark_recipient_dispatched(req.recipient_id, result["call_sid"])
+        return {"call_id": result["call_sid"]}
+    else:
+        await ob.mark_recipient_failed(req.recipient_id, result["error"] or "unknown")
+        raise HTTPException(status_code=502, detail=result["error"] or "dispatch failed")
+
+
 @app.get("/health")
 async def health():
     from app.exotel import circuit_breaker as _cb

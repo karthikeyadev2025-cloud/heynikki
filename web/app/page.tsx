@@ -181,6 +181,10 @@ function Icon({ name, color, size = 26 }: { name: string; color: string; size?: 
     phone: <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z"/>,
     // analytics
     chart: <><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>,
+    brain: <><path d="M12 5a3 3 0 1 0-5.997.142A4 4 0 0 0 4 9a4 4 0 0 0 .5 1.9A4 4 0 0 0 6 17.6 3 3 0 0 0 12 19Z"/><path d="M12 5a3 3 0 1 1 5.997.142A4 4 0 0 1 20 9a4 4 0 0 1-.5 1.9A4 4 0 0 1 18 17.6 3 3 0 0 1 12 19Z"/></>,
+    bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>,
+    users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></>,
+    megaphone: <><path d="m3 11 18-5v12L3 14v-3Z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></>,
     // shield / security
     shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></>,
   };
@@ -406,9 +410,10 @@ export default function Home() {
             margin: mobile ? "0 auto 28px" : "0 0 28px",
             maxWidth: 520, lineHeight: 1.6,
           }}>
-            Hey Nikki answers your business calls 24/7 in Telugu, Hindi and
-            English — switching language mid-sentence, just like a real
-            receptionist would.
+            Hey Nikki answers your calls 24/7 in real Telugu — your region&apos;s
+            dialect, proper గారు honorifics, switching to English mid-sentence
+            exactly like your own staff would. Books appointments, captures
+            every lead.
           </p>
           <div style={{
             display: "flex", gap: 12, flexWrap: "wrap",
@@ -424,7 +429,7 @@ export default function Home() {
           }}>
             <span>✓ No credit card</span>
             <span>✓ Cancel anytime</span>
-            <span>✓ Calls encrypted</span>
+            <span>✓ Telangana &amp; Andhra dialects</span>
           </div>
         </div>
 
@@ -575,7 +580,7 @@ export default function Home() {
         <div style={{ textAlign: "center", marginBottom: 64 }}>
           <Pill color={J.surya}>FEATURES</Pill>
           <h2 style={{ fontSize: 44, fontWeight: 800, margin: "20px 0 16px", letterSpacing: -1.5 }}>
-            Everything an Indian SMB needs
+            A receptionist who never clocks out
           </h2>
           <p style={{ fontSize: 18, color: J.textMid, maxWidth: 600, margin: "0 auto" }}>
             Built for clinics, retail shops, real estate offices, service businesses
@@ -585,18 +590,15 @@ export default function Home() {
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
         }}>
           {[
-            { i: "speech",   t: "Native Telugu",      d: "Understands Tanglish, polite phrasing, age-appropriate responses", c: J.mercury },
-            // was: "Smart slot management, calendar sync, conflict resolution".
-            // Calendar sync and conflict resolution don't exist in the code.
-            // What DOES work: extraction from the call + a dashboard to manage it.
-            { i: "calendar", t: "Books Appointments", d: "Captures the booking on the call and files it to your dashboard", c: J.surya },
-            { i: "chat",     t: "WhatsApp Auto",      d: "Confirmation messages after every call — coming soon", c: J.textMid },
-            { i: "phone",    t: "24/7 Live",          d: "Never miss a call. Works during lunch, holidays, midnight", c: J.surya },
-            { i: "chart",    t: "Live Dashboard",     d: "Real-time analytics, intent classification, conversion tracking", c: J.mercury },
-            // was: "Data stays in India. AWS Mumbai." — no longer true after the
-            // infrastructure move, and data-residency is a claim businesses
-            // actually rely on. Reduced to what is verifiably true today.
-            { i: "shield",   t: "Encrypted & Compliant", d: "AES-256 on every recording. TRAI disclosure on every call", c: J.surya },
+            { i: "speech",    t: "Real Telugu, not translated", d: "Telangana or Andhra dialect, గారు honorifics, natural Tanglish — sounds like your own staff", c: J.mercury },
+            { i: "brain",     t: "Knows your business",  d: "Tell her your prices, timings and services once — she answers callers from it", c: J.mercury },
+            { i: "calendar",  t: "Books appointments",   d: "Captures the booking mid-call and files it to your dashboard automatically", c: J.surya },
+            { i: "users",     t: "Every caller becomes a lead", d: "Auto-scored and sorted into a pipeline you can work — new to won", c: J.mercury },
+            { i: "megaphone", t: "Outbound campaigns",   d: "Upload your list, Nikki calls them. DND-scrubbed and opt-out aware", c: J.surya },
+            { i: "bell",      t: "Daily summary to you", d: "Every evening: calls answered, appointments booked, who to call back", c: J.mercury },
+            { i: "phone",     t: "24/7, never on hold",  d: "Lunch breaks, festivals, midnight — the phone still gets answered", c: J.surya },
+            { i: "chat",      t: "WhatsApp confirmations", d: "Booking confirmations and 24h reminders — coming soon", c: J.textMid },
+            { i: "shield",    t: "Encrypted & compliant", d: "AES-256 on every recording. TRAI disclosure on every call", c: J.surya },
           ].map((f, i) => (
             <div key={i} style={{
               background: J.surface, border: `1px solid ${J.border}`,
@@ -659,9 +661,28 @@ export default function Home() {
           gap: 24, maxWidth: 1100, margin: "0 auto",
         }}>
           {[
-            { name: "Starter", price: 1999, mins: 200, popular: false, features: ["1 voice profile", "200 min/month", "WhatsApp confirmations (coming soon)", "Email support"], color: J.textMid },
-            { name: "Growth", price: 4999, mins: 600, popular: true, features: ["3 voice profiles", "600 min/month", "Outbound campaigns", "Priority support", "Analytics dashboard"], color: J.mercury },
-            { name: "Scale", price: 9999, mins: 1500, popular: false, features: ["10 voice profiles", "1500 min/month", "API access", "Custom integrations", "Dedicated CSM"], color: J.surya },
+            { name: "Starter", price: 1999, mins: 200, popular: false, features: [
+              "200 minutes/month",
+              "Telugu, Hindi & English",
+              "Appointments booked automatically",
+              "Leads captured from every call",
+              "Teach Nikki about your business",
+            ], color: J.textMid },
+            { name: "Growth", price: 4999, mins: 600, popular: true, features: [
+              "600 minutes/month",
+              "Everything in Starter",
+              "Outbound calling campaigns",
+              "Daily WhatsApp summary",
+              "Full lead pipeline & analytics",
+              "Priority support",
+            ], color: J.mercury },
+            { name: "Scale", price: 9999, mins: 1500, popular: false, features: [
+              "1500 minutes/month",
+              "Everything in Growth",
+              "Multiple locations & numbers",
+              "API access & webhooks",
+              "Dedicated onboarding",
+            ], color: J.surya },
           ].map(p => (
             <div key={p.name} style={{
               background: J.vault, border: `1px solid ${p.popular ? p.color : J.border}`,

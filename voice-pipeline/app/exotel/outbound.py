@@ -118,6 +118,36 @@ async def place_outbound_call(to_number: str, status_callback: str = None,
             return {"success": False, "call_sid": None, "error": f"unexpected response: {e}"}
 
 
+async def mark_recipient_dispatched(recipient_id: str, call_sid: str) -> None:
+    """Best-effort — a failure here must not un-place a call that's
+    already ringing. Correlation still works via exotel_call_sid even if
+    this particular write is retried or lost."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            await c.patch(
+                f"{SUPABASE_URL}/rest/v1/outbound_recipients?id=eq.{recipient_id}",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                         "Content-Type": "application/json", "Prefer": "return=minimal"},
+                json={"status": "in_progress", "exotel_call_sid": call_sid},
+            )
+    except Exception as e:
+        log.warning("mark_recipient_dispatched failed: %s", e)
+
+
+async def mark_recipient_failed(recipient_id: str, error: str) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            await c.patch(
+                f"{SUPABASE_URL}/rest/v1/outbound_recipients?id=eq.{recipient_id}",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                         "Content-Type": "application/json", "Prefer": "return=minimal"},
+                json={"status": "failed"},
+            )
+    except Exception as e:
+        log.warning("mark_recipient_failed failed: %s", e)
+    log.warning("outbound recipient %s failed: %s", recipient_id, error)
+
+
 async def correlate_outbound_call(call_sid: str) -> dict:
     """Called from bridge.py's start handler for EVERY connected call
     (inbound or outbound) — checks whether this call_sid matches a
