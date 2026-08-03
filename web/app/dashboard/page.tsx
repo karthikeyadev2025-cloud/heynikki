@@ -532,7 +532,7 @@ export default function DashboardPage() {
 }
 
 // ── HOT LEADS CARD (v4.0) ────────────────────────────────────
-function HotLeadsCard({ tenantId }: { tenantId: string }) {
+function HotLeadsCard({ tenantId }: { tenantId: string | null }) {
   const [hotLeads, setHotLeads] = useState<any[]>([]);
 
   useEffect(() => {

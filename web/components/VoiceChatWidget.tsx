@@ -447,8 +447,8 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
         }}>
           <input
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleTypedSend(); } }}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") { e.preventDefault(); handleTypedSend(); } }}
             placeholder={status === "listening" ? "Listening..." : "Type or press 🎙️ to speak..."}
             disabled={status === "listening" || status === "thinking"}
             style={{
