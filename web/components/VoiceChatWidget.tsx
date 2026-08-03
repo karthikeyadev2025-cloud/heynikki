@@ -77,7 +77,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
   // ── Speak text via SpeechSynthesis ──────────────────────────────
   const speak = useCallback((text: string, onEnd?: () => void) => {
     window.speechSynthesis.cancel();
-    const cleanText = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}]/gu, '');
+    const cleanText = text.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, '');
     const utt = new SpeechSynthesisUtterance(cleanText);
     if (teVoice) utt.voice = teVoice;
     utt.lang  = "te-IN";
