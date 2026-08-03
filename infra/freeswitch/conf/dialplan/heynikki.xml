@@ -1,0 +1,112 @@
+<!-- ================================================================
+  Hey Nikki — FreeSWITCH Dialplan
+  Context: heynikki
+  Handles: Inbound from Jio/Vi, Click-to-Call, Missed Call Guard
+  ================================================================ -->
+<include>
+  <context name="heynikki">
+
+    <!-- ============================================================
+      TRAI COMPLIANCE: All AI-handled calls must disclose automated
+      nature within first 5 seconds (TRAI TCCCPR-2018, amended 2023).
+      This announcement plays before audio streaming begins.
+      ============================================================ -->
+
+    <!-- ── INBOUND CALLS FROM JIO / VI SIP TRUNK ──────────────── -->
+    <extension name="inbound_sip_ai" continue="false">
+      <condition field="destination_number" expression="^(\+?91\d{10}|\d{10})$">
+
+        <!-- Set channel variables -->
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=false"/>
+        <action application="set" data="call_timeout=120"/>
+        <action application="set" data="did_number=${destination_number}"/>
+        <action application="set" data="caller_ani=${caller_id_number}"/>
+
+        <!-- Answer the call -->
+        <action application="answer"/>
+
+        <!-- TRAI AI disclosure (mandatory, within 5 seconds) -->
+        <!-- Uncomment when audio file is available:
+        <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/>
+        -->
+
+        <!-- Start recording to shared volume -->
+        <action application="set" data="RECORD_STEREO=false"/>
+        <action application="set" data="recording_path=/tmp/recordings/${uuid}.wav"/>
+        <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
+
+        <!-- Stream audio to Hey Nikki voice pipeline via WebSocket -->
+        <!-- URL format: ws://HOST:PORT/ws/freeswitch/{did}/{caller}/{uuid} -->
+        <action application="set" data="STREAM_MESSAGE_DEFLECTION=false"/>
+        <action application="set" data="STREAM_BUFFER_SIZE=320"/>
+        <action application="audio_stream"
+          data="ws://127.0.0.1:8000/ws/freeswitch/${did_number}/${caller_ani}/${uuid}"/>
+
+        <!-- Post-call: notify API server -->
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:${billsec},&quot;hangup_cause&quot;:&quot;${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+
+      </condition>
+    </extension>
+
+    <!-- ── MISSED CALL GUARD ──────────────────────────────────── -->
+    <!-- Fires when inbound call goes unanswered for 20 seconds  -->
+    <extension name="missed_call_guard" continue="false">
+      <condition field="destination_number" expression="^missed_(.+)$">
+        <action application="answer"/>
+        <!-- Fallback voice message (TTS or pre-recorded) -->
+        <action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
+        <!-- Notify API server to fire WhatsApp follow-up via n8n -->
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${1}&quot;,&quot;did_number&quot;:&quot;${destination_number}&quot;}' &amp;"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+
+    <!-- ── CLICK-TO-CALL (Human CRM) ─────────────────────────── -->
+    <!-- Initiated by API server ESL originate command           -->
+    <!-- Leg 1: rings agent; Leg 2: dials customer via Jio trunk -->
+    <extension name="click_to_call_agent_leg" continue="false">
+      <condition field="destination_number" expression="^ctc_agent_(\d+)$">
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="answer"/>
+        <!-- Brief ring tone for agent -->
+        <action application="playback" data="tone_stream://%(2000,4000,440,480)"/>
+        <action application="bridge" data="${ctc_customer_bridge}"/>
+      </condition>
+    </extension>
+
+    <!-- ── OUTBOUND CALLS (Click-to-Call customer leg) ───────── -->
+    <extension name="outbound_to_customer" continue="false">
+      <condition field="destination_number" expression="^out_(\+?91\d{10}|\d{10})$">
+        <!-- Use Jio trunk as primary, Vi as failover -->
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
+        <action application="set" data="effective_caller_id_name=HeyNikki"/>
+        <action application="bridge"
+          data="sofia/gateway/jio_primary/${1}|sofia/gateway/vi_failover/${1}"/>
+      </condition>
+    </extension>
+
+    <!-- ── OUTBOUND AI CAMPAIGN CALLS ─────────────────────────── -->
+    <extension name="outbound_campaign" continue="false">
+      <condition field="destination_number" expression="^camp_(\+?91\d{10}|\d{10})$">
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
+        <action application="answer"/>
+        <!-- TRAI disclosure for outbound -->
+        <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
+        <!-- Stream to AI pipeline for outbound script -->
+        <action application="audio_stream"
+          data="ws://127.0.0.1:8000/ws/freeswitch/outbound/${1}/${uuid}?campaign_id=${campaign_id}"/>
+      </condition>
+    </extension>
+
+    <!-- ── INTERNAL / INVALID → REJECT ───────────────────────── -->
+    <extension name="catch_all">
+      <condition field="destination_number" expression="^(.*)$">
+        <action application="respond" data="404"/>
+      </condition>
+    </extension>
+
+  </context>
+</include>

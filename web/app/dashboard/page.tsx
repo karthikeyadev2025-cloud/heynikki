@@ -221,6 +221,9 @@ export default function DashboardPage() {
             <StatCard icon="🌙" value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
           </div>
 
+          {/* 🔥 Hot Leads Card — injected v4.0 */}
+          <HotLeadsCard tenantId={tenantId} />
+
           {/* ── Value banner ──
               "47 calls" means nothing to a shop owner. "Nikki caught 12 calls
               after you closed" is the number they feel, and it is the honest
@@ -525,5 +528,80 @@ export default function DashboardPage() {
         </>
       )}
     </Shell>
+  );
+}
+
+// ── HOT LEADS CARD (v4.0) ────────────────────────────────────
+function HotLeadsCard({ tenantId }: { tenantId: string }) {
+  const [hotLeads, setHotLeads] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const sb = createClient();
+    sb.from("leads")
+      .select("id, name, phone, score, intent, stage")
+      .eq("tenant_id", tenantId)
+      .gte("score", 60)
+      .not("stage", "in", '("won","lost")')
+      .order("score", { ascending: false })
+      .limit(5)
+      .then(({ data }) => setHotLeads(data || []));
+  }, [tenantId]);
+
+  if (hotLeads.length === 0) return null;
+
+  const scoreColor = (s: number) => s >= 80 ? C.grn : s >= 60 ? C.gold : C.gbr;
+
+  return (
+    <div style={{ background: C.surf, border: "1px solid " + C.bord,
+      borderRadius: 10, padding: 16, marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>🔥 Hot Leads — Top Prospects</div>
+        <a href="/leads" style={{ color: C.gbr, fontSize: 11, textDecoration: "none", fontWeight: 600 }}>
+          View all leads →
+        </a>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {hotLeads.map(lead => (
+          <div key={lead.id} style={{ display: "flex", alignItems: "center", gap: 12,
+            padding: "8px 10px", borderRadius: 7, background: C.hi }}>
+            {/* Score circle */}
+            <div style={{ width: 36, height: 36, borderRadius: "50%",
+              background: scoreColor(lead.score) + "22",
+              border: "2px solid " + scoreColor(lead.score) + "66",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 11, fontWeight: 900, color: scoreColor(lead.score), flexShrink: 0 }}>
+              {lead.score}
+            </div>
+            {/* Info */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: C.txt, fontSize: 12, fontWeight: 700, marginBottom: 2 }}>
+                {lead.name || lead.phone}
+              </div>
+              <div style={{ height: 3, background: C.bord, borderRadius: 2, width: "100%" }}>
+                <div style={{ width: lead.score + "%", height: "100%", borderRadius: 2,
+                  background: scoreColor(lead.score),
+                  boxShadow: "0 0 6px " + scoreColor(lead.score) + "66" }} />
+              </div>
+            </div>
+            {/* Intent */}
+            {lead.intent && (
+              <span style={{ background: C.gbr + "22", color: C.gbr, border: "1px solid " + C.gbr + "44",
+                borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 700,
+                textTransform: "uppercase" as const, whiteSpace: "nowrap" as const, flexShrink: 0 }}>
+                {lead.intent}
+              </span>
+            )}
+            {/* Call button */}
+            <a href="/leads" style={{ background: C.grn + "22", color: C.grn,
+              border: "1px solid " + C.grn + "44", borderRadius: 5,
+              padding: "4px 10px", fontSize: 10, fontWeight: 700,
+              textDecoration: "none", flexShrink: 0 }}>
+              📞 Call
+            </a>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

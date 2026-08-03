@@ -1,0 +1,169 @@
+version: '3.8'
+
+# ================================================================
+# Hey Nikki — Full EC2 Stack
+# Run: docker-compose up -d
+# ================================================================
+
+services:
+
+  # ── FreeSWITCH SIP Server ────────────────────────────────────
+  freeswitch:
+    image: signalwire/freeswitch-stable:latest
+    container_name: heynikki-freeswitch
+    restart: always
+    network_mode: host          # Required for SIP/RTP NAT traversal
+    volumes:
+      - ./freeswitch/conf:/etc/freeswitch
+      - ./freeswitch/logs:/var/log/freeswitch
+      - /tmp/recordings:/tmp/recordings
+    environment:
+      - FREESWITCH_LOG_LEVEL=warning
+    cap_add:
+      - SYS_NICE
+      - SYS_RESOURCE
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD", "fs_cli", "-x", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Python Voice Pipeline ─────────────────────────────────────
+  voice-pipeline:
+    build:
+      context: ../voice-pipeline
+      dockerfile: Dockerfile
+    container_name: heynikki-pipeline
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"   # Nginx proxies externally; never expose raw
+    volumes:
+      - /tmp/recordings:/tmp/recordings   # shared with FreeSWITCH
+    env_file: .env
+    environment:
+      - PORT=8000
+    depends_on:
+      freeswitch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+
+  # ── Node.js API Server ────────────────────────────────────────
+  api-server:
+    build:
+      context: ../api-server
+      dockerfile: Dockerfile
+    container_name: heynikki-api
+    restart: always
+    ports:
+      - "127.0.0.1:4000:4000"
+    env_file: .env
+    environment:
+      - PORT=4000
+      - PIPELINE_URL=http://voice-pipeline:8000
+    depends_on:
+      - voice-pipeline
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+  # ── n8n Workflow Automation ───────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: heynikki-n8n
+    restart: always
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/backup   # pre-loaded workflows
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.heynikki.in/
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - DB_TYPE=sqlite
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168        # keep 7 days of execution logs
+      - N8N_LOG_LEVEL=warn
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      # Pass through secrets for use in workflows
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - WATI_API_KEY=${WATI_API_KEY}
+      - WATI_API_URL=${WATI_API_URL}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Activepieces Automation (Alternative Engine) ───────────────
+  activepieces:
+    image: activepieces/activepieces:latest
+    container_name: heynikki-activepieces
+    restart: always
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - activepieces_data:/root/.activepieces
+    environment:
+      - AP_ENCRYPTION_KEY=${ACTIVEPIECES_ENCRYPTION_KEY}
+      - AP_JWT_SECRET=${ACTIVEPIECES_JWT_SECRET}
+      - AP_FRONTEND_URL=https://activepieces.heynikki.in
+      - AP_ENGINE_EXECUTABLE_PATH=dist/packages/engine/main.js
+      - AP_TELEMETRY_ENABLED=false
+      - AP_TEMPLATES_SOURCE_URL=
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Nginx Reverse Proxy + SSL ─────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: heynikki-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+    depends_on:
+      - api-server
+      - voice-pipeline
+      - n8n
+      - activepieces
+
+volumes:
+  n8n_data:
+    driver: local
+  activepieces_data:
+    driver: local

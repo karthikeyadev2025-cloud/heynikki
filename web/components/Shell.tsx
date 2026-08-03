@@ -18,13 +18,12 @@ const NAV_ITEMS = [
   { href: "/appointments",icon: "📅", label: "Appointments"},
   { href: "/campaigns",   icon: "📢", label: "Campaigns"   },
   { href: "/analytics",   icon: "📊", label: "Analytics"   },
-  // "/whatsapp" was listed here but web/app/whatsapp/ does not exist --
-  // clicking it produced a 404. Removed 2026-07-24; restore when the page
-  // is actually built (WhatsApp isn't wired to the call pipeline yet either).
+  { href: "/whatsapp",    icon: "💬", label: "WhatsApp"    },  // restored v4.0
   { href: "/knowledge",   icon: "🧠", label: "Teach Nikki" },
   { href: "/setup",       icon: "⚙️",  label: "Setup"       },
   { href: "/billing",     icon: "💳", label: "Billing"     },
 ];
+
 
 export default function Shell({ children, title }: { children: React.ReactNode; title?: string }) {
   const [tenant, setTenant]     = useState<Tenant | null>(null);

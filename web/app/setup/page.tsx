@@ -479,6 +479,168 @@ export default function SetupPage() {
           </div>
         )}
       </form>
+
+      {/* Missed Call Guard section — only shown once a profile exists */}
+      {profile && tenantId && (
+        <MissedCallGuardCard profileId={profile.id} tenantId={tenantId} />
+      )}
     </Shell>
+  );
+}
+
+
+// ── MISSED CALL GUARD CONFIG ──────────────────────────────────
+// Lets the tenant configure per-profile missed-call behaviour without
+// touching the Super Admin. The guard is triggered server-side by
+// FreeSWITCH ESL when a call shorter than guard_seconds is detected.
+
+function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenantId: string }) {
+  const C2 = C; // same palette
+  const [guardEnabled,  setGuardEnabled]  = useState(true);
+  const [guardSeconds,  setGuardSeconds]  = useState(20);
+  const [waFallback,    setWaFallback]    = useState(true);
+  const [saving,        setSaving]        = useState(false);
+  const [saved,         setSaved]         = useState(false);
+  const [loading,       setLoading]       = useState(true);
+
+  useEffect(() => {
+    const sb = createClient();
+    sb.from("voice_profiles")
+      .select("missed_call_guard_enabled, missed_call_guard_seconds, fallback_wa_enabled")
+      .eq("id", profileId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setGuardEnabled(data.missed_call_guard_enabled ?? true);
+          setGuardSeconds(data.missed_call_guard_seconds ?? 20);
+          setWaFallback(data.fallback_wa_enabled ?? true);
+        }
+        setLoading(false);
+      });
+  }, [profileId]);
+
+  const save = async () => {
+    setSaving(true);
+    const sb = createClient();
+    await sb.from("voice_profiles").update({
+      missed_call_guard_enabled:  guardEnabled,
+      missed_call_guard_seconds:  guardSeconds,
+      fallback_wa_enabled:        waFallback,
+    }).eq("id", profileId);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: C2.hi, border: "1px solid " + C2.bord,
+    borderRadius: 7, padding: "8px 12px",
+    color: C2.txt, fontSize: 13,
+  };
+
+  const Toggle = ({ on, onChange, label, desc }: {
+    on: boolean; onChange: (v: boolean) => void; label: string; desc: string;
+  }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "14px 0", borderBottom: "1px solid " + C2.bord + "44" }}>
+      <div>
+        <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{label}</div>
+        <div style={{ color: C2.dim, fontSize: 11 }}>{desc}</div>
+      </div>
+      <button type="button" onClick={() => onChange(!on)} style={{
+        width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+        background: on ? C2.grn : C2.bord, position: "relative", flexShrink: 0,
+        transition: "background 0.2s",
+      }}>
+        <span style={{
+          position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20,
+          borderRadius: "50%", background: "#fff",
+          transition: "left 0.2s", boxShadow: "0 1px 4px #0004",
+        }} />
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ color: C2.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
+        📵 Missed Call Guard
+      </div>
+      <div style={{ color: C2.mid, fontSize: 12, marginBottom: 16 }}>
+        When a caller hangs up before Nikki can answer — within {guardSeconds} seconds — the guard
+        automatically fires a WhatsApp follow-up so you never lose the lead.
+      </div>
+
+      <Card>
+        {loading ? (
+          <div style={{ color: C2.dim, textAlign: "center", padding: 20 }}>Loading...</div>
+        ) : (
+          <>
+            <Toggle
+              on={guardEnabled}
+              onChange={setGuardEnabled}
+              label="Enable Missed Call Guard"
+              desc="Detect and handle calls shorter than the timeout threshold"
+            />
+
+            {guardEnabled && (
+              <>
+                <div style={{ padding: "14px 0", borderBottom: "1px solid " + C2.bord + "44",
+                  display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Guard Timeout</div>
+                    <div style={{ color: C2.dim, fontSize: 11 }}>
+                      Calls shorter than this are flagged as missed
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="range" min={5} max={60} step={5}
+                      value={guardSeconds}
+                      onChange={e => setGuardSeconds(parseInt(e.target.value))}
+                      style={{ width: 100, accentColor: C2.glow }}
+                    />
+                    <div style={{ ...inputStyle, width: 54, textAlign: "center", padding: "6px 8px" }}>
+                      {guardSeconds}s
+                    </div>
+                  </div>
+                </div>
+
+                <Toggle
+                  on={waFallback}
+                  onChange={setWaFallback}
+                  label="WhatsApp Follow-up"
+                  desc="Send approved missed-call template to the caller via WhatsApp automatically"
+                />
+              </>
+            )}
+
+            {/* Info box */}
+            <div style={{ background: C2.glow + "11", border: "1px solid " + C2.glow + "33",
+              borderRadius: 8, padding: "10px 14px", marginTop: 16, fontSize: 12 }}>
+              <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4 }}>⚙️ How it works</div>
+              <div style={{ color: C2.mid, lineHeight: 1.6 }}>
+                FreeSWITCH ESL fires a <code style={{ color: C2.gbr }}>CHANNEL_HANGUP</code> event
+                for every call. If the call duration is under <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>,
+                the API server triggers your automation engine (n8n or Activepieces) to send
+                a WhatsApp message using the <em>missed_call_followup</em> template.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 20, alignItems: "center" }}>
+              <button type="button" onClick={save} disabled={saving} style={{
+                background: saving ? C2.bord : C2.glow,
+                color: "#fff", border: "none", borderRadius: 8,
+                padding: "10px 24px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                opacity: saving ? 0.7 : 1,
+              }}>
+                {saving ? "Saving..." : "Save Guard Settings"}
+              </button>
+              {saved && <span style={{ color: C2.grn, fontSize: 12, fontWeight: 700 }}>✓ Saved!</span>}
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
   );
 }

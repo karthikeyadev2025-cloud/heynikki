@@ -1,0 +1,57 @@
+<!-- FreeSWITCH SIP Profiles — Jio Primary + Vi Failover -->
+<include>
+
+  <!-- ── JIO ENTERPRISE SIP TRUNK — PRIMARY ─────────────────── -->
+  <gateway name="jio_primary">
+    <!--
+      Jio Enterprise SIP Gateway
+      Fill your actual Jio SIP credentials from the enterprise portal.
+      Contact: Jio Business helpline 1800-889-9999
+    -->
+    <param name="username"               value="${JIO_SIP_USERNAME}"/>
+    <param name="auth-username"          value="${JIO_SIP_USERNAME}"/>
+    <param name="password"               value="${JIO_SIP_PASSWORD}"/>
+    <param name="realm"                  value="${JIO_SIP_HOST}"/>
+    <param name="proxy"                  value="${JIO_SIP_HOST}"/>
+    <param name="from-domain"            value="${JIO_SIP_HOST}"/>
+    <param name="register"               value="true"/>
+    <param name="register-transport"     value="udp"/>
+    <param name="retry-seconds"          value="30"/>
+    <param name="ping"                   value="25"/>
+    <param name="ping-max"               value="10"/>
+    <param name="expire-seconds"         value="3600"/>
+    <param name="caller-id-in-from"      value="false"/>
+    <param name="contact-params"         value="tport=udp"/>
+    <param name="context"                value="heynikki"/>
+    <!-- Codec: G.711 PCMU/PCMA for 8kHz telephony (matches Sarvam TTS) -->
+    <param name="codec-prefs"            value="PCMU,PCMA"/>
+    <!-- Calls per second limit (anti-fraud) -->
+    <param name="calls-per-second"       value="5"/>
+  </gateway>
+
+  <!-- ── VI BUSINESS SIP TRUNK — FAILOVER ──────────────────── -->
+  <gateway name="vi_failover">
+    <!--
+      Vi Business SIP Gateway (Vodafone Idea)
+      Fill your Vi enterprise SIP credentials.
+      Contact: Vi Business support or your enterprise account manager.
+    -->
+    <param name="username"               value="${VI_SIP_USERNAME}"/>
+    <param name="auth-username"          value="${VI_SIP_USERNAME}"/>
+    <param name="password"               value="${VI_SIP_PASSWORD}"/>
+    <param name="realm"                  value="${VI_SIP_HOST}"/>
+    <param name="proxy"                  value="${VI_SIP_HOST}"/>
+    <param name="from-domain"            value="${VI_SIP_HOST}"/>
+    <param name="register"               value="true"/>
+    <param name="register-transport"     value="udp"/>
+    <param name="retry-seconds"          value="60"/>
+    <param name="ping"                   value="30"/>
+    <param name="expire-seconds"         value="3600"/>
+    <param name="caller-id-in-from"      value="false"/>
+    <param name="context"                value="heynikki"/>
+    <param name="codec-prefs"            value="PCMU,PCMA"/>
+    <param name="calls-per-second"       value="5"/>
+    <!-- Vi is standby — only used if Jio registration fails -->
+  </gateway>
+
+</include>

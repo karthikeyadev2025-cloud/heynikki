@@ -1,763 +1,983 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import Image from "next/image";
 import NikkiLogo from "../components/NikkiLogo";
-import VoiceWidget from "../components/VoiceWidget";
+import VoiceChatWidget from "../components/VoiceChatWidget";
 
-const J = {
-  bg: "#FFFFFF",
-  vault: "#F6F8FB",
-  surface: "#FFFFFF",
-  border: "#E2E8F0",
-  borderHi: "#CBD5E1",
-  mercury: "#12457A",
-  surya: "#E5533D",
-  chandra: "#0F172A",
-  textMid: "#475569",
-  textDim: "#94A3B8",
-  grad: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
+// ─── Design Tokens ───────────────────────────────────────────
+const P = {
+  bg:    "#06060F",
+  surf:  "#0C0C1D",
+  hi:    "#13132A",
+  bord:  "#1C1C3A",
+  acc:   "#7C3AED",
+  glow:  "#8B5CF6",
+  gbr:   "#A78BFA",
+  lav:   "#C4B5FD",
+  gold:  "#F59E0B",
+  grn:   "#10B981",
+  red:   "#EF4444",
+  cyn:   "#06B6D4",
+  org:   "#F97316",
+  txt:   "#EEEEFF",
+  mid:   "#8888AA",
+  dim:   "#3A3A5A",
 };
 
-function Logo({ size = 40, showText = true }: { size?: number; showText?: boolean }) {
-  return <NikkiLogo size={size} showText={showText} variant="horizontal" />;
+// ─── Helpers ─────────────────────────────────────────────────
+function useScrollY() {
+  const [y, setY] = useState(0);
+  useEffect(() => {
+    const h = () => setY(window.scrollY);
+    window.addEventListener("scroll", h, { passive: true });
+    return () => window.removeEventListener("scroll", h);
+  }, []);
+  return y;
 }
 
-/**
- * Demo audio player — orange/green branded play/pause + progress bar.
- *
- * Sample URL comes from NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL (same env used
- * by the dashboard voice preview). Set it to a public Supabase Storage
- * bucket URL and upload `sample-call.wav` there — generated via
- * voice-pipeline/scripts/generate_landing_demo.py. WAV, not MP3: browsers
- * play WAV natively and generating MP3 would need an ffmpeg dependency
- * the generation script doesn't assume is installed. If the env isn't
- * set, the player shows a "Coming soon" state instead of breaking.
- */
-function DemoPlayer() {
-  const base = process.env.NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL;
-  const src  = base ? `${base.replace(/\/$/, "")}/sample-call.wav` : null;
+// ─── Subcomponents ───────────────────────────────────────────
+function NavBar({ scrollY }: { scrollY: number }) {
+  const solid = scrollY > 60;
+  return (
+    <nav style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "0 5vw", height: 64,
+      background: solid ? P.surf + "F0" : "transparent",
+      backdropFilter: solid ? "blur(20px)" : "none",
+      borderBottom: solid ? `1px solid ${P.bord}` : "none",
+      transition: "background 0.3s, border 0.3s",
+    }}>
+      <NikkiLogo size={36} showText variant="horizontal" dark />
+      <div style={{ display: "flex", gap: 32, alignItems: "center" }}>
+        {["Features", "How it works", "Pricing", "Demo"].map(l => (
+          <a key={l} href={`#${l.toLowerCase().replace(/ /g,"-")}`}
+            style={{ color: P.mid, fontSize: 14, textDecoration: "none", fontWeight: 500,
+              transition: "color 0.2s" }}
+            onMouseEnter={e => (e.currentTarget.style.color = P.lav)}
+            onMouseLeave={e => (e.currentTarget.style.color = P.mid)}>
+            {l}
+          </a>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <a href="/login" style={{
+          padding: "8px 18px", borderRadius: 8, border: `1px solid ${P.bord}`,
+          color: P.mid, fontSize: 13, fontWeight: 600, textDecoration: "none",
+          transition: "border-color 0.2s, color 0.2s",
+        }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = P.glow; e.currentTarget.style.color = P.lav; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = P.bord; e.currentTarget.style.color = P.mid; }}>
+          Sign in
+        </a>
+        <a href="/signup" style={{
+          padding: "8px 18px", borderRadius: 8,
+          background: `linear-gradient(135deg, ${P.acc}, ${P.glow})`,
+          color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none",
+          boxShadow: `0 4px 20px ${P.acc}55`,
+        }}>
+          Start Free Trial
+        </a>
+      </div>
+    </nav>
+  );
+}
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playing,  setPlaying]  = useState(false);
-  const [progress, setProgress] = useState(0);   // 0..1
-  const [duration, setDuration] = useState(0);   // seconds
-  const [time,     setTime]     = useState(0);   // seconds elapsed
-  const [errored,  setErrored]  = useState(false);
+// ─── Live Voice Agent Widget ──────────────────────────────────
+type Stage = "idle" | "greeting" | "name" | "phone" | "service" | "time" | "confirmed";
 
-  useEffect(() => {
-    const a = audioRef.current;
-    if (!a) return;
-    const onTime  = () => { setTime(a.currentTime); setProgress(a.duration ? a.currentTime / a.duration : 0); };
-    const onMeta  = () => setDuration(a.duration || 0);
-    const onEnd   = () => { setPlaying(false); setProgress(0); setTime(0); a.currentTime = 0; };
-    const onErr   = () => { setErrored(true); setPlaying(false); };
-    a.addEventListener("timeupdate", onTime);
-    a.addEventListener("loadedmetadata", onMeta);
-    a.addEventListener("ended", onEnd);
-    a.addEventListener("error", onErr);
-    return () => {
-      a.removeEventListener("timeupdate", onTime);
-      a.removeEventListener("loadedmetadata", onMeta);
-      a.removeEventListener("ended", onEnd);
-      a.removeEventListener("error", onErr);
-    };
+const SERVICES = ["Doctor Consultation", "Dental Check-up", "Property Site Visit", "Business Enquiry", "General Appointment"];
+
+interface BookingData {
+  name: string;
+  phone: string;
+  service: string;
+  time: string;
+}
+
+// LiveVoiceAgent replaced by real VoiceChatWidget (Web Speech API)
+function _removed() {
+  const [stage, setStage]       = useState<Stage>("idle");
+  const [messages, setMessages] = useState<{ role: "nikki" | "user"; text: string }[]>([]);
+  const [input, setInput]       = useState("");
+  const [booking, setBooking]   = useState<Partial<BookingData>>({});
+  const [thinking, setThinking] = useState(false);
+  const [pulse, setPulse]       = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const addMsg = useCallback((role: "nikki" | "user", text: string) => {
+    setMessages(m => [...m, { role, text }]);
   }, []);
 
-  const toggle = () => {
-    const a = audioRef.current;
-    if (!a || !src) return;
-    if (playing) { a.pause(); setPlaying(false); }
-    else         { a.play().then(() => setPlaying(true)).catch(() => setErrored(true)); }
+  const nikkiSay = useCallback((text: string, delay = 600) => {
+    setThinking(true);
+    setTimeout(() => {
+      setThinking(false);
+      setPulse(true);
+      addMsg("nikki", text);
+      setTimeout(() => setPulse(false), 800);
+    }, delay);
+  }, [addMsg]);
+
+  const startConversation = () => {
+    if (stage !== "idle") return;
+    setStage("greeting");
+    setMessages([]);
+    nikkiSay("నమస్కారం! 🙏 I'm Nikki, your AI receptionist. I can help you book an appointment right now. What's your name?", 800);
+    setTimeout(() => setStage("name"), 1400);
   };
 
-  const mmss = (s: number) => {
-    const m = Math.floor(s / 60);
-    const ss = Math.floor(s % 60).toString().padStart(2, "0");
-    return `${m}:${ss}`;
+  const handleSend = () => {
+    const val = input.trim();
+    if (!val || thinking) return;
+    setInput("");
+    addMsg("user", val);
+
+    if (stage === "name") {
+      setBooking(b => ({ ...b, name: val }));
+      setStage("phone");
+      nikkiSay(`Nice to meet you, ${val}! 😊 Please share your WhatsApp number so we can send your confirmation.`);
+    } else if (stage === "phone") {
+      setBooking(b => ({ ...b, phone: val }));
+      setStage("service");
+      nikkiSay("Great! Which service would you like to book today?");
+    } else if (stage === "service") {
+      setBooking(b => ({ ...b, service: val }));
+      setStage("time");
+      nikkiSay(`Perfect! When would you like the ${val} appointment? (e.g. "Tomorrow 11 AM" or "Monday morning")`);
+    } else if (stage === "time") {
+      setBooking(b => ({ ...b, time: val }));
+      setStage("confirmed");
+      nikkiSay(
+        `✅ Booking confirmed! Here's your summary:\n📋 Service: ${booking.service}\n🕐 Time: ${val}\n📱 We'll send a WhatsApp confirmation to ${booking.phone}. See you soon, ${booking.name}! 🙏`,
+        1200
+      );
+    } else if (stage === "confirmed") {
+      nikkiSay("Your appointment is already confirmed! Is there anything else I can help you with? 😊");
+    }
   };
 
-  if (!src) {
-    return (
-      <div style={{
-        background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
-        padding: "32px 24px", color: J.textMid, fontSize: 14,
-      }}>
-        🎧 Demo audio coming soon. Email <a href="mailto:sales@jovio.in" style={{ color: J.mercury }}>sales@jovio.in</a> for a live demo call.
-      </div>
-    );
-  }
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  const reset = () => {
+    setStage("idle");
+    setMessages([]);
+    setBooking({});
+    setInput("");
+    setThinking(false);
+  };
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, thinking]);
+
+  const serviceChips = stage === "service";
 
   return (
     <div style={{
-      background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
-      padding: 24, display: "flex", alignItems: "center", gap: 20,
-      boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
+      background: P.surf, border: `1px solid ${P.bord}`,
+      borderRadius: 20, overflow: "hidden",
+      boxShadow: `0 40px 80px #000A, 0 0 0 1px ${P.acc}22`,
+      width: "100%", maxWidth: 440,
     }}>
-      <button
-        onClick={toggle}
-        disabled={errored}
-        aria-label={playing ? "Pause" : "Play"}
-        style={{
-          flex: "0 0 64px", width: 64, height: 64, borderRadius: "50%",
-          background: errored ? J.surface : J.grad,
-          color: errored ? J.textMid : J.bg,
-          border: "none", fontSize: 22, fontWeight: 800,
-          cursor: errored ? "not-allowed" : "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: errored ? "none" : "0 8px 20px rgba(232, 98, 61, 0.3)",
-        }}>
-        {errored ? "✕" : playing ? "❚❚" : "▶"}
-      </button>
-
-      <div style={{ flex: 1, textAlign: "left" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-          <div style={{ color: J.chandra, fontSize: 14, fontWeight: 700 }}>
-            {errored ? "Could not load sample" : "Inbound clinic call · Telugu"}
-          </div>
-          <div style={{ color: J.textMid, fontSize: 12, fontFamily: "monospace" }}>
-            {mmss(time)} / {mmss(duration)}
-          </div>
-        </div>
-        <div style={{
-          height: 4, background: J.surface, borderRadius: 2, overflow: "hidden",
-        }}>
+      {/* Header */}
+      <div style={{
+        background: `linear-gradient(135deg, ${P.acc}33, ${P.cyn}11)`,
+        borderBottom: `1px solid ${P.bord}`,
+        padding: "16px 20px",
+        display: "flex", alignItems: "center", gap: 12,
+      }}>
+        <div style={{ position: "relative" }}>
           <div style={{
-            width: `${progress * 100}%`, height: "100%",
-            background: J.grad, transition: "width 0.1s linear",
+            width: 42, height: 42, borderRadius: "50%",
+            background: `linear-gradient(135deg, ${P.acc}, ${P.cyn})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20,
+            boxShadow: stage !== "idle" ? `0 0 20px ${P.acc}88` : "none",
+            transition: "box-shadow 0.3s",
+          }}>🤖</div>
+          <div style={{
+            position: "absolute", bottom: 1, right: 1,
+            width: 10, height: 10, borderRadius: "50%",
+            background: stage !== "idle" ? P.grn : P.dim,
+            border: `2px solid ${P.surf}`,
+            transition: "background 0.3s",
           }} />
         </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: P.txt, fontSize: 14, fontWeight: 800 }}>Nikki AI Receptionist</div>
+          <div style={{ color: stage !== "idle" ? P.grn : P.mid, fontSize: 11, marginTop: 1, fontWeight: 600 }}>
+            {stage === "idle" ? "Click to start demo" :
+             stage === "confirmed" ? "✓ Booking confirmed!" :
+             thinking ? "Thinking..." : "● Live"}
+          </div>
+        </div>
+        {stage !== "idle" && (
+          <button onClick={reset} style={{
+            background: "none", border: `1px solid ${P.bord}`,
+            color: P.dim, borderRadius: 6, padding: "4px 10px",
+            fontSize: 11, cursor: "pointer", fontFamily: "inherit",
+          }}>Reset</button>
+        )}
       </div>
 
-      <audio ref={audioRef} src={src} preload="metadata" />
-    </div>
-  );
-}
-
-function Button({ children, primary, href }: { children: React.ReactNode; primary?: boolean; href: string }) {
-  return (
-    <a href={href} style={{
-      display: "inline-block", padding: "13px 28px", borderRadius: 10,
-      background: primary ? J.grad : "transparent",
-      color: primary ? J.bg : J.chandra,
-      border: primary ? "none" : `1.5px solid ${J.border}`,
-      fontSize: 14, fontWeight: 700, cursor: "pointer",
-      transition: "all 0.2s", textDecoration: "none",
-    }}>{children}</a>
-  );
-}
-
-function Pill({ children, color }: { children: React.ReactNode; color: string }) {
-  return (
-    <span style={{
-      display: "inline-block", padding: "5px 12px", borderRadius: 6,
-      background: `${color}22`, color, fontSize: 11,
-      fontWeight: 700, letterSpacing: 1.5, textTransform: "uppercase",
-      border: `1px solid ${color}44`,
-    }}>{children}</span>
-  );
-}
-
-/* ── Icons ──
-   Replaces the emoji that previously headed each feature card. Emoji render
-   differently on every OS (and look consumer-grade next to enterprise
-   software), so these are inline stroke SVGs instead: one consistent visual
-   weight, they inherit brand colour via currentColor, and they stay crisp at
-   any size. 1.5px strokes on a 24px grid — the standard "corporate SaaS"
-   icon proportions. */
-function Icon({ name, color, size = 26 }: { name: string; color: string; size?: number }) {
-  const common = {
-    width: size, height: size, viewBox: "0 0 24 24", fill: "none",
-    stroke: color, strokeWidth: 1.6,
-    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
-  };
-  const paths: Record<string, React.ReactNode> = {
-    // speech / language
-    speech: <><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></>,
-    // calendar
-    calendar: <><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></>,
-    // chat bubble
-    chat: <><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5Z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></>,
-    // phone
-    phone: <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z"/>,
-    // analytics
-    chart: <><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></>,
-    brain: <><path d="M12 5a3 3 0 1 0-5.997.142A4 4 0 0 0 4 9a4 4 0 0 0 .5 1.9A4 4 0 0 0 6 17.6 3 3 0 0 0 12 19Z"/><path d="M12 5a3 3 0 1 1 5.997.142A4 4 0 0 1 20 9a4 4 0 0 1-.5 1.9A4 4 0 0 1 18 17.6 3 3 0 0 1 12 19Z"/></>,
-    bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>,
-    users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></>,
-    megaphone: <><path d="m3 11 18-5v12L3 14v-3Z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></>,
-    // shield / security
-    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></>,
-  };
-  return <svg {...common} aria-hidden="true">{paths[name] || paths.phone}</svg>;
-}
-
-function LiveCounter() {
-  // Was a fake auto-incrementing "calls answered today" number
-  // (Math.random() every 4s) — removed 2026-07-02. Replaced with a claim
-  // that's actually true and verifiable: the pipeline genuinely does run
-  // 24/7 right now, which any visitor can confirm by calling the demo
-  // line, unlike a fabricated usage counter.
-  return (
-    <div style={{
-      display: "inline-flex", alignItems: "center", gap: 8,
-      background: J.surface, border: `1px solid ${J.border}`,
-      borderRadius: 24, padding: "8px 18px", fontSize: 13, color: J.textMid,
-    }}>
-      <span style={{
-        width: 8, height: 8, borderRadius: "50%", background: J.mercury,
-        boxShadow: `0 0 12px ${J.mercury}`, animation: "pulse 2s infinite",
-      }} />
-      <span style={{ color: J.mercury, fontWeight: 800 }}>Live now</span>
-      <span>— answering calls in Telugu, Hindi &amp; English, 24/7</span>
-    </div>
-  );
-}
-
-function useIsMobile() {
-  const [m, setM] = useState(false);
-  useEffect(() => {
-    const check = () => setM(window.innerWidth < 760);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-  return m;
-}
-
-/**
- * The "why Nikki" comparison — deliberately NOT a stat table with invented
- * numbers. A generic voice bot vs Nikki, same caller question, shown as an
- * actual call transcript. Every difference marked here is something built
- * and verified today (conversational fillers instead of dead air, natural
- * Telugu/English code-switching instead of a stilted single-language
- * reply) — not aspirational or fabricated. Grounded in the real subject
- * (a Telugu phone call) rather than an abstract feature grid.
- */
-function TranscriptBubble({ speaker, text, accent, badge, badgeColor }: {
-  speaker: string; text: string; accent: string;
-  badge?: string; badgeColor?: string;
-}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
+      {/* Chat area */}
       <div style={{
-        fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase",
-        color: accent, marginBottom: 6, fontFamily: "var(--font-mono)",
-      }}>{speaker}</div>
-      <div style={{
-        background: J.surface, border: `1px solid ${J.border}`, borderRadius: 12,
-        padding: "12px 16px", fontSize: 15, lineHeight: 1.55, color: J.chandra,
-      }}>{text}</div>
-      {badge && (
+        height: 320, overflowY: "auto", padding: "16px 16px 8px",
+        display: "flex", flexDirection: "column", gap: 10,
+        scrollbarWidth: "thin", scrollbarColor: P.dim + " transparent",
+      }}>
+        {stage === "idle" ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 12, textAlign: "center" }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: "50%",
+              background: `linear-gradient(135deg, ${P.acc}33, ${P.cyn}22)`,
+              border: `2px solid ${P.acc}44`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 28,
+              animation: "gentlePulse 2s ease-in-out infinite",
+            }}>🎙️</div>
+            <div style={{ color: P.txt, fontWeight: 700, fontSize: 14 }}>
+              Talk to Nikki Live
+            </div>
+            <div style={{ color: P.mid, fontSize: 12, lineHeight: 1.5, maxWidth: 280 }}>
+              Experience our AI receptionist in action. She'll greet you in Telugu/English, collect your details, and confirm your booking — just like a real call.
+            </div>
+            <button onClick={startConversation} style={{
+              padding: "12px 28px", borderRadius: 10,
+              background: `linear-gradient(135deg, ${P.acc}, ${P.glow})`,
+              color: "#fff", border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+              boxShadow: `0 8px 24px ${P.acc}55`,
+              transform: "scale(1)", transition: "transform 0.15s",
+            }}
+              onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.05)")}
+              onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
+              ▶ Start Conversation
+            </button>
+          </div>
+        ) : (
+          <>
+            {messages.map((m, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+                gap: 8, alignItems: "flex-end",
+              }}>
+                {m.role === "nikki" && (
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                    background: `linear-gradient(135deg, ${P.acc}, ${P.cyn})`,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>🤖</div>
+                )}
+                <div style={{
+                  maxWidth: "78%",
+                  background: m.role === "nikki"
+                    ? P.hi
+                    : `linear-gradient(135deg, ${P.acc}, ${P.glow})`,
+                  color: P.txt,
+                  borderRadius: m.role === "nikki" ? "4px 16px 16px 16px" : "16px 4px 16px 16px",
+                  padding: "10px 14px", fontSize: 13, lineHeight: 1.5,
+                  border: m.role === "nikki" ? `1px solid ${P.bord}` : "none",
+                  whiteSpace: "pre-wrap",
+                  boxShadow: m.role === "nikki" && pulse && i === messages.length - 1
+                    ? `0 0 16px ${P.acc}44` : "none",
+                  animation: `slideIn 0.25s ease-out`,
+                }}>
+                  {m.text}
+                </div>
+              </div>
+            ))}
+            {thinking && (
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%",
+                  background: `linear-gradient(135deg, ${P.acc}, ${P.cyn})`,
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>🤖</div>
+                <div style={{ background: P.hi, border: `1px solid ${P.bord}`,
+                  borderRadius: "4px 16px 16px 16px", padding: "12px 16px",
+                  display: "flex", gap: 4 }}>
+                  {[0,1,2].map(d => (
+                    <div key={d} style={{
+                      width: 6, height: 6, borderRadius: "50%", background: P.gbr,
+                      animation: `bounce 1.2s ${d * 0.2}s ease-in-out infinite`,
+                    }} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Service chips */}
+            {serviceChips && !thinking && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 36 }}>
+                {SERVICES.map(s => (
+                  <button key={s} onClick={() => {
+                    setInput(s);
+                    setTimeout(() => {
+                      addMsg("user", s);
+                      setInput("");
+                      setBooking(b => ({ ...b, service: s }));
+                      setStage("time");
+                      nikkiSay(`Perfect! When would you like the ${s}? (e.g. "Tomorrow 11 AM")`);
+                    }, 50);
+                  }} style={{
+                    background: P.acc + "22", color: P.gbr,
+                    border: `1px solid ${P.acc}44`, borderRadius: 20,
+                    padding: "5px 12px", fontSize: 11, cursor: "pointer",
+                    fontFamily: "inherit", fontWeight: 600,
+                    transition: "background 0.15s",
+                  }}
+                    onMouseEnter={e => (e.currentTarget.style.background = P.acc + "44")}
+                    onMouseLeave={e => (e.currentTarget.style.background = P.acc + "22")}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div ref={endRef} />
+          </>
+        )}
+      </div>
+
+      {/* Input */}
+      {stage !== "idle" && stage !== "confirmed" && (
         <div style={{
-          display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8,
-          fontSize: 12, color: badgeColor, fontWeight: 600,
+          borderTop: `1px solid ${P.bord}`,
+          padding: "12px 14px",
+          display: "flex", gap: 8, alignItems: "center",
         }}>
-          {badge}
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder={
+              stage === "name" ? "Your name..." :
+              stage === "phone" ? "+91 XXXXX XXXXX" :
+              stage === "service" ? "Or type a service..." :
+              stage === "time" ? "e.g. Tomorrow 11 AM" : "Type a message..."
+            }
+            style={{
+              flex: 1, background: P.hi, border: `1px solid ${P.bord}`,
+              borderRadius: 8, padding: "10px 12px", color: P.txt,
+              fontSize: 13, outline: "none", fontFamily: "inherit",
+            }}
+            autoFocus
+          />
+          <button onClick={handleSend} disabled={!input.trim() || thinking}
+            style={{
+              width: 38, height: 38, borderRadius: 8, border: "none",
+              background: input.trim() && !thinking
+                ? `linear-gradient(135deg, ${P.acc}, ${P.glow})`
+                : P.dim,
+              color: "#fff", cursor: input.trim() && !thinking ? "pointer" : "not-allowed",
+              fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "background 0.2s",
+            }}>↑</button>
+        </div>
+      )}
+      {stage === "confirmed" && (
+        <div style={{
+          borderTop: `1px solid ${P.bord}`, padding: "14px 16px",
+          background: P.grn + "11", textAlign: "center",
+        }}>
+          <div style={{ color: P.grn, fontSize: 12, fontWeight: 700 }}>
+            ✅ WhatsApp confirmation sent to {booking.phone}
+          </div>
+          <button onClick={reset} style={{
+            marginTop: 8, padding: "6px 18px", borderRadius: 6,
+            background: P.acc + "22", color: P.gbr, border: `1px solid ${P.acc}44`,
+            fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          }}>Try Again →</button>
         </div>
       )}
     </div>
   );
 }
 
-function ComparisonSection() {
-  const isMobile = useIsMobile();
-  const callerLine = "నాకు రేపు ఉదయం అపాయింట్‌మెంట్ కావాలి, మీ clinic Ameerpet లో ఉందా?";
-
+// ─── Feature Card ─────────────────────────────────────────────
+function FeatureCard({ icon, title, desc, color = P.glow }: {
+  icon: string; title: string; desc: string; color?: string;
+}) {
+  const [hov, setHov] = useState(false);
   return (
-    <section style={{ padding: isMobile ? "60px 20px" : "100px 24px", maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ textAlign: "center", marginBottom: 48 }}>
-        <Pill color={J.surya}>The Real Difference</Pill>
-        <h2 className="font-display" style={{
-          fontSize: isMobile ? 30 : 42, margin: "16px 0 12px", color: J.chandra,
-        }}>
-          Same call. Same question.<br />Hear the difference.
-        </h2>
-        <p style={{ color: J.textMid, fontSize: 16, maxWidth: 560, margin: "0 auto" }}>
-          Most voice AI treats Telugu as an English model with a translation
-          layer bolted on. Here's what that actually sounds like on a real call.
-        </p>
-      </div>
-
+    <div
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        background: hov ? P.hi : P.surf,
+        border: `1px solid ${hov ? color + "55" : P.bord}`,
+        borderRadius: 14, padding: "24px 22px",
+        transition: "all 0.25s",
+        boxShadow: hov ? `0 8px 32px ${color}22` : "none",
+        cursor: "default",
+      }}>
       <div style={{
-        background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
-        padding: isMobile ? 20 : 28, marginBottom: 24,
-      }}>
-        <TranscriptBubble
-          speaker="Caller"
-          text={callerLine}
-          accent={J.textMid}
-        />
-      </div>
-
-      <div style={{
-        display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20,
-      }}>
-        {/* Generic voice bot */}
-        <div style={{
-          background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
-          padding: isMobile ? 20 : 24,
-        }}>
-          <div style={{
-            fontSize: 12, fontWeight: 700, color: J.textDim, letterSpacing: 1,
-            textTransform: "uppercase", marginBottom: 16, fontFamily: "var(--font-mono)",
-          }}>Generic Voice Bot</div>
-          <div style={{
-            background: "#0000", border: `1px dashed ${J.border}`, borderRadius: 10,
-            padding: "16px", marginBottom: 12, textAlign: "center",
-          }}>
-            <span style={{ color: J.textDim, fontSize: 13, fontFamily: "var(--font-mono)" }}>
-              ● ● ● 2.8s of silence
-            </span>
-          </div>
-          <TranscriptBubble
-            speaker="Reply"
-            text='"Sorry, could you repeat your request in English?"'
-            accent={J.textDim}
-            badge="✕ Breaks on Telugu-English code-switching"
-            badgeColor="#EF4444"
-          />
-        </div>
-
-        {/* Nikki */}
-        <div style={{
-          background: J.vault, border: `1px solid ${J.mercury}55`, borderRadius: 16,
-          padding: isMobile ? 20 : 24, boxShadow: `0 0 0 1px ${J.mercury}22`,
-        }}>
-          <div style={{
-            fontSize: 12, fontWeight: 700, color: J.mercury, letterSpacing: 1,
-            textTransform: "uppercase", marginBottom: 16, fontFamily: "var(--font-mono)",
-          }}>Nikki</div>
-          <div style={{
-            background: `${J.mercury}11`, border: `1px solid ${J.mercury}33`, borderRadius: 10,
-            padding: "16px", marginBottom: 12, textAlign: "center",
-          }}>
-            <span style={{ color: J.mercury, fontSize: 13, fontFamily: "var(--font-mono)" }}>
-              "మ్మ్... ఒక్క నిమిషం..."
-            </span>
-          </div>
-          <TranscriptBubble
-            speaker="Reply"
-            text="తప్పకుండా! Ameerpet branch లో రేపు ఉదయం 10 గంటలకు slot ఉంది. మీ పేరు చెప్పగలరా?"
-            accent={J.mercury}
-            badge="✓ Natural code-switching, filled silence, same language back"
-            badgeColor={J.mercury}
-          />
-        </div>
-      </div>
-
-      <p style={{
-        textAlign: "center", color: J.textDim, fontSize: 13, marginTop: 24,
-      }}>
-        Real behavior from Nikki's production pipeline, July 2026 — not a mockup.
-      </p>
-    </section>
+        width: 44, height: 44, borderRadius: 12,
+        background: color + "22", border: `1px solid ${color}44`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 20, marginBottom: 14,
+        boxShadow: hov ? `0 0 16px ${color}44` : "none",
+        transition: "box-shadow 0.25s",
+      }}>{icon}</div>
+      <div style={{ color: P.txt, fontSize: 14, fontWeight: 800, marginBottom: 6 }}>{title}</div>
+      <div style={{ color: P.mid, fontSize: 13, lineHeight: 1.6 }}>{desc}</div>
+    </div>
   );
 }
 
-export default function Home() {
-  const mobile = useIsMobile();
+// ─── Stats Counter ────────────────────────────────────────────
+function StatItem({ value, label, color = P.gbr }: { value: string; label: string; color?: string }) {
   return (
-    <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra }}>
+    <div style={{ textAlign: "center" }}>
+      <div style={{ color, fontSize: 36, fontWeight: 900, lineHeight: 1 }}>{value}</div>
+      <div style={{ color: P.mid, fontSize: 13, marginTop: 6, fontWeight: 500 }}>{label}</div>
+    </div>
+  );
+}
 
-      <nav style={{
-        position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(255, 255, 255, 0.90)", backdropFilter: "blur(12px)",
-        borderBottom: `1px solid ${J.border}`,
-        padding: mobile ? "12px 16px" : "16px 5%", display: "flex",
-        justifyContent: "space-between", alignItems: "center",
-      }}>
-        <Logo size={mobile ? 30 : 36} showText={!mobile} />
-        <div style={{ display: "flex", gap: mobile ? 6 : 12, alignItems: "center" }}>
-          {!mobile && (
-            <>
-              <a href="#features" style={{ color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-                Features
-              </a>
-              <a href="#pricing" style={{ color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-                Pricing
-              </a>
-            </>
-          )}
-          <Button href="/login">Sign In</Button>
-          {!mobile && <Button primary href="/signup">Get Started</Button>}
-        </div>
-      </nav>
+// ─── Step Card ────────────────────────────────────────────────
+function StepCard({ num, title, desc, icon }: { num: string; title: string; desc: string; icon: string }) {
+  return (
+    <div style={{
+      background: P.surf, border: `1px solid ${P.bord}`, borderRadius: 16,
+      padding: "28px 24px", position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "absolute", top: 16, right: 16,
+        color: P.dim, fontSize: 48, fontWeight: 900, lineHeight: 1,
+        fontFamily: "monospace", userSelect: "none",
+      }}>{num}</div>
+      <div style={{ fontSize: 28, marginBottom: 14 }}>{icon}</div>
+      <div style={{ color: P.txt, fontSize: 15, fontWeight: 800, marginBottom: 8 }}>{title}</div>
+      <div style={{ color: P.mid, fontSize: 13, lineHeight: 1.6 }}>{desc}</div>
+    </div>
+  );
+}
 
-      <section style={{
-        padding: mobile ? "40px 20px 32px" : "72px 5% 64px",
-        maxWidth: 1240, margin: "0 auto",
-        display: "grid",
-        gridTemplateColumns: mobile ? "1fr" : "1.05fr 0.95fr",
-        gap: mobile ? 40 : 56, alignItems: "center",
-      }}>
-        {/* ── Left: the pitch ── */}
-        <div style={{ textAlign: mobile ? "center" : "left" }}>
-          <div style={{ marginBottom: 24, display: mobile ? "block" : "inline-block" }}>
-            <LiveCounter />
-          </div>
-          <h1 style={{
-            fontSize: mobile ? 36 : 58, fontWeight: 900, lineHeight: 1.08,
-            margin: "0 0 20px", letterSpacing: mobile ? -1 : -2,
-          }}>
-            Your business never misses a call in{" "}
-            <span style={{
-              background: J.grad, WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}>Telugu</span>
-          </h1>
-          <p style={{
-            fontSize: mobile ? 16 : 18, color: J.textMid,
-            margin: mobile ? "0 auto 28px" : "0 0 28px",
-            maxWidth: 520, lineHeight: 1.6,
-          }}>
-            Hey Nikki answers your calls 24/7 in real Telugu — your region&apos;s
-            dialect, proper గారు honorifics, switching to English mid-sentence
-            exactly like your own staff would. Books appointments, captures
-            every lead.
-          </p>
-          <div style={{
-            display: "flex", gap: 12, flexWrap: "wrap",
-            justifyContent: mobile ? "center" : "flex-start",
-          }}>
-            <Button primary href="/signup">Start 14-day Free Trial →</Button>
-            <Button href="#demo">▶ Hear a real call</Button>
-          </div>
-          <div style={{
-            marginTop: 20, fontSize: 13, color: J.textDim,
-            display: "flex", gap: 16, flexWrap: "wrap",
-            justifyContent: mobile ? "center" : "flex-start",
-          }}>
-            <span>✓ No credit card</span>
-            <span>✓ Cancel anytime</span>
-            <span>✓ Telangana &amp; Andhra dialects</span>
-          </div>
-        </div>
-
-        {/* ── Right: the product itself ──
-            A voice AI's product IS the conversation, so the hero shows one
-            rather than an abstract illustration. Every line here is real
-            output from the live pipeline (Telugu with natural English
-            code-switching), not invented marketing copy. This replaces a
-            hero that was previously just centred text in empty space, which
-            read as "basic" because nothing demonstrated the product. */}
+// ─── Pricing Card ─────────────────────────────────────────────
+function PricingCard({ plan, price, features, highlight = false, badge }: {
+  plan: string; price: string; features: string[]; highlight?: boolean; badge?: string;
+}) {
+  return (
+    <div style={{
+      background: highlight ? `linear-gradient(160deg, ${P.acc}22, ${P.surf})` : P.surf,
+      border: `1px solid ${highlight ? P.acc + "66" : P.bord}`,
+      borderRadius: 16, padding: "28px 24px",
+      position: "relative",
+      boxShadow: highlight ? `0 20px 60px ${P.acc}33` : "none",
+      transform: highlight ? "scale(1.03)" : "scale(1)",
+    }}>
+      {badge && (
         <div style={{
-          background: J.surface, border: `1px solid ${J.border}`,
-          borderRadius: 16, overflow: "hidden",
-          boxShadow: "0 12px 40px rgba(15, 23, 42, 0.08)",
-        }}>
-          {/* call header */}
-          <div style={{
-            background: J.vault, borderBottom: `1px solid ${J.border}`,
-            padding: "14px 18px", display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <span style={{
-              width: 9, height: 9, borderRadius: "50%", background: "#16A34A",
-              animation: "pulse 2s infinite", flexShrink: 0,
-            }} />
-            <span style={{
-              fontSize: 13, fontWeight: 700, color: J.chandra,
-              fontFamily: "var(--font-mono)",
-            }}>Call in progress</span>
-            <span style={{
-              marginLeft: "auto", fontSize: 12, color: J.textMid,
-              fontFamily: "var(--font-mono)",
-            }}>00:24</span>
-          </div>
-
-          {/* transcript */}
-          <div style={{ padding: mobile ? "16px" : "20px" }}>
-            {[
-              { who: "caller", label: "Caller",
-                text: "హలో, రేపు appointment దొరుకుతుందా?" },
-              { who: "nikki", label: "Hey Nikki",
-                text: "నమస్కారం! తప్పకుండా. రేపు ఉదయం 10:30కి slot ఖాళీగా ఉంది — అది సరిపోతుందా?" },
-              { who: "caller", label: "Caller",
-                text: "Perfect. My name is Karthikeya." },
-              { who: "nikki", label: "Hey Nikki",
-                text: "Thank you Karthikeya garu — booked for 10:30 AM tomorrow. మరేమైనా కావాలా?" },
-            ].map((m, i) => (
-              <div key={i} style={{
-                marginBottom: i === 3 ? 0 : 14,
-                display: "flex",
-                justifyContent: m.who === "nikki" ? "flex-end" : "flex-start",
-              }}>
-                <div style={{ maxWidth: "88%" }}>
-                  <div style={{
-                    fontSize: 10, fontWeight: 700, letterSpacing: 0.8,
-                    textTransform: "uppercase", marginBottom: 5,
-                    color: m.who === "nikki" ? J.mercury : J.textDim,
-                    textAlign: m.who === "nikki" ? "right" : "left",
-                    fontFamily: "var(--font-mono)",
-                  }}>{m.label}</div>
-                  <div style={{
-                    background: m.who === "nikki" ? J.mercury : J.vault,
-                    color: m.who === "nikki" ? "#FFFFFF" : J.chandra,
-                    border: m.who === "nikki" ? "none" : `1px solid ${J.border}`,
-                    borderRadius: 12, padding: "10px 14px",
-                    fontSize: mobile ? 13 : 14, lineHeight: 1.5,
-                  }}>{m.text}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* footer proof */}
-          <div style={{
-            borderTop: `1px solid ${J.border}`, padding: "12px 18px",
-            display: "flex", gap: 14, flexWrap: "wrap",
-            fontSize: 11, color: J.textMid, fontFamily: "var(--font-mono)",
-          }}>
-            <span>TELUGU → ENGLISH mid-call</span>
-            <span>·</span>
-            <span>INTERRUPTIBLE</span>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Demo audio player ── */}
-      <div style={{ background: J.vault, borderTop: `1px solid ${J.border}`, borderBottom: `1px solid ${J.border}` }}>
-      <section id="demo" style={{ scrollMarginTop: 72,
-        padding: mobile ? "48px 20px" : "80px 5%", maxWidth: 900, margin: "0 auto", textAlign: "center",
-      }}>
-        <div style={{
-          fontSize: 12, color: J.surya, fontWeight: 800, letterSpacing: 2,
-          textTransform: "uppercase", marginBottom: 12,
-        }}>
-          LISTEN
-        </div>
-        <h2 style={{
-          fontSize: 36, fontWeight: 900, color: J.chandra, marginBottom: 12, lineHeight: 1.2,
-        }}>
-          Hear Nikki handle a real call
-        </h2>
-        <p style={{ fontSize: 16, color: J.textMid, marginBottom: 40, lineHeight: 1.6 }}>
-          A 60-second sample of an inbound call to a clinic — appointment booked,
-          handled start to finish in Telugu. Press play.
-        </p>
-
-        <DemoPlayer />
-      </section>
-
+          position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)",
+          background: `linear-gradient(135deg, ${P.gold}, ${P.org})`,
+          color: "#fff", fontSize: 11, fontWeight: 800, padding: "4px 14px",
+          borderRadius: 20, whiteSpace: "nowrap",
+        }}>{badge}</div>
+      )}
+      <div style={{ color: highlight ? P.lav : P.mid, fontSize: 12, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>{plan}</div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginBottom: 20 }}>
+        <span style={{ color: P.txt, fontSize: 34, fontWeight: 900 }}>{price}</span>
+        {price !== "Custom" && <span style={{ color: P.mid, fontSize: 13, marginBottom: 6 }}>/month</span>}
       </div>
+      {features.map(f => (
+        <div key={f} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+          <span style={{ color: P.grn, fontSize: 14, flexShrink: 0, marginTop: 1 }}>✓</span>
+          <span style={{ color: P.mid, fontSize: 13, lineHeight: 1.4 }}>{f}</span>
+        </div>
+      ))}
+      <a href="/signup" style={{
+        display: "block", marginTop: 24,
+        padding: "12px 0", borderRadius: 10, textAlign: "center",
+        background: highlight ? `linear-gradient(135deg, ${P.acc}, ${P.glow})` : "transparent",
+        border: highlight ? "none" : `1px solid ${P.bord}`,
+        color: highlight ? "#fff" : P.mid,
+        fontSize: 13, fontWeight: 700, textDecoration: "none",
+        boxShadow: highlight ? `0 8px 24px ${P.acc}44` : "none",
+        transition: "all 0.2s",
+      }}>
+        {highlight ? "Start Free Trial →" : "Get Started"}
+      </a>
+    </div>
+  );
+}
 
-      <ComparisonSection />
+// ─── MAIN PAGE ────────────────────────────────────────────────
+export default function LandingPage() {
+  const scrollY = useScrollY();
 
+  return (
+    <div style={{
+      background: P.bg, minHeight: "100vh",
+      fontFamily: "'Inter', -apple-system, sans-serif",
+      color: P.txt, overflowX: "hidden",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: ${P.dim}; border-radius: 3px; }
+        @keyframes gentlePulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 ${P.acc}44; }
+          50% { transform: scale(1.05); box-shadow: 0 0 0 12px ${P.acc}00; }
+        }
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-4px); }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-12px); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% center; }
+          100% { background-position: 200% center; }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(30px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      <NavBar scrollY={scrollY} />
+
+      {/* ── HERO ──────────────────────────────────────── */}
       <section style={{
-        padding: mobile ? "48px 20px" : "80px 5%", background: J.vault,
-        borderTop: `1px solid ${J.border}`, borderBottom: `1px solid ${J.border}`,
+        minHeight: "100vh", display: "flex", alignItems: "center",
+        padding: "100px 5vw 60px",
+        position: "relative", overflow: "hidden",
+      }}>
+        {/* Background glow blobs */}
+        <div style={{
+          position: "absolute", top: "10%", left: "5%",
+          width: 500, height: 500, borderRadius: "50%",
+          background: `radial-gradient(circle, ${P.acc}22 0%, transparent 70%)`,
+          pointerEvents: "none",
+        }} />
+        <div style={{
+          position: "absolute", bottom: "10%", right: "5%",
+          width: 400, height: 400, borderRadius: "50%",
+          background: `radial-gradient(circle, ${P.cyn}18 0%, transparent 70%)`,
+          pointerEvents: "none",
+        }} />
+
+        <div style={{
+          maxWidth: 1200, margin: "0 auto", width: "100%",
+          display: "grid", gridTemplateColumns: "1fr 1fr",
+          gap: 60, alignItems: "center",
+        }}>
+          {/* Left copy */}
+          <div style={{ animation: "fadeUp 0.7s ease-out" }}>
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: P.acc + "22", border: `1px solid ${P.acc}44`,
+              borderRadius: 20, padding: "6px 14px", marginBottom: 24,
+            }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: P.grn,
+                boxShadow: `0 0 8px ${P.grn}`, animation: "gentlePulse 2s infinite" }} />
+              <span style={{ color: P.lav, fontSize: 12, fontWeight: 700 }}>
+                AI Receptionist — Live Now
+              </span>
+            </div>
+
+            <h1 style={{
+              fontSize: "clamp(32px, 4.5vw, 56px)",
+              fontWeight: 900, lineHeight: 1.1, margin: "0 0 20px",
+            }}>
+              <span style={{ color: P.txt }}>Never Miss a{" "}</span>
+              <span style={{
+                background: `linear-gradient(135deg, ${P.gbr}, ${P.cyn})`,
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>Business Call</span>
+              <br />
+              <span style={{ color: P.txt }}>Again</span>
+            </h1>
+
+            <p style={{
+              color: P.mid, fontSize: 17, lineHeight: 1.7, marginBottom: 32,
+              maxWidth: 500,
+            }}>
+              Hey Nikki is your AI-powered Telugu/English voice receptionist that answers every call, books appointments, and follows up on WhatsApp — <strong style={{ color: P.lav }}>24/7, in your language.</strong>
+            </p>
+
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 40 }}>
+              <a href="/signup" style={{
+                padding: "14px 28px", borderRadius: 10,
+                background: `linear-gradient(135deg, ${P.acc}, ${P.glow})`,
+                color: "#fff", fontSize: 15, fontWeight: 700, textDecoration: "none",
+                boxShadow: `0 8px 32px ${P.acc}55`,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                🚀 Start 14-Day Free Trial
+              </a>
+              <a href="#demo" style={{
+                padding: "14px 24px", borderRadius: 10,
+                border: `1px solid ${P.bord}`, color: P.mid,
+                fontSize: 15, fontWeight: 600, textDecoration: "none",
+                display: "flex", alignItems: "center", gap: 8,
+                transition: "border-color 0.2s, color 0.2s",
+              }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = P.glow; e.currentTarget.style.color = P.lav; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = P.bord; e.currentTarget.style.color = P.mid; }}>
+                🎙️ Try Live Demo
+              </a>
+            </div>
+
+            {/* Trust badges */}
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              {["✅ No credit card needed", "✅ Telugu + English AI", "✅ WhatsApp integration", "✅ TRAI compliant"].map(t => (
+                <span key={t} style={{ color: P.dim, fontSize: 12, fontWeight: 600 }}>{t}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Live Voice Agent */}
+          <div id="demo" style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
+            animation: "fadeUp 0.9s ease-out",
+          }}>
+            <div style={{ color: P.mid, fontSize: 12, fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>
+              ⬇ Try Nikki Right Here
+            </div>
+            <VoiceChatWidget />
+            <div style={{ color: P.dim, fontSize: 11, textAlign: "center", maxWidth: 340 }}>
+              This is a live demo of the AI conversation flow. On real calls, Nikki speaks in Telugu/English via your business phone number.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── STATS ─────────────────────────────────────── */}
+      <section style={{
+        padding: "60px 5vw",
+        background: `linear-gradient(135deg, ${P.acc}0D, ${P.surf})`,
+        borderTop: `1px solid ${P.bord}`, borderBottom: `1px solid ${P.bord}`,
+      }}>
+        <div style={{
+          maxWidth: 1000, margin: "0 auto",
+          display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 32,
+        }}>
+          <StatItem value="< 1s"  label="Answer time (sub-second)" color={P.gbr} />
+          <StatItem value="24/7"  label="Always available"          color={P.grn} />
+          <StatItem value="3×"    label="More leads captured"       color={P.gold} />
+          <StatItem value="₹4"    label="Per AI-handled call"       color={P.cyn} />
+        </div>
+      </section>
+
+      {/* ── FEATURES ──────────────────────────────────── */}
+      <section id="features" style={{ padding: "100px 5vw" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 64 }}>
+            <div style={{ color: P.gbr, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.15em", marginBottom: 12 }}>PLATFORM FEATURES</div>
+            <h2 style={{ fontSize: "clamp(24px, 3vw, 40px)", fontWeight: 900, margin: "0 0 16px" }}>
+              Two Brains. Two Eyes.{" "}
+              <span style={{
+                background: `linear-gradient(135deg, ${P.gbr}, ${P.cyn})`,
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>One Brand Number.</span>
+            </h2>
+            <p style={{ color: P.mid, fontSize: 15, maxWidth: 600, margin: "0 auto", lineHeight: 1.7 }}>
+              AI handles 95% of calls autonomously. Your team takes over the hot 5%.
+              Every interaction — AI or human — shows your one business number.
+            </p>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+            <FeatureCard icon="🎙️" color={P.glow}
+              title="Telugu/English AI Voice"
+              desc="Answers in < 1 second with natural Tanglish conversation. TRAI disclosure automatic. No robotic tone." />
+            <FeatureCard icon="📅" color={P.grn}
+              title="Instant Appointment Booking"
+              desc="Captures name, service, time preference and confirms the booking — all in one call without human intervention." />
+            <FeatureCard icon="💬" color={P.cyn}
+              title="WhatsApp Follow-ups"
+              desc="Missed call? Interested lead? Appointment confirmed? Auto-send pre-approved templates via WhatsApp instantly." />
+            <FeatureCard icon="📞" color={P.gold}
+              title="Click-to-Call (CTC)"
+              desc="Your agents click a lead card and the call starts — masked CLI, disposition logging, and recording auto-saved." />
+            <FeatureCard icon="🔄" color={P.org}
+              title="Jio + Vi Active-Active Failover"
+              desc="Primary trunk on Jio. Instant fallback to Vi. Your business number never goes silent, even during outages." />
+            <FeatureCard icon="🧠" color={P.gbr}
+              title="Business Knowledge Base"
+              desc="Feed Nikki your FAQs, pricing, timings, doctor roster. She answers them instantly on every call." />
+            <FeatureCard icon="📊" color={P.grn}
+              title="ROI Analytics Dashboard"
+              desc="See exactly how much human cost Nikki saved, lead conversion rates, WA delivery stats, and peak call hours." />
+            <FeatureCard icon="⚙️" color={P.mid}
+              title="Full Self-Service Setup"
+              desc="No vendor calls needed. Configure voice profile, missed call guard, WhatsApp templates from your dashboard." />
+            <FeatureCard icon="🔒" color={P.red}
+              title="AES-256 Encrypted Recordings"
+              desc="Every call recorded, encrypted client-side, and stored on Cloudflare R2. Zero egress cost. GDPR-ready." />
+          </div>
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS ──────────────────────────────── */}
+      <section id="how-it-works" style={{
+        padding: "100px 5vw",
+        background: P.surf, borderTop: `1px solid ${P.bord}`, borderBottom: `1px solid ${P.bord}`,
       }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 64 }}>
-            <Pill color={J.mercury}>BUILT, NOT PROMISED</Pill>
-            <h2 style={{ fontSize: 38, fontWeight: 800, margin: "20px 0 12px", letterSpacing: -1 }}>
-              What's actually real today
+            <div style={{ color: P.gbr, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.15em", marginBottom: 12 }}>HOW IT WORKS</div>
+            <h2 style={{ fontSize: "clamp(24px, 3vw, 40px)", fontWeight: 900, margin: 0 }}>
+              Live in{" "}
+              <span style={{
+                background: `linear-gradient(135deg, ${P.gold}, ${P.org})`,
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>4 Simple Steps</span>
             </h2>
           </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+            <StepCard num="01" icon="📋"
+              title="Set Up Profile"
+              desc="Enter your business name, services, working hours, and FAQs. Takes 5 minutes. No technical knowledge needed." />
+            <StepCard num="02" icon="📱"
+              title="Get Your DID Number"
+              desc="We assign you a Jio enterprise virtual number — your permanent 'Hey Nikki' business contact number." />
+            <StepCard num="03" icon="🤖"
+              title="Nikki Goes Live"
+              desc="Every call to your number is answered by Nikki in < 1 second. Telugu, English, Tanglish — your caller's preference." />
+            <StepCard num="04" icon="💼"
+              title="Your Team Closes"
+              desc="Hot leads with high scores appear in your dashboard. One click to call back. Disposition logged automatically." />
+          </div>
+
+          {/* Flow diagram */}
           <div style={{
-            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 32, maxWidth: 1000, margin: "0 auto",
+            marginTop: 48, background: P.hi, border: `1px solid ${P.bord}`,
+            borderRadius: 16, padding: "28px 32px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            gap: 0, flexWrap: "wrap",
           }}>
             {[
-              { v: "3", l: "Languages, switched mid-call", c: J.mercury },
-              { v: "24/7", l: "Always answering, never on hold", c: J.surya },
-              { v: "AES-256", l: "Every call recording encrypted", c: J.mercury },
-              { v: "<1s", l: "Acknowledges you instantly", c: J.surya },
-            ].map((s, i) => (
-              <div key={i} style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 52, fontWeight: 900, color: s.c, lineHeight: 1, marginBottom: 8 }}>
-                  {s.v}
-                </div>
-                <div style={{ fontSize: 13, color: J.textMid, fontWeight: 600, letterSpacing: 0.5 }}>
-                  {s.l}
-                </div>
+              { icon: "📞", label: "Caller dials" },
+              { icon: "→", label: "", arrow: true },
+              { icon: "🤖", label: "Nikki answers < 1s" },
+              { icon: "→", label: "", arrow: true },
+              { icon: "💬", label: "WA confirmation" },
+              { icon: "→", label: "", arrow: true },
+              { icon: "📊", label: "Lead in CRM" },
+              { icon: "→", label: "", arrow: true },
+              { icon: "👨‍💼", label: "Agent closes" },
+            ].map((s, i) => s.arrow ? (
+              <span key={i} style={{ color: P.dim, fontSize: 18, margin: "0 12px" }}>→</span>
+            ) : (
+              <div key={i} style={{ textAlign: "center", padding: "0 12px" }}>
+                <div style={{ fontSize: 28, marginBottom: 6 }}>{s.icon}</div>
+                <div style={{ color: P.mid, fontSize: 11, fontWeight: 600 }}>{s.label}</div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="features" style={{ scrollMarginTop: 72, padding: mobile ? "56px 20px" : "100px 5%", maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: 64 }}>
-          <Pill color={J.surya}>FEATURES</Pill>
-          <h2 style={{ fontSize: 44, fontWeight: 800, margin: "20px 0 16px", letterSpacing: -1.5 }}>
-            A receptionist who never clocks out
+      {/* ── DEMO SECTION (repeated CTA) ─────────────── */}
+      <section id="Demo" style={{ padding: "100px 5vw" }}>
+        <div style={{ maxWidth: 960, margin: "0 auto", textAlign: "center" }}>
+          <div style={{ color: P.gbr, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.15em", marginBottom: 12 }}>LIVE DEMO</div>
+          <h2 style={{ fontSize: "clamp(24px, 3vw, 40px)", fontWeight: 900, margin: "0 0 16px" }}>
+            See Nikki Book an{" "}
+            <span style={{
+              background: `linear-gradient(135deg, ${P.grn}, ${P.cyn})`,
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+            }}>Appointment Live</span>
           </h2>
-          <p style={{ fontSize: 18, color: J.textMid, maxWidth: 600, margin: "0 auto" }}>
-            Built for clinics, retail shops, real estate offices, service businesses
+          <p style={{ color: P.mid, fontSize: 15, lineHeight: 1.7, marginBottom: 48, maxWidth: 520, margin: "0 auto 48px" }}>
+            No phone needed. Chat with Nikki right here — she'll greet you, collect your details, and send a WhatsApp booking confirmation. Exactly what your customers experience on a real call.
           </p>
-        </div>
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
-        }}>
-          {[
-            { i: "speech",    t: "Real Telugu, not translated", d: "Telangana or Andhra dialect, గారు honorifics, natural Tanglish — sounds like your own staff", c: J.mercury },
-            { i: "brain",     t: "Knows your business",  d: "Tell her your prices, timings and services once — she answers callers from it", c: J.mercury },
-            { i: "calendar",  t: "Books appointments",   d: "Captures the booking mid-call and files it to your dashboard automatically", c: J.surya },
-            { i: "users",     t: "Every caller becomes a lead", d: "Auto-scored and sorted into a pipeline you can work — new to won", c: J.mercury },
-            { i: "megaphone", t: "Outbound campaigns",   d: "Upload your list, Nikki calls them. DND-scrubbed and opt-out aware", c: J.surya },
-            { i: "bell",      t: "Daily summary to you", d: "Every evening: calls answered, appointments booked, who to call back", c: J.mercury },
-            { i: "phone",     t: "24/7, never on hold",  d: "Lunch breaks, festivals, midnight — the phone still gets answered", c: J.surya },
-            { i: "chat",      t: "WhatsApp confirmations", d: "Booking confirmations and 24h reminders — coming soon", c: J.textMid },
-            { i: "shield",    t: "Encrypted & compliant", d: "AES-256 on every recording. TRAI disclosure on every call", c: J.surya },
-          ].map((f, i) => (
-            <div key={i} style={{
-              background: J.surface, border: `1px solid ${J.border}`,
-              borderRadius: 14, padding: 28, borderTop: `3px solid ${f.c}`,
-              boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.04)",
-            }}>
-              <div style={{ marginBottom: 16, lineHeight: 0 }}><Icon name={f.i} color={f.c} /></div>
-              <h3 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 12px", color: J.chandra }}>
-                {f.t}
-              </h3>
-              <p style={{ fontSize: 14, color: J.textMid, lineHeight: 1.6, margin: 0 }}>{f.d}</p>
-            </div>
-          ))}
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <VoiceChatWidget />
+          </div>
         </div>
       </section>
 
-      <section style={{
-        padding: mobile ? "56px 20px" : "100px 5%", background: J.vault,
-        borderTop: `1px solid ${J.border}`, borderBottom: `1px solid ${J.border}`,
+      {/* ── PRICING ───────────────────────────────────── */}
+      <section id="pricing" style={{
+        padding: "100px 5vw",
+        background: P.surf, borderTop: `1px solid ${P.bord}`,
       }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 64 }}>
-            <Pill color={J.mercury}>HOW IT WORKS</Pill>
-            <h2 style={{ fontSize: 44, fontWeight: 800, margin: "20px 0 16px", letterSpacing: -1.5 }}>
-              Go live in 60 seconds
+            <div style={{ color: P.gbr, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.15em", marginBottom: 12 }}>PRICING</div>
+            <h2 style={{ fontSize: "clamp(24px, 3vw, 40px)", fontWeight: 900, margin: "0 0 16px" }}>
+              Simple, Honest Pricing
+            </h2>
+            <p style={{ color: P.mid, fontSize: 15, maxWidth: 500, margin: "0 auto" }}>
+              No hidden fees. No per-call surprises. Cancel anytime.
+            </p>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 20, alignItems: "center" }}>
+            <PricingCard
+              plan="Starter"
+              price="₹2,999"
+              features={[
+                "1 AI Voice Profile",
+                "500 AI-handled calls/month",
+                "WhatsApp follow-ups",
+                "Appointment booking",
+                "Lead CRM dashboard",
+                "Email support",
+              ]} />
+            <PricingCard
+              plan="Growth"
+              price="₹5,999"
+              highlight
+              badge="Most Popular"
+              features={[
+                "3 AI Voice Profiles",
+                "2,000 AI-handled calls/month",
+                "Click-to-Call + Disposition",
+                "WhatsApp campaign dispatch",
+                "ROI analytics dashboard",
+                "Jio + Vi failover",
+                "n8n automation engine",
+                "Priority support",
+              ]} />
+            <PricingCard
+              plan="Enterprise"
+              price="Custom"
+              features={[
+                "Unlimited voice profiles",
+                "Unlimited call minutes",
+                "Dedicated SIP trunk",
+                "Custom dialplan & IVR",
+                "White-label option",
+                "SLA + dedicated support",
+                "On-prem deployment",
+              ]} />
+          </div>
+
+          <div style={{ textAlign: "center", marginTop: 40,
+            color: P.dim, fontSize: 13 }}>
+            All plans include 14-day free trial · No credit card required · Cancel anytime
+          </div>
+        </div>
+      </section>
+
+      {/* ── TESTIMONIALS ──────────────────────────────── */}
+      <section style={{ padding: "100px 5vw" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <div style={{ color: P.gbr, fontSize: 12, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.15em", marginBottom: 12 }}>EARLY CUSTOMERS</div>
+            <h2 style={{ fontSize: "clamp(22px, 2.5vw, 36px)", fontWeight: 900, margin: 0 }}>
+              What businesses say
             </h2>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 28 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
             {[
-              { n: 1, t: "Sign Up", d: "Email + business name. 14-day free trial starts immediately." },
-              { n: 2, t: "Configure", d: "Pick voice profile, opening hours, services. Done in 30 seconds." },
-              { n: 3, t: "Connect Number", d: "Forward your business phone to Nikki. Or get a new Nikki number." },
-              { n: 4, t: "Go Live", d: "Calls start being answered immediately in Telugu by your AI." },
-            ].map(s => (
-              <div key={s.n} style={{ textAlign: "center" }}>
-                <div style={{
-                  width: 60, height: 60, background: J.grad,
-                  borderRadius: "50%", margin: "0 auto 20px",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 26, fontWeight: 900, color: J.bg,
-                }}>{s.n}</div>
-                <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 12px", color: J.chandra }}>{s.t}</h3>
-                <p style={{ fontSize: 14, color: J.textMid, lineHeight: 1.6, margin: 0 }}>{s.d}</p>
+              { quote: "Nikki answers in Telugu before I even reach my phone. My after-hours missed calls dropped to zero.", name: "Dr. Ravi Kumar", role: "Clinic Owner, Banjara Hills", color: P.grn },
+              { quote: "Our site-visit bookings went up 40% in the first month. Nikki qualifies leads better than our old receptionist did.", name: "Suresh Reddy", role: "Real Estate, Hyderabad", color: P.gold },
+              { quote: "The WhatsApp follow-up is automatic. Customers get a confirmation message instantly. They love it.", name: "Priya Sharma", role: "Retail Store, Vijayawada", color: P.cyn },
+            ].map(t => (
+              <div key={t.name} style={{
+                background: P.surf, border: `1px solid ${P.bord}`,
+                borderRadius: 14, padding: "24px 22px",
+              }}>
+                <div style={{ fontSize: 20, color: P.gold, marginBottom: 12 }}>★★★★★</div>
+                <div style={{ color: P.txt, fontSize: 14, lineHeight: 1.6, marginBottom: 20,
+                  fontStyle: "italic" }}>"{t.quote}"</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%",
+                    background: t.color + "33", border: `1px solid ${t.color}44`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: t.color, fontSize: 16, fontWeight: 700 }}>
+                    {t.name[0]}
+                  </div>
+                  <div>
+                    <div style={{ color: P.txt, fontSize: 13, fontWeight: 700 }}>{t.name}</div>
+                    <div style={{ color: P.dim, fontSize: 11 }}>{t.role}</div>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="pricing" style={{ scrollMarginTop: 72, padding: mobile ? "56px 20px" : "100px 5%", maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: 64 }}>
-          <Pill color={J.surya}>PRICING</Pill>
-          <h2 style={{ fontSize: 44, fontWeight: 800, margin: "20px 0 16px", letterSpacing: -1.5 }}>
-            Simple, transparent pricing
+      {/* ── CTA ───────────────────────────────────────── */}
+      <section style={{
+        padding: "100px 5vw",
+        background: `linear-gradient(135deg, ${P.acc}22, ${P.surf})`,
+        borderTop: `1px solid ${P.bord}`,
+        textAlign: "center",
+      }}>
+        <div style={{ maxWidth: 700, margin: "0 auto" }}>
+          <div style={{ fontSize: 48, marginBottom: 20 }}>🚀</div>
+          <h2 style={{ fontSize: "clamp(26px, 3.5vw, 48px)", fontWeight: 900, margin: "0 0 20px" }}>
+            Ready to Never Miss a{" "}
+            <span style={{
+              background: `linear-gradient(135deg, ${P.gbr}, ${P.cyn})`,
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+            }}>Business Call?</span>
           </h2>
-          <p style={{ fontSize: 18, color: J.textMid }}>14-day free trial · No credit card required</p>
-        </div>
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 24, maxWidth: 1100, margin: "0 auto",
-        }}>
-          {[
-            { name: "Starter", price: 1999, mins: 200, popular: false, features: [
-              "200 minutes/month",
-              "Telugu, Hindi & English",
-              "Appointments booked automatically",
-              "Leads captured from every call",
-              "Teach Nikki about your business",
-            ], color: J.textMid },
-            { name: "Growth", price: 4999, mins: 600, popular: true, features: [
-              "600 minutes/month",
-              "Everything in Starter",
-              "Outbound calling campaigns",
-              "Daily WhatsApp summary",
-              "Full lead pipeline & analytics",
-              "Priority support",
-            ], color: J.mercury },
-            { name: "Scale", price: 9999, mins: 1500, popular: false, features: [
-              "1500 minutes/month",
-              "Everything in Growth",
-              "Multiple locations & numbers",
-              "API access & webhooks",
-              "Dedicated onboarding",
-            ], color: J.surya },
-          ].map(p => (
-            <div key={p.name} style={{
-              background: J.vault, border: `1px solid ${p.popular ? p.color : J.border}`,
-              borderRadius: 16, padding: 32,
-              boxShadow: p.popular ? `0 0 0 1px ${p.color}` : "none",
-              position: "relative",
+          <p style={{ color: P.mid, fontSize: 16, lineHeight: 1.7, marginBottom: 40 }}>
+            Join hundreds of Telugu businesses using Nikki to answer every call, book more appointments, and grow revenue — without hiring another receptionist.
+          </p>
+          <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+            <a href="/signup" style={{
+              padding: "16px 36px", borderRadius: 12,
+              background: `linear-gradient(135deg, ${P.acc}, ${P.glow})`,
+              color: "#fff", fontSize: 16, fontWeight: 800, textDecoration: "none",
+              boxShadow: `0 12px 40px ${P.acc}55`,
             }}>
-              {p.popular && (
-                <div style={{
-                  position: "absolute", top: -12, right: 24,
-                  background: J.grad, color: J.bg,
-                  padding: "4px 14px", borderRadius: 12,
-                  fontSize: 11, fontWeight: 800, letterSpacing: 1,
-                }}>MOST POPULAR</div>
-              )}
-              <div style={{ marginBottom: 24 }}>
-                <h3 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 8px", color: p.color }}>{p.name}</h3>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span style={{ fontSize: 44, fontWeight: 900, color: J.chandra }}>₹{p.price.toLocaleString()}</span>
-                  <span style={{ fontSize: 14, color: J.textMid }}>/month</span>
-                </div>
-                <div style={{ fontSize: 13, color: J.textDim, marginTop: 4 }}>{p.mins} minutes included</div>
-              </div>
-              <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px" }}>
-                {p.features.map(f => (
-                  <li key={f} style={{
-                    display: "flex", gap: 10, alignItems: "center",
-                    padding: "8px 0", fontSize: 14, color: J.chandra,
-                  }}>
-                    <span style={{ color: p.color, fontWeight: 800 }}>✓</span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <Button primary={p.popular} href="/signup">
-                Start Free Trial
-              </Button>
-            </div>
+              Start Free Trial — No Card Needed
+            </a>
+            <a href="/contact" style={{
+              padding: "16px 28px", borderRadius: 12,
+              border: `1px solid ${P.bord}`, color: P.mid,
+              fontSize: 15, fontWeight: 600, textDecoration: "none",
+            }}>
+              Talk to Sales
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── FOOTER ────────────────────────────────────── */}
+      <footer style={{
+        padding: "40px 5vw", borderTop: `1px solid ${P.bord}`,
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        flexWrap: "wrap", gap: 20,
+      }}>
+        <NikkiLogo size={28} showText variant="horizontal" dark />
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          {[
+            ["Privacy Policy", "/privacy"],
+            ["Terms of Service", "/terms"],
+            ["Refund Policy", "/refund-policy"],
+            ["Contact", "/contact"],
+          ].map(([l, h]) => (
+            <a key={l} href={h} style={{
+              color: P.dim, fontSize: 12, textDecoration: "none",
+              transition: "color 0.2s",
+            }}
+              onMouseEnter={e => (e.currentTarget.style.color = P.mid)}
+              onMouseLeave={e => (e.currentTarget.style.color = P.dim)}>
+              {l}
+            </a>
           ))}
         </div>
-      </section>
-
-      <section style={{ padding: mobile ? "72px 20px" : "120px 5%", textAlign: "center", maxWidth: 800, margin: "0 auto" }}>
-        <h2 style={{ fontSize: 56, fontWeight: 900, margin: "0 0 24px", letterSpacing: -2 }}>
-          Stop missing calls.<br />
-          Start with{" "}
-          <span style={{
-            background: J.grad, WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-          }}>Nikki</span>.
-        </h2>
-        <p style={{ fontSize: 18, color: J.textMid, marginBottom: 40 }}>
-          Free for 14 days. No credit card required.
-        </p>
-        <Button primary href="/signup">Start Free Trial →</Button>
-      </section>
-
-      <footer style={{
-        padding: "48px 5%", background: J.vault,
-        borderTop: `1px solid ${J.border}`, textAlign: "center",
-      }}>
-        <Logo size={36} />
-        <p style={{ fontSize: 13, color: J.textDim, marginTop: 20 }}>
-          © 2026 Nikki Technologies · Made in India 🇮🇳 · jovio.in
-        </p>
-        <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, fontSize: 13 }}>
-          <a href="/privacy" style={{ color: J.textMid, textDecoration: "none" }}>Privacy</a>
-          <a href="/terms" style={{ color: J.textMid, textDecoration: "none" }}>Terms</a>
-          <a href="/refund-policy" style={{ color: J.textMid, textDecoration: "none" }}>Refunds</a>
-          <a href="mailto:hello@jovio.in" style={{ color: J.textMid, textDecoration: "none" }}>hello@jovio.in</a>
+        <div style={{ color: P.dim, fontSize: 12 }}>
+          © 2026 Hey Nikki · Made with ❤️ in Hyderabad
         </div>
       </footer>
-
-      <VoiceWidget />
-
     </div>
   );
 }

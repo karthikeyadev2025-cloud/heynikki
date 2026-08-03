@@ -47,7 +47,8 @@ function KPI({ value, label, color, icon }: { value: any; label: string; color: 
   );
 }
 
-const TABS = ["📡 Dashboard","🏢 Tenants","📞 Live Calls","💰 Revenue","🔌 API Health","📣 Broadcast"];
+const TABS = ["📡 Dashboard","🏢 Tenants","📞 Live Calls","💰 Revenue","🔌 API Health","📣 Broadcast","⚙️ Platform Config","📶 FreeSWITCH","💳 Pricing Engine"];
+
 
 export default function SuperAdminPage() {
   const [tab, setTab]           = useState(0);
@@ -78,7 +79,11 @@ export default function SuperAdminPage() {
     <RevenuePanel      key="rev"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
+    <PlatformConfigPanel key="cfg"   token={token} />,
+    <FreeSwitchPanel     key="fs"    token={token} />,
+    <PricingEnginePanel  key="price" token={token} />,
   ];
+
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh",
@@ -685,6 +690,428 @@ function BroadcastPanel({ token }: { token: string }) {
           {sending ? "Sending..." : "Send Broadcast"}
         </button>
       </Card>
+    </div>
+  );
+}
+
+// ── PILL TOGGLE COMPONENT ──────────────────────────────────────
+function PillToggle({ options, value, onChange }: {
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: "inline-flex", background: C.hi, borderRadius: 8,
+      border: "1px solid " + C.bord, padding: 3, gap: 2 }}>
+      {options.map(opt => (
+        <button key={opt.value} onClick={() => onChange(opt.value)} style={{
+          padding: "6px 18px", borderRadius: 6, border: "none", fontSize: 12,
+          fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+          background: value === opt.value ? C.glow : "transparent",
+          color: value === opt.value ? "#fff" : C.mid,
+          boxShadow: value === opt.value ? "0 0 16px " + C.glow + "66" : "none",
+        }}>{opt.label}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── PLATFORM CONFIG PANEL ─────────────────────────────────────
+function PlatformConfigPanel({ token }: { token: string }) {
+  const [cfg, setCfg]     = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saved, setSaved]   = useState<string | null>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/platform/config`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.json()).then((rows: any[]) => {
+      const m: Record<string, string> = {};
+      for (const r of rows) m[r.key] = r.value;
+      setCfg(m);
+    });
+  }, [token, API_URL]);
+
+  const saveKey = async (key: string, value: string) => {
+    setSaving(key);
+    await fetch(`${API_URL}/api/platform/config`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    setCfg(prev => ({ ...prev, [key]: value }));
+    setSaving(null);
+    setSaved(key);
+    setTimeout(() => setSaved(null), 2000);
+  };
+
+  const Row = ({ label, desc, children }: { label: string; desc: string; children: React.ReactNode }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "16px 0", borderBottom: "1px solid " + C.bord + "44" }}>
+      <div>
+        <div style={{ color: C.txt, fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{label}</div>
+        <div style={{ color: C.dim, fontSize: 11 }}>{desc}</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {children}
+        {saved === label && <span style={{ color: C.grn, fontSize: 11 }}>✓ Saved</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ color: C.txt, fontSize: 16, fontWeight: 900, marginBottom: 4 }}>⚙️ Platform Config</div>
+      <div style={{ color: C.dim, fontSize: 12, marginBottom: 20 }}>
+        Toggle engines, configure URLs, and set global defaults — no redeployment needed.
+      </div>
+
+      {cfg["telephony_engine"] === "exotel" && (
+        <div style={{ background: C.gold + "22", border: "1px solid " + C.gold + "44",
+          borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.gold, marginBottom: 16 }}>
+          ⚠️ Exotel mode is active — inbound calls route through Exotel, not FreeSWITCH.
+        </div>
+      )}
+
+      <Card>
+        <Row label="Telephony Engine" desc="FreeSWITCH = Jio/Vi SIP primary. Exotel = legacy fallback.">
+          <PillToggle
+            options={[{ label: "FreeSWITCH", value: "freeswitch" }, { label: "Exotel", value: "exotel" }]}
+            value={cfg["telephony_engine"] || "freeswitch"}
+            onChange={v => saveKey("telephony_engine", v)}
+          />
+        </Row>
+
+        <Row label="Automation Engine" desc="Routes WhatsApp/automation webhooks to selected engine.">
+          <PillToggle
+            options={[{ label: "n8n", value: "n8n" }, { label: "Activepieces", value: "activepieces" }]}
+            value={cfg["automation_engine"] || "n8n"}
+            onChange={v => saveKey("automation_engine", v)}
+          />
+        </Row>
+
+        <Row label="Primary SIP Trunk" desc="Which carrier gets inbound calls first.">
+          <PillToggle
+            options={[{ label: "Jio", value: "jio" }, { label: "Vi", value: "vi" }]}
+            value={cfg["sip_primary"] || "jio"}
+            onChange={v => saveKey("sip_primary", v)}
+          />
+        </Row>
+
+        <Row label="Global Missed Call Guard" desc="Default: trigger 20s safety net on all DIDs.">
+          <PillToggle
+            options={[{ label: "ON", value: "true" }, { label: "OFF", value: "false" }]}
+            value={cfg["missed_call_guard"] || "true"}
+            onChange={v => saveKey("missed_call_guard", v)}
+          />
+          <input
+            type="number" min={5} max={60}
+            value={cfg["missed_call_seconds"] || "20"}
+            onChange={e => setCfg(p => ({ ...p, missed_call_seconds: e.target.value }))}
+            onBlur={e => saveKey("missed_call_seconds", e.target.value)}
+            style={{ width: 60, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+              borderRadius: 6, padding: "6px 8px", fontSize: 12, textAlign: "center" }}
+          />
+          <span style={{ color: C.dim, fontSize: 11 }}>sec</span>
+        </Row>
+
+        {(["n8n_url", "activepieces_url", "r2_public_url"] as const).map(key => (
+          <Row key={key} label={key.replace(/_/g, " ").toUpperCase()} desc={`Internal URL for ${key}`}>
+            <input
+              value={cfg[key] || ""}
+              onChange={e => setCfg(p => ({ ...p, [key]: e.target.value }))}
+              onBlur={e => saveKey(key, e.target.value)}
+              style={{ width: 260, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+                borderRadius: 6, padding: "7px 10px", fontSize: 12 }}
+            />
+          </Row>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ── FREESWITCH PANEL ──────────────────────────────────────────
+function FreeSwitchPanel({ token }: { token: string }) {
+  const [fsData, setFsData]   = useState<any>(null);
+  const [dids, setDids]       = useState<any[]>([]);
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing]   = useState<string | null>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  const loadFS = async () => {
+    const [fs, d, t] = await Promise.all([
+      fetch(`${API_URL}/api/admin/freeswitch/status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).catch(() => null),
+      sb.from("dids").select("*, tenants(name)").order("created_at", { ascending: false }),
+      sb.from("tenants").select("id, name").eq("status", "active"),
+    ]);
+    setFsData(fs);
+    setDids(d.data || []);
+    setTenants(t.data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadFS(); const t = setInterval(loadFS, 10000); return () => clearInterval(t); }, []);
+
+  const hangupChannel = async (uuid: string) => {
+    setActing(uuid);
+    await fetch(`${API_URL}/api/admin/freeswitch/hangup-channel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ uuid }),
+    });
+    await loadFS(); setActing(null);
+  };
+
+  const reloadDialplan = async () => {
+    setActing("reload");
+    await fetch(`${API_URL}/api/admin/freeswitch/reload-dialplan`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` },
+    });
+    setActing(null);
+  };
+
+  const assignDid = async (didId: string, tenantId: string) => {
+    await sb.from("dids").update({ tenant_id: tenantId, status: "assigned", assigned_at: new Date().toISOString() }).eq("id", didId);
+    await loadFS();
+  };
+
+  const statusColor = (s: string) => s === "registered" ? C.grn : s === "unregistered" ? C.gold : C.red;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ color: C.txt, fontSize: 16, fontWeight: 900 }}>📶 FreeSWITCH Control</div>
+          <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
+            {fsData?.alive ? "🟢 FreeSWITCH reachable" : "🔴 FreeSWITCH unreachable"} · Refreshing every 10s
+          </div>
+        </div>
+        <button onClick={reloadDialplan} disabled={acting === "reload"} style={{
+          background: C.glow + "22", color: C.gbr, border: "1px solid " + C.glow + "44",
+          borderRadius: 7, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+        }}>
+          {acting === "reload" ? "Reloading..." : "🔄 Reload Dialplan"}
+        </button>
+      </div>
+
+      {/* SIP Trunk Status */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        {(fsData?.trunks || [{ name: "Jio Enterprise", status: "unknown", gateway: "jio_primary" },
+                              { name: "Vi Business", status: "unknown", gateway: "vi_failover" }]).map((trunk: any) => (
+          <Card key={trunk.gateway}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ color: C.txt, fontSize: 13, fontWeight: 700 }}>{trunk.name}</div>
+                <div style={{ color: C.dim, fontSize: 10, marginTop: 2 }}>{trunk.gateway}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%",
+                  background: statusColor(trunk.status),
+                  boxShadow: "0 0 8px " + statusColor(trunk.status) }} />
+                <Pill label={trunk.status} color={statusColor(trunk.status)} />
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Active Channels */}
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
+          Active Channels ({(fsData?.channels || []).length})
+        </div>
+        {(fsData?.channels || []).length === 0 ? (
+          <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: "20px 0" }}>No active calls</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>{["UUID", "Caller", "Called", "Direction", "Duration", ""].map(h => (
+                <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                  padding: "6px 10px", textAlign: "left", borderBottom: "1px solid " + C.bord }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {(fsData?.channels || []).map((ch: any) => (
+                <tr key={ch.uuid} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                  <td style={{ padding: "8px 10px", color: C.dim, fontSize: 10, fontFamily: "monospace" }}>{ch.uuid?.slice(0,8)}…</td>
+                  <td style={{ padding: "8px 10px", color: C.txt, fontSize: 12 }}>{ch.caller_number}</td>
+                  <td style={{ padding: "8px 10px", color: C.mid, fontSize: 12 }}>{ch.called_number}</td>
+                  <td style={{ padding: "8px 10px" }}><Pill label={ch.direction} color={ch.direction === "inbound" ? C.grn : C.gold} /></td>
+                  <td style={{ padding: "8px 10px", color: C.gbr, fontSize: 12, fontWeight: 700 }}>{ch.duration_sec}s</td>
+                  <td style={{ padding: "8px 10px" }}>
+                    <button onClick={() => hangupChannel(ch.uuid)} disabled={acting === ch.uuid}
+                      style={{ background: C.red + "22", color: C.red, border: "1px solid " + C.red + "44",
+                        borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                      Hangup
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      {/* DID Management */}
+      <Card>
+        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>DID Inventory</div>
+        {loading ? <div style={{ color: C.dim, textAlign: "center", padding: 20 }}>Loading...</div> : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>{["Number", "Provider", "Tenant", "Routing", "Status", "Monthly Cost", "Action"].map(h => (
+                <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                  padding: "6px 10px", textAlign: "left", borderBottom: "1px solid " + C.bord }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {dids.map((did: any) => (
+                <tr key={did.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                  <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 700 }}>{did.number}</td>
+                  <td style={{ padding: "10px" }}><Pill label={did.provider} color={C.cyn} /></td>
+                  <td style={{ padding: "10px", color: C.mid, fontSize: 12 }}>{did.tenants?.name || "—"}</td>
+                  <td style={{ padding: "10px" }}><Pill label={did.routing_mode || "ai"} color={C.gbr} /></td>
+                  <td style={{ padding: "10px" }}>
+                    <Pill label={did.status} color={did.status === "assigned" ? C.grn : did.status === "available" ? C.gold : C.dim} />
+                  </td>
+                  <td style={{ padding: "10px", color: C.grn, fontSize: 12, fontWeight: 700 }}>
+                    ₹{((did.monthly_cost_paise || 199900) / 100).toLocaleString()}/mo
+                  </td>
+                  <td style={{ padding: "10px" }}>
+                    <select defaultValue="" onChange={e => e.target.value && assignDid(did.id, e.target.value)}
+                      style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
+                        borderRadius: 5, padding: "4px 8px", fontSize: 11, cursor: "pointer" }}>
+                      <option value="" disabled>Assign to…</option>
+                      {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ── PRICING ENGINE PANEL ──────────────────────────────────────
+function PricingEnginePanel({ token }: { token: string }) {
+  const [plans, setPlans]   = useState<any[]>([]);
+  const [edited, setEdited] = useState<Record<string, any>>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved]   = useState(false);
+
+  useEffect(() => {
+    sb.from("plans").select("*").then(({ data }) => setPlans(data || []));
+  }, []);
+
+  const set = (planId: string, field: string, val: any) => {
+    setEdited(prev => ({ ...prev, [planId]: { ...(prev[planId] || {}), [field]: val } }));
+  };
+
+  const saveAll = async () => {
+    setSaving(true);
+    for (const [planId, changes] of Object.entries(edited)) {
+      await sb.from("plans").update(changes).eq("id", planId);
+    }
+    const { data } = await sb.from("plans").select("*");
+    setPlans(data || []);
+    setEdited({});
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const val = (plan: any, field: string) =>
+    edited[plan.id]?.[field] ?? plan[field];
+
+  const Input = ({ plan, field, prefix = "", suffix = "" }: { plan: any; field: string; prefix?: string; suffix?: string }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+      {prefix && <span style={{ color: C.dim, fontSize: 11 }}>{prefix}</span>}
+      <input
+        type="number"
+        value={field.includes("paise") ? Math.round(val(plan, field) / 100) : val(plan, field)}
+        onChange={e => set(plan.id, field, field.includes("paise") ? parseInt(e.target.value) * 100 : parseInt(e.target.value))}
+        style={{ width: 80, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+          borderRadius: 6, padding: "5px 8px", fontSize: 12, textAlign: "right" }}
+      />
+      {suffix && <span style={{ color: C.dim, fontSize: 11 }}>{suffix}</span>}
+    </div>
+  );
+
+  const PLAN_COLORS: Record<string, string> = { trial: C.dim, starter: C.mid, growth: C.gbr, scale: C.gold };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <div style={{ color: C.txt, fontSize: 16, fontWeight: 900 }}>💳 Pricing Engine</div>
+          <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
+            Edit pricing live — changes take effect immediately. No redeployment.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {saved && <span style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>✓ Saved!</span>}
+          <button onClick={saveAll} disabled={saving || Object.keys(edited).length === 0} style={{
+            background: C.glow, color: "#fff", border: "none", borderRadius: 7,
+            padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+            opacity: saving || Object.keys(edited).length === 0 ? 0.5 : 1,
+          }}>
+            {saving ? "Saving..." : "Save All Changes"}
+          </button>
+        </div>
+      </div>
+
+      {/* Plans table */}
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>{["Plan", "Monthly (₹)", "Annual (₹)", "Minutes", "Max Profiles", "Max DIDs", "Concurrent", "Recording Days"].map(h => (
+                <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                  padding: "8px 12px", textAlign: "left", borderBottom: "1px solid " + C.bord, whiteSpace: "nowrap" }}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {plans.map(plan => (
+                <tr key={plan.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
+                  <td style={{ padding: "12px" }}>
+                    <Pill label={plan.id} color={PLAN_COLORS[plan.id] || C.mid} />
+                  </td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="price_monthly_paise" prefix="₹" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="price_annual_paise" prefix="₹" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="minutes_per_month" suffix="min" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_voice_profiles" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_phone_numbers" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_concurrent_calls" /></td>
+                  <td style={{ padding: "12px" }}><Input plan={plan} field="recording_days" suffix="d" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Product pricing cards */}
+      <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>Product Unit Pricing</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+        {[
+          { label: "AI Telecaller Unit",    icon: "🤖", color: C.glow, price: "₹5,999/mo" },
+          { label: "Human CRM Seat",        icon: "👤", color: C.gbr,  price: "₹1,999/mo" },
+          { label: "Dedicated Jio DID",     icon: "📞", color: C.grn,  price: "₹1,999/mo" },
+        ].map(p => (
+          <Card key={p.label}>
+            <div style={{ fontSize: 24, marginBottom: 8 }}>{p.icon}</div>
+            <div style={{ color: C.mid, fontSize: 11, marginBottom: 4 }}>{p.label}</div>
+            <div style={{ color: p.color, fontSize: 22, fontWeight: 900 }}>{p.price}</div>
+            <div style={{ color: C.dim, fontSize: 10, marginTop: 4 }}>Update in Plans table above</div>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

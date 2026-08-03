@@ -93,6 +93,58 @@ export default function LeadsPage() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // Click-to-Call + Disposition state
+  const [ctcActive, setCtcActive] = useState<{ lead: Lead; ctcLogId?: string } | null>(null);
+  const [dispModal, setDispModal] = useState<{ lead: Lead; ctcLogId: string } | null>(null);
+  const [dispNotes, setDispNotes] = useState("");
+  const [ctcLoading, setCtcLoading] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+
+  const handleClickToCall = async (lead: Lead) => {
+    setCtcLoading(lead.id);
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    try {
+      const resp = await fetch(`${API}/api/calls/click-to-call`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_number: lead.phone, lead_id: lead.id }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setCtcActive({ lead, ctcLogId: data.ctc_log_id });
+        showToast(`📞 Calling ${lead.name || lead.phone}...`);
+        // Auto-show disposition modal after 30 seconds
+        setTimeout(() => {
+          setCtcActive(null);
+          if (data.ctc_log_id) setDispModal({ lead, ctcLogId: data.ctc_log_id });
+        }, 30000);
+      } else {
+        showToast(`❌ ${data.error || "Call failed"}`);
+      }
+    } catch (e: any) {
+      showToast(`❌ ${e.message}`);
+    }
+    setCtcLoading(null);
+  };
+
+  const submitDisposition = async (disposition: string) => {
+    if (!dispModal) return;
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    await fetch(`${API}/api/calls/disposition`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ctc_log_id: dispModal.ctcLogId, disposition, notes: dispNotes }),
+    });
+    showToast(`✅ Disposition saved: ${disposition}`);
+    setDispModal(null);
+    setDispNotes("");
+    load();
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,6 +200,55 @@ export default function LeadsPage() {
 
   return (
     <Shell>
+      {/* Toast */}
+      {toast && (
+        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999,
+          background: C.surf, border: "1px solid " + C.bord, borderRadius: 10,
+          padding: "12px 20px", color: C.txt, fontSize: 13, fontWeight: 700,
+          boxShadow: "0 8px 32px #0008" }}>{toast}</div>
+      )}
+
+      {/* Disposition modal */}
+      {dispModal && (
+        <div style={{ position: "fixed", inset: 0, background: "#07070D99", zIndex: 999,
+          display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: C.surf, border: "1px solid " + C.bord,
+            borderRadius: 12, padding: 28, width: 440, boxShadow: "0 20px 60px #0008" }}>
+            <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>📋 Call Disposition</div>
+            <div style={{ color: C.mid, fontSize: 12, marginBottom: 20 }}>
+              {dispModal.lead.name || dispModal.lead.phone} — How did the call go?
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              {[
+                { label: "✅ Interested",     value: "interested",     color: C.grn  },
+                { label: "📅 Booked",         value: "booked",         color: C.gbr  },
+                { label: "🔄 Call Back",       value: "callback",       color: C.gold },
+                { label: "❌ Not Interested",  value: "not_interested", color: C.dim  },
+                { label: "📵 No Answer",       value: "no_answer",      color: C.mid  },
+                { label: "📵 Busy",            value: "busy",           color: C.mid  },
+              ].map(d => (
+                <button key={d.value} onClick={() => submitDisposition(d.value)} style={{
+                  background: d.color + "22", color: d.color,
+                  border: "1px solid " + d.color + "44",
+                  borderRadius: 8, padding: "12px 10px", fontSize: 13,
+                  fontWeight: 700, cursor: "pointer", textAlign: "center"
+                }}>{d.label}</button>
+              ))}
+            </div>
+            <textarea value={dispNotes} onChange={e => setDispNotes(e.target.value)}
+              placeholder="Add notes (optional)…" rows={3}
+              style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+                borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 12,
+                resize: "vertical", marginBottom: 12 }} />
+            <button onClick={() => { setDispModal(null); setDispNotes(""); }}
+              style={{ background: "none", color: C.dim, border: "1px solid " + C.bord,
+                borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer" }}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ padding: 24, maxWidth: 1060 }}>
         <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>
           Leads
@@ -290,20 +391,58 @@ export default function LeadsPage() {
                     )}
                   </div>
 
-                  {/* stage control */}
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    {STAGES.map(s => (
-                      <button key={s.id}
-                        onClick={() => updateLead(l.id, { stage: s.id })}
-                        title={`Mark ${s.label}`}
-                        style={{
-                          background: l.stage === s.id ? s.color + "26" : "transparent",
-                          color: l.stage === s.id ? s.color : C.dim,
-                          border: `1px solid ${l.stage === s.id ? s.color + "66" : C.bord}`,
-                          borderRadius: 7, padding: "5px 10px", fontSize: 11,
-                          fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                        }}>{s.label}</button>
-                    ))}
+                  {/* stage control + click-to-call */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                    {/* Click-to-Call button */}
+                    <button
+                      onClick={() => handleClickToCall(l)}
+                      disabled={ctcLoading === l.id || ctcActive?.lead.id === l.id}
+                      style={{
+                        background: C.grn + "22", color: C.grn,
+                        border: "1px solid " + C.grn + "44",
+                        borderRadius: 7, padding: "7px 14px", fontSize: 12,
+                        fontWeight: 700, cursor: "pointer",
+                        opacity: ctcLoading === l.id ? 0.7 : 1,
+                        display: "flex", alignItems: "center", gap: 5,
+                      }}>
+                      {ctcLoading === l.id ? "⏳ Dialing..." :
+                       ctcActive?.lead.id === l.id ? "📞 Active Call" : "📞 Call Lead"}
+                    </button>
+                    {/* Disposition trigger */}
+                    {ctcActive?.lead.id === l.id && (
+                      <button onClick={() => { setCtcActive(null); setDispModal({ lead: l, ctcLogId: ctcActive.ctcLogId! }); }}
+                        style={{ background: C.gold + "22", color: C.gold, border: "1px solid " + C.gold + "44",
+                          borderRadius: 7, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        📋 Log Disposition
+                      </button>
+                    )}
+                    {/* Stage buttons */}
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      {STAGES.map(s => (
+                        <button key={s.id}
+                          onClick={() => updateLead(l.id, { stage: s.id })}
+                          title={`Mark ${s.label}`}
+                          style={{
+                            background: l.stage === s.id ? s.color + "26" : "transparent",
+                            color: l.stage === s.id ? s.color : C.dim,
+                            border: `1px solid ${l.stage === s.id ? s.color + "66" : C.bord}`,
+                            borderRadius: 7, padding: "5px 10px", fontSize: 11,
+                            fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                          }}>{s.label}</button>
+                      ))}
+                    </div>
+                    {/* Score progress bar */}
+                    <div style={{ width: 160, marginTop: 4 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ color: C.dim, fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em" }}>Score</span>
+                        <span style={{ color: scoreColor(l.score), fontSize: 9, fontWeight: 700 }}>{l.score}/100</span>
+                      </div>
+                      <div style={{ height: 4, background: C.bord, borderRadius: 2 }}>
+                        <div style={{ width: l.score + "%", height: "100%", borderRadius: 2,
+                          background: scoreColor(l.score), transition: "width 0.4s ease",
+                          boxShadow: l.score >= 70 ? "0 0 8px " + C.grn + "88" : "none" }} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

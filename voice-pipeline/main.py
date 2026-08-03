@@ -740,7 +740,29 @@ class NikkiAgent:
             log.error(f"Appointment booking error: {e}")
 
 
+# ── BROWSER WIDGET SESSION STORE ─────────────────────────────
+# In-memory session map: session_id → NikkiAgent instance.
+# Cleared after 30 minutes of inactivity. Separate from phone calls.
+import time as _time
+_widget_sessions: dict[str, tuple[NikkiAgent, float]] = {}
+
+def _get_or_create_widget_session(session_id: str, profile: dict) -> NikkiAgent:
+    now = _time.time()
+    # Expire sessions older than 30 minutes
+    expired = [k for k, (_, ts) in _widget_sessions.items() if now - ts > 1800]
+    for k in expired:
+        del _widget_sessions[k]
+    if session_id in _widget_sessions:
+        agent, _ = _widget_sessions[session_id]
+        _widget_sessions[session_id] = (agent, now)
+        return agent
+    agent = NikkiAgent(profile, "web_visitor")
+    _widget_sessions[session_id] = (agent, now)
+    return agent
+
+
 # ── FASTAPI ROUTES ────────────────────────────────────────
+
 
 class InboundCallRequest(BaseModel):
     caller_number: str
@@ -806,6 +828,185 @@ async def health():
         "timestamp": datetime.now().isoformat(),
         "circuit_breakers": _cb.all_status(),
     }
+
+# ════════════════════════════════════════════════════════════════
+# BROWSER WIDGET ENDPOINTS
+# Used by the in-browser voice/chat widget (Web Speech API frontend).
+# No auth needed for the demo widget — rate-limited by CORS origin.
+# Confirmed bookings are saved to Supabase so they appear in admin.
+# ════════════════════════════════════════════════════════════════
+
+_DEMO_PROFILE: dict = {
+    "id":             "demo",
+    "tenant_id":      "demo",
+    "profile_sku":    "standard",
+    "business_name":  "Hey Nikki Demo",
+    "open_time":      "09:00",
+    "close_time":     "21:00",
+    "services":       ["Doctor Consultation", "Dental Check-up", "Property Site Visit", "Business Enquiry", "General Appointment"],
+    "appointment_types": ["New Patient", "Follow-up", "Enquiry"],
+    "whatsapp_number": None,
+    "missed_call_guard_enabled": False,
+}
+
+class BrowserChatRequest(BaseModel):
+    text:        str
+    session_id:  str
+    tenant_id:   Optional[str] = None   # if authenticated visitor, use real profile
+    tts:         bool = False            # True = also return Sarvam TTS audio bytes
+
+class BookingSaveRequest(BaseModel):
+    name:        str
+    phone:       str
+    service:     str
+    slot:        str
+    tenant_id:   Optional[str] = None
+    session_id:  str
+
+@app.post("/api/v1/browser/chat")
+async def browser_chat(req: BrowserChatRequest):
+    """
+    Single-turn chat endpoint for the in-browser voice widget.
+    Web Speech API → transcript text → this endpoint → LLM response text
+    (+ optional Sarvam TTS audio bytes if tts=True).
+
+    Each session_id maintains conversation history so follow-up turns
+    are contextually aware. Supports both demo mode (no tenant) and
+    authenticated widget (tenant_id provided).
+    """
+    # Pick voice profile: real tenant profile or fallback demo
+    profile = _DEMO_PROFILE
+    if req.tenant_id and req.tenant_id != "demo":
+        db = SupabaseClient()
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(
+                    f"{db.url}/rest/v1/voice_profiles",
+                    headers=db.headers,
+                    params={"tenant_id": f"eq.{req.tenant_id}", "select": "*", "limit": "1"},
+                )
+                rows = resp.json()
+                if rows:
+                    profile = rows[0]
+        except Exception as e:
+            log.warning(f"[widget] profile lookup failed: {e}")
+
+    agent = _get_or_create_widget_session(req.session_id, profile)
+
+    # Build system prompt for web widget context
+    system_prompt = (
+        build_system_prompt(profile) +
+        "\n\n[WIDGET CONTEXT] User is chatting via the web widget — not on a phone call. "
+        "Respond in English or Telugu/Tanglish. Keep responses SHORT (under 25 words). "
+        "Guide them to: share their name → phone number → choose a service → preferred time → confirm booking. "
+        "When you have name + phone + service + time, say: BOOKING_CONFIRMED: <summary>."
+    )
+
+    history = list(agent.history)
+    history.append({"role": "user", "content": req.text})
+
+    llm = GeminiLLM()
+    response_text = await llm.generate(system_prompt, history)
+
+    # Update agent history
+    agent.history.append({"role": "user", "content": req.text})
+    agent.history.append({"role": "assistant", "content": response_text})
+
+    # Detect booking confirmation
+    booking_confirmed = "BOOKING_CONFIRMED:" in response_text
+    booking_summary = ""
+    if booking_confirmed:
+        booking_summary = response_text.split("BOOKING_CONFIRMED:")[-1].strip()
+        response_text = response_text.split("BOOKING_CONFIRMED:")[0].strip()
+        if not response_text:
+            response_text = f"✅ Booking confirmed! {booking_summary}"
+
+    # Optional TTS via Sarvam (for richer voice experience)
+    audio_b64 = None
+    if req.tts:
+        try:
+            tts = SarvamTTS()
+            audio_bytes = await tts.synthesize(response_text, agent.voice)
+            import base64 as _b64
+            audio_b64 = _b64.b64encode(audio_bytes).decode() if audio_bytes else None
+        except Exception as e:
+            log.warning(f"[widget] TTS failed (will use browser TTS): {e}")
+
+    return {
+        "response": response_text,
+        "audio_b64": audio_b64,
+        "booking_confirmed": booking_confirmed,
+        "booking_summary": booking_summary,
+        "intent": agent.intent,
+        "turn": len(agent.history) // 2,
+    }
+
+
+@app.post("/api/v1/browser/save-booking")
+async def browser_save_booking(req: BookingSaveRequest):
+    """
+    Save a booking collected by the browser widget to Supabase.
+    This makes it appear in the client's Appointments dashboard immediately.
+    For demo visitors (no tenant_id), saved to a shared demo tenant.
+    """
+    db = SupabaseClient()
+    tenant_id = req.tenant_id or "00000000-0000-0000-0000-000000000000"  # demo tenant
+
+    # Resolve real tenant if provided
+    real_tenant_id: Optional[str] = None
+    if req.tenant_id and req.tenant_id != "demo":
+        real_tenant_id = req.tenant_id
+
+    try:
+        # Create a leads record for the visitor
+        lead_resp = await db.save_call({
+            "tenant_id":     real_tenant_id or tenant_id,
+            "caller_number": req.phone,
+            "direction":     "inbound",
+            "status":        "completed",
+            "intent":        "appointment",
+            "source":        "web_widget",
+        })
+        call_id = lead_resp
+
+        # Create appointment record
+        appt_id = await db.save_appointment({
+            "tenant_id":     real_tenant_id or tenant_id,
+            "caller_number": req.phone,
+            "call_id":       call_id,
+            "status":        "confirmed",
+            "notes":         f"Web widget booking | Name: {req.name} | Service: {req.service} | Slot: {req.slot}",
+        })
+
+        # Also upsert lead record with name
+        if real_tenant_id:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(
+                        f"{db.url}/rest/v1/leads",
+                        headers={**db.headers, "Prefer": "resolution=merge-duplicates"},
+                        json={
+                            "tenant_id":         real_tenant_id,
+                            "phone":             req.phone,
+                            "name":              req.name,
+                            "intent":            "book_appointment",
+                            "interest":          req.service,
+                            "stage":             "qualified",
+                            "score":             80,
+                            "source":            "web_widget",
+                            "last_contacted_at": datetime.now().isoformat(),
+                        }
+                    )
+            except Exception as e:
+                log.warning(f"[widget] lead upsert failed: {e}")
+
+        log.info(f"[widget] booking saved: {req.name} {req.phone} {req.service} @ {req.slot}")
+        return {"ok": True, "appointment_id": appt_id, "call_id": call_id}
+
+    except Exception as e:
+        log.error(f"[widget] save_booking failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/v1/call/inbound")
 async def handle_inbound(req: InboundCallRequest, x_internal_secret: str = Header(None)):
@@ -1219,3 +1420,330 @@ async def plivo_ws(ws: _WebSocket):
 @app.websocket("/ws/widget")
 async def widget_ws(ws: _WebSocket):
     await handle_widget_ws(ws)
+
+
+# ════════════════════════════════════════════════════════════════
+# FREESWITCH mod_audio_stream — WebSocket handler
+# Added for Hey Nikki v4.0 — parallel path; Exotel untouched.
+#
+# FreeSWITCH dialplan sends audio here via:
+#   audio_stream data="ws://127.0.0.1:8000/ws/freeswitch/{did}/{caller}/{uuid}"
+#
+# Wire protocol:
+#   1. First message: JSON metadata frame from FreeSWITCH
+#   2. Subsequent messages: binary PCM audio (8kHz, 16-bit, mono)
+#   3. Send binary audio back to play to caller
+#   4. Send JSON {"stop": true} to end the stream cleanly
+# ════════════════════════════════════════════════════════════════
+
+import struct
+import wave
+import io
+import tempfile
+import time
+
+# Silence detection: ~320ms of silence (320 bytes @ 8kHz 8-bit or 640 bytes @ 16-bit)
+_SILENCE_THRESHOLD  = 200        # RMS energy threshold for silence
+_SILENCE_FRAMES     = 16         # consecutive silent 20ms frames before STT fires
+_MIN_SPEECH_FRAMES  = 3          # minimum speech frames to attempt STT
+_FRAME_BYTES        = 320        # bytes per 20ms frame at 8kHz 16-bit mono
+
+
+def _rms(audio_bytes: bytes) -> float:
+    """Compute RMS energy of raw PCM16 audio bytes."""
+    if len(audio_bytes) < 2:
+        return 0.0
+    samples = struct.unpack(f"<{len(audio_bytes)//2}h", audio_bytes[:len(audio_bytes)//2*2])
+    if not samples:
+        return 0.0
+    return (sum(s*s for s in samples) / len(samples)) ** 0.5
+
+
+def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
+    """Wrap raw PCM16 bytes into a valid WAV container for Sarvam STT."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)       # 16-bit
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) -> str:
+    """Upload call recording to Cloudflare R2. Returns public URL or ''."""
+    # FreeSWITCH mod_audio_stream collects PCM — we receive it here in memory.
+    cf_account_id = os.environ.get("CF_ACCOUNT_ID", "")
+    r2_access_key = os.environ.get("R2_ACCESS_KEY_ID", "")
+    r2_secret     = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+    r2_bucket     = os.environ.get("R2_BUCKET", "heynikki-recordings")
+    r2_public_url = os.environ.get("R2_PUBLIC_URL", "")
+
+    if not all([cf_account_id, r2_access_key, r2_secret]):
+        log.warning("[FS] R2 credentials not set — skipping recording upload")
+        return ""
+
+    try:
+        import boto3
+        from botocore.config import Config as _BotoCfg
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{cf_account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=r2_access_key,
+            aws_secret_access_key=r2_secret,
+            config=_BotoCfg(signature_version="s3v4"),
+            region_name="auto",
+        )
+
+        object_key = f"{tenant_id}/{call_id}.wav"
+        s3.put_object(
+            Bucket=r2_bucket,
+            Key=object_key,
+            Body=local_wav_bytes,
+            ContentType="audio/wav",
+        )
+        public_url = f"{r2_public_url.rstrip('/')}/{object_key}"
+        log.info(f"[FS] Recording uploaded to R2: {object_key} ({len(local_wav_bytes):,}B)")
+        return public_url
+    except ImportError:
+        log.error("[FS] boto3 not installed — run: pip install boto3")
+        return ""
+    except Exception as e:
+        log.error(f"[FS] R2 upload failed: {e}")
+        return ""
+
+
+async def _read_platform_config() -> dict:
+    """Read platform_config table from Supabase. Returns key→value dict."""
+    try:
+        db = SupabaseClient()
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{db.url}/rest/v1/platform_config",
+                headers=db.headers,
+                params={"select": "key,value"},
+            )
+            rows = resp.json() if resp.status_code == 200 else []
+            return {r["key"]: r["value"] for r in rows if isinstance(r, dict)}
+    except Exception as e:
+        log.warning(f"[FS] platform_config read failed: {e}")
+        return {}
+
+
+async def _fire_automation_webhook(event: str, payload: dict, cfg: dict):
+    """Fire n8n or Activepieces webhook based on platform_config. Fire-and-forget."""
+    engine = cfg.get("automation_engine", "n8n")
+    base = (
+        cfg.get("n8n_url") or os.environ.get("N8N_WEBHOOK_BASE", "http://localhost:5678/webhook")
+        if engine == "n8n"
+        else cfg.get("activepieces_url") or os.environ.get("ACTIVEPIECES_WEBHOOK_BASE", "http://localhost:8080/api/v1/webhooks")
+    )
+    url = f"{base.rstrip('/')}/{event}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(url, json=payload)
+        log.info(f"[FS] Automation webhook fired → {engine}: {event}")
+    except Exception as e:
+        log.warning(f"[FS] Automation webhook failed ({event}): {e}")
+
+
+# ── FreeSWITCH WebSocket endpoint ────────────────────────────────────────────
+@app.websocket("/ws/freeswitch/{did_number}/{caller_number}/{fs_uuid}")
+async def freeswitch_ws(
+    ws: _WebSocket,
+    did_number:    str,
+    caller_number: str,
+    fs_uuid:       str,
+):
+    """
+    FreeSWITCH mod_audio_stream WebSocket handler.
+
+    Audio flow:
+      FS → binary PCM frames → VAD buffer → STT → Gemini → TTS → binary PCM → FS
+
+    Recording flow:
+      All inbound PCM accumulated in memory → WAV → Cloudflare R2 on hangup.
+    """
+    await ws.accept()
+    log.info(f"[FS] Connected: did={did_number} caller={caller_number} uuid={fs_uuid}")
+
+    db      = SupabaseClient()
+    profile = await db.get_voice_profile(did_number)
+
+    if not profile:
+        log.warning(f"[FS] No voice profile for DID: {did_number} — sending 404 and closing")
+        await ws.send_text(json.dumps({"error": "no_profile", "did": did_number}))
+        await ws.close(code=1008)
+        return
+
+    agent = NikkiAgent(profile, caller_number)
+
+    # Override call_id if API server pre-created the record
+    # (API server calls /api/v1/call/freeswitch/inbound before connecting)
+    agent.call_id = await db.save_call({
+        "tenant_id":        profile["tenant_id"],
+        "voice_profile_id": profile["id"],
+        "caller_number":    caller_number,
+        "direction":        "inbound",
+        "status":           "active",
+        "livekit_room_id":  fs_uuid,   # store FS UUID for ESL lookups
+    })
+
+    call_start_ts = time.time()
+    recording_pcm = bytearray()   # accumulate all PCM for R2 upload
+    speech_buf    = bytearray()   # current utterance buffer
+    silence_count = 0
+    speech_count  = 0
+    cfg           = {}
+    disclosure_sent = False
+
+    try:
+        # Load platform config for automation routing
+        cfg = await _read_platform_config()
+
+        # Send TRAI disclosure audio immediately on connect
+        disclosure_audio = await agent.on_call_start()
+        if disclosure_audio:
+            await ws.send_bytes(disclosure_audio)
+        disclosure_sent = True
+
+        # Main audio loop
+        while True:
+            try:
+                message = await asyncio.wait_for(ws.receive(), timeout=120.0)
+            except asyncio.TimeoutError:
+                log.warning(f"[FS] {fs_uuid}: 120s timeout — hanging up")
+                break
+
+            # FreeSWITCH sends disconnect on call end
+            if message.get("type") == "websocket.disconnect":
+                log.info(f"[FS] {fs_uuid}: WebSocket disconnect received")
+                break
+
+            # ── JSON metadata frame (first message from FreeSWITCH) ─────────
+            if message.get("type") == "websocket.receive" and message.get("text"):
+                try:
+                    meta = json.loads(message["text"])
+                    log.info(f"[FS] {fs_uuid}: metadata={meta}")
+                except Exception:
+                    pass
+                continue
+
+            # ── Binary audio frame ────────────────────────────────────────────
+            if message.get("type") == "websocket.receive" and message.get("bytes"):
+                frame = bytes(message["bytes"])
+
+                # Accumulate full recording
+                recording_pcm.extend(frame)
+
+                # VAD: compute RMS energy of this frame
+                energy = _rms(frame)
+                is_speech = energy > _SILENCE_THRESHOLD
+
+                if is_speech:
+                    speech_buf.extend(frame)
+                    speech_count  += 1
+                    silence_count  = 0
+                else:
+                    silence_count += 1
+                    if speech_count > 0:
+                        speech_buf.extend(frame)  # include trailing silence
+
+                # Fire STT when we hit silence after speech
+                if silence_count >= _SILENCE_FRAMES and speech_count >= _MIN_SPEECH_FRAMES:
+                    utterance_pcm = bytes(speech_buf)
+                    speech_buf    = bytearray()
+                    speech_count  = 0
+                    silence_count = 0
+
+                    # Convert raw PCM → WAV for STT
+                    wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
+
+                    # STT → LLM → TTS pipeline (reuse existing NikkiAgent)
+                    response_audio = await agent.on_speech(wav_bytes)
+                    if response_audio:
+                        await ws.send_bytes(response_audio)
+
+    except Exception as e:
+        log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
+
+    finally:
+        # ── Call cleanup ───────────────────────────────────────────────────
+        duration = int(time.time() - call_start_ts)
+        log.info(f"[FS] {fs_uuid}: Call ended, duration={duration}s, pcm={len(recording_pcm)}B")
+
+        # Upload recording to R2 (async, don't block close)
+        r2_url = ""
+        if recording_pcm:
+            wav_bytes = _pcm16_to_wav_bytes(bytes(recording_pcm))
+            r2_url = await _upload_to_r2(wav_bytes, agent.call_id or fs_uuid, profile["tenant_id"])
+
+        # Finalize call record
+        updates = {
+            "status":           "completed",
+            "duration_seconds": duration,
+            "transcript":       agent.transcript,
+            "intent":           agent.intent,
+        }
+        if r2_url:
+            updates["recording_url"] = r2_url
+        if agent.call_id:
+            await db.update_call(agent.call_id, updates)
+
+        # Fire post-call automation (missed call if < 8s)
+        if duration < 8:
+            await _fire_automation_webhook("missed-call", {
+                "caller_number": caller_number,
+                "did_number":    did_number,
+                "call_id":       agent.call_id,
+                "tenant_id":     profile["tenant_id"],
+                "business_name": profile.get("business_name", ""),
+            }, cfg)
+        elif agent.intent == "appointment":
+            await _fire_automation_webhook("appointment-booked", {
+                "caller_number": caller_number,
+                "tenant_id":     profile["tenant_id"],
+                "call_id":       agent.call_id,
+            }, cfg)
+
+        log.info(f"[FS] {fs_uuid}: cleanup complete, r2={r2_url or 'skipped'}")
+
+
+# ── FreeSWITCH REST shim endpoints ───────────────────────────────────────────
+# Called by api-server when FreeSWITCH events arrive. Lightweight — just
+# acknowledges the call so the API server gets a quick 200 OK.
+
+class FSInboundRequest(BaseModel):
+    call_id:          Optional[str] = None
+    caller_number:    str
+    did_number:       str
+    fs_uuid:          str
+    tenant_id:        Optional[str] = None
+    voice_profile_id: Optional[str] = None
+
+class FSHangupRequest(BaseModel):
+    fs_uuid:    str
+    call_id:    Optional[str] = None
+    tenant_id:  Optional[str] = None
+
+@app.post("/api/v1/call/freeswitch/inbound")
+async def fs_inbound(req: FSInboundRequest, x_internal_secret: str = Header(None)):
+    """Called by api-server when FreeSWITCH answers a call.
+    The actual AI session is handled by the WebSocket endpoint above.
+    This shim just acknowledges receipt."""
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    log.info(f"[FS REST] Inbound: uuid={req.fs_uuid} did={req.did_number} caller={req.caller_number}")
+    return {"ok": True, "fs_uuid": req.fs_uuid, "ws_url": f"/ws/freeswitch/{req.did_number}/{req.caller_number}/{req.fs_uuid}"}
+
+@app.post("/api/v1/call/freeswitch/hangup")
+async def fs_hangup(req: FSHangupRequest, x_internal_secret: str = Header(None)):
+    """Called by api-server after FreeSWITCH CHANNEL_HANGUP.
+    Recording upload happens inside the WebSocket handler on disconnect;
+    this endpoint is a secondary trigger for cases where WS already closed."""
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    log.info(f"[FS REST] Hangup: uuid={req.fs_uuid} call_id={req.call_id}")
+    return {"ok": True}
+

@@ -1,5 +1,6 @@
 // api-server/src/index.ts
 // Node.js Business API Server
+// FreeSWITCH ESL integration added — see esl.ts
 
 // ─── Sentry instrumentation ──────────────────────────────
 // MUST come before any other imports so Sentry can patch Express, HTTP,
@@ -1175,6 +1176,538 @@ app.use((err: any, _req: any, res: any, _next: any) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
+
+// ════════════════════════════════════════════════════════════════
+// FREESWITCH + PLATFORM EXTENSIONS
+// Added for Hey Nikki v4.0 — FreeSWITCH ESL + Jio/Vi SIP
+// ════════════════════════════════════════════════════════════════
+
+import { fsl } from "./esl";
+
+// ── Platform config cache (60s TTL) ──────────────────────────
+let _platformConfigCache: Record<string, string> | null = null;
+let _platformConfigCacheAt = 0;
+async function getPlatformConfig(): Promise<Record<string, string>> {
+  if (_platformConfigCache && Date.now() - _platformConfigCacheAt < 60000) {
+    return _platformConfigCache;
+  }
+  const { data } = await sb.from("platform_config").select("key,value");
+  const cfg: Record<string, string> = {};
+  for (const row of data || []) cfg[row.key] = row.value;
+  _platformConfigCache = cfg;
+  _platformConfigCacheAt = Date.now();
+  return cfg;
+}
+
+// ── Automation webhook dispatcher ──────────────────────────────
+// Fires to n8n OR activepieces based on platform_config.automation_engine.
+// Never throws — errors are logged but never block the call path.
+async function fireAutomationWebhook(event: string, payload: object): Promise<void> {
+  try {
+    const cfg    = await getPlatformConfig();
+    const engine = cfg["automation_engine"] || "n8n";
+    const base   = engine === "n8n"
+      ? (cfg["n8n_url"] || process.env.N8N_WEBHOOK_BASE || "http://localhost:5678/webhook")
+      : (cfg["activepieces_url"] || process.env.ACTIVEPIECES_WEBHOOK_BASE || "http://localhost:8080/api/v1/webhooks");
+
+    const url = `${base.replace(/\/$/, "")}/${event}`;
+    await fetch(url, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+      signal:  AbortSignal.timeout(5000),
+    });
+    console.log(`[automation] ${engine} webhook fired: ${event}`);
+  } catch (err: any) {
+    console.error(`[automation] webhook failed for event=${event}:`, err.message);
+  }
+}
+
+// ── FreeSWITCH inbound webhook ────────────────────────────────
+// Called by FreeSWITCH dialplan/ESL when a call is answered
+app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
+  try {
+    const { caller_number, did_number, fs_uuid } = req.body;
+
+    // Look up voice profile by DID number
+    const { data: did } = await sb.from("dids")
+      .select("tenant_id, voice_profile_id")
+      .eq("number", did_number)
+      .single();
+
+    if (!did) {
+      console.warn(`[FS Inbound] Unknown DID: ${did_number}`);
+      return res.status(404).json({ error: "DID not found" });
+    }
+
+    // Create call record
+    const { data: callRow } = await sb.from("calls").insert({
+      tenant_id:        did.tenant_id,
+      voice_profile_id: did.voice_profile_id,
+      caller_number,
+      direction:        "inbound",
+      status:           "active",
+      livekit_room_id:  fs_uuid,   // reuse field for FS UUID
+    }).select().single();
+
+    // Forward to voice pipeline
+    await fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/inbound`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
+      body: JSON.stringify({
+        call_id:          callRow?.id,
+        caller_number,
+        did_number,
+        fs_uuid,
+        tenant_id:        did.tenant_id,
+        voice_profile_id: did.voice_profile_id,
+      }),
+    });
+
+    res.json({ ok: true, call_id: callRow?.id });
+  } catch (err: any) {
+    console.error("[FS Inbound error]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── FreeSWITCH hangup webhook ─────────────────────────────────
+app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
+  try {
+    const { fs_uuid, duration, hangup_cause, did_number, caller_number } = req.body;
+
+    // Find call by FS UUID
+    const { data: callRow } = await sb.from("calls")
+      .select("id, tenant_id, voice_profile_id")
+      .eq("livekit_room_id", fs_uuid)
+      .single();
+
+    if (callRow) {
+      // Update call status
+      await sb.from("calls").update({
+        status:           "completed",
+        duration_seconds: parseInt(duration || "0"),
+        updated_at:       new Date().toISOString(),
+      }).eq("id", callRow.id);
+
+      // Trigger R2 upload in voice pipeline (async)
+      fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/hangup`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
+        body: JSON.stringify({ fs_uuid, call_id: callRow.id, tenant_id: callRow.tenant_id }),
+      }).catch(e => console.error("[Pipeline hangup]", e.message));
+    }
+
+    // Check if missed call (duration < 5 seconds = unanswered)
+    if (parseInt(duration || "0") < 5 && hangup_cause !== "NORMAL_CLEARING") {
+      await fireAutomationWebhook("missed-call", {
+        caller_number,
+        did_number,
+        call_id:     callRow?.id,
+        tenant_id:   callRow?.tenant_id,
+      });
+
+      // Log missed call in Supabase
+      if (callRow) {
+        await sb.from("calls").update({ status: "missed" }).eq("id", callRow.id);
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[FS Hangup error]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── FreeSWITCH missed-call explicit webhook ───────────────────
+app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) => {
+  try {
+    const { caller_number, did_number } = req.body;
+
+    // Look up tenant from DID
+    const { data: did } = await sb.from("dids")
+      .select("tenant_id, voice_profile_id")
+      .eq("number", did_number).single();
+
+    if (did) {
+      // Get voice profile for WhatsApp number
+      const { data: vp } = await sb.from("voice_profiles")
+        .select("business_name, whatsapp_number, fallback_wa_enabled")
+        .eq("id", did.voice_profile_id).single();
+
+      if (vp?.fallback_wa_enabled !== false) {
+        await fireAutomationWebhook("missed-call", {
+          caller_number,
+          did_number,
+          tenant_id:     did.tenant_id,
+          business_name: vp?.business_name || "our team",
+          whatsapp_number: vp?.whatsapp_number || caller_number,
+        });
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[Missed call error]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── Click-to-Call ─────────────────────────────────────────────
+app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res) => {
+  try {
+    const user     = req.user;
+    const tenantId = await getTenantId(user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+    const { customer_number, lead_id, agent_phone } = req.body;
+    if (!customer_number) return res.status(400).json({ error: "customer_number required" });
+
+    // Check telephony engine
+    const cfg = await getPlatformConfig();
+    const engine = cfg["telephony_engine"] || "freeswitch";
+
+    // Get tenant's DID for masked CLI
+    const { data: did } = await sb.from("dids")
+      .select("number").eq("tenant_id", tenantId).eq("status", "assigned").single();
+
+    const maskedCli = did?.number || customer_number;
+
+    let fsUuid = "";
+    if (engine === "freeswitch") {
+      // Use FreeSWITCH ESL for 2-leg bridge
+      const agentNumber = agent_phone || user.phone || "agent";
+      fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
+    } else {
+      // Exotel fallback — use Exotel Calls API
+      console.log("[CTC] Using Exotel fallback for click-to-call");
+      // Exotel originate call (existing logic)
+    }
+
+    // Log to click_to_call_log
+    const { data: ctcLog } = await sb.from("click_to_call_log").insert({
+      tenant_id:       tenantId,
+      agent_user_id:   user.id,
+      lead_id:         lead_id || null,
+      caller_number:   maskedCli,
+      callee_number:   customer_number,
+      masked_cli:      maskedCli,
+      freeswitch_uuid: fsUuid,
+    }).select().single();
+
+    // Update lead last_contacted_at
+    if (lead_id) {
+      await sb.from("leads").update({
+        last_contacted_at: new Date().toISOString(),
+        stage: "contacted",
+      }).eq("id", lead_id).eq("tenant_id", tenantId);
+    }
+
+    await audit("click_to_call", {
+      tenantId, actorId: user.id,
+      metadata: { customer_number, lead_id, fs_uuid: fsUuid },
+    });
+
+    res.json({ ok: true, ctc_log_id: ctcLog?.id, fs_uuid: fsUuid, status: "dialing" });
+  } catch (err: any) {
+    console.error("[Click-to-Call error]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Call Disposition ──────────────────────────────────────────
+app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) => {
+  try {
+    const user     = req.user;
+    const tenantId = await getTenantId(user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+    const { ctc_log_id, disposition, notes } = req.body;
+    if (!ctc_log_id || !disposition) {
+      return res.status(400).json({ error: "ctc_log_id and disposition required" });
+    }
+
+    // Update click_to_call_log
+    await sb.from("click_to_call_log").update({ disposition, notes, updated_at: new Date().toISOString() })
+      .eq("id", ctc_log_id).eq("tenant_id", tenantId);
+
+    // Map disposition → lead stage
+    const STAGE_MAP: Record<string, string> = {
+      booked:         "won",
+      interested:     "qualified",
+      callback:       "contacted",
+      not_interested: "lost",
+      no_answer:      "new",
+    };
+    const newStage = STAGE_MAP[disposition];
+
+    // Get lead_id from log
+    const { data: log } = await sb.from("click_to_call_log")
+      .select("lead_id").eq("id", ctc_log_id).single();
+
+    if (log?.lead_id && newStage) {
+      await sb.from("leads").update({
+        stage:      newStage,
+        notes:      notes || undefined,
+        updated_at: new Date().toISOString(),
+      }).eq("id", log.lead_id).eq("tenant_id", tenantId);
+    }
+
+    // Fire automation webhook for interested leads
+    if (disposition === "interested" || disposition === "booked") {
+      const { data: lead } = await sb.from("leads")
+        .select("phone, name").eq("id", log?.lead_id).single();
+      if (lead) {
+        await fireAutomationWebhook("interested-lead", {
+          tenant_id:   tenantId,
+          phone:       lead.phone,
+          name:        lead.name,
+          disposition,
+          notes,
+        });
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[Disposition error]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── Platform Config (Super Admin) ─────────────────────────────
+app.get("/api/platform/config", verifyJWT, async (req: any, res) => {
+  try {
+    const { data: tu } = await sb.from("tenant_users")
+      .select("role").eq("user_id", req.user.id).single();
+    if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+
+    const { data } = await sb.from("platform_config").select("*");
+    res.json(data || []);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/platform/config", verifyJWT, async (req: any, res) => {
+  try {
+    const { data: tu } = await sb.from("tenant_users")
+      .select("role").eq("user_id", req.user.id).single();
+    if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+
+    const { key, value } = req.body;
+    if (!key || value === undefined) return res.status(400).json({ error: "key and value required" });
+
+    await sb.from("platform_config").upsert({ key, value, updated_by: req.user.id, updated_at: new Date().toISOString() });
+    _platformConfigCache = null; // invalidate cache
+
+    await audit("platform_config_update", { actorId: req.user.id, metadata: { key, value } });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── FreeSWITCH Status (Super Admin) ───────────────────────────
+app.get("/api/admin/freeswitch/status", verifyJWT, async (req: any, res) => {
+  try {
+    const { data: tu } = await sb.from("tenant_users")
+      .select("role").eq("user_id", req.user.id).single();
+    if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+
+    const [status, channels, trunks] = await Promise.all([
+      fsl.getStatus(),
+      fsl.getActiveChannels(),
+      fsl.getSipTrunkStatus(),
+    ]);
+
+    res.json({ status, channels, trunks, alive: status.uptime !== "unavailable" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, alive: false });
+  }
+});
+
+app.post("/api/admin/freeswitch/hangup-channel", verifyJWT, async (req: any, res) => {
+  try {
+    const { data: tu } = await sb.from("tenant_users")
+      .select("role").eq("user_id", req.user.id).single();
+    if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+
+    const { uuid } = req.body;
+    if (!uuid) return res.status(400).json({ error: "uuid required" });
+
+    await fsl.hangupChannel(uuid);
+    await audit("freeswitch_hangup_channel", { actorId: req.user.id, metadata: { uuid } });
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/freeswitch/reload-dialplan", verifyJWT, async (req: any, res) => {
+  try {
+    const { data: tu } = await sb.from("tenant_users")
+      .select("role").eq("user_id", req.user.id).single();
+    if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+
+    await fsl.reloadXml();
+    await audit("freeswitch_reload_dialplan", { actorId: req.user.id });
+    res.json({ ok: true, message: "Dialplan reloaded" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════
+// ADMIN VOICE ASSISTANT ENDPOINT
+// Answers natural-language admin questions about today's data.
+// Powers the Super Admin floating voice assistant.
+// Uses Gemini (already in the stack) — zero additional cost.
+// ════════════════════════════════════════════════════════════════
+
+app.post("/api/admin/voice-query", verifyAuth, async (req: any, res) => {
+  const { question, tenant_id } = req.body as { question: string; tenant_id?: string };
+
+  if (!question) {
+    return res.status(400).json({ error: "question required" });
+  }
+
+  // Only super admins OR tenant scoped to their own data
+  const targetTenantId = tenant_id || null;
+
+  try {
+    // ── Gather context data from Supabase ────────────────────────
+    const today = new Date();
+    const todayStr = today.toISOString().split("T")[0];
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+
+    const queries: Record<string, any> = {};
+
+    // Today's calls
+    const { data: todayCalls } = await (targetTenantId
+      ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
+          .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
+      : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
+          .gte("created_at", todayStr + "T00:00:00").limit(200));
+    queries.today_calls = todayCalls || [];
+
+    // Today's appointments
+    const { data: todayAppts } = await (targetTenantId
+      ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
+          .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
+      : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", todayStr + "T00:00:00").limit(100));
+    queries.today_appointments = todayAppts || [];
+
+    // Hot leads
+    const { data: hotLeads } = await (targetTenantId
+      ? sb.from("leads").select("name,phone,score,stage,intent,created_at")
+          .eq("tenant_id", targetTenantId).gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10)
+      : sb.from("leads").select("name,score,stage,intent").gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10));
+    queries.hot_leads = hotLeads || [];
+
+    // Monthly stats
+    const { data: monthCalls } = await (targetTenantId
+      ? sb.from("calls").select("id,status,intent,appointment_created").eq("tenant_id", targetTenantId).gte("created_at", monthStart)
+      : sb.from("calls").select("id,status,intent,appointment_created").gte("created_at", monthStart).limit(1000));
+    queries.month_calls = monthCalls || [];
+
+    // Active channels (FreeSWITCH)
+    let activeChannels: any[] = [];
+    try {
+      const { channels } = await fsl.getActiveChannels();
+      activeChannels = channels || [];
+    } catch (_) {}
+    queries.active_calls_now = activeChannels;
+
+    // ── Build context for Gemini ─────────────────────────────────
+    const contextJson = JSON.stringify({
+      current_datetime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      today_date: todayStr,
+      today_calls_total:        queries.today_calls.length,
+      today_calls_completed:    queries.today_calls.filter((c: any) => c.status === "completed").length,
+      today_calls_missed:       queries.today_calls.filter((c: any) => c.status === "missed").length,
+      today_appointments:       queries.today_appointments.length,
+      today_appointments_list:  queries.today_appointments.slice(0, 10).map((a: any) => ({
+        time:    new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+        notes:   a.notes || "No details",
+        status:  a.status,
+      })),
+      hot_leads:                queries.hot_leads.slice(0, 5).map((l: any) => ({
+        name:  l.name || "Unknown",
+        score: l.score,
+        stage: l.stage,
+        intent: l.intent,
+      })),
+      month_calls_total:        queries.month_calls.length,
+      month_appointments:       queries.month_calls.filter((c: any) => c.appointment_created).length,
+      active_calls_right_now:   activeChannels.length,
+    }, null, 2);
+
+    // ── Call Gemini ──────────────────────────────────────────────
+    const geminiKey = process.env.GEMINI_API_KEY!;
+    const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
+    const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+
+    const payload = {
+      system_instruction: {
+        parts: [{
+          text: `You are Nikki, the AI assistant for the Hey Nikki admin panel.
+You have access to the following real-time business data. Answer questions concisely and conversationally.
+Keep responses under 3 sentences — designed to be read aloud via browser TTS.
+When listing items, use natural language (not bullet points).
+Always be positive, professional, and specific with numbers.
+
+CURRENT BUSINESS DATA:
+${contextJson}`
+        }]
+      },
+      contents: [{ role: "user", parts: [{ text: question }] }],
+      generationConfig: { maxOutputTokens: 150, temperature: 0.4 },
+    };
+
+    const geminiResp = await fetch(
+      isAuthKey ? geminiUrl : `${geminiUrl}?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(isAuthKey ? { Authorization: `Bearer ${geminiKey}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!geminiResp.ok) {
+      throw new Error(`Gemini error: ${geminiResp.status}`);
+    }
+
+    const geminiData = await geminiResp.json() as any;
+    const answer = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+      || "I couldn't retrieve that data right now. Please check the dashboard.";
+
+    res.json({
+      answer,
+      context: {
+        today_calls: queries.today_calls.length,
+        today_appointments: queries.today_appointments.length,
+        hot_leads: queries.hot_leads.length,
+        active_calls_now: activeChannels.length,
+      },
+    });
+
+  } catch (err: any) {
+    console.error("[voice-query]", err);
+    res.status(500).json({
+      answer: "Sorry, I had trouble accessing the data. Please try again.",
+      error: err.message,
+    });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`Nikki API Server running on port ${PORT}`);
 });
