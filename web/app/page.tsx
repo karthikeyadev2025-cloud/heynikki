@@ -278,7 +278,7 @@ export default function LandingPage() {
           </div>
 
           {/* Right Hero: Live Voice Agent */}
-          <div id="demo" style={{ display: "flex", flexDirect: "column", alignItems: "center" }}>
+          <div id="demo" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             <VoiceChatWidget />
           </div>
         </div>
