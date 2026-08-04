@@ -3,14 +3,15 @@ import { useState, useEffect } from "react";
 import NikkiLogo from "../components/NikkiLogo";
 import VoiceChatWidget from "../components/VoiceChatWidget";
 
-// ── Hey Nikki Official Brand Palette ──────────────────────────
-const J = {
+// ── Brand Palette ─────────────────────────────────────────────
+const C = {
   bg:         "#FFFFFF",
   vault:      "#F6F8FB",
   surface:    "#FFFFFF",
   border:     "#E2E8F0",
   borderHi:   "#CBD5E1",
   teal:       "#12457A",
+  tealLight:  "#1D6FA5",
   terracotta: "#E5533D",
   espresso:   "#0F172A",
   textMid:    "#475569",
@@ -18,8 +19,6 @@ const J = {
   gold:       "#F59E0B",
   emerald:    "#10B981",
   cyan:       "#06B6D4",
-  gradTeal:   "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
-  gradHero:   "linear-gradient(180deg, #F6F8FB 0%, #FFFFFF 100%)",
 };
 
 function useScrollY() {
@@ -32,417 +31,463 @@ function useScrollY() {
   return y;
 }
 
-// ── NavBar ───────────────────────────────────────────────────
-function NavBar({ scrollY }: { scrollY: number }) {
-  const solid = scrollY > 40;
-  return (
-    <nav style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "0 5vw", height: 68,
-      background: solid ? "rgba(255, 255, 255, 0.95)" : J.vault,
-      backdropFilter: solid ? "blur(12px)" : "none",
-      borderBottom: `1px solid ${J.border}`,
-      transition: "all 0.25s ease",
-    }}>
-      <NikkiLogo size={38} showText variant="horizontal" dark={false} />
-      
-      <div style={{ display: "flex", gap: 32, alignItems: "center" }}>
-        {[
-          ["Features", "#features"],
-          ["How it works", "#how-it-works"],
-          ["Pricing", "#pricing"],
-          ["Live Demo", "#demo"],
-        ].map(([l, h]) => (
-          <a key={l} href={h}
-            style={{ color: J.espresso, fontSize: 14, textDecoration: "none", fontWeight: 600,
-              transition: "color 0.2s" }}
-            onMouseEnter={e => (e.currentTarget.style.color = J.terracotta)}
-            onMouseLeave={e => (e.currentTarget.style.color = J.espresso)}>
-            {l}
-          </a>
-        ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <a href="/login" style={{
-          padding: "9px 20px", borderRadius: 8, border: `1px solid ${J.borderHi}`,
-          color: J.espresso, fontSize: 13, fontWeight: 700, textDecoration: "none",
-          background: "#FFFFFF", transition: "all 0.2s",
-        }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = J.teal; e.currentTarget.style.color = J.teal; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = J.borderHi; e.currentTarget.style.color = J.espresso; }}>
-          Sign In
-        </a>
-        <a href="/signup" style={{
-          padding: "9px 22px", borderRadius: 8,
-          background: J.terracotta,
-          color: "#FFFFFF", fontSize: 13, fontWeight: 700, textDecoration: "none",
-          boxShadow: "0 4px 14px rgba(229, 83, 61, 0.3)",
-          transition: "transform 0.15s",
-        }}
-          onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-1px)")}
-          onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}>
-          Start Free Trial
-        </a>
-      </div>
-    </nav>
-  );
-}
-
-// ── Feature Card ─────────────────────────────────────────────
-function FeatureCard({ icon, title, desc, tag }: {
-  icon: string; title: string; desc: string; tag?: string;
-}) {
-  return (
-    <div style={{
-      background: J.surface, border: `1px solid ${J.border}`,
-      borderRadius: 14, padding: "28px 24px",
-      transition: "all 0.25s ease",
-      boxShadow: "0 4px 20px rgba(15, 23, 42, 0.03)",
-      position: "relative",
-    }}>
-      {tag && (
-        <span style={{
-          position: "absolute", top: 16, right: 16,
-          background: J.vault, border: `1px solid ${J.borderHi}`,
-          color: J.teal, fontSize: 10, fontWeight: 800,
-          padding: "2px 8px", borderRadius: 10, textTransform: "uppercase",
-        }}>{tag}</span>
-      )}
-      <div style={{
-        width: 48, height: 48, borderRadius: 12,
-        background: J.vault, border: `1px solid ${J.border}`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 22, marginBottom: 16,
-      }}>{icon}</div>
-      <div style={{ color: J.espresso, fontSize: 16, fontWeight: 800, marginBottom: 8 }}>{title}</div>
-      <div style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6 }}>{desc}</div>
-    </div>
-  );
-}
-
-// ── Stat Item ─────────────────────────────────────────────
-function StatItem({ value, label }: { value: string; label: string }) {
-  return (
-    <div style={{ textAlign: "center" }}>
-      <div style={{ color: J.teal, fontSize: 38, fontWeight: 900, lineHeight: 1 }}>{value}</div>
-      <div style={{ color: J.textMid, fontSize: 13, marginTop: 8, fontWeight: 600 }}>{label}</div>
-    </div>
-  );
-}
-
-// ── Step Card ─────────────────────────────────────────────
-function StepCard({ num, title, desc, icon }: { num: string; title: string; desc: string; icon: string }) {
-  return (
-    <div style={{
-      background: J.surface, border: `1px solid ${J.border}`, borderRadius: 14,
-      padding: "28px 22px", position: "relative",
-      boxShadow: "0 4px 16px rgba(0,0,0,0.02)",
-    }}>
-      <div style={{
-        color: J.terracotta, fontSize: 12, fontWeight: 900,
-        marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.1em",
-      }}>STEP {num}</div>
-      <div style={{ fontSize: 26, marginBottom: 12 }}>{icon}</div>
-      <div style={{ color: J.espresso, fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{title}</div>
-      <div style={{ color: J.textMid, fontSize: 13, lineHeight: 1.6 }}>{desc}</div>
-    </div>
-  );
-}
-
-// ── Pricing Card ──────────────────────────────────────────
-function PricingCard({ plan, price, features, highlight = false, badge }: {
-  plan: string; price: string; features: string[]; highlight?: boolean; badge?: string;
-}) {
-  return (
-    <div style={{
-      background: highlight ? J.teal : J.surface,
-      border: `1px solid ${highlight ? J.teal : J.border}`,
-      borderRadius: 16, padding: "32px 26px",
-      color: highlight ? "#FFFFFF" : J.espresso,
-      position: "relative",
-      boxShadow: highlight ? "0 20px 40px rgba(18, 69, 122, 0.25)" : "0 4px 20px rgba(0,0,0,0.04)",
-      transform: highlight ? "scale(1.03)" : "none",
-    }}>
-      {badge && (
-        <div style={{
-          position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)",
-          background: J.terracotta, color: "#FFFFFF", fontSize: 11, fontWeight: 800,
-          padding: "4px 14px", borderRadius: 20, textTransform: "uppercase",
-        }}>{badge}</div>
-      )}
-      <div style={{ color: highlight ? "rgba(255,255,255,0.8)" : J.textMid, fontSize: 13,
-        fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{plan}</div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginBottom: 24 }}>
-        <span style={{ fontSize: 36, fontWeight: 900 }}>{price}</span>
-        {price !== "Custom" && <span style={{ fontSize: 13, opacity: 0.8, marginBottom: 6 }}>/month</span>}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 28 }}>
-        {features.map(f => (
-          <div key={f} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span style={{ color: highlight ? "#FFFFFF" : J.emerald, fontSize: 14, fontWeight: 900 }}>✓</span>
-            <span style={{ fontSize: 13, opacity: highlight ? 0.95 : 0.85, lineHeight: 1.4 }}>{f}</span>
-          </div>
-        ))}
-      </div>
-      <a href="/signup" style={{
-        display: "block", padding: "12px 0", borderRadius: 8, textAlign: "center",
-        background: highlight ? J.terracotta : J.vault,
-        border: highlight ? "none" : `1px solid ${J.borderHi}`,
-        color: highlight ? "#FFFFFF" : J.espresso,
-        fontSize: 14, fontWeight: 700, textDecoration: "none",
-        transition: "all 0.2s",
-      }}>
-        {highlight ? "Start 14-Day Free Trial →" : "Get Started"}
-      </a>
-    </div>
-  );
-}
-
-// ── MAIN LANDING PAGE ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// LANDING PAGE
+// ══════════════════════════════════════════════════════════════
 export default function LandingPage() {
   const scrollY = useScrollY();
+  const solid = scrollY > 40;
 
   return (
     <div style={{
-      background: J.bg, minHeight: "100vh",
+      background: C.bg, minHeight: "100vh",
       fontFamily: "'Inter', -apple-system, sans-serif",
-      color: J.espresso, overflowX: "hidden",
+      color: C.espresso, overflowX: "hidden",
     }}>
-      <NavBar scrollY={scrollY} />
+      <style>{`
+        @keyframes hero-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+        @keyframes hero-glow { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
+        @keyframes fade-up { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slide-in { from{opacity:0;transform:translateX(-20px)} to{opacity:1;transform:translateX(0)} }
+        html { scroll-behavior: smooth; }
+      `}</style>
 
-      {/* ── HERO SECTION ────────────────────────────────── */}
-      <section style={{
-        background: J.gradHero,
-        padding: "130px 5vw 80px",
-        borderBottom: `1px solid ${J.border}`,
+      {/* ═══ NAVBAR ═══════════════════════════════════════ */}
+      <nav style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "0 5vw", height: 68,
+        background: solid ? "rgba(255,255,255,0.96)" : "transparent",
+        backdropFilter: solid ? "blur(16px) saturate(180%)" : "none",
+        borderBottom: solid ? `1px solid ${C.border}` : "1px solid transparent",
+        transition: "all 0.3s ease",
       }}>
+        <NikkiLogo size={38} showText variant="horizontal" dark={false} />
+
+        <div style={{ display: "flex", gap: 30, alignItems: "center" }}>
+          {[
+            ["Features", "#features"],
+            ["How It Works", "#how-it-works"],
+            ["Pricing", "#pricing"],
+            ["Live Demo", "#demo"],
+          ].map(([label, href]) => (
+            <a key={label} href={href} style={{
+              color: C.textMid, fontSize: 14, textDecoration: "none",
+              fontWeight: 600, transition: "color 0.2s",
+            }}
+              onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.color = C.terracotta; }}
+              onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.color = C.textMid; }}
+            >{label}</a>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <a href="/login" style={{
+            padding: "9px 20px", borderRadius: 8,
+            border: `1px solid ${C.borderHi}`, background: "#fff",
+            color: C.espresso, fontSize: 13, fontWeight: 700,
+            textDecoration: "none", transition: "all 0.2s",
+          }}>Sign In</a>
+          <a href="/signup" style={{
+            padding: "9px 22px", borderRadius: 8,
+            background: C.terracotta, color: "#fff",
+            fontSize: 13, fontWeight: 700, textDecoration: "none",
+            boxShadow: "0 4px 16px rgba(229,83,61,0.3)",
+          }}>Start Free Trial</a>
+        </div>
+      </nav>
+
+      {/* ═══ HERO ═════════════════════════════════════════ */}
+      <section style={{
+        background: `linear-gradient(175deg, ${C.vault} 0%, #EFF4F9 40%, #FFFFFF 100%)`,
+        padding: "140px 5vw 100px",
+        position: "relative", overflow: "hidden",
+      }}>
+        {/* Decorative gradient blobs */}
+        <div style={{
+          position: "absolute", top: -100, right: -80,
+          width: 400, height: 400, borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(229,83,61,0.06) 0%, transparent 70%)",
+          animation: "hero-glow 6s ease-in-out infinite",
+        }} />
+        <div style={{
+          position: "absolute", bottom: -60, left: -60,
+          width: 300, height: 300, borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(18,69,122,0.05) 0%, transparent 70%)",
+        }} />
+
         <div style={{
           maxWidth: 1200, margin: "0 auto",
-          display: "grid", gridTemplateColumns: "1.1fr 0.9fr",
-          gap: 48, alignItems: "center",
+          display: "grid", gridTemplateColumns: "1.15fr 0.85fr",
+          gap: 60, alignItems: "center", position: "relative",
         }}>
-          {/* Left Hero Copy */}
-          <div>
+          {/* Left copy */}
+          <div style={{ animation: "fade-up 0.8s ease-out" }}>
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 8,
-              background: J.vault, border: `1px solid ${J.borderHi}`,
-              borderRadius: 20, padding: "6px 16px", marginBottom: 24,
+              background: "#fff", border: `1px solid ${C.borderHi}`,
+              borderRadius: 24, padding: "6px 18px 6px 6px", marginBottom: 28,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
             }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: J.emerald }} />
-              <span style={{ color: J.teal, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                AI Voice Receptionist · Live in Telugu & English
+              <div style={{
+                width: 22, height: 22, borderRadius: "50%",
+                background: C.emerald, display: "flex",
+                alignItems: "center", justifyContent: "center",
+              }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff" }} />
+              </div>
+              <span style={{
+                color: C.teal, fontSize: 12, fontWeight: 800,
+                textTransform: "uppercase", letterSpacing: "0.06em",
+              }}>
+                AI Voice Receptionist · Telugu & English
               </span>
             </div>
 
             <h1 style={{
-              fontSize: "clamp(34px, 4.5vw, 54px)",
-              fontWeight: 900, lineHeight: 1.12, margin: "0 0 20px",
-              color: J.espresso, letterSpacing: "-0.02em",
+              fontSize: "clamp(36px, 4.5vw, 56px)",
+              fontWeight: 900, lineHeight: 1.1, margin: "0 0 24px",
+              letterSpacing: "-0.03em",
             }}>
-              Never Miss a <span style={{ color: J.terracotta }}>Business Call</span> Again.
+              Your Business Deserves a{" "}
+              <span style={{
+                color: C.terracotta,
+                backgroundImage: `linear-gradient(120deg, ${C.terracotta} 0%, #F97316 100%)`,
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}>24/7 Receptionist.</span>
             </h1>
 
             <p style={{
-              color: J.textMid, fontSize: 17, lineHeight: 1.7, marginBottom: 36,
-              maxWidth: 520, fontWeight: 400,
+              color: C.textMid, fontSize: 17, lineHeight: 1.7,
+              marginBottom: 36, maxWidth: 520,
             }}>
-              Hey Nikki is your 24/7 AI-powered receptionist. She answers calls in sub-second in <strong style={{ color: J.teal }}>Telugu & English</strong>, books appointments, and sends instant WhatsApp follow-ups — using your single dedicated business number.
+              Nikki answers every call in <strong>sub-second</strong> — in natural Telugu & English. She books appointments, sends WhatsApp confirmations, and never takes a day off. All from your <strong>single dedicated business number</strong>.
             </p>
 
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 40 }}>
+            <div style={{ display: "flex", gap: 14, marginBottom: 44, flexWrap: "wrap" }}>
               <a href="/signup" style={{
-                padding: "14px 30px", borderRadius: 8,
-                background: J.terracotta, color: "#FFFFFF",
+                padding: "15px 32px", borderRadius: 10,
+                background: C.terracotta, color: "#fff",
                 fontSize: 15, fontWeight: 800, textDecoration: "none",
-                boxShadow: "0 8px 24px rgba(229, 83, 61, 0.3)",
-              }}>
-                🚀 Start Free Trial
-              </a>
+                boxShadow: "0 8px 24px rgba(229,83,61,0.3)",
+                transition: "transform 0.15s, box-shadow 0.15s",
+              }}
+                onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 12px 32px rgba(229,83,61,0.4)"; }}
+                onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(229,83,61,0.3)"; }}
+              >Start 14-Day Free Trial →</a>
               <a href="#demo" style={{
-                padding: "14px 26px", borderRadius: 8,
-                background: J.vault, border: `1px solid ${J.borderHi}`,
-                color: J.espresso, fontSize: 15, fontWeight: 700, textDecoration: "none",
-              }}>
-                🎙️ Test Live Agent
-              </a>
+                padding: "15px 28px", borderRadius: 10,
+                background: "#fff", border: `1.5px solid ${C.borderHi}`,
+                color: C.teal, fontSize: 15, fontWeight: 700, textDecoration: "none",
+                transition: "border-color 0.2s",
+              }}
+                onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.borderColor = C.teal; }}
+                onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.borderColor = C.borderHi; }}
+              >🎙️ Try Live Demo</a>
             </div>
 
-            {/* Badges */}
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", borderTop: `1px solid ${J.border}`, paddingTop: 24 }}>
-              {["✅ No credit card required", "✅ Single Jio/Vi DID number", "✅ Auto WhatsApp follow-up"].map(b => (
-                <span key={b} style={{ color: J.textMid, fontSize: 12, fontWeight: 600 }}>{b}</span>
+            {/* Trust row */}
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+              {[
+                { icon: "⚡", text: "Sub-Second Response" },
+                { icon: "📱", text: "WhatsApp Auto-Sync" },
+                { icon: "🔒", text: "TRAI Compliant" },
+              ].map(({ icon, text }) => (
+                <div key={text} style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  color: C.textDim, fontSize: 12, fontWeight: 600,
+                }}>
+                  <span style={{ fontSize: 14 }}>{icon}</span> {text}
+                </div>
               ))}
             </div>
           </div>
 
-          {/* Right Hero: Live Voice Agent */}
-          <div id="demo" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          {/* Right: Live Voice Agent Widget */}
+          <div id="demo" style={{
+            display: "flex", flexDirection: "column", alignItems: "center",
+            animation: "hero-float 5s ease-in-out infinite",
+          }}>
             <VoiceChatWidget />
           </div>
         </div>
       </section>
 
-      {/* ── STATS ROW ───────────────────────────────────── */}
+      {/* ═══ STATS ════════════════════════════════════════ */}
       <section style={{
-        padding: "50px 5vw",
-        background: J.vault,
-        borderBottom: `1px solid ${J.border}`,
+        padding: "56px 5vw", background: C.vault,
+        borderTop: `1px solid ${C.border}`,
+        borderBottom: `1px solid ${C.border}`,
       }}>
         <div style={{
           maxWidth: 1100, margin: "0 auto",
           display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 32,
+          textAlign: "center",
         }}>
-          <StatItem value="< 1 sec" label="Sub-second AI answer time" />
-          <StatItem value="24 / 7"  label="Always-on receptionist" />
-          <StatItem value="3×"      label="Higher lead capture rate" />
-          <StatItem value="100%"    label="WhatsApp delivery sync" />
+          {[
+            { val: "< 1s", label: "AI Answer Time" },
+            { val: "24/7", label: "Always Available" },
+            { val: "3×", label: "Lead Capture Rate" },
+            { val: "₹4", label: "Cost Per Call vs ₹35 Human" },
+          ].map(({ val, label }) => (
+            <div key={label}>
+              <div style={{ color: C.teal, fontSize: 40, fontWeight: 900, lineHeight: 1 }}>{val}</div>
+              <div style={{ color: C.textMid, fontSize: 13, marginTop: 8, fontWeight: 600 }}>{label}</div>
+            </div>
+          ))}
         </div>
       </section>
 
-      {/* ── FEATURES GRID ───────────────────────────────── */}
-      <section id="features" style={{ padding: "90px 5vw", background: J.bg }}>
+      {/* ═══ FEATURES ═════════════════════════════════════ */}
+      <section id="features" style={{ padding: "100px 5vw" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 60 }}>
-            <div style={{ color: J.terracotta, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
-              COMPLETE CRM & VOICE PLATFORM
-            </div>
-            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 42px)", fontWeight: 900, color: J.espresso, margin: 0 }}>
-              Two Brains. Two Eyes. <span style={{ color: J.teal }}>One Brand Number.</span>
+          <div style={{ textAlign: "center", marginBottom: 64 }}>
+            <div style={{
+              color: C.terracotta, fontSize: 12, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
+            }}>EVERYTHING YOU NEED</div>
+            <h2 style={{
+              fontSize: "clamp(28px, 3.5vw, 44px)",
+              fontWeight: 900, margin: "0 0 12px", letterSpacing: "-0.02em",
+            }}>
+              Two Brains. One Brand Number.
             </h2>
-            <p style={{ color: J.textMid, fontSize: 15, maxWidth: 620, margin: "12px auto 0", lineHeight: 1.6 }}>
-              AI answers inbound calls sub-second. Your sales team makes human outbound calls via Click-to-Call. Every interaction runs through your single dedicated Jio/Vi virtual number.
+            <p style={{
+              color: C.textMid, fontSize: 16, maxWidth: 640, margin: "0 auto", lineHeight: 1.6,
+            }}>
+              AI handles inbound calls autonomously. Your human team makes outbound calls via Click-to-Call. Every interaction through your single dedicated Jio/Vi number.
             </p>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 20 }}>
-            <FeatureCard icon="🎙️" tag="Sub-Second"
-              title="Telugu & English Voice AI"
-              desc="Nikki speaks natural Telugu, English, and Tanglish with regional accent support. Automatic TRAI disclosure built in." />
-            <FeatureCard icon="📅" tag="Automated"
-              title="Instant Appointment Booking"
-              desc="Captures caller name, preferred date, time slot, and service. Updates your dashboard and confirms via WhatsApp." />
-            <FeatureCard icon="💬" tag="WhatsApp"
-              title="WhatsApp Dispatch Panel"
-              desc="Auto-sends brochure PDFs, appointment confirmations, and missed call follow-ups using approved Meta templates." />
-            <FeatureCard icon="📞" tag="Human CTC"
-              title="Click-to-Call (Masked CLI)"
-              desc="Your human team calls leads straight from the dashboard with masked caller ID and instant disposition logging." />
-            <FeatureCard icon="🔄" tag="Active-Active"
-              title="Jio & Vi Dual Trunk Failover"
-              desc="Primary SIP trunk on Jio Enterprise. Instant active-active failover to Vi Business so you never drop a call." />
-            <FeatureCard icon="📊" tag="ROI Metrics"
-              title="ROI Analytics Dashboard"
-              desc="Tracks human receptionist salary saved (₹35 vs ₹4 AI cost), conversion rates, peak hours, and WhatsApp delivery." />
-            <FeatureCard icon="📵" tag="Missed Guard"
-              title="Missed Call Guard"
-              desc="If a caller hangs up before 20s, Nikki automatically triggers a WhatsApp follow-up message so no lead is lost." />
-            <FeatureCard icon="🔒" tag="Cloudflare R2"
-              title="Encrypted Call Recordings"
-              desc="Every call recorded, encrypted, and offloaded to Cloudflare R2 with zero egress costs and GDPR compliance." />
-            <FeatureCard icon="⚙️" tag="Self-Service"
-              title="Full Self-Service Control"
-              desc="Update FAQs, timings, missed call guard timeouts, and WhatsApp templates right from your client portal." />
+            {[
+              { icon: "🎙️", title: "Telugu & English Voice AI", desc: "Natural Tanglish with గారు honorifics, regional accents, and sub-second response time.", tag: "CORE" },
+              { icon: "📅", title: "Instant Appointment Booking", desc: "Captures name, phone, service, and slot. Books instantly and confirms via WhatsApp.", tag: "AUTO" },
+              { icon: "💬", title: "WhatsApp Dispatch Panel", desc: "Brochure PDFs, appointment confirmations, and missed call follow-ups on approved Meta templates." },
+              { icon: "📞", title: "Click-to-Call with Masked CLI", desc: "Human team calls leads from dashboard. Customer sees your business number, not agent's personal phone." },
+              { icon: "🔄", title: "Jio + Vi Dual Trunk Failover", desc: "Active-active SIP trunk failover. If Jio drops, Vi picks up instantly. Zero missed calls.", tag: "HA" },
+              { icon: "📊", title: "ROI Analytics Dashboard", desc: "Human salary saved (₹35→₹4/call), conversion rates, peak hours, WhatsApp delivery metrics." },
+              { icon: "📵", title: "Missed Call Guard", desc: "Caller hangs up before 20s? Nikki sends a WhatsApp within 30 seconds so no lead is lost." },
+              { icon: "🔒", title: "Encrypted Call Recordings", desc: "Every call recorded, encrypted, uploaded to Cloudflare R2 with zero egress costs." },
+              { icon: "⚙️", title: "Full Self-Service Control", desc: "Update FAQs, business hours, voice profile, missed call timeout, and WhatsApp templates yourself." },
+            ].map(({ icon, title, desc, tag }) => (
+              <div key={title} style={{
+                background: "#fff", border: `1px solid ${C.border}`,
+                borderRadius: 14, padding: "28px 24px",
+                boxShadow: "0 4px 20px rgba(15,23,42,0.03)",
+                transition: "border-color 0.25s, box-shadow 0.25s",
+                position: "relative",
+              }}
+                onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
+                  e.currentTarget.style.borderColor = C.teal + "44";
+                  e.currentTarget.style.boxShadow = "0 8px 32px rgba(18,69,122,0.08)";
+                }}
+                onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
+                  e.currentTarget.style.borderColor = C.border;
+                  e.currentTarget.style.boxShadow = "0 4px 20px rgba(15,23,42,0.03)";
+                }}
+              >
+                {tag && (
+                  <span style={{
+                    position: "absolute", top: 16, right: 16,
+                    background: C.vault, border: `1px solid ${C.borderHi}`,
+                    color: C.teal, fontSize: 9, fontWeight: 800,
+                    padding: "2px 8px", borderRadius: 10, textTransform: "uppercase",
+                  }}>{tag}</span>
+                )}
+                <div style={{
+                  width: 48, height: 48, borderRadius: 12,
+                  background: C.vault, border: `1px solid ${C.border}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 22, marginBottom: 16,
+                }}>{icon}</div>
+                <div style={{ color: C.espresso, fontSize: 16, fontWeight: 800, marginBottom: 8 }}>{title}</div>
+                <div style={{ color: C.textMid, fontSize: 14, lineHeight: 1.6 }}>{desc}</div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── HOW IT WORKS ────────────────────────────────── */}
+      {/* ═══ HOW IT WORKS ═════════════════════════════════ */}
       <section id="how-it-works" style={{
-        padding: "90px 5vw",
-        background: J.vault,
-        borderTop: `1px solid ${J.border}`,
-        borderBottom: `1px solid ${J.border}`,
+        padding: "100px 5vw", background: C.vault,
+        borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 54 }}>
-            <div style={{ color: J.teal, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
-              SIMPLE 4-STEP ONBOARDING
-            </div>
-            <h2 style={{ fontSize: "clamp(24px, 3vw, 38px)", fontWeight: 900, color: J.espresso, margin: 0 }}>
+          <div style={{ textAlign: "center", marginBottom: 60 }}>
+            <div style={{
+              color: C.teal, fontSize: 12, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
+            }}>GET STARTED IN 5 MINUTES</div>
+            <h2 style={{ fontSize: "clamp(26px, 3vw, 40px)", fontWeight: 900, margin: 0 }}>
               How Hey Nikki Works
             </h2>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
-            <StepCard num="01" icon="🏢" title="Configure Profile" desc="Set your business hours, FAQs, services, and preferred voice in 5 minutes." />
-            <StepCard num="02" icon="📞" title="Assign Virtual Number" desc="Get your dedicated Jio/Vi Enterprise SIP trunk virtual DID number." />
-            <StepCard num="03" icon="🤖" title="Nikki Handles Calls" desc="Inbound calls are answered sub-second in Telugu/English with automatic AI logging." />
-            <StepCard num="04" icon="💬" title="WhatsApp & CTC" desc="Confirmed bookings get WhatsApp confirmations; hot leads are handed over to your human sales floor." />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20 }}>
+            {[
+              { num: "01", icon: "🏢", title: "Set Up Profile", desc: "Business hours, FAQs, services, and preferred Telugu voice — done in 5 minutes." },
+              { num: "02", icon: "📞", title: "Get Virtual Number", desc: "Dedicated Jio/Vi Enterprise SIP trunk DID. This becomes your single brand number." },
+              { num: "03", icon: "🤖", title: "Nikki Answers Calls", desc: "Every inbound call answered sub-second in natural Telugu/English with live AI." },
+              { num: "04", icon: "💬", title: "WhatsApp + CRM", desc: "Confirmed bookings get WhatsApp confirmation. Hot leads go to your sales dashboard." },
+            ].map(({ num, icon, title, desc }) => (
+              <div key={num} style={{
+                background: "#fff", border: `1px solid ${C.border}`,
+                borderRadius: 14, padding: "28px 22px",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.02)",
+              }}>
+                <div style={{
+                  color: C.terracotta, fontSize: 11, fontWeight: 900,
+                  textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14,
+                }}>STEP {num}</div>
+                <div style={{ fontSize: 28, marginBottom: 14 }}>{icon}</div>
+                <div style={{ color: C.espresso, fontSize: 15, fontWeight: 800, marginBottom: 8 }}>{title}</div>
+                <div style={{ color: C.textMid, fontSize: 13, lineHeight: 1.6 }}>{desc}</div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── PRICING SECTION ─────────────────────────────── */}
-      <section id="pricing" style={{ padding: "90px 5vw", background: J.bg }}>
+      {/* ═══ PRICING ══════════════════════════════════════ */}
+      <section id="pricing" style={{ padding: "100px 5vw" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 60 }}>
-            <div style={{ color: J.terracotta, fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
-              TRANSPARENT PRICING
-            </div>
-            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 42px)", fontWeight: 900, color: J.espresso, margin: 0 }}>
-              Plans Built for Every Business
+          <div style={{ textAlign: "center", marginBottom: 64 }}>
+            <div style={{
+              color: C.terracotta, fontSize: 12, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
+            }}>TRANSPARENT PRICING</div>
+            <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 900, margin: "0 0 10px" }}>
+              Plans for Every Business Size
             </h2>
-            <p style={{ color: J.textMid, fontSize: 15, margin: "10px auto 0" }}>
-              Start with a 14-day free trial. Upgrade or cancel anytime.
+            <p style={{ color: C.textMid, fontSize: 15 }}>
+              14-day free trial on all plans. No credit card required.
             </p>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 24, alignItems: "center" }}>
-            <PricingCard
-              plan="Starter"
-              price="₹2,999"
-              features={[
-                "1 AI Voice Profile",
-                "500 AI-handled calls/month",
-                "WhatsApp appointment sync",
-                "Basic Lead CRM",
-                "Email & Chat Support",
-              ]} />
-            <PricingCard
-              plan="Growth"
-              price="₹5,999"
-              highlight
-              badge="Most Popular"
-              features={[
-                "3 AI Voice Profiles",
-                "2,000 AI-handled calls/month",
-                "Click-to-Call + Disposition",
-                "WhatsApp Dispatch Panel",
-                "Missed Call Guard",
-                "ROI Analytics Dashboard",
-                "Jio + Vi Dual Trunk Failover",
-              ]} />
-            <PricingCard
-              plan="Scale"
-              price="₹14,999"
-              features={[
-                "Unlimited Voice Profiles",
-                "5,000 AI-handled calls/month",
-                "Dedicated Account Manager",
-                "Custom WhatsApp Templates",
-                "FreeSWITCH ESL Outbound API",
-                "Cloudflare R2 Direct Sync",
-              ]} />
+          <div style={{
+            display: "grid", gridTemplateColumns: "repeat(3,1fr)",
+            gap: 24, alignItems: "stretch",
+          }}>
+            {[
+              {
+                plan: "Starter", price: "₹2,999", highlight: false,
+                features: ["1 Voice Profile", "500 AI Calls/Month", "WhatsApp Booking Sync", "Basic Lead CRM", "Email Support"],
+              },
+              {
+                plan: "Growth", price: "₹5,999", highlight: true, badge: "Most Popular",
+                features: ["3 Voice Profiles", "2,000 AI Calls/Month", "Click-to-Call + Disposition", "WhatsApp Dispatch Panel", "Missed Call Guard", "ROI Analytics", "Jio + Vi Failover"],
+              },
+              {
+                plan: "Scale", price: "₹14,999", highlight: false,
+                features: ["Unlimited Profiles", "5,000 AI Calls/Month", "Dedicated Account Manager", "Custom WhatsApp Templates", "ESL Outbound API", "Cloudflare R2 Sync"],
+              },
+            ].map(({ plan, price, highlight, badge, features }) => (
+              <div key={plan} style={{
+                background: highlight ? C.teal : "#fff",
+                border: `1px solid ${highlight ? C.teal : C.border}`,
+                borderRadius: 16, padding: "36px 28px",
+                color: highlight ? "#fff" : C.espresso,
+                position: "relative",
+                boxShadow: highlight
+                  ? "0 24px 48px rgba(18,69,122,0.25)"
+                  : "0 4px 20px rgba(0,0,0,0.04)",
+                transform: highlight ? "scale(1.03)" : "none",
+              }}>
+                {badge && (
+                  <div style={{
+                    position: "absolute", top: -14, left: "50%",
+                    transform: "translateX(-50%)",
+                    background: C.terracotta, color: "#fff",
+                    fontSize: 11, fontWeight: 800,
+                    padding: "5px 16px", borderRadius: 20,
+                    textTransform: "uppercase",
+                  }}>{badge}</div>
+                )}
+                <div style={{
+                  color: highlight ? "rgba(255,255,255,0.7)" : C.textMid,
+                  fontSize: 13, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.08em", marginBottom: 10,
+                }}>{plan}</div>
+                <div style={{
+                  display: "flex", alignItems: "flex-end", gap: 4, marginBottom: 28,
+                }}>
+                  <span style={{ fontSize: 40, fontWeight: 900, lineHeight: 1 }}>{price}</span>
+                  <span style={{ fontSize: 13, opacity: 0.7, marginBottom: 6 }}>/month</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 32 }}>
+                  {features.map(f => (
+                    <div key={f} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{ color: highlight ? "#fff" : C.emerald, fontSize: 14, fontWeight: 900 }}>✓</span>
+                      <span style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <a href="/signup" style={{
+                  display: "block", padding: "13px 0", borderRadius: 10,
+                  textAlign: "center",
+                  background: highlight ? C.terracotta : C.vault,
+                  border: highlight ? "none" : `1px solid ${C.borderHi}`,
+                  color: highlight ? "#fff" : C.espresso,
+                  fontSize: 14, fontWeight: 800, textDecoration: "none",
+                  boxShadow: highlight ? "0 4px 14px rgba(229,83,61,0.3)" : "none",
+                }}>
+                  {highlight ? "Start Free Trial →" : "Get Started"}
+                </a>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── FOOTER ──────────────────────────────────────── */}
+      {/* ═══ CTA BANNER ═══════════════════════════════════ */}
+      <section style={{
+        padding: "80px 5vw",
+        background: `linear-gradient(135deg, ${C.teal}, ${C.tealLight})`,
+        textAlign: "center",
+      }}>
+        <div style={{ maxWidth: 700, margin: "0 auto" }}>
+          <h2 style={{
+            color: "#fff", fontSize: "clamp(26px, 3vw, 40px)",
+            fontWeight: 900, margin: "0 0 16px", lineHeight: 1.2,
+          }}>
+            Stop Losing Customers to Missed Calls.
+          </h2>
+          <p style={{
+            color: "rgba(255,255,255,0.8)", fontSize: 16,
+            marginBottom: 36, lineHeight: 1.6,
+          }}>
+            Every missed call is a lost customer. Nikki ensures that never happens — answering in Telugu & English, 24 hours a day, 7 days a week.
+          </p>
+          <a href="/signup" style={{
+            display: "inline-block", padding: "16px 36px", borderRadius: 10,
+            background: C.terracotta, color: "#fff",
+            fontSize: 16, fontWeight: 800, textDecoration: "none",
+            boxShadow: "0 8px 24px rgba(229,83,61,0.4)",
+          }}>
+            Start Your Free Trial Today →
+          </a>
+        </div>
+      </section>
+
+      {/* ═══ FOOTER ═══════════════════════════════════════ */}
       <footer style={{
-        padding: "40px 5vw", background: J.vault, borderTop: `1px solid ${J.border}`,
-        display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16,
+        padding: "40px 5vw", background: C.vault,
+        borderTop: `1px solid ${C.border}`,
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", flexWrap: "wrap", gap: 16,
       }}>
         <NikkiLogo size={32} showText variant="horizontal" dark={false} />
         <div style={{ display: "flex", gap: 24 }}>
           {["Privacy Policy", "Terms of Service", "Refund Policy", "Contact"].map(l => (
-            <a key={l} href={`/${l.toLowerCase().replace(/ /g,"-")}`} style={{ color: J.textMid, fontSize: 12, textDecoration: "none", fontWeight: 500 }}>
-              {l}
-            </a>
+            <a key={l} href={`/${l.toLowerCase().replace(/ /g, "-")}`} style={{
+              color: C.textMid, fontSize: 12, textDecoration: "none", fontWeight: 500,
+            }}>{l}</a>
           ))}
         </div>
-        <div style={{ color: J.textDim, fontSize: 12 }}>
+        <div style={{ color: C.textDim, fontSize: 12 }}>
           © 2026 Hey Nikki · Enterprise Voice AI & Omnichannel CRM
         </div>
       </footer>
