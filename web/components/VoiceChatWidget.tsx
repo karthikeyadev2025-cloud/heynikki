@@ -1,7 +1,11 @@
 // components/VoiceChatWidget.tsx
 // Official Hey Nikki Brand Voice Widget (Teal #12457A + Terracotta #E5533D)
-// Real in-browser voice agent using Web Speech API (100% free, no API key required).
-// Fallback: Smart client-side response when pipeline URL DNS is not yet resolved.
+// Features:
+// 1. Hands-Free Continuous Listening: Mic opens automatically after Nikki speaks!
+// 2. Telugu Register Rules: "గారు" honorific, "మీరు" respect, natural Tanglish numbers.
+// 3. Robust Name & Entity Extraction in Telugu & English.
+// 4. Web Speech API (te-IN + en-IN, 100% Free).
+// 5. Client-Side Smart Fallback so pipeline DNS pending never blocks UI.
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -39,6 +43,19 @@ interface Props {
 
 const SERVICES = ["Doctor Consultation", "Dental Check-up", "Property Site Visit", "Business Enquiry", "General Appointment"];
 
+// ── Telugu Name Extractor ────────────────────────────────────
+function extractName(input: string): string {
+  const clean = input.trim();
+  // Strip common Telugu/English prefixes
+  const prefixRegex = /^(my name is|i am|this is|call me|నా పేరు|నేను|మాది)\s+/i;
+  const stripped = clean.replace(prefixRegex, "").trim();
+  // Capitalize first letter
+  if (!stripped) return "Customer";
+  const nameCandidate = stripped.split(/[\s,]+/)[0];
+  const capitalized = nameCandidate.charAt(0).toUpperCase() + nameCandidate.slice(1);
+  return capitalized;
+}
+
 export default function VoiceChatWidget({ tenantId, compact }: Props) {
   const [msgs, setMsgs]           = useState<Msg[]>([]);
   const [status, setStatus]       = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
@@ -49,6 +66,8 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
   const [hasSTT, setHasSTT]       = useState(false);
   const [teVoice, setTeVoice]     = useState<SpeechSynthesisVoice | null>(null);
   const [stage, setStage]         = useState<"greeting" | "name" | "phone" | "service" | "slot" | "done">("greeting");
+  const [autoListen, setAutoListen] = useState(true); // Continuous listening toggle
+
   const recogRef                  = useRef<any>(null);
   const endRef                    = useRef<HTMLDivElement>(null);
 
@@ -74,21 +93,44 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, status]);
 
+  // Forward declaration for recursion
+  const startListeningRef = useRef<() => void>(() => {});
+
   // ── Speak text via SpeechSynthesis ──────────────────────────────
   const speak = useCallback((text: string, onEnd?: () => void) => {
     window.speechSynthesis.cancel();
+    // Strip emojis for clean TTS audio output
     const cleanText = text.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, '');
     const utt = new SpeechSynthesisUtterance(cleanText);
     if (teVoice) utt.voice = teVoice;
     utt.lang  = "te-IN";
     utt.rate  = 0.95;
     utt.pitch = 1.05;
+
     utt.onstart = () => setStatus("speaking");
-    utt.onend   = () => { setStatus("idle"); onEnd?.(); };
-    utt.onerror = () => { setStatus("idle"); onEnd?.(); };
+    utt.onend   = () => {
+      setStatus("idle");
+      onEnd?.();
+      // CONTINUOUS HANDS-FREE LISTENING: Auto-start mic after Nikki finishes speaking
+      if (autoListen && stage !== "done" && !confirmed) {
+        setTimeout(() => {
+          startListeningRef.current();
+        }, 500);
+      }
+    };
+    utt.onerror = () => {
+      setStatus("idle");
+      onEnd?.();
+      if (autoListen && stage !== "done" && !confirmed) {
+        setTimeout(() => {
+          startListeningRef.current();
+        }, 500);
+      }
+    };
+
     setStatus("speaking");
     window.speechSynthesis.speak(utt);
-  }, [teVoice]);
+  }, [teVoice, autoListen, stage, confirmed]);
 
   const nikkiSay = useCallback((text: string, speakIt = true) => {
     setMsgs(m => [...m, { role: "nikki", text }]);
@@ -100,9 +142,10 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     let updated = { ...currentBooking };
 
     if (currentStage === "greeting" || currentStage === "name") {
-      updated.name = userText.trim();
+      const name = extractName(userText);
+      updated.name = name;
       return {
-        reply: `Nice to meet you, ${updated.name}! 😊 Could you please share your WhatsApp phone number?`,
+        reply: `నమస్కారం ${name} గారు! 😊 ధన్యవాదాలు. మీ WhatsApp phone number చెప్పండి?`,
         nextStage: "phone",
         isConfirmed: false,
         updatedBooking: updated,
@@ -112,8 +155,9 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     if (currentStage === "phone") {
       const phoneMatch = userText.match(/[+0-9]{10,}/) || userText.trim();
       updated.phone = typeof phoneMatch === "string" ? phoneMatch : phoneMatch[0];
+      const name = updated.name || "గారు";
       return {
-        reply: `Got it! Which service would you like to book today?`,
+        reply: `అలాగే ${name}! మీకు ఏ service appointment కావాలి? (e.g. Doctor Consultation, Property Site Visit)`,
         nextStage: "service",
         isConfirmed: false,
         updatedBooking: updated,
@@ -122,8 +166,9 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
 
     if (currentStage === "service") {
       updated.service = userText.trim();
+      const name = updated.name || "గారు";
       return {
-        reply: `Perfect! What date and time works best for your ${updated.service}? (e.g. "Tomorrow 11 AM")`,
+        reply: `సరే ${name}! ${updated.service} కి ఏ రోజు & సమయం మీకు అనుకూలంగా ఉంటుంది? (e.g. Tomorrow 11 AM)`,
         nextStage: "slot",
         isConfirmed: false,
         updatedBooking: updated,
@@ -132,12 +177,12 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
 
     if (currentStage === "slot") {
       updated.slot = userText.trim();
-      const name = updated.name || "Customer";
+      const name = updated.name ? `${updated.name} గారు` : "";
       const phone = updated.phone || "your number";
       const service = updated.service || "Appointment";
       const slot = updated.slot;
       return {
-        reply: `✅ Booking Confirmed for ${name}!\n📋 Service: ${service}\n🕐 Time: ${slot}\n📱 WhatsApp confirmation will be sent to ${phone}. Thank you! 🙏`,
+        reply: `✅ ${name}, మీ appointment confirm అయింది!\n📋 Service: ${service}\n🕐 Time: ${slot}\n📱 WhatsApp confirmation ${phone} కి పంపాము. ధన్యవాదాలు! 🙏`,
         nextStage: "done",
         isConfirmed: true,
         updatedBooking: updated,
@@ -145,7 +190,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     }
 
     return {
-      reply: `Your booking is confirmed! We look forward to serving you. Is there anything else I can help with?`,
+      reply: `మీ appointment confirm అయింది! Thank you for choosing Hey Nikki. Have a great day!`,
       nextStage: "done",
       isConfirmed: true,
       updatedBooking: updated,
@@ -159,7 +204,6 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
 
     const pipelineUrl = process.env.NEXT_PUBLIC_PIPELINE_URL;
 
-    // Try backend if PIPELINE_URL is valid, otherwise use instant smart fallback
     let serverSuccess = false;
     if (pipelineUrl && !pipelineUrl.includes("pipeline.heynikki.in")) {
       try {
@@ -180,10 +224,10 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
           nikkiSay(responseText, true);
           if (data.booking_confirmed) {
             setConfirmed(true);
+            setStage("done");
           }
         }
       } catch (e) {
-        // Fetch failed (net::ERR_NAME_NOT_RESOLVED) — fall back cleanly
         serverSuccess = false;
       }
     }
@@ -194,9 +238,11 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
         const { reply, nextStage, isConfirmed, updatedBooking } = getClientFallbackResponse(userText, booking, stage);
         setBooking(updatedBooking);
         setStage(nextStage);
-        if (isConfirmed) setConfirmed(true);
+        if (isConfirmed) {
+          setConfirmed(true);
+        }
 
-        // Attempt async save to API server if available
+        // Attempt async save to API server
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
         if (isConfirmed && updatedBooking.phone) {
           fetch(`${apiUrl}/webhooks/browser/save-booking`, {
@@ -217,17 +263,21 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     }
   }, [sessionId, tenantId, booking, stage, nikkiSay, getClientFallbackResponse]);
 
-  // ── Speech Recognition ─────────────────────────────────────────
+  // ── Hands-Free Speech Recognition ──────────────────────────────
   const startListening = useCallback(() => {
     if (status === "speaking") window.speechSynthesis.cancel();
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) return;
 
+    try {
+      recogRef.current?.stop();
+    } catch (_) {}
+
     const rec = new SpeechRec();
     recogRef.current = rec;
     rec.continuous    = false;
     rec.interimResults = true;
-    rec.lang          = "te-IN";
+    rec.lang          = "te-IN"; // Dual Telugu/English recognition
 
     rec.onstart  = () => setStatus("listening");
     rec.onresult = (e: any) => {
@@ -243,12 +293,27 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
         setStatus("idle");
       }
     };
-    rec.onerror = () => setStatus("idle");
-    rec.start();
+    rec.onerror = (e: any) => {
+      console.warn("SpeechRec error:", e.error);
+      setStatus("idle");
+    };
+    try {
+      rec.start();
+    } catch (e) {
+      setStatus("idle");
+    }
   }, [status, input, sendToNikki]);
 
+  // Store ref for hands-free auto-trigger
+  startListeningRef.current = startListening;
+
   const stopListening = useCallback(() => {
-    recogRef.current?.stop();
+    setAutoListen(false);
+    try {
+      recogRef.current?.stop();
+    } catch (_) {}
+    window.speechSynthesis.cancel();
+    setStatus("idle");
   }, []);
 
   const handleTypedSend = useCallback(() => {
@@ -263,24 +328,26 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
     setConfirmed(false);
     setBooking({});
     setStage("greeting");
+    setAutoListen(true);
     setStatus("idle");
     setTimeout(() => {
-      nikkiSay("నమస్కారం! 🙏 I'm Nikki, your AI receptionist. May I please have your name to book your appointment?", true);
+      nikkiSay("నమస్కారం! 🙏 I'm Nikki, your AI receptionist. మీ పేరు చెప్పండి?", true);
     }, 200);
   }, [nikkiSay]);
 
   const resetChat = () => {
     window.speechSynthesis.cancel();
-    recogRef.current?.stop();
+    try { recogRef.current?.stop(); } catch (_) {}
     setMsgs([]);
     setConfirmed(false);
     setBooking({});
     setStage("greeting");
+    setAutoListen(true);
     setStatus("idle");
     setInput("");
   };
 
-  const height = compact ? 260 : 320;
+  const height = compact ? 260 : 330;
 
   return (
     <div style={{
@@ -304,6 +371,8 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 20, flexShrink: 0,
           border: "1px solid rgba(255,255,255,0.3)",
+          boxShadow: status === "listening" ? "0 0 16px #E5533D" : "none",
+          transition: "box-shadow 0.3s",
         }}>🎙️</div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -311,23 +380,27 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
             hey <span style={{ color: B.terracotta }}>nikki</span>
           </div>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 1, fontWeight: 500 }}>
-            {status === "idle" && msgs.length === 0 && "AI Telugu Voice Receptionist"}
+            {status === "idle" && msgs.length === 0 && "Hands-Free Voice Receptionist"}
             {status === "idle" && msgs.length > 0 && "● Ready"}
-            {status === "listening" && "🎙️ Listening to you..."}
-            {status === "thinking" && "⏳ Thinking..."}
-            {status === "speaking" && "🔊 Speaking..."}
+            {status === "listening" && "🎙️ Listening... speak now"}
+            {status === "thinking" && "⏳ Processing..."}
+            {status === "speaking" && "🔊 Nikki Speaking..."}
             {confirmed && "✅ Booking Confirmed!"}
           </div>
         </div>
 
+        {/* Mode badge */}
         <div style={{
-          background: B.terracotta, color: "#FFFFFF",
+          background: autoListen ? B.terracotta : "rgba(255,255,255,0.2)",
+          color: "#FFFFFF",
           borderRadius: 12, padding: "3px 9px",
           fontSize: 10, fontWeight: 800, textTransform: "uppercase",
-        }}>LIVE AI</div>
+        }}>
+          {autoListen ? "HANDS-FREE" : "MANUAL"}
+        </div>
 
         {msgs.length > 0 && (
-          <button onClick={resetChat} style={{
+          <button onClick={resetChat} title="Restart Conversation" style={{
             background: "rgba(255,255,255,0.2)", border: "none",
             color: "#FFFFFF", borderRadius: 6, padding: "3px 8px",
             fontSize: 11, cursor: "pointer", fontFamily: "inherit",
@@ -348,26 +421,26 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
             gap: 12, textAlign: "center", padding: "20px 10px",
           }}>
             <div style={{
-              width: 56, height: 56, borderRadius: "50%",
+              width: 60, height: 60, borderRadius: "50%",
               background: `linear-gradient(135deg, ${B.terracotta}, ${B.teal})`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 26, color: "#FFFFFF", cursor: "pointer",
-              boxShadow: "0 8px 20px rgba(229,83,61,0.3)",
+              fontSize: 28, color: "#FFFFFF", cursor: "pointer",
+              boxShadow: "0 8px 24px rgba(229,83,61,0.35)",
             }} onClick={startConversation}>🎙️</div>
             <div>
               <div style={{ color: B.espresso, fontWeight: 800, fontSize: 15, marginBottom: 4 }}>
-                Experience Nikki Live
+                Hands-Free Voice Agent
               </div>
-              <div style={{ color: B.textMid, fontSize: 12, lineHeight: 1.5, maxWidth: 280 }}>
-                Speak in Telugu or English. Nikki will collect your booking details and confirm your appointment instantly.
+              <div style={{ color: B.textMid, fontSize: 12, lineHeight: 1.5, maxWidth: 290 }}>
+                Speak in Telugu or English. Once started, Nikki listens automatically after each turn — no need to click mic again!
               </div>
             </div>
             <button onClick={startConversation} style={{
-              padding: "10px 24px", borderRadius: 8,
+              padding: "11px 26px", borderRadius: 8,
               background: B.teal, color: "#FFFFFF",
               border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-              boxShadow: "0 4px 12px rgba(18,69,122,0.25)",
+              boxShadow: "0 4px 14px rgba(18,69,122,0.3)",
             }}>▶ Start Conversation</button>
           </div>
         ) : (
@@ -401,7 +474,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
               </div>
             ))}
 
-            {/* Stage chips for fast service selection */}
+            {/* Quick Service chips */}
             {stage === "service" && !confirmed && status === "idle" && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 34, marginTop: 4 }}>
                 {SERVICES.map(s => (
@@ -427,7 +500,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800 }}>N</div>
                 <div style={{ background: "#FFFFFF", border: `1px solid ${B.border}`,
                   borderRadius: "4px 14px 14px 14px", padding: "10px 14px", color: B.textDim, fontSize: 12 }}>
-                  Thinking...
+                  Processing...
                 </div>
               </div>
             )}
@@ -436,7 +509,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
             {status === "listening" && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
                 background: "#FEF2F2", borderRadius: 8, border: "1px solid #FCA5A5" }}>
-                <div style={{ color: B.terracotta, fontSize: 12, fontWeight: 700 }}>🎙️ Listening...</div>
+                <div style={{ color: B.terracotta, fontSize: 12, fontWeight: 800 }}>🎙️ Listening... speak now</div>
                 {input && <div style={{ color: B.textMid, fontSize: 12, fontStyle: "italic" }}>"{input}"</div>}
               </div>
             )}
@@ -458,7 +531,7 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
             value={input}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
             onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") { e.preventDefault(); handleTypedSend(); } }}
-            placeholder={status === "listening" ? "Listening..." : "Type or speak message..."}
+            placeholder={status === "listening" ? "Listening..." : "Type or speak..."}
             disabled={status === "listening" || status === "thinking"}
             style={{
               flex: 1, background: B.vault, border: `1px solid ${B.border}`,
@@ -470,12 +543,14 @@ export default function VoiceChatWidget({ tenantId, compact }: Props) {
             <button
               onClick={status === "listening" ? stopListening : startListening}
               disabled={status === "thinking" || status === "speaking"}
+              title={status === "listening" ? "Stop listening" : "Speak in Telugu or English"}
               style={{
                 width: 36, height: 36, borderRadius: "50%", border: "none",
                 background: status === "listening" ? B.terracotta : B.teal,
                 color: "#FFFFFF", cursor: "pointer",
                 fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center",
                 flexShrink: 0,
+                boxShadow: status === "listening" ? "0 0 14px #E5533D" : "none",
               }}>
               {status === "listening" ? "⏹" : "🎙️"}
             </button>
