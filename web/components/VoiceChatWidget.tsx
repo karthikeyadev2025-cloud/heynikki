@@ -1,12 +1,11 @@
 // components/VoiceChatWidget.tsx
-// Hey Nikki — Human-Like Telugu/English Voice Receptionist Widget
+// Hey Nikki — Human-Like Emotional Telugu/English Voice Receptionist
 // ────────────────────────────────────────────────────────────────
-// Voice Rules (from bridge.py):
-//   - Always మీరు (respectful). Never నువ్వు.
-//   - గారు after caller's name: "Ramesh గారు"
-//   - Numbers/times/dates in English inside Telugu sentence frames
-//   - Natural fillers: అలాగే, సరే, ఒక్క నిమిషం, బాగుంది
-//   - Never machine-translate. Speak natural Tanglish.
+// Real Human Telugu Voice Dynamics & Emotions:
+//   - Warmth & Empathy: "అయ్యో నమస్కారం అండి!", "చాలా సంతోషం అండి!", "అసలు కంగారు పడకండి!"
+//   - Telugu Register: Always మీరు (respectful), గారు honorific ("Ramesh గారు")
+//   - Tanglish: Natural numbers, dates, times in English inside Telugu frames
+//   - Emotion Modes: Warm & Polite, Cheerful & Upbeat, Caring & Empathetic
 // ────────────────────────────────────────────────────────────────
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -31,10 +30,12 @@ const B = {
   textMid:    "#475569",
   textDim:    "#94A3B8",
   green:      "#10B981",
+  rose:       "#E11D48",
 };
 
 interface Msg { role: "nikki" | "user"; text: string; }
 interface Booking { name?: string; phone?: string; service?: string; slot?: string; }
+type EmotionMode = "warm" | "cheerful" | "caring";
 
 const SERVICES = [
   "Doctor Visit", "Dental Checkup", "Property Visit",
@@ -44,20 +45,15 @@ const SERVICES = [
 // ── Smart Name Extraction ─────────────────────────────────────
 function extractName(raw: string): string {
   let s = raw.trim();
-  // Strip Telugu & English name prefixes
-  s = s.replace(/^(my name is|i am|this is|call me|it's|i'm|నా పేరు|నేను|మాది|మా పేరు)\s+/i, "").trim();
-  // Remove trailing punctuation
+  s = s.replace(/^(my name is|i am|this is|call me|it's|i'm|నా పేరు|నేను|మాది|మా పేరు|నన్ను)\s+/i, "").trim();
   s = s.replace(/[.!?,]+$/, "").trim();
   if (!s) return "";
-  // Take first 1-2 words as name
   const words = s.split(/\s+/).slice(0, 2);
   return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
-// ── Human-like Telugu Responses ───────────────────────────────
-// These follow the exact register rules from bridge.py:
-// - గారు honorific, మీరు respect, Tanglish numbers, natural fillers
-function humanResponse(stage: string, booking: Booking, userText: string): {
+// ── Highly Human Emotional Telugu Responses ───────────────────
+function humanResponse(stage: string, booking: Booking, userText: string, emotion: EmotionMode): {
   reply: string; nextStage: string; done: boolean; updated: Booking;
 } {
   const updated = { ...booking };
@@ -66,21 +62,34 @@ function humanResponse(stage: string, booking: Booking, userText: string): {
     const name = extractName(userText);
     if (!name || name.length < 2) {
       return {
-        reply: "సరే, మీ name ఒకసారి clear గా చెప్పండి please?",
+        reply: emotion === "caring"
+          ? "అయ్యో సరేనండి, మీ పేరు ఒకసారి మళ్లీ స్పష్టంగా చెప్తారా పర్వాలేదు?"
+          : "అలాగే అండి, మీ name ఒకసారి విడిగా చెప్పండి please?",
         nextStage: "name",
         done: false,
         updated,
       };
     }
     updated.name = name;
-    // Randomize greeting for human feel
-    const greetings = [
-      `${name} గారు, నమస్కారం! మీరు call చేసినందుకు thank you 🙏\nమీ WhatsApp number ఇవ్వగలరా? confirmation message పంపిస్తాను.`,
-      `అలాగే ${name} గారు! Nice to meet you 😊\nమీ phone number చెప్పండి, WhatsApp లో booking details పంపుతాను.`,
-      `బాగుంది ${name} గారు! ధన్యవాదాలు 🙏\nConfirmation కోసం మీ WhatsApp number ఇవ్వండి please.`,
-    ];
+
+    const greetings = {
+      warm: [
+        `అయ్యో నమస్కారం ${name} గారు! 🙏 ఎంత మంచిదో మీరు call చేశారు!\nమీ WhatsApp number ఇవ్వగలరా? Booking details పంపిస్తానండి.`,
+        `చాలా సంతోషం ${name} గారు! Nice to meet you 😊\nమీ phone number చెప్పండి, వెంటనే WhatsApp లో confirmation పంపుతాను.`,
+      ],
+      cheerful: [
+        `హలో ${name} గారు! నమస్కారం అండి! 🌟 Super so happy to talk to you!\nమీ 10-digit WhatsApp number చెప్పండి!`,
+        `వావ్, Hello ${name} గారు! 😃 ధన్యవాదాలు call చేసినందుకు!\nమీ WhatsApp phone number ఇవ్వండి, దానికి details పంపిస్తాను!`,
+      ],
+      caring: [
+        `నమస్కారం ${name} గారు 🙏 మీరు కాల్ చేసినందుకు చాలా సంతోషం అండి.\nఅసలు కంగారు పడకండి, మీ WhatsApp number చెప్పండి, నేను వివరాలన్నీ పంపిస్తాను.`,
+        `అయ్యో హలో ${name} గారు! 👋 చాలా ఆనందం అండి.\nమీ డీటెయిల్స్ కోసం మీ WhatsApp number ఒక్కసారి చెప్తారా?`,
+      ]
+    };
+
+    const list = greetings[emotion];
     return {
-      reply: greetings[Math.floor(Math.random() * greetings.length)],
+      reply: list[Math.floor(Math.random() * list.length)],
       nextStage: "phone",
       done: false,
       updated,
@@ -91,19 +100,34 @@ function humanResponse(stage: string, booking: Booking, userText: string): {
     const digits = userText.replace(/[^0-9+]/g, "");
     if (digits.length < 10) {
       return {
-        reply: `${updated.name} గారు, ఒక్క నిమిషం — number properly catch అవ్వలేదు. మీ 10 digit phone number ఒకసారి repeat చేయండి?`,
+        reply: emotion === "caring"
+          ? `${updated.name} గారు, క్షమించాలి అండి — నంబర్ సరిగ్గా వినిపించలేదు. మీ 10 digit number ఒక్కసారి మళ్లీ చెప్తారా?`
+          : `${updated.name} గారు, ఒక్క నిమిషం — number catch అవ్వలేదు. మీ 10 digit phone number మళ్లీ ఒకసారి repeat చేయండి?`,
         nextStage: "phone",
         done: false,
         updated,
       };
     }
     updated.phone = digits.slice(-10);
-    const responses = [
-      `సరే ${updated.name} గారు, ${updated.phone} note చేసుకున్నాను!\nఇప్పుడు చెప్పండి — ఏ service కోసం appointment book చేయాలి?`,
-      `అలాగే, got it! ${updated.phone} 👍\n${updated.name} గారు, మీకు ఏ type of appointment కావాలి?`,
-    ];
+
+    const responses = {
+      warm: [
+        `అలాగే అండి, ${updated.name} గారు! ${updated.phone} సురక్షితంగా నోట్ చేసుకున్నాను 👍\nచెప్పండి — మీకు ఏ service కోసం appointment కావాలి?`,
+        `చాలా సంతోషం అండి, got it! ${updated.phone} 📱\n${updated.name} గారు, ఏ type of appointment book చేయమంటారు?`,
+      ],
+      cheerful: [
+        `Awesome ${updated.name} గారు! ${updated.phone} note చేసేసాను! 🎉\nఇప్పుడు చెప్పండి — మనకు ఏ service appointment కావాలి?`,
+        `Perfect అండి! ${updated.phone} 👍\n${updated.name} గారు, ఏ appointment book చేద్దాం చెప్పండి!`,
+      ],
+      caring: [
+        `సరేనండి ${updated.name} గారు, మీ నంబర్ ${updated.phone} జాగ్రత్తగా నోట్ చేశాను 🙏\nమీకు ఏ service లో సహాయం కావాలో చెప్పండి అండి?`,
+        `చాలా ధన్యవాదాలు అండి. ${updated.phone} నోట్ అయింది 😊\n${updated.name} గారు, మీకు ఏ appointment కావాలో ప్రశాంతంగా చెప్పండి.`,
+      ]
+    };
+
+    const list = responses[emotion];
     return {
-      reply: responses[Math.floor(Math.random() * responses.length)],
+      reply: list[Math.floor(Math.random() * list.length)],
       nextStage: "service",
       done: false,
       updated,
@@ -112,12 +136,25 @@ function humanResponse(stage: string, booking: Booking, userText: string): {
 
   if (stage === "service") {
     updated.service = userText.trim();
-    const responses = [
-      `${updated.service} — noted ${updated.name} గారు! 📋\nమీకు ఏ day and time convenient? For example, "tomorrow 11 AM" or "Monday afternoon" చెప్పండి.`,
-      `అలాగే, ${updated.service} కి book చేద్దాం!\n${updated.name} గారు, ఏ రోజు & ఏ time మీకు suit అవుతుంది?`,
-    ];
+
+    const responses = {
+      warm: [
+        `${updated.service} — ఖచ్చితంగా నోట్ చేసుకున్నాను ${updated.name} గారు! 📋\nమీకు ఏ day and time అనుకూలంగా ఉంటుంది? (e.g., "Tomorrow 11 AM" or "Monday afternoon")`,
+        `అలాగే అండి, ${updated.service} కి బుక్ చేద్దాం! 😊\n${updated.name} గారు, ఏ రోజు & ఏ టైమ్ కి మీకు వీలవుతుంది చెప్పండి?`,
+      ],
+      cheerful: [
+        `Great choice ${updated.name} గారు! ${updated.service}! ✨\nమీకు ఎప్పుడు వీలవుతుంది? "tomorrow 11 AM" లాగా చెప్పండి, slot సరి చూస్తాను!`,
+        `సూపర్ అండి! ${updated.service} appointment 🎯\n${updated.name} గారు, ఏ రోజు మరియు సమయం మీకు convenient?`,
+      ],
+      caring: [
+        `సరేనండి ${updated.name} గారు, ${updated.service} కోసం సమయాన్ని చూద్దాం 🌿\nమీకు ఏ రోజు, ఏ సమయంలో అనుకూలంగా ఉంటుందో చెప్పండి అండి.`,
+        `ఖచ్చితంగా అండి, ${updated.service} కి ఏర్పాటు చేస్తాను 🙏\n${updated.name} గారు, మీకు వీలయ్యే day & time ప్రశాంతంగా చెప్పండి.`,
+      ]
+    };
+
+    const list = responses[emotion];
     return {
-      reply: responses[Math.floor(Math.random() * responses.length)],
+      reply: list[Math.floor(Math.random() * list.length)],
       nextStage: "slot",
       done: false,
       updated,
@@ -126,12 +163,29 @@ function humanResponse(stage: string, booking: Booking, userText: string): {
 
   if (stage === "slot") {
     updated.slot = userText.trim();
-    return {
-      reply: `✅ Done ${updated.name} గారు! మీ appointment confirm అయింది:\n\n` +
+
+    const confirmations = {
+      warm: `అయ్యో చాలా సంతోషం ${updated.name} గారు! 🎉 మీ appointment 100% confirm అయిపోయింది:\n\n` +
         `📋 Service: ${updated.service}\n` +
         `📅 Time: ${updated.slot}\n` +
         `📱 WhatsApp: ${updated.phone}\n\n` +
-        `Confirmation message మీ WhatsApp కి send చేస్తున్నాను. Thank you so much! 🙏\nమీకు ఏదైనా doubt ఉంటే ఎప్పుడైనా call చేయండి.`,
+        `వివరాలన్నీ మీ WhatsApp కి పంపించానండి. Thank you so much! 🙏\nమీకు ఏ సందేహం ఉన్నా ఎప్పుడైనా ధైర్యంగా కాల్ చేయండి అండి!`,
+
+      cheerful: `Woohoo! 🎉 ${updated.name} గారు, మీ appointment successful గా confirmed అయిపోయింది!\n\n` +
+        `📋 Service: ${updated.service}\n` +
+        `📅 Time: ${updated.slot}\n` +
+        `📱 WhatsApp: ${updated.phone}\n\n` +
+        `Instant WhatsApp confirmation పంపించేసాను! Have a wonderful day ahead ${updated.name} గారు! 😊✨`,
+
+      caring: `అయ్యా చాలా ఆనందం అండి ${updated.name} గారు. మీ appointment చక్కగా confirm అయింది 🙏\n\n` +
+        `📋 Service: ${updated.service}\n` +
+        `📅 Time: ${updated.slot}\n` +
+        `📱 WhatsApp: ${updated.phone}\n\n` +
+        `వివరాలు మీ WhatsApp కి పంపాను అండి. ఏ సహాయం కావాలన్నా నేను ఇక్కడే ఉంటాను. ధన్యవాదాలు! 🌸`
+    };
+
+    return {
+      reply: confirmations[emotion],
       nextStage: "done",
       done: true,
       updated,
@@ -139,7 +193,7 @@ function humanResponse(stage: string, booking: Booking, userText: string): {
   }
 
   return {
-    reply: `${updated.name || ""} గారు, మీ booking already confirmed అయింది! ఇంకేదైనా help కావాలా?`,
+    reply: `${updated.name || ""} గారు, మీ బుకింగ్ వివరాలు ఇప్పటికే కన్ఫర్మ్ అయ్యాయండి! ఇంకా ఏమైనా సహాయం కావాలా?`,
     nextStage: "done",
     done: true,
     updated,
@@ -159,6 +213,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const [confirmed, setConfirmed]   = useState(false);
   const [stage, setStage]           = useState("name");
   const [autoListen, setAutoListen] = useState(true);
+  const [emotion, setEmotion]       = useState<EmotionMode>("warm"); // Warm, Cheerful, Caring
   const [hasSTT, setHasSTT]         = useState(false);
   const [teVoice, setTeVoice]       = useState<SpeechSynthesisVoice | null>(null);
   const [started, setStarted]       = useState(false);
@@ -188,33 +243,46 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, status]);
 
-  // ── TTS with auto-listen after ──────────────────────────────
+  // ── TTS with Audio Modulation for Natural Human Emotion ────
   const speak = useCallback((text: string) => {
     window.speechSynthesis.cancel();
     const clean = text.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "");
     const utt = new SpeechSynthesisUtterance(clean);
     if (teVoice) utt.voice = teVoice;
-    utt.lang  = "te-IN";
-    utt.rate  = 0.92;
-    utt.pitch = 1.08;
+    utt.lang = "te-IN";
+
+    // Emotional Voice Tuning:
+    // Warm: Normal rate, slightly higher pitch for friendly tone
+    // Cheerful: Slightly faster rate, higher pitch for energetic tone
+    // Caring: Slightly slower rate, soft gentle pitch for empathetic tone
+    if (emotion === "cheerful") {
+      utt.rate  = 0.98;
+      utt.pitch = 1.15;
+    } else if (emotion === "caring") {
+      utt.rate  = 0.88;
+      utt.pitch = 1.02;
+    } else {
+      utt.rate  = 0.92;
+      utt.pitch = 1.08;
+    }
+
     utt.onstart = () => setStatus("speaking");
     utt.onend = () => {
       setStatus("idle");
       if (autoListen && !confirmed) {
-        setTimeout(() => listenRef.current(), 600);
+        setTimeout(() => listenRef.current(), 550);
       }
     };
     utt.onerror = () => {
       setStatus("idle");
       if (autoListen && !confirmed) {
-        setTimeout(() => listenRef.current(), 600);
+        setTimeout(() => listenRef.current(), 550);
       }
     };
     setStatus("speaking");
     window.speechSynthesis.speak(utt);
-  }, [teVoice, autoListen, confirmed]);
+  }, [teVoice, autoListen, confirmed, emotion]);
 
-  // ── Add message + speak ─────────────────────────────────────
   const nikkiSay = useCallback((text: string) => {
     setMsgs(m => [...m, { role: "nikki", text }]);
     speak(text);
@@ -226,13 +294,12 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     setStatus("thinking");
 
     setTimeout(() => {
-      const { reply, nextStage, done, updated } = humanResponse(stage, booking, userText);
+      const { reply, nextStage, done, updated } = humanResponse(stage, booking, userText, emotion);
       setBooking(updated);
       setStage(nextStage);
       if (done) {
         setConfirmed(true);
         setAutoListen(false);
-        // Try to save booking to API (async, non-blocking)
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
         if (apiUrl && updated.phone) {
           fetch(`${apiUrl}/webhooks/browser/save-booking`, {
@@ -243,8 +310,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
         }
       }
       nikkiSay(reply);
-    }, 500 + Math.random() * 400); // Human-like thinking delay
-  }, [stage, booking, tenantId, nikkiSay]);
+    }, 450 + Math.random() * 350);
+  }, [stage, booking, tenantId, emotion, nikkiSay]);
 
   // ── Hands-free Speech Recognition ───────────────────────────
   const startListening = useCallback(() => {
@@ -311,9 +378,14 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     setStarted(true);
     setStatus("idle");
     setTimeout(() => {
-      nikkiSay("నమస్కారం! 🙏 I'm Nikki — మీ AI receptionist.\nమీ పేరు చెప్పండి, appointment book చేద్దాం!");
+      const openGreeting = emotion === "caring"
+        ? "అయ్యో నమస్కారం అండి! 🙏 నేను నిక్కి — మీ AI receptionist.\nమీ పేరు చెప్పండి అండి, appointment ప్రశాంతంగా బుక్ చేద్దాం!"
+        : emotion === "cheerful"
+        ? "హలో అండి! 🌟 నమస్కారం! I'm Nikki — మీ AI receptionist.\nమీ పేరు చెప్పండి, వెంటనే appointment book చేసేద్దాం!"
+        : "నమస్కారం అండి! 🙏 I'm Nikki — మీ AI receptionist.\nమీ పేరు చెప్పండి, appointment book చేద్దాం!";
+      nikkiSay(openGreeting);
     }, 300);
-  }, [nikkiSay]);
+  }, [nikkiSay, emotion]);
 
   const reset = () => {
     window.speechSynthesis.cancel();
@@ -323,7 +395,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     setStatus("idle"); setInput("");
   };
 
-  // ── Pulse animation for listening ───────────────────────────
   const isActive = status === "listening" || status === "speaking";
 
   return (
@@ -374,8 +445,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
             hey <span style={{ color: "#FCA5A5" }}>nikki</span>
           </div>
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 500 }}>
-            {!started && "Telugu & English Voice AI"}
-            {started && status === "idle" && !confirmed && "● Waiting for you..."}
+            {!started && "Emotional Telugu Voice AI"}
+            {started && status === "idle" && !confirmed && "● Listening to you..."}
             {status === "listening" && "🎙️ Listening — speak naturally"}
             {status === "thinking" && "💭 Thinking..."}
             {status === "speaking" && "🗣️ Nikki is speaking..."}
@@ -383,25 +454,31 @@ export default function VoiceChatWidget({ tenantId, compact }: {
           </div>
         </div>
 
-        {/* Hands-free badge */}
-        {started && (
-          <button onClick={() => setAutoListen(a => !a)} style={{
-            background: autoListen ? B.terracotta : "rgba(255,255,255,0.15)",
-            color: "#fff", border: "none", borderRadius: 12,
-            padding: "4px 10px", fontSize: 9, fontWeight: 800,
-            cursor: "pointer", textTransform: "uppercase",
-            transition: "background 0.2s",
-          }}>
-            {autoListen ? "🎙️ AUTO" : "MANUAL"}
-          </button>
-        )}
+        {/* Emotion Selector Toggle */}
+        <div style={{ display: "flex", background: "rgba(255,255,255,0.15)", borderRadius: 12, padding: 2 }}>
+          {(["warm", "cheerful", "caring"] as EmotionMode[]).map(m => (
+            <button
+              key={m}
+              onClick={() => setEmotion(m)}
+              title={`${m.toUpperCase()} Mode`}
+              style={{
+                background: emotion === m ? B.terracotta : "transparent",
+                color: "#fff", border: "none", borderRadius: 10,
+                padding: "3px 7px", fontSize: 9, fontWeight: 800,
+                cursor: "pointer", textTransform: "capitalize",
+                transition: "background 0.2s",
+              }}>
+              {m === "warm" ? "💖 Warm" : m === "cheerful" ? "😊 Bright" : "🩺 Gentle"}
+            </button>
+          ))}
+        </div>
 
         {started && (
           <button onClick={reset} title="Restart" style={{
             background: "rgba(255,255,255,0.15)", border: "none",
             color: "#fff", borderRadius: "50%", width: 28, height: 28,
             cursor: "pointer", fontSize: 12, display: "flex",
-            alignItems: "center", justifyContent: "center",
+            alignItems: "center", justifyContent: "center", flexShrink: 0,
           }}>↺</button>
         )}
       </div>
@@ -433,10 +510,10 @@ export default function VoiceChatWidget({ tenantId, compact }: {
 
             <div>
               <div style={{ color: B.espresso, fontWeight: 900, fontSize: 17, marginBottom: 6 }}>
-                Talk to Nikki — Live
+                Human Emotional Voice Agent
               </div>
-              <div style={{ color: B.textMid, fontSize: 13, lineHeight: 1.6, maxWidth: 300 }}>
-                Speak in <strong>Telugu</strong> or <strong>English</strong>. Nikki listens hands-free — no need to click mic again after each reply.
+              <div style={{ color: B.textMid, fontSize: 13, lineHeight: 1.6, maxWidth: 310 }}>
+                Experience warm, natural <strong>Telugu & Tanglish</strong> speech with real human emotions (గారు, మీరు, సరేనండి, ధన్యవాదాలు).
               </div>
             </div>
 
@@ -454,8 +531,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               ▶ Start Conversation
             </button>
 
-            <div style={{ display: "flex", gap: 16, marginTop: 4 }}>
-              {["100% Free", "No Sign-Up", "Real Voice AI"].map(t => (
+            <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
+              {["💖 Warm & Emotional", "🎙️ Hands-Free", "⚡ Real-Time"].map(t => (
                 <span key={t} style={{ color: B.textDim, fontSize: 10, fontWeight: 600 }}>✓ {t}</span>
               ))}
             </div>
@@ -534,7 +611,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
                   borderRadius: "4px 16px 16px 16px", padding: "12px 16px",
                   color: B.textDim, fontSize: 12, fontStyle: "italic",
                 }}>
-                  ఒక్క నిమిషం...
+                  ఒక్క నిమిషం అండి...
                 </div>
               </div>
             )}
