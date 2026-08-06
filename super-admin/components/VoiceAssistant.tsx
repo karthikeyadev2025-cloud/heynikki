@@ -9,6 +9,7 @@
 // Backend: /api/admin/voice-query (Gemini + Supabase).
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { NIKKI } from "../lib/brand";
 
 declare global {
   interface Window {
@@ -20,10 +21,10 @@ declare global {
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
 const C = {
-  bg:   "#07070D", surf: "#0F0F1A", hi: "#161625", bord: "#1E1E35",
-  acc:  "#8B5CF6", gbr:  "#A78BFA", lav: "#C4B5FD",
-  grn:  "#10B981", red:  "#EF4444", gold: "#F59E0B",
-  txt:  "#EEEEFF", mid:  "#8888AA", dim:  "#44445A",
+  bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  acc: NIKKI.terracotta, gbr: NIKKI.tealLight, lav: NIKKI.tealLight,
+  grn: NIKKI.emerald, red: NIKKI.red, gold: NIKKI.gold,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 const SUGGESTED = [
@@ -369,7 +370,7 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
           width: 56, height: 56, borderRadius: "50%", border: "none",
           background: open
             ? C.dim
-            : `linear-gradient(135deg, ${C.acc}, #8B5CF6)`,
+            : `linear-gradient(135deg, ${C.acc}, ${NIKKI.terracotta})`,
           cursor: "pointer",
           fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center",
           boxShadow: open ? "none" : `0 8px 24px ${C.acc}77, 0 2px 8px #0006`,

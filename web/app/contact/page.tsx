@@ -12,12 +12,12 @@ export default function Contact() {
 
       <h2>Reach us by topic</h2>
       <ul>
-        <li><strong>Sales & general:</strong> <a href="mailto:hello@jovio.in">hello@jovio.in</a></li>
-        <li><strong>Support:</strong> <a href="mailto:support@jovio.in">support@jovio.in</a></li>
-        <li><strong>Billing & refunds:</strong> <a href="mailto:billing@jovio.in">billing@jovio.in</a></li>
-        <li><strong>Privacy & DPDP grievance:</strong> <a href="mailto:privacy@jovio.in">privacy@jovio.in</a></li>
-        <li><strong>Legal:</strong> <a href="mailto:legal@jovio.in">legal@jovio.in</a></li>
-        <li><strong>Security disclosure:</strong> <a href="mailto:security@jovio.in">security@jovio.in</a></li>
+        <li><strong>Sales & general:</strong> <a href="mailto:hello@heynikki.in">hello@heynikki.in</a></li>
+        <li><strong>Support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a></li>
+        <li><strong>Billing & refunds:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a></li>
+        <li><strong>Privacy & DPDP grievance:</strong> <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a></li>
+        <li><strong>Legal:</strong> <a href="mailto:legal@heynikki.in">legal@heynikki.in</a></li>
+        <li><strong>Security disclosure:</strong> <a href="mailto:security@heynikki.in">security@heynikki.in</a></li>
       </ul>
 
       <h2>Registered office</h2>
@@ -40,7 +40,7 @@ export default function Contact() {
       <h2>Press & partnerships</h2>
       <p>
         Journalist? Investor? Distribution partner? Email
-        <a href="mailto:hello@jovio.in"> hello@jovio.in</a> with "Press" or "Partnership"
+        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with "Press" or "Partnership"
         in the subject line and we'll route it to the right person.
       </p>
     </LegalLayout>

@@ -4,13 +4,14 @@ import { useState, useEffect } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { Tenant, CallMinutes } from "../../lib/supabase";
+import { NIKKI } from "../../lib/brand";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
 const C = {
-  surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
-  glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
-  grn:"#10B981", red:"#EF4444", txt:"#EEEEFF", mid:"#8888AA", dim:"#44445A",
+  surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
+  grn: NIKKI.emerald, red: NIKKI.red, txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 const PLANS = [
@@ -162,7 +163,7 @@ export default function BillingPage() {
             // backstop and will reconcile. Never silently swallow this.
             alert(
               "Payment went through but we couldn't confirm it automatically. " +
-              "Please contact support@jovio.in with your payment ID: " +
+              "Please contact support@heynikki.in with your payment ID: " +
               response.razorpay_payment_id
             );
           }

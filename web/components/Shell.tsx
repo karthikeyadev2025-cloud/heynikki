@@ -3,12 +3,13 @@
 import { useState, useEffect } from "react";
 import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
+import { NIKKI } from "../lib/brand";
 
 const C = {
-  bg:"#07070D", surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
-  acc:"#6D28D9", glow:"#8B5CF6", gbr:"#A78BFA",
-  gold:"#F59E0B", grn:"#10B981", red:"#EF4444",
-  txt:"#EEEEFF", mid:"#8888AA", dim:"#44445A",
+  bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  acc: NIKKI.terracotta, glow: NIKKI.teal, gbr: NIKKI.tealLight,
+  gold: NIKKI.gold, grn: NIKKI.emerald, red: NIKKI.red,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 const NAV_ITEMS = [

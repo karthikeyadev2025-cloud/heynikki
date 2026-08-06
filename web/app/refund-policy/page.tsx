@@ -25,7 +25,7 @@ export default function Refund() {
         <li>
           <strong>Within 7 days of first paid subscription:</strong> if you signed up for a
           paid plan and find Nikki doesn't fit your needs, email
-          <a href="mailto:support@jovio.in"> support@jovio.in</a> within 7 days of the first
+          <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 7 days of the first
           charge for a full refund. This applies only to the very first monthly charge
           and is available once per customer.
         </li>
@@ -53,7 +53,7 @@ export default function Refund() {
       <h2>5. Cancellation</h2>
       <p>
         You can cancel anytime from <strong>Dashboard → Billing → Cancel</strong> or by
-        emailing <a href="mailto:support@jovio.in">support@jovio.in</a>. Cancellation takes
+        emailing <a href="mailto:support@heynikki.in">support@heynikki.in</a>. Cancellation takes
         effect at the end of the current billing cycle — you keep service until then.
       </p>
 
@@ -67,7 +67,7 @@ export default function Refund() {
       <h2>7. Disputes</h2>
       <p>
         If you believe you've been charged in error, email
-        <a href="mailto:billing@jovio.in"> billing@jovio.in</a> within 30 days of the
+        <a href="mailto:billing@heynikki.in"> billing@heynikki.in</a> within 30 days of the
         charge with your invoice number. We respond within 3 business days. If we can't
         resolve it, you may approach Razorpay's grievance process or the appropriate
         consumer forum.
@@ -75,8 +75,8 @@ export default function Refund() {
 
       <h2>8. Contact</h2>
       <p>
-        <strong>Refunds & billing:</strong> <a href="mailto:billing@jovio.in">billing@jovio.in</a><br />
-        <strong>General support:</strong> <a href="mailto:support@jovio.in">support@jovio.in</a>
+        <strong>Refunds & billing:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a><br />
+        <strong>General support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a>
       </p>
     </LegalLayout>
   );

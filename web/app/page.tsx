@@ -134,6 +134,7 @@ export default function LandingPage() {
   const monthlyHumanCost = Math.round(dailyCalls * 30 * 35); // ₹35 per human handled call
   const monthlyAICost    = Math.round(dailyCalls * 30 * 4);  // ₹4 per AI handled call
   const monthlySavings   = monthlyHumanCost - monthlyAICost;
+  const savingsPercent   = Math.round((monthlySavings / monthlyHumanCost) * 100);
 
   // Accordion State
   const [openFaq, setOpenFaq] = useState<number | null>(0);
@@ -269,7 +270,7 @@ export default function LandingPage() {
               color: C.textMid, fontSize: 18, lineHeight: 1.7,
               marginBottom: 38, maxWidth: 540, fontWeight: 400,
             }}>
-              Hey Nikki answers inbound calls sub-second in <strong>Telugu & English</strong>, books appointments, and triggers instant WhatsApp follow-ups — operating under your <strong>single Jio/Vi brand number</strong>.
+              Hey Nikki answers inbound calls sub-second in <strong>Telugu & English</strong>, books appointments, and triggers instant WhatsApp follow-ups — operating under your <strong>single business number</strong>.
             </p>
 
             <div style={{ display: "flex", gap: 16, marginBottom: 48, flexWrap: "wrap" }}>
@@ -310,7 +311,7 @@ export default function LandingPage() {
               {[
                 { icon: <IconShield size={16} color={C.emerald} />, text: "TRAI AI Compliant" },
                 { icon: <IconWhatsApp size={16} color={C.emerald} />, text: "Meta WhatsApp Partner" },
-                { icon: <IconRefresh size={16} color={C.teal} />, text: "Jio & Vi Dual Failover" },
+                { icon: <IconRefresh size={16} color={C.teal} />, text: "Encrypted Call Recording" },
               ].map(({ icon, text }, idx) => (
                 <div key={idx} style={{
                   display: "flex", alignItems: "center", gap: 8,
@@ -351,7 +352,7 @@ export default function LandingPage() {
           {[
             { val: "< 1s", label: "AI Answer Speed", sub: "Regional Telugu & English" },
             { val: "24 / 7", label: "Always Active", sub: "Zero missed after-hours calls" },
-            { val: "3×", label: "Lead Capture Rate", sub: "Auto WhatsApp followup" },
+            { val: "3×*", label: "Est. Lead Capture Lift", sub: "Auto WhatsApp followup" },
             { val: "₹4", label: "AI Cost Per Call", sub: "vs ₹35 human receptionist" },
           ].map(({ val, label, sub }) => (
             <div key={label}>
@@ -361,6 +362,9 @@ export default function LandingPage() {
             </div>
           ))}
         </div>
+        <p style={{ textAlign: "center", color: C.textDim, fontSize: 11, marginTop: 28 }}>
+          * Estimated, based on illustrative call-cost assumptions — not a guaranteed outcome.
+        </p>
       </section>
 
       {/* ═══ DUAL ARCHITECTURE DIAGRAM ════════════════════ */}
@@ -515,7 +519,7 @@ export default function LandingPage() {
                 ₹{monthlySavings.toLocaleString("en-IN")}
               </div>
               <p style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.5, marginBottom: 24 }}>
-                You save <strong>88% on operational receptionist costs</strong> every month while boosting lead capture 3× with automated WhatsApp follow-ups.
+                Based on the numbers above, that's roughly <strong>{savingsPercent}% lower operational cost</strong> than a human receptionist, plus faster follow-ups from automated WhatsApp messaging.
               </p>
               <a href="/signup" style={{
                 display: "inline-block", padding: "12px 28px", borderRadius: 10,
@@ -756,7 +760,7 @@ export default function LandingPage() {
             color: "rgba(255,255,255,0.85)", fontSize: 16,
             marginBottom: 36, lineHeight: 1.6,
           }}>
-            Join hundreds of clinics, real estate firms, and businesses operating 24/7 with Hey Nikki.
+            Join clinics, real estate firms, and businesses operating 24/7 with Hey Nikki.
           </p>
           <a href="/signup" style={{
             display: "inline-block", padding: "16px 38px", borderRadius: 12,

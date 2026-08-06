@@ -33,18 +33,18 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://jovio.in"),
+  metadataBase: new URL("https://heynikki.in"),
   title: "Hey Nikki — Telugu AI Receptionist for Indian Businesses",
   description: "Your business never misses a call. Hey Nikki answers in Telugu, Hindi and English — switching language mid-call, 24/7.",
   keywords: "Telugu AI, voice agent, AI receptionist, India, SMB, call answering, Hey Nikki",
   authors: [{ name: "Nikki Technologies" }],
   alternates: {
-    canonical: "https://jovio.in",
+    canonical: "https://heynikki.in",
   },
   openGraph: {
     title: "Hey Nikki — Telugu AI Receptionist",
     description: "Your business never misses a call. 24/7 Telugu AI receptionist for Indian SMBs.",
-    url: "https://jovio.in",
+    url: "https://heynikki.in",
     siteName: "Hey Nikki",
     locale: "en_IN",
     type: "website",

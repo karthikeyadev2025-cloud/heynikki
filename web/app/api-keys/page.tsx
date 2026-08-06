@@ -3,16 +3,17 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
+import { NIKKI } from "../../lib/brand";
 
 const J = {
-  bg: "#070B19", vault: "#111827", surface: "#1A2235",
-  border: "#1F2937", borderHi: "#374151",
-  mercury: "#00E676", surya: "#F59E0B", chandra: "#F8FAFC",
-  textMid: "#9CA3AF", textDim: "#4B5563", red: "#EF4444",
-  grad: "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
+  bg: NIKKI.bg, vault: NIKKI.vault, surface: NIKKI.surface,
+  border: NIKKI.border, borderHi: NIKKI.borderHi,
+  mercury: NIKKI.teal, surya: NIKKI.terracotta, chandra: NIKKI.text,
+  textMid: NIKKI.textMid, textDim: NIKKI.textDim, red: NIKKI.red,
+  grad: NIKKI.gradient,
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
 interface ApiKey {
   id:         string;
@@ -338,7 +339,7 @@ export default function ApiKeysPage() {
         {/* Docs link */}
         <div style={{ marginTop: 32, padding: 16, background: J.vault, borderRadius: 10,
                       border: `1px solid ${J.border}`, fontSize: 13, color: J.textMid }}>
-          📖 API documentation: <a href="https://docs.jovio.in/api" style={{ color: J.mercury }}>docs.jovio.in/api</a>
+          📖 API documentation: <a href="https://docs.heynikki.in/api" style={{ color: J.mercury }}>docs.heynikki.in/api</a>
           {" · "}Endpoints: <code style={{ color: J.chandra }}>GET /api/v1/calls</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/calls/:id</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/appointments</code>,

@@ -100,7 +100,7 @@ export default function VoiceWidget() {
       // Deliberately not connected to destination — don't play the
       // caller's own mic input back to them.
 
-      const base = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
+      const base = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
       const wsUrl = base.replace(/^https:/, "wss:").replace(/^http:/, "ws:") + "/ws/widget";
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";

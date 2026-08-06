@@ -65,7 +65,7 @@ export default function Pricing() {
       <h2>Need a custom plan?</h2>
       <p>
         Volume discounts available for 10+ branches or 5,000+ minutes/month. Email
-        <a href="mailto:hello@jovio.in"> hello@jovio.in</a> with your call volume and
+        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume and
         we'll send a quote.
       </p>
     </LegalLayout>

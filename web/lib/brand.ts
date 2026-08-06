@@ -1,42 +1,64 @@
-// lib/brand.ts — Nikki Official Brand System
+// lib/brand.ts — Hey Nikki Official Brand System
+// Palette locked 2026: Teal (#12457A) + Terracotta (#E5533D), light theme.
+// This is the single source of truth — every page/component should import
+// NIKKI from here instead of redefining its own local color object.
+//
+// Superseded palette (do not reintroduce): navy #070B19 / neon-green #00E676
+// / orange #F59E0B on dark background. Some legacy pages (api-keys, dashboard,
+// calls, leads, billing, analytics, knowledge, campaigns, appointments, setup,
+// whatsapp, Shell) still use that old palette or a third purple/indigo one —
+// those need to be migrated to this file next.
+
 export const NIKKI = {
-  // Official brand colors (locked)
-  background: "#070B19",  // Deep navy black
-  vault:      "#111827",  // Surface
-  mercury:    "#00E676",  // Brand green (logo bottom)
-  surya:      "#F59E0B",  // Brand orange (logo top)
-  chandra:    "#F8FAFC",  // Pure white text
+  // Core surfaces (light theme)
+  bg:         "#FFFFFF",  // Page background
+  vault:      "#F6F8FB",  // Section / card background
+  surface:    "#FFFFFF",  // Elevated surface (cards, modals)
+  border:     "#E2E8F0",  // Default border
+  borderHi:   "#CBD5E1",  // Emphasized border
 
-  // Derived shades
-  bgDeep:     "#040813",  // Even darker for hover/depth
-  surface:    "#111827",  // = vault
-  surfaceHi:  "#1A2235",  // Elevated surface
-  border:     "#1F2937",  // Default border
-  borderHi:   "#374151",  // Brighter border
+  // Brand colors (locked)
+  teal:       "#12457A",  // Primary — logo, CTAs, links, trust
+  tealLight:  "#1D6FA5",  // Gradient partner / hover state for teal
+  terracotta: "#E5533D",  // Accent — highlights, badges, energy
 
-  // Text shades
-  text:       "#F8FAFC",  // = chandra
-  textMid:    "#9CA3AF",  // Mid gray
-  textDim:    "#4B5563",  // Dim gray
+  // Text
+  text:       "#0F172A",  // Primary text (near-black)
+  textMid:    "#475569",  // Secondary text
+  textDim:    "#94A3B8",  // Tertiary / placeholder text
 
   // Semantic
-  red:        "#EF4444",
-  yellow:     "#F59E0B",  // = surya
-  blue:       "#3B82F6",
-  purple:     "#8B5CF6",
+  red:        "#EF4444",  // Errors / destructive
+  gold:       "#F59E0B",  // Warnings
+  emerald:    "#10B981",  // Success
+  cyan:       "#06B6D4",  // Info
 
-  // Gradients — using brand colors
-  gradient:    "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
-  gradientRev: "linear-gradient(135deg, #00E676 0%, #F59E0B 100%)",
-  gradientV:   "linear-gradient(180deg, #F59E0B 0%, #00E676 100%)",
+  // Gradients — brand only, do not mix with old navy/green gradient
+  gradient:       "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
+  gradientAccent: "linear-gradient(135deg, #E5533D 0%, #F97316 100%)",
+} as const;
+
+// ── Legacy key aliases ──────────────────────────────────────────
+// A handful of pages (login, signup, LegalLayout, VoiceWidget, not-found,
+// CookieBanner) already hardcode the *new* teal/terracotta values but under
+// the *old* key names (mercury/surya/chandra/espresso/grad) inherited from
+// the navy/green system. These aliases let those files switch to importing
+// from here with a minimal diff. New code should use the real names above
+// (teal/terracotta/text) — don't write new code against these aliases.
+export const NIKKI_LEGACY_ALIASES = {
+  mercury:  NIKKI.teal,
+  surya:    NIKKI.terracotta,
+  chandra:  NIKKI.text,
+  espresso: NIKKI.text,
+  grad:     NIKKI.gradient,
 } as const;
 
 // Tailwind class shortcuts
 export const tw = {
-  bg:      "bg-[#070B19]",
-  surface: "bg-[#111827]",
-  text:    "text-[#F8FAFC]",
-  mid:     "text-[#9CA3AF]",
-  mercury: "text-[#00E676]",
-  surya:   "text-[#F59E0B]",
+  bg:         "bg-white",
+  surface:    "bg-[#F6F8FB]",
+  text:       "text-[#0F172A]",
+  mid:        "text-[#475569]",
+  teal:       "text-[#12457A]",
+  terracotta: "text-[#E5533D]",
 };

@@ -40,8 +40,8 @@ export default function CookieBanner() {
       style={{
         position: "fixed", bottom: 16, left: 16, right: 16,
         maxWidth: 720, margin: "0 auto", zIndex: 9999,
-        background: "#111827",
-        border: "1px solid #1F2937", borderRadius: 14,
+        background: "#0F172A",
+        border: "1px solid #1E293B", borderRadius: 14,
         padding: "16px 20px",
         boxShadow: "0 20px 40px rgba(0, 0, 0, 0.5)",
         display: "flex", flexWrap: "wrap", gap: 14,

@@ -30,7 +30,6 @@ const B = {
   textMid:    "#475569",
   textDim:    "#94A3B8",
   green:      "#10B981",
-  purple:     "#8B5CF6",
 };
 
 interface Msg { role: "nikki" | "user"; text: string; }

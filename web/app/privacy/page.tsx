@@ -73,7 +73,7 @@ export default function Privacy() {
         <li><strong>Grievance redressal</strong> — file a complaint with our Grievance Officer (below).</li>
       </ul>
       <p>
-        Email <a href="mailto:privacy@jovio.in">privacy@jovio.in</a> to exercise any of these
+        Email <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a> to exercise any of these
         rights. We respond within 30 days.
       </p>
 
@@ -124,7 +124,7 @@ export default function Privacy() {
         <strong>Karthikeya</strong><br />
         Nikki Technologies<br />
         Hyderabad, Telangana, India<br />
-        Email: <a href="mailto:privacy@jovio.in">privacy@jovio.in</a>
+        Email: <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a>
       </p>
       <p style={{ fontSize: 13, color: "#9CA3AF" }}>
         Designated as Grievance Officer per Section 13 of the DPDP Act, 2023.

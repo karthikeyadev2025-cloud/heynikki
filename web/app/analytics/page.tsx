@@ -7,12 +7,13 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
+import { NIKKI } from "../../lib/brand";
 
 const C = {
-  surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
-  glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
-  grn:"#10B981", red:"#EF4444", cyn:"#06B6D4", org:"#F97316",
-  txt:"#EEEEFF", mid:"#8888AA", dim:"#44445A",
+  surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
+  grn: NIKKI.emerald, red: NIKKI.red, cyn: NIKKI.cyan, org: NIKKI.terracotta,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 const INTENT_COLORS: Record<string, string> = {

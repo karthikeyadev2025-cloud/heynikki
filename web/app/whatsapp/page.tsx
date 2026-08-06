@@ -3,12 +3,13 @@
 import { useState, useEffect } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
+import { NIKKI } from "../../lib/brand";
 
 const C = {
-  bg:"#07070D", surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
-  glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
-  grn:"#10B981", red:"#EF4444", cyn:"#06B6D4", org:"#F97316",
-  txt:"#EEEEFF", mid:"#8888AA", dim:"#44445A",
+  bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
+  grn: NIKKI.emerald, red: NIKKI.red, cyn: NIKKI.cyan, org: NIKKI.terracotta,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 function Card({ children, title, style }: { children: React.ReactNode; title?: string; style?: React.CSSProperties }) {
@@ -123,7 +124,7 @@ export default function WhatsAppPage() {
 
       {/* Send modal */}
       {modal && (
-        <div style={{ position: "fixed", inset: 0, background: "#07070D99", zIndex: 999,
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)", zIndex: 999,
           display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
             borderRadius: 12, padding: 28, width: 420, boxShadow: "0 20px 60px #0008" }}>

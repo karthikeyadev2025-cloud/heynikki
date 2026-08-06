@@ -45,15 +45,15 @@ export default function LegalLayout({
         </p>
 
         <style>{`
-          .legal h2 { font-size: 22px; font-weight: 800; color: #F8FAFC; margin: 36px 0 12px; }
-          .legal h3 { font-size: 17px; font-weight: 700; color: #F8FAFC; margin: 24px 0 8px; }
+          .legal h2 { font-size: 22px; font-weight: 800; color: #0F172A; margin: 36px 0 12px; }
+          .legal h3 { font-size: 17px; font-weight: 700; color: #0F172A; margin: 24px 0 8px; }
           .legal p  { margin: 0 0 14px; }
           .legal ul { margin: 0 0 14px; padding-left: 24px; }
           .legal li { margin-bottom: 6px; }
           .legal a  { color: #12457A; text-decoration: underline; }
           .legal a:hover { text-decoration: underline; }
-          .legal strong { color: #F8FAFC; }
-          .legal hr { border: 0; border-top: 1px solid #1F2937; margin: 32px 0; }
+          .legal strong { color: #0F172A; }
+          .legal hr { border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0; }
         `}</style>
         <div className="legal">{children}</div>
       </article>

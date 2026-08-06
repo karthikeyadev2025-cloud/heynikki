@@ -22,7 +22,7 @@ export default function Terms() {
       <ul>
         <li>You must be 18 or older and authorised to bind your business to these Terms.</li>
         <li>You're responsible for keeping your password secure and for all activity under your account.</li>
-        <li>Tell us immediately at <a href="mailto:support@jovio.in">support@jovio.in</a> if you suspect unauthorised access.</li>
+        <li>Tell us immediately at <a href="mailto:support@heynikki.in">support@heynikki.in</a> if you suspect unauthorised access.</li>
         <li>One account per business entity. Resellers must contact us for partner terms.</li>
       </ul>
 
@@ -64,7 +64,7 @@ export default function Terms() {
         Scheduled maintenance is announced at least 48 hours in advance. If we fall below
         99.5% in any calendar month, Scale-plan customers are eligible for a 10% credit
         toward the next month's bill, claimable by emailing
-        <a href="mailto:support@jovio.in"> support@jovio.in</a> within 30 days.
+        <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 30 days.
       </p>
 
       <h2>7. Third-party services</h2>
@@ -132,7 +132,7 @@ export default function Terms() {
 
       <h2>14. Contact</h2>
       <p>
-        Email <a href="mailto:legal@jovio.in">legal@jovio.in</a> for legal notices.
+        Email <a href="mailto:legal@heynikki.in">legal@heynikki.in</a> for legal notices.
         See our <a href="/contact">Contact page</a> for general support.
       </p>
     </LegalLayout>

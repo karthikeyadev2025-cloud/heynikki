@@ -1,11 +1,12 @@
 // super-admin/app/page.tsx
-// Deploy to: admin.jovio.in (separate Vercel project)
+// Deploy to: admin.heynikki.in (separate Vercel project)
 // Access: super_admin role only
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer } from "recharts";
+import { NIKKI } from "../lib/brand";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -16,10 +17,10 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 // ── DESIGN ───────────────────────────────────────────────
 const C = {
-  bg:"#07070D", surf:"#0F0F1A", hi:"#161625", bord:"#1E1E35",
-  glow:"#8B5CF6", gbr:"#A78BFA", gold:"#F59E0B",
-  grn:"#10B981", red:"#EF4444", cyn:"#06B6D4", org:"#F97316",
-  txt:"#EEEEFF", mid:"#8888AA", dim:"#44445A",
+  bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
+  grn: NIKKI.emerald, red: NIKKI.red, cyn: NIKKI.cyan, org: NIKKI.terracotta,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
 // ── COMPONENTS ────────────────────────────────────────────
@@ -165,7 +166,7 @@ function AdminLogin({ onSuccess }: { onSuccess: (token: string) => void }) {
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: 14 }}>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="admin@jovio.in" required
+              placeholder="admin@heynikki.in" required
               style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
                 borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 14 }} />
           </div>
