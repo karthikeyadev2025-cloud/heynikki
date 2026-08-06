@@ -1,22 +1,40 @@
 #!/bin/bash
 # ================================================================
-# Hey Nikki — Complete EC2 Ubuntu 22.04 Setup Script
+# Hey Nikki — Complete EC2 Setup Script
 # Run as: sudo bash setup_ec2_complete.sh
+#
+# OS: any reasonably current Ubuntu LTS works — Docker Compose runs
+# FreeSWITCH, the voice pipeline, and the API server as containers,
+# so this script only needs Docker + firewall + certbot on the host
+# itself, not FreeSWITCH/Node/Python directly. Not pinned to a
+# specific Ubuntu version for that reason.
 # ================================================================
 
 set -e
 echo "=== Hey Nikki EC2 Setup ==="
-echo "Ubuntu 22.04 | Docker + FreeSWITCH + n8n + Activepieces + Nginx"
+echo "Docker Compose: FreeSWITCH + voice-pipeline + api-server + n8n + Activepieces + Nginx"
 
 # ── 1. System Update ──────────────────────────────────────────
 apt-get update -y && apt-get upgrade -y
 apt-get install -y \
   curl wget git unzip \
   build-essential \
-  nginx certbot python3-certbot-nginx \
+  certbot \
   ufw fail2ban \
-  htop iotop net-tools \
-  python3.11 python3.11-pip python3.11-venv
+  htop iotop net-tools
+
+# NOTE: nginx is intentionally NOT installed on the host — it runs as the
+# `nginx` service in docker-compose.yml, binding host ports 80/443 directly.
+# Installing the nginx apt package here would start a second process
+# competing for those same ports. Only `certbot` (no nginx plugin) is
+# needed on the host, to issue certs that the container then mounts
+# read-only — see the certbot step below.
+#
+# python3.11 and Node.js are also intentionally NOT installed on the host —
+# api-server and voice-pipeline both build as Docker images (see
+# Dockerfile.api and voice-pipeline/Dockerfile), not run directly on the
+# host. If you're seeing this and thinking something needs them, check
+# docker-compose.yml first — it's almost certainly already handled there.
 
 # ── 2. Docker Install ─────────────────────────────────────────
 curl -fsSL https://get.docker.com | sh
@@ -26,17 +44,7 @@ apt-get install -y docker-compose-plugin
 # Ensure docker compose v2
 docker compose version
 
-# ── 3. Node.js 20 via NVM ────────────────────────────────────
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-export NVM_DIR="$HOME/.nvm"
-source "$NVM_DIR/nvm.sh"
-nvm install 20
-nvm use 20
-nvm alias default 20
-node --version
-npm --version
-
-# ── 4. Security: UFW Firewall ─────────────────────────────────
+# ── 3. Security: UFW Firewall ─────────────────────────────────
 echo "=== Configuring UFW Firewall ==="
 ufw default deny incoming
 ufw default allow outgoing
@@ -71,7 +79,7 @@ ufw allow 16384:32768/udp
 ufw --force enable
 ufw status verbose
 
-# ── 5. fail2ban for SIP protection ───────────────────────────
+# ── 4. fail2ban for SIP protection ───────────────────────────
 cat > /etc/fail2ban/jail.d/freeswitch.conf << 'EOF'
 [freeswitch]
 enabled  = true
@@ -84,11 +92,11 @@ bantime  = 3600
 EOF
 systemctl restart fail2ban
 
-# ── 6. Create directory structure ────────────────────────────
+# ── 5. Create directory structure ────────────────────────────
 mkdir -p /opt/heynikki
 chown ubuntu:ubuntu /opt/heynikki
 
-# ── 7. Clone or update repo ───────────────────────────────────
+# ── 6. Clone or update repo ───────────────────────────────────
 echo "=== Cloning Hey Nikki repo ==="
 if [ -d "/opt/heynikki/.git" ]; then
   cd /opt/heynikki && git pull origin main
@@ -97,7 +105,7 @@ else
 fi
 cd /opt/heynikki
 
-# ── 8. Environment setup ──────────────────────────────────────
+# ── 7. Environment setup ──────────────────────────────────────
 if [ ! -f "infra/.env" ]; then
   cp infra/.env.example infra/.env
   echo ""
@@ -106,7 +114,7 @@ if [ ! -f "infra/.env" ]; then
   echo ""
 fi
 
-# ── 9. Docker Compose up ──────────────────────────────────────
+# ── 8. Docker Compose up ──────────────────────────────────────
 echo "=== Starting Docker services ==="
 cd /opt/heynikki/infra
 docker compose pull
@@ -116,21 +124,30 @@ docker compose up -d --build
 sleep 10
 docker compose ps
 
-# ── 10. SSL Certificates ──────────────────────────────────────
+# ── 9. SSL Certificates ──────────────────────────────────────
 echo ""
 echo "=== SSL Certificate Setup ==="
 echo "Run these commands after DNS is pointed to this server:"
 echo ""
 echo "certbot certonly --webroot -w /opt/heynikki/infra/nginx/certbot/www \\"
+echo "  --config-dir /opt/heynikki/infra/nginx/certbot/conf \\"
+echo "  --work-dir   /opt/heynikki/infra/nginx/certbot/work \\"
+echo "  --logs-dir   /opt/heynikki/infra/nginx/certbot/logs \\"
 echo "  -d api.heynikki.in \\"
 echo "  -d pipeline.heynikki.in \\"
 echo "  -d n8n.heynikki.in \\"
 echo "  -d activepieces.heynikki.in \\"
 echo "  --agree-tos --non-interactive --email your@email.com"
 echo ""
+echo "The --config-dir above is REQUIRED — without it certbot writes to the"
+echo "OS default /etc/letsencrypt, which the nginx container never sees"
+echo "(it mounts ./nginx/certbot/conf, not the OS path). Cert renewal must"
+echo "use the same --config-dir/--work-dir/--logs-dir flags, or certbot"
+echo "will not find the certs it already issued."
+echo ""
 echo "Then: docker compose restart nginx"
 
-# ── 11. Health check ─────────────────────────────────────────
+# ── 10. Health check ─────────────────────────────────────────
 echo ""
 echo "=== Health Checks ==="
 sleep 5
