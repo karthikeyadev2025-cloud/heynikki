@@ -1,0 +1,12 @@
+<configuration name="switch.conf" description="Core Configuration">
+  <settings>
+    <param name="max-sessions" value="100"/>
+    <param name="sessions-per-second" value="10"/>
+    <param name="loglevel" value="info"/>
+    <param name="colorize-console" value="true"/>
+    <param name="dialplan-timestamps" value="false"/>
+    <!-- Recordings/logs land in /tmp/recordings inside the container,
+         which docker-compose.yml already binds to the host at
+         /tmp/recordings (shared with voice-pipeline for R2 upload). -->
+  </settings>
+</configuration>

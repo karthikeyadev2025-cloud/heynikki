@@ -1,0 +1,47 @@
+<!--
+  Hey Nikki SIP profile — binds to port 5060 and loads the Jio/Vi
+  trunk gateways from heynikki_trunks.xml. This is the piece that was
+  missing: heynikki_trunks.xml only defines <gateway> blocks, which
+  mod_sofia never loads unless a <profile> includes them.
+-->
+<include>
+  <profile name="heynikki">
+    <gateways>
+      <X-PRE-PROCESS cmd="include" data="heynikki_trunks.xml"/>
+    </gateways>
+
+    <settings>
+      <param name="context"                value="heynikki"/>
+      <param name="sip-port"                value="5060"/>
+      <param name="rtp-ip"                  value="$${local_ip_v4}"/>
+      <param name="sip-ip"                  value="$${local_ip_v4}"/>
+
+      <!-- EC2 sits behind a public IP that differs from its private
+           interface IP — required for correct SDP in NAT'd deployments.
+           Set these in .env once the EC2 elastic IP is known; until
+           then FreeSWITCH falls back to sip-ip/rtp-ip above, which
+           will NOT work across the public internet from Jio/Vi. -->
+      <param name="ext-rtp-ip"              value="$${external_rtp_ip}"/>
+      <param name="ext-sip-ip"              value="$${external_sip_ip}"/>
+
+      <param name="auth-calls"              value="false"/>
+      <!-- Trunk-only profile: Jio/Vi are the only peers, authenticated
+           via the gateway register above, not inbound challenge — so
+           auth-calls stays false and access is restricted at the
+           network layer instead. -->
+      <!-- REQUIRED BEFORE GO-LIVE — uncomment once real Jio/Vi gateway
+           IP ranges are filled into acl.conf.xml's
+           "heynikki-sip-trunks" list (see TODO there):
+      <param name="apply-inbound-acl" value="heynikki-sip-trunks"/>
+      -->
+
+      <param name="codec-prefs"             value="PCMU,PCMA"/>
+      <param name="inbound-codec-negotiation" value="generous"/>
+      <param name="dtmf-type"               value="rfc2833"/>
+      <param name="rtp-timeout-sec"         value="300"/>
+      <param name="rtp-hold-timeout-sec"    value="1800"/>
+      <param name="disable-register"        value="false"/>
+      <param name="apply-nat-acl"           value="nat.auto"/>
+    </settings>
+  </profile>
+</include>

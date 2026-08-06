@@ -1,0 +1,13 @@
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <!-- 127.0.0.1 only — network_mode: host means this binds to the EC2
+         host's loopback, not the public interface. Never change this to
+         0.0.0.0; ESL has no rate limiting and full call control. -->
+    <param name="listen-ip" value="127.0.0.1"/>
+    <param name="listen-port" value="8021"/>
+    <param name="password" value="$${FREESWITCH_ESL_PASSWORD}"/>
+    <!-- api-server/src/esl.ts defaults to the FreeSWITCH stock password
+         "ClueCon" if FREESWITCH_ESL_PASSWORD is unset — change both
+         together, never leave either on the default in production. -->
+  </settings>
+</configuration>

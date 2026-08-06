@@ -1,0 +1,25 @@
+<!--
+  Hey Nikki — FreeSWITCH root configuration.
+
+  This directory is bind-mounted straight over /etc/freeswitch inside the
+  container (see infra/docker-compose.yml), replacing the image's default
+  config entirely. Every file FreeSWITCH needs to boot must exist here —
+  there is no fallback to the image's built-in config.
+-->
+<configuration name="freeswitch.xml" description="Top level configuration">
+  <X-PRE-PROCESS cmd="include" data="vars.xml"/>
+
+  <section name="configuration" description="Various Configuration">
+    <X-PRE-PROCESS cmd="include" data="autoload_configs/*.xml"/>
+  </section>
+
+  <section name="dialplan" description="Regex/XML Dialplan">
+    <X-PRE-PROCESS cmd="include" data="dialplan/*.xml"/>
+  </section>
+
+  <section name="directory" description="User Directory">
+    <!-- No local extensions/softphone users in this deployment — only
+         trunk gateways (Jio/Vi) and click-to-call agent bridging, both
+         handled via the dialplan and ESL, not SIP registration. -->
+  </section>
+</configuration>

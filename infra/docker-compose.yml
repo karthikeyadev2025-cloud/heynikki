@@ -9,10 +9,15 @@ services:
 
   # ── FreeSWITCH SIP Server ────────────────────────────────────
   freeswitch:
-    image: signalwire/freeswitch-stable:latest
+    build:
+      context: ./freeswitch
+      dockerfile: Dockerfile
     container_name: heynikki-freeswitch
     restart: always
     network_mode: host          # Required for SIP/RTP NAT traversal
+    env_file: .env               # JIO_SIP_*, VI_SIP_*, FREESWITCH_ESL_PASSWORD,
+                                  # INTERNAL_SECRET — picked up by conf/vars.xml's
+                                  # env-set directives
     volumes:
       - ./freeswitch/conf:/etc/freeswitch
       - ./freeswitch/logs:/var/log/freeswitch

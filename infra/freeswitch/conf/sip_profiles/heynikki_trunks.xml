@@ -8,12 +8,12 @@
       Fill your actual Jio SIP credentials from the enterprise portal.
       Contact: Jio Business helpline 1800-889-9999
     -->
-    <param name="username"               value="${JIO_SIP_USERNAME}"/>
-    <param name="auth-username"          value="${JIO_SIP_USERNAME}"/>
-    <param name="password"               value="${JIO_SIP_PASSWORD}"/>
-    <param name="realm"                  value="${JIO_SIP_HOST}"/>
-    <param name="proxy"                  value="${JIO_SIP_HOST}"/>
-    <param name="from-domain"            value="${JIO_SIP_HOST}"/>
+    <param name="username"               value="$${JIO_SIP_USERNAME}"/>
+    <param name="auth-username"          value="$${JIO_SIP_USERNAME}"/>
+    <param name="password"               value="$${JIO_SIP_PASSWORD}"/>
+    <param name="realm"                  value="$${JIO_SIP_HOST}"/>
+    <param name="proxy"                  value="$${JIO_SIP_HOST}"/>
+    <param name="from-domain"            value="$${JIO_SIP_HOST}"/>
     <param name="register"               value="true"/>
     <param name="register-transport"     value="udp"/>
     <param name="retry-seconds"          value="30"/>
@@ -36,12 +36,12 @@
       Fill your Vi enterprise SIP credentials.
       Contact: Vi Business support or your enterprise account manager.
     -->
-    <param name="username"               value="${VI_SIP_USERNAME}"/>
-    <param name="auth-username"          value="${VI_SIP_USERNAME}"/>
-    <param name="password"               value="${VI_SIP_PASSWORD}"/>
-    <param name="realm"                  value="${VI_SIP_HOST}"/>
-    <param name="proxy"                  value="${VI_SIP_HOST}"/>
-    <param name="from-domain"            value="${VI_SIP_HOST}"/>
+    <param name="username"               value="$${VI_SIP_USERNAME}"/>
+    <param name="auth-username"          value="$${VI_SIP_USERNAME}"/>
+    <param name="password"               value="$${VI_SIP_PASSWORD}"/>
+    <param name="realm"                  value="$${VI_SIP_HOST}"/>
+    <param name="proxy"                  value="$${VI_SIP_HOST}"/>
+    <param name="from-domain"            value="$${VI_SIP_HOST}"/>
     <param name="register"               value="true"/>
     <param name="register-transport"     value="udp"/>
     <param name="retry-seconds"          value="60"/>

@@ -1,0 +1,35 @@
+<configuration name="acl.conf" description="Network Lists">
+  <network-lists>
+    <!-- Standard RFC1918 private-range list — required by
+         sip_profiles/heynikki.xml's apply-nat-acl="nat.auto" param -->
+    <list name="nat.auto" default="allow">
+      <node type="deny" cidr="192.168.0.0/16"/>
+      <node type="deny" cidr="10.0.0.0/8"/>
+      <node type="deny" cidr="172.16.0.0/12"/>
+      <node type="deny" cidr="100.64.0.0/10"/>
+      <node type="deny" cidr="127.0.0.0/8"/>
+    </list>
+
+    <!-- ══════════════════════════════════════════════════════════
+      TODO — REQUIRED BEFORE GO-LIVE. Not filled in because I don't
+      have your actual Jio Enterprise / Vi Business SIP gateway IP
+      ranges, and guessing plausible-looking ones here would be worse
+      than leaving this empty — a wrong CIDR either blocks your real
+      trunk traffic or silently allows the wrong traffic through.
+
+      Per your plan's own CAUTION note: SIP port 5060 open to
+      0.0.0.0/0 is toll fraud within hours. Get the real ranges from:
+        - Jio Enterprise SIP: your onboarding docs / account manager
+          (1800-889-9999)
+        - Vi Business SIP: your Vi enterprise account manager
+      Then fill this in and reference it as the EC2 security-group
+      source (Sprint 1 table already lists this under "EC2 Security
+      Groups"), AND uncomment an apply-inbound-acl param pointing at
+      this list in sip_profiles/heynikki.xml.
+      ══════════════════════════════════════════════════════════ -->
+    <list name="heynikki-sip-trunks" default="deny">
+      <!-- <node type="allow" cidr="JIO_GATEWAY_CIDR_HERE"/> -->
+      <!-- <node type="allow" cidr="VI_GATEWAY_CIDR_HERE"/> -->
+    </list>
+  </network-lists>
+</configuration>

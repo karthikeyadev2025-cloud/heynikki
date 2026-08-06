@@ -1,0 +1,41 @@
+<include>
+  <X-PRE-PROCESS cmd="set" data="domain=heynikki.in"/>
+  <X-PRE-PROCESS cmd="set" data="hold_music=local_stream://moh"/>
+  <X-PRE-PROCESS cmd="set" data="use_profile=heynikki"/>
+
+  <!-- default_password only guards the (unused) directory section —
+       there are no SIP-registered extensions in this deployment. -->
+  <X-PRE-PROCESS cmd="set" data="default_password=CHANGE_ME_UNUSED"/>
+
+  <!-- Codec preferences: 8kHz G.711 matches Sarvam STT/TTS and Jio/Vi trunks -->
+  <X-PRE-PROCESS cmd="set" data="global_codec_prefs=PCMU,PCMA"/>
+  <X-PRE-PROCESS cmd="set" data="outbound_codec_prefs=PCMU,PCMA"/>
+
+  <X-PRE-PROCESS cmd="set" data="sound_prefix=/usr/share/freeswitch/sounds/en/us/callie"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_start_port=16384"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_end_port=32768"/>
+
+  <!-- NAT traversal: EC2's private interface IP differs from its public
+       IP, which Jio/Vi need in the SDP to send RTP back correctly. STUN
+       auto-detects it on each restart. STRONGLY prefer replacing this
+       with the EC2 Elastic IP directly (e.g. "203.0.113.50") once
+       allocated — STUN adds a dependency on an external server being
+       reachable at boot, and a churning IP breaks NAT ACLs. -->
+  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=stun:stun.freeswitch.org"/>
+  <X-PRE-PROCESS cmd="set" data="external_sip_ip=stun:stun.freeswitch.org"/>
+
+  <!-- Pull secrets from the container's environment (docker-compose env_file .env)
+       into FreeSWITCH global vars, referenceable elsewhere as $${name}.
+       NOTE: single ${name} is a call-time channel variable and only works
+       inside <action> data attributes in the dialplan — it does NOT
+       substitute in static config like gateway params or ESL settings.
+       Always use $${name} (double-dollar) outside the dialplan. -->
+  <X-PRE-PROCESS cmd="env-set" data="FREESWITCH_ESL_PASSWORD=$FREESWITCH_ESL_PASSWORD"/>
+  <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_HOST=$JIO_SIP_HOST"/>
+  <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_USERNAME=$JIO_SIP_USERNAME"/>
+  <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_PASSWORD=$JIO_SIP_PASSWORD"/>
+  <X-PRE-PROCESS cmd="env-set" data="VI_SIP_HOST=$VI_SIP_HOST"/>
+  <X-PRE-PROCESS cmd="env-set" data="VI_SIP_USERNAME=$VI_SIP_USERNAME"/>
+  <X-PRE-PROCESS cmd="env-set" data="VI_SIP_PASSWORD=$VI_SIP_PASSWORD"/>
+  <X-PRE-PROCESS cmd="env-set" data="INTERNAL_SECRET=$INTERNAL_SECRET"/>
+</include>
