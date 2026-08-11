@@ -15,11 +15,15 @@
 #     it would mean rewriting dialplan/heynikki.xml on another untested
 #     guess, not just swapping a FROM line.
 #
-# So: build FreeSWITCH from source instead, via its own official
-# bootstrap.sh (resolves the correct apt build-deps itself — removes
-# guesswork on exact package names/versions for this Debian release).
-# Slower first build (expect 20-40 min) but doesn't depend on any third
-# party's image existing, being public, or being version-compatible.
+# So: build FreeSWITCH from source instead. Learned the hard way across
+# several iterations that bootstrap.sh only sets up the autotools chain
+# (autoconf/automake/libtool) — it does NOT resolve FreeSWITCH's actual
+# library dependencies, and as of FreeSWITCH v1.10.4, sofia-sip and
+# spandsp were removed from the FreeSWITCH tree entirely and must be
+# built from source separately (Debian's packaged spandsp is the old,
+# incompatible 2.x branch). Slower first build (expect 30-50 min now,
+# with libks/sofia-sip/spandsp added) but doesn't depend on any third
+# party's pre-built image existing, being public, or matching versions.
 #
 # WHY mod_audio_stream AT ALL: the dialplan (conf/dialplan/heynikki.xml)
 # calls the "audio_stream" application to pipe call audio to the
@@ -52,19 +56,48 @@ ARG MOD_AUDIO_STREAM_VERSION=v1.0.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget ca-certificates gnupg2 lsb-release sudo \
         build-essential automake autoconf libtool libtool-bin pkg-config cmake \
-        libspandsp-dev libpcre3-dev libsqlite3-dev libcurl4-openssl-dev \
+        libpcre3-dev libsqlite3-dev libcurl4-openssl-dev \
         libedit-dev libspeex-dev libspeexdsp-dev uuid-dev unixodbc-dev \
         libopus-dev libsndfile1-dev libldns-dev libtiff-dev libjpeg62-turbo-dev \
         libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# All of FreeSWITCH's actual library dependencies (spandsp, pcre, sqlite,
-# curl, speex, opus, libav*, etc.) — these have to be apt-installed
-# ourselves; bootstrap.sh (run below) only sets up the autotools chain
-# (autoconf/automake/libtool), it does NOT resolve these. Found the hard
-# way: bootstrap.sh succeeded, then ./configure failed on the first
-# missing one (spandsp) and would have kept failing one dependency at a
-# time without this fuller list.
+# ── libks, sofia-sip, spandsp — built from source ──────────────────
+# As of FreeSWITCH v1.10.4, sofia-sip and spandsp were REMOVED from the
+# FreeSWITCH source tree and must be built separately (confirmed via
+# SignalWire's own developer docs). Debian's packaged libspandsp-dev is
+# the old 2.x ABI; FreeSWITCH needs 3.0+, which Debian doesn't ship —
+# that's what caused "checking for spandsp >= 3.0... no usable spandsp"
+# even with libspandsp-dev apt-installed. libks (SignalWire's own
+# library) has the same problem: no usable Debian package.
+RUN git clone --depth 1 https://github.com/signalwire/libks.git /usr/src/libks \
+    && cd /usr/src/libks \
+    && cmake . \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
+
+RUN git clone --depth 1 https://github.com/freeswitch/sofia-sip.git /usr/src/sofia-sip \
+    && cd /usr/src/sofia-sip \
+    && ./bootstrap.sh \
+    && ./configure \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
+
+# Pinned to a known-good commit rather than HEAD — multiple independent
+# FreeSWITCH-from-source guides report current spandsp master fails to
+# compile (signalwire/freeswitch#2158) and revert to this commit as the
+# documented workaround.
+RUN git clone https://github.com/freeswitch/spandsp.git /usr/src/spandsp \
+    && cd /usr/src/spandsp \
+    && git reset --hard 67d2455efe02e7ff0d897f3fd5636fed4d54549e \
+    && ./bootstrap.sh \
+    && ./configure \
+    && make -j"$(nproc)" \
+    && make install \
+    && ldconfig
+
 RUN git clone --branch ${FREESWITCH_VERSION} --depth 1 \
         https://github.com/signalwire/freeswitch.git /usr/src/freeswitch
 WORKDIR /usr/src/freeswitch
@@ -75,7 +108,11 @@ RUN ./bootstrap.sh
 # headers/libs at — avoids path-mismatch issues against a default
 # /usr/local/freeswitch prefix. --sysconfdir=/etc/freeswitch matches
 # docker-compose.yml's existing bind mount of ./freeswitch/conf there.
-RUN ./configure --prefix=/usr --sysconfdir=/etc/freeswitch --localstatedir=/var
+# PKG_CONFIG_PATH ensures the from-source libks/sofia-sip/spandsp
+# (installed to /usr/local by their own default cmake/configure
+# prefixes) are actually found ahead of any stale system paths.
+RUN PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:$PKG_CONFIG_PATH \
+    ./configure --prefix=/usr --sysconfdir=/etc/freeswitch --localstatedir=/var
 RUN make -j"$(nproc)"
 RUN make install
 
