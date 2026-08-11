@@ -1567,7 +1567,7 @@ app.post("/api/admin/freeswitch/reload-dialplan", verifyJWT, async (req: any, re
 // Uses Gemini (already in the stack) — zero additional cost.
 // ════════════════════════════════════════════════════════════════
 
-app.post("/api/admin/voice-query", verifyAuth, async (req: any, res) => {
+app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
   const { question, tenant_id } = req.body as { question: string; tenant_id?: string };
 
   if (!question) {
@@ -1616,7 +1616,7 @@ app.post("/api/admin/voice-query", verifyAuth, async (req: any, res) => {
     // Active channels (FreeSWITCH)
     let activeChannels: any[] = [];
     try {
-      const { channels } = await fsl.getActiveChannels();
+      const channels = await fsl.getActiveChannels();
       activeChannels = channels || [];
     } catch (_) {}
     queries.active_calls_now = activeChannels;
