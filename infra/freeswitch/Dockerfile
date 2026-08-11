@@ -114,12 +114,29 @@ RUN ./bootstrap.sh
 RUN PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:$PKG_CONFIG_PATH \
     ./configure --prefix=/usr --sysconfdir=/etc/freeswitch --localstatedir=/var
 RUN make -j"$(nproc)"
-RUN make install
+RUN make install && ldconfig
 
 # Build mod_audio_stream against the FreeSWITCH just installed above.
+#
+# mod_audio_stream's own docs assume the FreeSWITCH default prefix
+# (/usr/local/freeswitch) and tell you to
+# `export PKG_CONFIG_PATH=/usr/local/freeswitch/lib/pkgconfig`. This
+# build uses --prefix=/usr instead (to match what mod_audio_stream's
+# build script expects for header/lib FHS layout — see the configure
+# step above), so freeswitch.pc does NOT land at that path at all.
+# Covering every plausible location autoconf's libdir detection could
+# have chosen (plain lib/, lib64/, or the Debian multiarch triplet)
+# rather than guessing a single one.
+ENV PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/lib64/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev zlib1g-dev libevent-dev libspeexdsp-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pkg-config --exists freeswitch && echo "freeswitch.pc found OK" \
+    || (echo "freeswitch.pc NOT found on PKG_CONFIG_PATH=$PKG_CONFIG_PATH — locating it:" \
+        && find / -name "freeswitch.pc" 2>/dev/null \
+        && exit 1)
 
 RUN git clone --branch ${MOD_AUDIO_STREAM_VERSION} --depth 1 \
         https://github.com/amigniter/mod_audio_stream.git /usr/src/mod_audio_stream \
@@ -133,7 +150,7 @@ RUN git clone --branch ${MOD_AUDIO_STREAM_VERSION} --depth 1 \
 # Clean up build trees to keep the final image smaller (build deps like
 # build-essential/cmake are left in — harmless, and useful if anyone
 # needs to rebuild a module inside a running container later).
-RUN rm -rf /usr/src/freeswitch /usr/src/mod_audio_stream
+RUN rm -rf /usr/src/freeswitch /usr/src/mod_audio_stream /usr/src/libks /usr/src/sofia-sip /usr/src/spandsp
 
 # modules.conf.xml (mounted at /etc/freeswitch from ../conf) already has
 # <load module="mod_audio_stream"/> — nothing further to wire up here.
