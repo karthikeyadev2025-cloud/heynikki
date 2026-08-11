@@ -52,11 +52,19 @@ ARG MOD_AUDIO_STREAM_VERSION=v1.0.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget ca-certificates gnupg2 lsb-release sudo \
         build-essential automake autoconf libtool libtool-bin pkg-config cmake \
+        libspandsp-dev libpcre3-dev libsqlite3-dev libcurl4-openssl-dev \
+        libedit-dev libspeex-dev libspeexdsp-dev uuid-dev unixodbc-dev \
+        libopus-dev libsndfile1-dev libldns-dev libtiff-dev libjpeg62-turbo-dev \
+        libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone FreeSWITCH and let its own bootstrap.sh install the exact apt
-# build-dependencies it needs for this OS release — more reliable than
-# a hand-maintained list of -dev packages that drifts out of sync.
+# All of FreeSWITCH's actual library dependencies (spandsp, pcre, sqlite,
+# curl, speex, opus, libav*, etc.) — these have to be apt-installed
+# ourselves; bootstrap.sh (run below) only sets up the autotools chain
+# (autoconf/automake/libtool), it does NOT resolve these. Found the hard
+# way: bootstrap.sh succeeded, then ./configure failed on the first
+# missing one (spandsp) and would have kept failing one dependency at a
+# time without this fuller list.
 RUN git clone --branch ${FREESWITCH_VERSION} --depth 1 \
         https://github.com/signalwire/freeswitch.git /usr/src/freeswitch
 WORKDIR /usr/src/freeswitch
