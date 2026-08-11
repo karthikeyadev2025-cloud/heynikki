@@ -51,7 +51,7 @@ ARG MOD_AUDIO_STREAM_VERSION=v1.0.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget ca-certificates gnupg2 lsb-release sudo \
-        build-essential automake autoconf libtool pkg-config cmake \
+        build-essential automake autoconf libtool libtool-bin pkg-config cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone FreeSWITCH and let its own bootstrap.sh install the exact apt
