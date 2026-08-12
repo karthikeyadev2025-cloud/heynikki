@@ -28,6 +28,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Check, Loader2 } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -240,7 +241,7 @@ export default function KnowledgePage() {
                     whiteSpace: "pre-wrap" }}>{e.content}</div>
                   <div style={{ marginTop: 6, fontSize: 11,
                     color: e.embedding ? C.grn : C.gold }}>
-                    {e.embedding ? "✓ Nikki knows this" : "⏳ processing…"}
+                    {e.embedding ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Nikki knows this</span>) : (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Loader2 size={12} /> processing…</span>)}
                   </div>
                 </div>
                 <button onClick={() => removeEntry(e.id)} title="Remove" style={{

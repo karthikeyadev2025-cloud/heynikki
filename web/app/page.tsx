@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import NikkiLogo from "../components/NikkiLogo";
 import VoiceChatWidget from "../components/VoiceChatWidget";
+import { Check } from "lucide-react";
 
 // ── Brand Palette ─────────────────────────────────────────────
 const C = {
@@ -655,7 +656,7 @@ export default function LandingPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 32 }}>
                   {features.map(f => (
                     <div key={f} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <span style={{ color: highlight ? "#fff" : C.emerald, fontSize: 14, fontWeight: 900 }}>✓</span>
+                      <Check size={14} color={highlight ? "#fff" : C.emerald} strokeWidth={3} />
                       <span style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>{f}</span>
                     </div>
                   ))}

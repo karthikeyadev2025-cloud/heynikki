@@ -19,6 +19,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Calendar } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -134,7 +135,7 @@ export default function AppointmentsPage() {
         ) : shown.length === 0 ? (
           <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
             padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📅</div>
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Calendar size={28} /></div>
             <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>
               {filter === "upcoming" ? "No upcoming appointments" : "No appointments yet"}
             </h3>

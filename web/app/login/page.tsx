@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
+import { Key } from "lucide-react";
 
 const J = {
   bg: "#FFFFFF", vault: "#F6F8FB", surface: "#FFFFFF",
@@ -127,7 +128,7 @@ export default function LoginPage() {
               border: `1px solid ${J.border}`, borderRadius: 10, cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
             }}>
-              <span style={{ fontSize: 16 }}>🔑</span> Continue with Google
+              <Key size={15} /> Continue with Google
             </button>
           </form>
         </div>

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord } from "../../lib/supabase";
+import { Check, X, Bot, User, Phone } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
 
 const C = {
@@ -62,10 +63,10 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <IntentBadge intent={call.intent} />
             {call.wa_sent && (
-              <span style={{ color: C.cyn, fontSize: 11, fontWeight: 700 }}>WA ✓</span>
+              <span style={{ color: C.cyn, fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>WA <Check size={11} /></span>
             )}
             <button onClick={onClose} style={{ background: "none", border: "none",
-              color: C.dim, fontSize: 20, cursor: "pointer", padding: "0 4px" }}>✕</button>
+              color: C.dim, cursor: "pointer", padding: "0 4px", display: "flex" }}><X size={18} /></button>
           </div>
         </div>
 
@@ -123,7 +124,7 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
                   <div style={{ width: 26, height: 26, borderRadius: "50%",
                     background: C.glow + "33", border: "1px solid " + C.glow,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, flexShrink: 0 }}>🤖</div>
+                    flexShrink: 0 }}><Bot size={13} /></div>
                 )}
                 <div style={{
                   background: turn.role === "assistant" ? C.hi : C.glow + "22",
@@ -141,7 +142,7 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
                   <div style={{ width: 26, height: 26, borderRadius: "50%",
                     background: C.gold + "22", border: "1px solid " + C.gold + "44",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, flexShrink: 0 }}>👤</div>
+                    flexShrink: 0 }}><User size={13} /></div>
                 )}
               </div>
             ))}
@@ -274,7 +275,7 @@ export default function CallsPage() {
           <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading calls...</div>
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: 48, color: C.dim }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📞</div>
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Phone size={28} /></div>
             <div>No calls yet. Set up your voice profile to start receiving calls.</div>
             <a href="/setup" style={{ color: C.glow, fontSize: 13, display: "block", marginTop: 8 }}>
               Set up now →
@@ -315,11 +316,11 @@ export default function CallsPage() {
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 13,
                     color: call.wa_sent ? C.grn : C.dim }}>
-                    {call.wa_sent ? "✓" : "—"}
+                    {call.wa_sent ? <Check size={14} color={C.grn} /> : "—"}
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 13,
                     color: call.appointment_created ? C.grn : C.dim }}>
-                    {call.appointment_created ? "✓" : "—"}
+                    {call.appointment_created ? <Check size={14} color={C.grn} /> : "—"}
                   </td>
                   <td style={{ padding: "10px 12px", color: C.dim, fontSize: 11, whiteSpace: "nowrap" }}>
                     {formatTime(call.created_at)}

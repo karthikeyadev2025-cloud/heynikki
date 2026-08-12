@@ -5,6 +5,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { Tenant, CallMinutes } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Check } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -280,7 +281,7 @@ export default function BillingPage() {
                     </div>
                     {plan.features.map(f => (
                       <div key={f} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
-                        <span style={{ color: C.grn, fontSize: 11 }}>✓</span>
+                        <Check size={11} color={C.grn} />
                         <span style={{ color: C.mid, fontSize: 11 }}>{f}</span>
                       </div>
                     ))}

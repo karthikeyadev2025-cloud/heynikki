@@ -7,6 +7,7 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
+import { BarChart3, Trophy } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
 
 const C = {
@@ -194,7 +195,7 @@ export default function AnalyticsPage() {
         <>
           {/* Range selector */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <div style={{ color: C.txt, fontSize: 16, fontWeight: 900 }}>📊 ROI Analytics</div>
+            <div style={{ color: C.txt, fontSize: 16, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><BarChart3 size={16} /> ROI Analytics</div>
             <div style={{ display: "flex", gap: 6 }}>
               {(["7", "30", "90"] as const).map(r => (
                 <button key={r} onClick={() => { setLoading(true); setRange(r); }}
@@ -283,7 +284,7 @@ export default function AnalyticsPage() {
                 </div>
               ))}
               <div style={{ color: C.grn, fontSize: 12, fontWeight: 700, marginTop: 12, textAlign: "center" }}>
-                🏆 {won} Clients Won · ₹{(won * 5000).toLocaleString()} est. revenue
+                Clients Won · ₹{(won * 5000).toLocaleString()} est. revenue
               </div>
             </Card>
 

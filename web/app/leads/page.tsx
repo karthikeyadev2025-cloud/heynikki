@@ -22,6 +22,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -117,17 +118,17 @@ export default function LeadsPage() {
       const data = await resp.json();
       if (resp.ok) {
         setCtcActive({ lead, ctcLogId: data.ctc_log_id });
-        showToast(`📞 Calling ${lead.name || lead.phone}...`);
+        showToast(`Calling ${lead.name || lead.phone}...`);
         // Auto-show disposition modal after 30 seconds
         setTimeout(() => {
           setCtcActive(null);
           if (data.ctc_log_id) setDispModal({ lead, ctcLogId: data.ctc_log_id });
         }, 30000);
       } else {
-        showToast(`❌ ${data.error || "Call failed"}`);
+        showToast(`${data.error || "Call failed"}`);
       }
     } catch (e: any) {
-      showToast(`❌ ${e.message}`);
+      showToast(`${e.message}`);
     }
     setCtcLoading(null);
   };
@@ -141,7 +142,7 @@ export default function LeadsPage() {
       headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ctc_log_id: dispModal.ctcLogId, disposition, notes: dispNotes }),
     });
-    showToast(`✅ Disposition saved: ${disposition}`);
+    showToast(`Disposition saved: ${disposition}`);
     setDispModal(null);
     setDispNotes("");
     load();
@@ -215,25 +216,26 @@ export default function LeadsPage() {
           display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
             borderRadius: 12, padding: 28, width: 440, boxShadow: "0 20px 60px #0008" }}>
-            <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>📋 Call Disposition</div>
+            <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={16} /> Call Disposition</div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 20 }}>
               {dispModal.lead.name || dispModal.lead.phone} — How did the call go?
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
               {[
-                { label: "✅ Interested",     value: "interested",     color: C.grn  },
-                { label: "📅 Booked",         value: "booked",         color: C.gbr  },
-                { label: "🔄 Call Back",       value: "callback",       color: C.gold },
-                { label: "❌ Not Interested",  value: "not_interested", color: C.dim  },
-                { label: "📵 No Answer",       value: "no_answer",      color: C.mid  },
-                { label: "📵 Busy",            value: "busy",           color: C.mid  },
+                { label: "Interested",     value: "interested",     color: C.grn,  icon: Check },
+                { label: "Booked",         value: "booked",         color: C.gbr,  icon: Calendar },
+                { label: "Call Back",      value: "callback",       color: C.gold, icon: RefreshCw },
+                { label: "Not Interested", value: "not_interested", color: C.dim,  icon: X },
+                { label: "No Answer",      value: "no_answer",      color: C.mid,  icon: PhoneOff },
+                { label: "Busy",           value: "busy",           color: C.mid,  icon: PhoneOff },
               ].map(d => (
                 <button key={d.value} onClick={() => submitDisposition(d.value)} style={{
                   background: d.color + "22", color: d.color,
                   border: "1px solid " + d.color + "44",
                   borderRadius: 8, padding: "12px 10px", fontSize: 13,
-                  fontWeight: 700, cursor: "pointer", textAlign: "center"
-                }}>{d.label}</button>
+                  fontWeight: 700, cursor: "pointer", textAlign: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                }}><d.icon size={14} /> {d.label}</button>
               ))}
             </div>
             <textarea value={dispNotes} onChange={e => setDispNotes(e.target.value)}
@@ -301,7 +303,7 @@ export default function LeadsPage() {
         ) : shown.length === 0 ? (
           <div style={{ background: C.surf, border: `1px solid ${C.bord}`,
             borderRadius: 12, padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>👥</div>
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Users size={28} /></div>
             <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>
               {leads.length === 0 ? "No leads yet" : "No leads match that filter"}
             </h3>
@@ -406,15 +408,16 @@ export default function LeadsPage() {
                         opacity: ctcLoading === l.id ? 0.7 : 1,
                         display: "flex", alignItems: "center", gap: 5,
                       }}>
-                      {ctcLoading === l.id ? "⏳ Dialing..." :
-                       ctcActive?.lead.id === l.id ? "📞 Active Call" : "📞 Call Lead"}
+                      {ctcLoading === l.id ? (<><RefreshCw size={12} /> Dialing...</>) :
+                       ctcActive?.lead.id === l.id ? (<><Phone size={12} /> Active Call</>) : (<><Phone size={12} /> Call Lead</>)}
                     </button>
                     {/* Disposition trigger */}
                     {ctcActive?.lead.id === l.id && (
                       <button onClick={() => { setCtcActive(null); setDispModal({ lead: l, ctcLogId: ctcActive.ctcLogId! }); }}
                         style={{ background: C.gold + "22", color: C.gold, border: "1px solid " + C.gold + "44",
-                          borderRadius: 7, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                        📋 Log Disposition
+                          borderRadius: 7, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          display: "flex", alignItems: "center", gap: 5 }}>
+                        <ClipboardList size={11} /> Log Disposition
                       </button>
                     )}
                     {/* Stage buttons */}

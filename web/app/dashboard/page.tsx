@@ -5,6 +5,10 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord, Appointment } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import {
+  Phone, Calendar, PhoneOff, Moon, Flame, Sparkles, PartyPopper,
+  Smartphone, Check,
+} from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -37,7 +41,7 @@ function IntentBadge({ intent }: { intent: string }) {
   );
 }
 
-function StatCard({ icon, value, label, color }: { icon: string; value: string | number; label: string; color: string }) {
+function StatCard({ icon: Icon, value, label, color }: { icon: React.ComponentType<{ size?: number }>; value: string | number; label: string; color: string }) {
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -46,7 +50,7 @@ function StatCard({ icon, value, label, color }: { icon: string; value: string |
             letterSpacing: "0.1em", marginBottom: 6 }}>{label}</div>
           <div style={{ color, fontSize: 26, fontWeight: 900 }}>{value}</div>
         </div>
-        <span style={{ fontSize: 24 }}>{icon}</span>
+        <Icon size={22} />
       </div>
     </Card>
   );
@@ -216,13 +220,13 @@ export default function DashboardPage() {
         <>
           {/* Stats row */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
-            <StatCard icon="📞" value={stats.total}        label="Calls Today"          color={C.gbr}  />
-            <StatCard icon="📅" value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
-            <StatCard icon="📵" value={stats.missed}       label="Missed (handled)"     color={C.gold} />
-            <StatCard icon="🌙" value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
+            <StatCard icon={Phone}    value={stats.total}        label="Calls Today"          color={C.gbr}  />
+            <StatCard icon={Calendar} value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
+            <StatCard icon={PhoneOff} value={stats.missed}       label="Missed (handled)"     color={C.gold} />
+            <StatCard icon={Moon}     value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
           </div>
 
-          {/* 🔥 Hot Leads Card — injected v4.0 */}
+          {/* Hot Leads Card — injected v4.0 */}
           <HotLeadsCard tenantId={tenantId} />
 
           {/* ── Value banner ──
@@ -237,7 +241,7 @@ export default function DashboardPage() {
               border: `1px solid ${C.glow}44`,
             }}>
               <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ fontSize: 28 }}>✨</div>
+                <Sparkles size={28} />
                 <div style={{ flex: "1 1 260px" }}>
                   <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
                     This month, Hey Nikki caught{" "}
@@ -343,7 +347,7 @@ export default function DashboardPage() {
             <Card style={{ marginBottom: 20, padding: 32, textAlign: "center",
                            background: `linear-gradient(135deg, ${C.glow}10 0%, ${C.cyn}10 100%)`,
                            borderColor: C.glow + "44" }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+              <div style={{ marginBottom: 12, display: "flex", justifyContent: "center" }}><PartyPopper size={40} /></div>
               <div style={{ color: C.txt, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
                 Welcome to Hey Nikki
               </div>
@@ -391,7 +395,7 @@ export default function DashboardPage() {
                   alignItems: "center", padding: "10px 12px", background: C.surf,
                   borderRadius: 8, marginBottom: 8, border: "1px solid " + C.bord }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <span style={{ fontSize: 20 }}>📱</span>
+                    <Smartphone size={18} />
                     <div>
                       <div style={{ color: C.txt, fontSize: 13, fontWeight: 700 }}>
                         {call.caller_number}
@@ -415,7 +419,7 @@ export default function DashboardPage() {
             {/* Today's appointments */}
             <Card>
               <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-                📅 Appointment Ledger
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Calendar size={15} /> Appointment Ledger</span>
               </div>
               {appointments.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
@@ -434,7 +438,7 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {a.wa_confirmed && (
-                        <span style={{ color: C.grn, fontSize: 10 }}>✓ WA</span>
+                        <span style={{ color: C.grn, fontSize: 10, display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> WA</span>
                       )}
                       <span style={{ background: C.grn + "22", color: C.grn, fontSize: 10,
                         padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>
@@ -449,11 +453,11 @@ export default function DashboardPage() {
             {/* Missed calls */}
             <Card>
               <div style={{ color: C.gold, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-                📵 Missed Calls — AI Handled
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PhoneOff size={15} /> Missed Calls — AI Handled</span>
               </div>
               {missedCalls.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
-                  No missed calls 🎉
+                  No missed calls
                 </div>
               ) : missedCalls.map(call => (
                 <div key={call.id} style={{ padding: "8px 0", borderBottom: "1px solid " + C.bord + "44" }}>
@@ -466,7 +470,7 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       {call.wa_sent && (
-                        <span style={{ color: C.cyn, fontSize: 10, fontWeight: 700 }}>WA ✓</span>
+                        <span style={{ color: C.cyn, fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 2 }}>WA <Check size={10} /></span>
                       )}
                     </div>
                   </div>
@@ -516,7 +520,7 @@ export default function DashboardPage() {
                     </td>
                     <td style={{ padding: "8px 8px", color: call.wa_sent ? C.grn : C.dim,
                       fontSize: 12 }}>
-                      {call.wa_sent ? "✓ Sent" : "—"}
+                      {call.wa_sent ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> Sent</span>) : "—"}
                     </td>
                     <td style={{ padding: "8px 8px", color: C.dim, fontSize: 11 }}>
                       {timeAgo(call.created_at)}
@@ -557,7 +561,7 @@ function HotLeadsCard({ tenantId }: { tenantId: string | null }) {
     <div style={{ background: C.surf, border: "1px solid " + C.bord,
       borderRadius: 10, padding: 16, marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>🔥 Hot Leads — Top Prospects</div>
+        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}><Flame size={15} color={C.gold} /> Hot Leads — Top Prospects</div>
         <a href="/leads" style={{ color: C.gbr, fontSize: 11, textDecoration: "none", fontWeight: 600 }}>
           View all leads →
         </a>
@@ -598,7 +602,7 @@ function HotLeadsCard({ tenantId }: { tenantId: string | null }) {
               border: "1px solid " + C.grn + "44", borderRadius: 5,
               padding: "4px 10px", fontSize: 10, fontWeight: 700,
               textDecoration: "none", flexShrink: 0 }}>
-              📞 Call
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Call</span>
             </a>
           </div>
         ))}

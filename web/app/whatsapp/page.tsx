@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Check, X, Send, MessageCircle, ClipboardList, ScrollText } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -12,7 +13,7 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-function Card({ children, title, style }: { children: React.ReactNode; title?: string; style?: React.CSSProperties }) {
+function Card({ children, title, style }: { children: React.ReactNode; title?: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{ background: C.surf, border: "1px solid " + C.bord,
       borderRadius: 10, padding: 16, ...style }}>
@@ -85,12 +86,12 @@ export default function WhatsAppPage() {
         }),
       });
 
-      setToast("✅ Message sent!");
+      setToast("Message sent!");
       setModal(null);
       setToNumber("");
       setVars({});
     } catch {
-      setToast("❌ Send failed — check API connection");
+      setToast("Send failed — check API connection");
     }
     setSending(null);
     setTimeout(() => setToast(null), 3000);
@@ -129,7 +130,7 @@ export default function WhatsAppPage() {
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
             borderRadius: 12, padding: 28, width: 420, boxShadow: "0 20px 60px #0008" }}>
             <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
-              📨 Send Template
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Send size={15} /> Send Template</span>
             </div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 16 }}>
               Template: <span style={{ color: C.gbr }}>{modal.template.name}</span>
@@ -207,13 +208,13 @@ export default function WhatsAppPage() {
           {/* 24h Window Info */}
           <div style={{ background: C.grn + "11", border: "1px solid " + C.grn + "33",
             borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.grn, marginBottom: 20 }}>
-            💬 <strong>24-Hour Service Window</strong> — You can only send free-form messages to customers who messaged you first in the last 24 hours.
+            <MessageCircle size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} /><strong>24-Hour Service Window</strong> — You can only send free-form messages to customers who messaged you first in the last 24 hours.
             Outside this window, only pre-approved utility templates can be sent.
           </div>
 
           {/* Template Library */}
           <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, marginBottom: 12 }}>
-            📋 Template Library
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClipboardList size={14} /> Template Library</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
             {templates.map(t => (
@@ -233,14 +234,14 @@ export default function WhatsAppPage() {
                   style={{ width: "100%", background: C.glow + "22", color: C.gbr,
                     border: "1px solid " + C.glow + "44", borderRadius: 6, padding: "8px",
                     fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  📨 Send this template
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Send size={12} /> Send this template</span>
                 </button>
               </Card>
             ))}
           </div>
 
           {/* Dispatch History */}
-          <Card title="📜 Dispatch History — Last 50 Messages">
+          <Card title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><ScrollText size={14} /> Dispatch History — Last 50 Messages</span>}>
             {dispatch.length === 0 ? (
               <div style={{ color: C.dim, textAlign: "center", padding: 24 }}>No messages sent yet</div>
             ) : (

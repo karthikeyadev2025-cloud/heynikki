@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
+import {
+  Radio, Phone, Users, Calendar, Megaphone, BarChart3,
+  MessageCircle, Brain, Settings, CreditCard,
+} from "lucide-react";
 import { NIKKI } from "../lib/brand";
 
 const C = {
@@ -13,16 +17,16 @@ const C = {
 };
 
 const NAV_ITEMS = [
-  { href: "/dashboard",   icon: "📟", label: "Reception"   },
-  { href: "/calls",       icon: "📞", label: "All Calls"   },
-  { href: "/leads",       icon: "👥", label: "Leads"       },
-  { href: "/appointments",icon: "📅", label: "Appointments"},
-  { href: "/campaigns",   icon: "📢", label: "Campaigns"   },
-  { href: "/analytics",   icon: "📊", label: "Analytics"   },
-  { href: "/whatsapp",    icon: "💬", label: "WhatsApp"    },  // restored v4.0
-  { href: "/knowledge",   icon: "🧠", label: "Teach Nikki" },
-  { href: "/setup",       icon: "⚙️",  label: "Setup"       },
-  { href: "/billing",     icon: "💳", label: "Billing"     },
+  { href: "/dashboard",   icon: Radio,         label: "Reception"   },
+  { href: "/calls",       icon: Phone,         label: "All Calls"   },
+  { href: "/leads",       icon: Users,         label: "Leads"       },
+  { href: "/appointments",icon: Calendar,      label: "Appointments"},
+  { href: "/campaigns",   icon: Megaphone,     label: "Campaigns"   },
+  { href: "/analytics",   icon: BarChart3,     label: "Analytics"   },
+  { href: "/whatsapp",    icon: MessageCircle, label: "WhatsApp"    },  // restored v4.0
+  { href: "/knowledge",   icon: Brain,         label: "Teach Nikki" },
+  { href: "/setup",       icon: Settings,      label: "Setup"       },
+  { href: "/billing",     icon: CreditCard,    label: "Billing"     },
 ];
 
 
@@ -80,6 +84,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
         {NAV_ITEMS.map(item => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          const Icon = item.icon;
           return (
             <a key={item.href} href={item.href} style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -89,7 +94,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
               color: active ? C.gbr : C.mid, fontSize: 13, fontWeight: active ? 700 : 400,
               transition: "all 0.15s",
             }}>
-              <span>{item.icon}</span>
+              <Icon size={16} />
               <span>{item.label}</span>
             </a>
           );

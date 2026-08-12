@@ -35,6 +35,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { AlertTriangle, Megaphone } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -269,7 +270,7 @@ export default function CampaignsPage() {
         {/* Honest status banner -- dispatch genuinely isn't wired yet. */}
         <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 20 }}>
           <div style={{ display:"flex", gap: 10, alignItems:"flex-start" }}>
-            <span style={{ fontSize: 18, lineHeight: 1 }}>⚠️</span>
+            <AlertTriangle size={16} />
             <div style={{ fontSize: 13, color: C.txt, lineHeight: 1.6 }}>
               <strong>Calls don&apos;t dial yet.</strong> You can build campaigns and
               upload numbers now — they&apos;re stored safely and opt-outs are
@@ -348,7 +349,7 @@ export default function CampaignsPage() {
           <p style={{ color: C.mid }}>Loading…</p>
         ) : campaigns.length === 0 ? (
           <Card style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>📢</div>
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Megaphone size={28} /></div>
             <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>No campaigns yet</h3>
             <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
               Create one to start building your calling list.

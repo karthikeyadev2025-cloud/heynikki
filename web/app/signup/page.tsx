@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
+import { Mail } from "lucide-react";
 
 const J = {
   bg: "#FFFFFF", vault: "#F6F8FB", surface: "#FFFFFF",
@@ -53,7 +54,7 @@ export default function SignupPage() {
           <div style={{ marginBottom: 20, display: "inline-block" }}>
             <NikkiLogo size={64} variant="icon" />
           </div>
-          <div style={{ fontSize: 52, marginBottom: 16 }}>📧</div>
+          <div style={{ marginBottom: 16, display: "flex", justifyContent: "center" }}><Mail size={44} /></div>
           <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, color: J.chandra }}>
             Check your email
           </h2>

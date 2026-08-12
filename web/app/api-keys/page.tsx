@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Check, ClipboardCopy, Key, BarChart3, Clock, BookOpen } from "lucide-react";
 
 const J = {
   bg: NIKKI.bg, vault: NIKKI.vault, surface: NIKKI.surface,
@@ -172,7 +173,7 @@ export default function ApiKeysPage() {
             borderRadius: 16, padding: 24, marginBottom: 24,
           }}>
             <div style={{ color: J.mercury, fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>
-              ✓ Key created — copy it now
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={12} /> Key created — copy it now</span>
             </div>
             <p style={{ color: J.textMid, fontSize: 13, marginBottom: 16 }}>
               <strong style={{ color: J.chandra }}>{newKey.name}</strong>. This key is shown
@@ -191,7 +192,7 @@ export default function ApiKeysPage() {
                   padding: "10px 18px", background: J.surface,
                   border: `1px solid ${J.borderHi}`, color: J.chandra,
                   borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer",
-                }}>📋 Copy</button>
+                }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClipboardCopy size={13} /> Copy</span></button>
               <button
                 onClick={() => setNewKey(null)}
                 style={{
@@ -293,7 +294,7 @@ export default function ApiKeysPage() {
             background: J.vault, border: `1px solid ${J.border}`,
             borderRadius: 16, padding: 40, textAlign: "center", color: J.textMid,
           }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔑</div>
+            <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><Key size={28} /></div>
             No API keys yet. Issue one above to start integrating.
           </div>
         ) : (
@@ -326,8 +327,8 @@ export default function ApiKeysPage() {
                     {k.prefix}<span style={{ color: J.textDim }}>{"…(hidden)"}</span>
                   </div>
                   <div style={{ display: "flex", gap: 16, fontSize: 12, color: J.textMid, flexWrap: "wrap" }}>
-                    <span>📊 {k.request_count?.toLocaleString() || 0} requests</span>
-                    <span>🕐 {k.last_used_at ? `last used ${new Date(k.last_used_at).toLocaleString()}` : "never used"}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><BarChart3 size={12} /> {k.request_count?.toLocaleString() || 0} requests</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {k.last_used_at ? `last used ${new Date(k.last_used_at).toLocaleString()}` : "never used"}</span>
                     <span style={{ color: J.textDim }}>{(k.scopes || []).join(" · ") || "no scopes"}</span>
                   </div>
                 </div>
@@ -339,7 +340,7 @@ export default function ApiKeysPage() {
         {/* Docs link */}
         <div style={{ marginTop: 32, padding: 16, background: J.vault, borderRadius: 10,
                       border: `1px solid ${J.border}`, fontSize: 13, color: J.textMid }}>
-          📖 API documentation: <a href="https://docs.heynikki.in/api" style={{ color: J.mercury }}>docs.heynikki.in/api</a>
+          <BookOpen size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} /> API documentation: <a href="https://docs.heynikki.in/api" style={{ color: J.mercury }}>docs.heynikki.in/api</a>
           {" · "}Endpoints: <code style={{ color: J.chandra }}>GET /api/v1/calls</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/calls/:id</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/appointments</code>,

@@ -5,6 +5,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { VoiceProfile } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -15,10 +16,10 @@ const C = {
 };
 
 const PROFILE_SKUS = [
-  { id: "standard",    name: "Nikki Telugu Receptionist — Standard",    desc: "General business, retail, coaching",        icon: "🏢", voice: "anushka" },
-  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Hospitals, clinics, diagnostic labs",       icon: "🏥", voice: "vidya"   },
-  { id: "real_estate", name: "Nikki Telugu Receptionist — Real Estate", desc: "Site visits, lead capture, property enquiries", icon: "🏗️", voice: "karun"   },
-  { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: "⭐", voice: "manisha" },
+  { id: "standard",    name: "Nikki Telugu Receptionist — Standard",    desc: "General business, retail, coaching",        icon: Building2, voice: "anushka" },
+  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Hospitals, clinics, diagnostic labs",       icon: Hospital, voice: "vidya"   },
+  { id: "real_estate", name: "Nikki Telugu Receptionist — Real Estate", desc: "Site visits, lead capture, property enquiries", icon: HardHat, voice: "karun"   },
+  { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: Star, voice: "manisha" },
 ];
 
 // Voice sample URLs — public Supabase Storage bucket `voice-samples` serves
@@ -208,7 +209,7 @@ export default function SetupPage() {
                     border: "1px solid " + (isSelected ? C.glow : C.bord),
                     transition: "all 0.15s",
                   }}>
-                  <div style={{ fontSize: 20, marginBottom: 6 }}>{sku.icon}</div>
+                  <div style={{ marginBottom: 6 }}><sku.icon size={20} /></div>
                   <div style={{ color: C.txt, fontSize: 12, fontWeight: 700 }}>{sku.name}</div>
                   <div style={{ color: C.dim, fontSize: 11, marginTop: 3 }}>{sku.desc}</div>
 
@@ -228,7 +229,7 @@ export default function SetupPage() {
                       cursor: hasSample ? "pointer" : "not-allowed",
                       opacity: hasSample ? 1 : 0.4,
                     }}>
-                    {isPlaying ? "❚❚" : "▶"}
+                    {isPlaying ? <Pause size={12} /> : <Play size={12} />}
                   </button>
                 </div>
               );
@@ -461,7 +462,7 @@ export default function SetupPage() {
             borderRadius: 8, padding: "12px 0", fontSize: 14, fontWeight: 700,
             opacity: saving ? 0.7 : 1,
           }}>
-            {saving ? "Saving..." : saved ? "✓ Saved!" : "Save & Go Live"}
+            {saving ? "Saving..." : saved ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={14} /> Saved!</span>) : "Save & Go Live"}
           </button>
 
           <button type="button" onClick={handleTestCall} disabled={testCalling || !profile} style={{
@@ -470,7 +471,7 @@ export default function SetupPage() {
             fontSize: 13, fontWeight: 700,
             opacity: (!profile || testCalling) ? 0.5 : 1,
           }}>
-            {testCalling ? "Calling..." : "📞 Test Call"}
+            {testCalling ? "Calling..." : (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Test Call</span>)}
           </button>
         </div>
 
@@ -565,7 +566,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
   return (
     <div style={{ marginTop: 28 }}>
       <div style={{ color: C2.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
-        📵 Missed Call Guard
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><PhoneOff size={15} /> Missed Call Guard</span>
       </div>
       <div style={{ color: C2.mid, fontSize: 12, marginBottom: 16 }}>
         When a caller hangs up before Nikki can answer — within {guardSeconds} seconds — the guard
@@ -619,7 +620,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
             {/* Info box */}
             <div style={{ background: C2.glow + "11", border: "1px solid " + C2.glow + "33",
               borderRadius: 8, padding: "10px 14px", marginTop: 16, fontSize: 12 }}>
-              <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4 }}>⚙️ How it works</div>
+              <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Settings size={13} /> How it works</div>
               <div style={{ color: C2.mid, lineHeight: 1.6 }}>
                 FreeSWITCH ESL fires a <code style={{ color: C2.gbr }}>CHANNEL_HANGUP</code> event
                 for every call. If the call duration is under <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>,
@@ -637,7 +638,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
               }}>
                 {saving ? "Saving..." : "Save Guard Settings"}
               </button>
-              {saved && <span style={{ color: C2.grn, fontSize: 12, fontWeight: 700 }}>✓ Saved!</span>}
+              {saved && <span style={{ color: C2.grn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Saved!</span>}
             </div>
           </>
         )}
