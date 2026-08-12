@@ -1646,6 +1646,118 @@ app.post("/api/admin/freeswitch/reload-dialplan", verifyJWT, async (req: any, re
 // Uses Gemini (already in the stack) — zero additional cost.
 // ════════════════════════════════════════════════════════════════
 
+// ── Shared: gather business context data for Nikki's voice assistant ──
+// Extracted so both /api/admin/voice-query (super-admin, text-only,
+// browser TTS) and /api/tenant/voice-query (any tenant owner, real
+// Sarvam STT+TTS) use the exact same data-gathering logic rather than
+// two copies drifting apart over time.
+async function buildBusinessContext(targetTenantId: string | null) {
+  const today = new Date();
+  const todayStr = today.toISOString().split("T")[0];
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+  const queries: Record<string, any> = {};
+
+  const { data: todayCalls } = await (targetTenantId
+    ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
+        .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
+    : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
+        .gte("created_at", todayStr + "T00:00:00").limit(200));
+  queries.today_calls = todayCalls || [];
+
+  const { data: todayAppts } = await (targetTenantId
+    ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
+        .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
+    : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", todayStr + "T00:00:00").limit(100));
+  queries.today_appointments = todayAppts || [];
+
+  const { data: hotLeads } = await (targetTenantId
+    ? sb.from("leads").select("name,phone,score,stage,intent,created_at")
+        .eq("tenant_id", targetTenantId).gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10)
+    : sb.from("leads").select("name,score,stage,intent").gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10));
+  queries.hot_leads = hotLeads || [];
+
+  const { data: monthCalls } = await (targetTenantId
+    ? sb.from("calls").select("id,status,intent,appointment_created").eq("tenant_id", targetTenantId).gte("created_at", monthStart)
+    : sb.from("calls").select("id,status,intent,appointment_created").gte("created_at", monthStart).limit(1000));
+  queries.month_calls = monthCalls || [];
+
+  let activeChannels: any[] = [];
+  try {
+    activeChannels = (await fsl.getActiveChannels()) || [];
+  } catch (_) {}
+  queries.active_calls_now = activeChannels;
+
+  const contextJson = JSON.stringify({
+    current_datetime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    today_date: todayStr,
+    today_calls_total:        queries.today_calls.length,
+    today_calls_completed:    queries.today_calls.filter((c: any) => c.status === "completed").length,
+    today_calls_missed:       queries.today_calls.filter((c: any) => c.status === "missed").length,
+    today_appointments:       queries.today_appointments.length,
+    today_appointments_list:  queries.today_appointments.slice(0, 10).map((a: any) => ({
+      time:    new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      notes:   a.notes || "No details",
+      status:  a.status,
+    })),
+    hot_leads:                queries.hot_leads.slice(0, 5).map((l: any) => ({
+      name:  l.name || "Unknown",
+      score: l.score,
+      stage: l.stage,
+      intent: l.intent,
+    })),
+    month_calls_total:        queries.month_calls.length,
+    month_appointments:       queries.month_calls.filter((c: any) => c.appointment_created).length,
+    active_calls_right_now:   activeChannels.length,
+  }, null, 2);
+
+  return { contextJson, queries, activeChannels };
+}
+
+// ── Shared: ask Gemini a question against the gathered business context ──
+async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
+  const geminiKey = process.env.GEMINI_API_KEY!;
+  const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
+  const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+
+  const payload = {
+    system_instruction: {
+      parts: [{
+        text: `You are Nikki, ${isSuperAdmin ? "the AI assistant for the Hey Nikki admin panel" : "the AI assistant helping this business owner understand their own Hey Nikki account"}.
+You have access to the following real-time business data. Answer questions concisely and conversationally.
+Keep responses under 3 sentences — designed to be read aloud via TTS.
+When listing items, use natural language (not bullet points).
+Always be positive, professional, and specific with numbers.
+${isSuperAdmin ? "" : "Respond in Telugu, naturally and warmly, matching how a helpful assistant would speak to a business owner they know well."}
+
+CURRENT BUSINESS DATA:
+${contextJson}`
+      }]
+    },
+    contents: [{ role: "user", parts: [{ text: question }] }],
+    generationConfig: { maxOutputTokens: 150, temperature: 0.4 },
+  };
+
+  const geminiResp = await fetch(
+    isAuthKey ? geminiUrl : `${geminiUrl}?key=${geminiKey}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(isAuthKey ? { Authorization: `Bearer ${geminiKey}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!geminiResp.ok) {
+    throw new Error(`Gemini error: ${geminiResp.status}`);
+  }
+
+  const geminiData = await geminiResp.json() as any;
+  return geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+    || "I couldn't retrieve that data right now. Please check the dashboard.";
+}
+
 app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
   const { question, tenant_id } = req.body as { question: string; tenant_id?: string };
 
@@ -1653,118 +1765,26 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
     return res.status(400).json({ error: "question required" });
   }
 
-  // Only super admins OR tenant scoped to their own data
-  const targetTenantId = tenant_id || null;
+  // SECURITY: was previously trusting tenant_id straight from the
+  // request body with no check that the caller actually owns it —
+  // any authenticated user could pass a different tenant's id and
+  // read their calls/appointments/leads. Now verified: a non-super-
+  // admin can only query their OWN tenant (whatever tenant_id they
+  // send is ignored and replaced with their real one); a null/absent
+  // tenant_id from a non-admin also resolves to their own tenant
+  // rather than falling through to the platform-wide branch.
+  const { data: callerRole } = await sb.from("tenant_users")
+    .select("role, tenant_id").eq("user_id", req.user.id).single();
+  const isSuperAdmin = callerRole?.role === "super_admin";
+  const targetTenantId = isSuperAdmin ? (tenant_id || null) : callerRole?.tenant_id;
+
+  if (!isSuperAdmin && !targetTenantId) {
+    return res.status(403).json({ error: "No tenant associated with this account" });
+  }
 
   try {
-    // ── Gather context data from Supabase ────────────────────────
-    const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
-
-    const queries: Record<string, any> = {};
-
-    // Today's calls
-    const { data: todayCalls } = await (targetTenantId
-      ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
-          .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
-      : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
-          .gte("created_at", todayStr + "T00:00:00").limit(200));
-    queries.today_calls = todayCalls || [];
-
-    // Today's appointments
-    const { data: todayAppts } = await (targetTenantId
-      ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
-          .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
-      : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", todayStr + "T00:00:00").limit(100));
-    queries.today_appointments = todayAppts || [];
-
-    // Hot leads
-    const { data: hotLeads } = await (targetTenantId
-      ? sb.from("leads").select("name,phone,score,stage,intent,created_at")
-          .eq("tenant_id", targetTenantId).gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10)
-      : sb.from("leads").select("name,score,stage,intent").gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10));
-    queries.hot_leads = hotLeads || [];
-
-    // Monthly stats
-    const { data: monthCalls } = await (targetTenantId
-      ? sb.from("calls").select("id,status,intent,appointment_created").eq("tenant_id", targetTenantId).gte("created_at", monthStart)
-      : sb.from("calls").select("id,status,intent,appointment_created").gte("created_at", monthStart).limit(1000));
-    queries.month_calls = monthCalls || [];
-
-    // Active channels (FreeSWITCH)
-    let activeChannels: any[] = [];
-    try {
-      const channels = await fsl.getActiveChannels();
-      activeChannels = channels || [];
-    } catch (_) {}
-    queries.active_calls_now = activeChannels;
-
-    // ── Build context for Gemini ─────────────────────────────────
-    const contextJson = JSON.stringify({
-      current_datetime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-      today_date: todayStr,
-      today_calls_total:        queries.today_calls.length,
-      today_calls_completed:    queries.today_calls.filter((c: any) => c.status === "completed").length,
-      today_calls_missed:       queries.today_calls.filter((c: any) => c.status === "missed").length,
-      today_appointments:       queries.today_appointments.length,
-      today_appointments_list:  queries.today_appointments.slice(0, 10).map((a: any) => ({
-        time:    new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-        notes:   a.notes || "No details",
-        status:  a.status,
-      })),
-      hot_leads:                queries.hot_leads.slice(0, 5).map((l: any) => ({
-        name:  l.name || "Unknown",
-        score: l.score,
-        stage: l.stage,
-        intent: l.intent,
-      })),
-      month_calls_total:        queries.month_calls.length,
-      month_appointments:       queries.month_calls.filter((c: any) => c.appointment_created).length,
-      active_calls_right_now:   activeChannels.length,
-    }, null, 2);
-
-    // ── Call Gemini ──────────────────────────────────────────────
-    const geminiKey = process.env.GEMINI_API_KEY!;
-    const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
-    const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
-
-    const payload = {
-      system_instruction: {
-        parts: [{
-          text: `You are Nikki, the AI assistant for the Hey Nikki admin panel.
-You have access to the following real-time business data. Answer questions concisely and conversationally.
-Keep responses under 3 sentences — designed to be read aloud via browser TTS.
-When listing items, use natural language (not bullet points).
-Always be positive, professional, and specific with numbers.
-
-CURRENT BUSINESS DATA:
-${contextJson}`
-        }]
-      },
-      contents: [{ role: "user", parts: [{ text: question }] }],
-      generationConfig: { maxOutputTokens: 150, temperature: 0.4 },
-    };
-
-    const geminiResp = await fetch(
-      isAuthKey ? geminiUrl : `${geminiUrl}?key=${geminiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(isAuthKey ? { Authorization: `Bearer ${geminiKey}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    if (!geminiResp.ok) {
-      throw new Error(`Gemini error: ${geminiResp.status}`);
-    }
-
-    const geminiData = await geminiResp.json() as any;
-    const answer = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-      || "I couldn't retrieve that data right now. Please check the dashboard.";
+    const { contextJson, queries, activeChannels } = await buildBusinessContext(targetTenantId);
+    const answer = await askGemini(question, contextJson, isSuperAdmin);
 
     res.json({
       answer,
@@ -1782,6 +1802,107 @@ ${contextJson}`
       answer: "Sorry, I had trouble accessing the data. Please try again.",
       error: err.message,
     });
+  }
+});
+
+// ── Tenant-facing voice assistant: real Sarvam STT + TTS ──────────
+// The super-admin widget above uses the browser's Web Speech API for
+// mic input and TTS output — free, but has weak-to-nonexistent Telugu
+// support in most browsers. This one uses the same Sarvam models
+// already proven in the live phone pipeline (voice-pipeline/main.py's
+// SarvamSTT/SarvamTTS classes) for genuine Telugu quality: Saaras v3
+// for transcription, Bulbul v3 for synthesis.
+//
+// Body: { audio_base64: string, mime_type: string } — mime_type is
+// whatever the browser's MediaRecorder actually produced (typically
+// audio/webm). Sarvam's REST STT endpoint auto-detects codec and
+// explicitly supports webm directly (confirmed via their own docs),
+// so no client-side re-encoding to WAV is needed.
+app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
+  const { audio_base64, mime_type } = req.body as { audio_base64: string; mime_type: string };
+
+  if (!audio_base64) {
+    return res.status(400).json({ error: "audio_base64 required" });
+  }
+
+  // Always the caller's own tenant — no tenant_id accepted from the
+  // client at all here (unlike the admin endpoint above), since this
+  // route is meant for a business owner asking about their own data,
+  // full stop. Removes any possibility of the same tenant_id-spoofing
+  // issue fixed above from ever existing in this endpoint.
+  const { data: callerRow } = await sb.from("tenant_users")
+    .select("tenant_id").eq("user_id", req.user.id).single();
+  const tenantId = callerRow?.tenant_id;
+  if (!tenantId) {
+    return res.status(403).json({ error: "No tenant associated with this account" });
+  }
+
+  const SARVAM_KEY = process.env.SARVAM_API_KEY!;
+
+  try {
+    // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
+    const audioBuffer = Buffer.from(audio_base64, "base64");
+    const sttForm = new FormData();
+    const ext = (mime_type || "audio/webm").split("/")[1] || "webm";
+    sttForm.append("file", new Blob([audioBuffer], { type: mime_type || "audio/webm" }), `audio.${ext}`);
+    sttForm.append("model", "saaras:v3");
+    sttForm.append("language_code", "te-IN");
+
+    const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
+      method: "POST",
+      headers: { "api-subscription-key": SARVAM_KEY },
+      body: sttForm as any,
+    });
+    if (!sttResp.ok) throw new Error(`Sarvam STT error: ${sttResp.status}`);
+    const sttData = await sttResp.json() as any;
+    const transcript: string = sttData.transcript || "";
+
+    if (!transcript.trim()) {
+      return res.status(422).json({ error: "Could not hear anything — please try again" });
+    }
+
+    // ── 2. Ask Gemini, scoped to this tenant's own business data ──
+    const { contextJson } = await buildBusinessContext(tenantId);
+    const answer = await askGemini(transcript, contextJson, false);
+
+    // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
+    // Non-telephony settings here (unlike the phone pipeline's 8kHz
+    // mulaw) — this plays back through a normal browser <audio>
+    // element, so higher quality output is worth it, and there's no
+    // 20-word truncation since this is a dashboard Q&A tool, not a
+    // live phone conversation with pacing constraints.
+    const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
+      method: "POST",
+      headers: {
+        "api-subscription-key": SARVAM_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: [answer],
+        target_language_code: "te-IN",
+        speaker: "anushka",
+        model: "bulbul:v3",
+        pitch: 0,
+        pace: 1.0,
+        loudness: 1.2,
+        speech_sample_rate: 22050,
+        enable_preprocessing: true,
+      }),
+    });
+    if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);
+    const ttsData = await ttsResp.json() as any;
+    const audioOutBase64: string = ttsData.audios?.[0] || "";
+
+    res.json({
+      transcript,
+      answer,
+      audio_base64: audioOutBase64,
+      audio_mime: "audio/wav",
+    });
+
+  } catch (err: any) {
+    console.error("[tenant voice-query]", err);
+    res.status(500).json({ error: err.message || "Voice query failed" });
   }
 });
 

@@ -7,6 +7,7 @@ import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
   MessageCircle, Brain, Settings, CreditCard,
 } from "lucide-react";
+import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import { NIKKI } from "../lib/brand";
 
 const C = {
@@ -157,6 +158,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
           {children}
         </div>
       </div>
+      <OwnerVoiceAssistant />
     </div>
   );
 }
