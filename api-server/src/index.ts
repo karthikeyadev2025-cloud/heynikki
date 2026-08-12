@@ -1727,6 +1727,7 @@ You have access to the following real-time business data. Answer questions conci
 Keep responses under 3 sentences — designed to be read aloud via TTS.
 When listing items, use natural language (not bullet points).
 Always be positive, professional, and specific with numbers.
+If the data provided doesn't actually contain the answer, say so honestly — never guess a number or invent a fact that isn't in the data below.
 ${isSuperAdmin ? "" : "Respond in Telugu, naturally and warmly, matching how a helpful assistant would speak to a business owner they know well."}
 
 CURRENT BUSINESS DATA:
@@ -1734,7 +1735,7 @@ ${contextJson}`
       }]
     },
     contents: [{ role: "user", parts: [{ text: question }] }],
-    generationConfig: { maxOutputTokens: 150, temperature: 0.4 },
+    generationConfig: { maxOutputTokens: 150, temperature: 0.15 },  // lowered from 0.4 for more literal, less improvised answers
   };
 
   const geminiResp = await fetch(

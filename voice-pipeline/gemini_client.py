@@ -40,7 +40,7 @@ async def gemini_generate(system_prompt: str, history: list[dict], api_key: str 
         "contents": contents,
         "generationConfig": {
             "maxOutputTokens": 60,
-            "temperature": 0.3,
+            "temperature": 0.15,  # lowered from 0.3 for more literal, less improvised answers
             "topP": 0.8,
         }
     }

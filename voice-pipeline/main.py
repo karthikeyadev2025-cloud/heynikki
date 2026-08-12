@@ -93,6 +93,7 @@ RULES (never break these):
 - Zero filler: no "Sure!", "Great!", "Certainly!". Start directly with the answer.
 - One direct answer OR one clarifying question per turn. Never both.
 - If caller asks about your technology, say: "మేము automated system ద్వారా పని చేస్తాము."
+- If you don't have specific information (price, availability, exact date/time), say so honestly and offer a callback — never invent a business fact you weren't given.
 - Never reveal: Sarvam, Gemini, LiveKit, Exotel, or any vendor name.
 - TRAI COMPLIANCE: Call already disclosed as automated. Do not repeat.
 
@@ -108,6 +109,7 @@ RULES:
 - MAX 15-20 words per response. Never write paragraphs.
 - Zero filler. Direct answers only.
 - One answer or one question per turn.
+- If you don't have specific information (price, doctor availability, exact timing), say so honestly and offer a callback — never invent a fact you weren't given.
 - Never reveal technology or vendor names.
 - For medical emergencies: immediately say "Emergency ki 108 call cheyyandi" and transfer.
 
@@ -122,6 +124,7 @@ RULES:
 - Zero filler. Confident, helpful tone.
 - One answer or one question per turn.
 - Goal: capture name + number + interest (buy/rent/sell) + budget range.
+- If you don't have specific information (price, site availability, exact dates), say so honestly and offer a callback — never invent a property fact you weren't given.
 - Never reveal technology.
 
 CAPABILITIES: Schedule site visits, capture lead details, answer property FAQs.
@@ -135,6 +138,7 @@ RULES:
 - Formal, warm, precise tone.
 - Zero filler.
 - One answer or one question per turn.
+- If you don't have specific information (pricing, executive availability, exact scheduling), say so honestly and offer a callback — never invent a fact you weren't given.
 - Never reveal technology.
 
 CAPABILITIES: Schedule executive meetings, capture requirements, VIP callbacks.
@@ -319,7 +323,7 @@ class GeminiLLM:
             "contents": parts_history,
             "generationConfig": {
                 "maxOutputTokens": 60,
-                "temperature": 0.3,
+                "temperature": 0.15,  # lowered from 0.3 for more literal, less improvised answers
                 "topP": 0.8,
             }
         }
@@ -376,7 +380,7 @@ class GeminiLLM:
                         "model": "gpt-4o-mini",
                         "messages": messages,
                         "max_tokens": 60,
-                        "temperature": 0.3,
+                        "temperature": 0.15,  # lowered from 0.3 for more literal, less improvised answers
                     }
                 )
                 if resp.status_code == 200:
