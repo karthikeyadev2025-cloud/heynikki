@@ -10,7 +10,7 @@ import { NIKKI } from "../lib/brand";
 import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
-  Check, AlertTriangle, RefreshCw, Bot, User,
+  Check, AlertTriangle, RefreshCw, Bot, User, Users,
 } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
@@ -89,6 +89,7 @@ const TABS = [
   { label: "Dashboard",       icon: LayoutDashboard },
   { label: "Tenants",         icon: Building2 },
   { label: "Live Calls",      icon: Phone },
+  { label: "CRM",             icon: Users },
   { label: "Revenue",         icon: IndianRupee },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
@@ -124,6 +125,7 @@ export default function SuperAdminPage() {
     <PlatformDashboard key="dash" token={token} />,
     <TenantsPanel      key="ten"  token={token} />,
     <LiveCallsPanel    key="live" token={token} />,
+    <CrmPanel          key="crm"  token={token} />,
     <RevenuePanel      key="rev"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
@@ -470,6 +472,118 @@ function TenantsPanel({ token }: { token: string }) {
               ))}
             </tbody>
           </table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ── CRM PANEL ──────────────────────────────────────────────
+// Platform-wide oversight across all tenants' leads. The leads table's
+// own design notes (011_leads_crm.sql) are explicit: "a simple, honest
+// funnel... NOT a configurable pipeline builder... a fake enterprise
+// feature is worse than a clear simple one" — matching that same
+// philosophy here rather than building something heavier than the
+// data model actually supports. RLS already grants super_admin
+// cross-tenant read/write (is_super_admin() in the leads policies),
+// so this queries Supabase directly, same pattern as TenantsPanel.
+
+function CrmPanel({ token: _ }: { token: string }) {
+  const [leads, setLeads]     = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch]   = useState("");
+  const [stageFilter, setStageFilter] = useState("all");
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await sb.from("leads")
+        .select("*, tenants(name)")
+        .order("last_contacted_at", { ascending: false })
+        .limit(500);
+      setLeads(data || []);
+      setLoading(false);
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const stageColor = (s: string) => ({
+    new: C.cyn, contacted: C.gold, qualified: C.gbr, won: C.grn, lost: C.dim,
+  } as Record<string, string>)[s] || C.mid;
+
+  const filtered = leads.filter(l => {
+    const matchStage  = stageFilter === "all" || l.stage === stageFilter;
+    const matchSearch = !search ||
+      l.name?.toLowerCase().includes(search.toLowerCase()) ||
+      l.phone?.includes(search) ||
+      l.tenants?.name?.toLowerCase().includes(search.toLowerCase());
+    return matchStage && matchSearch;
+  });
+
+  const counts = ["new", "contacted", "qualified", "won", "lost"].map(s => ({
+    stage: s, count: leads.filter(l => l.stage === s).length,
+  }));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 20 }}>
+        {counts.map(({ stage, count }) => (
+          <Card key={stage} style={{ textAlign: "center" }}>
+            <div style={{ color: stageColor(stage), fontSize: TYPE.xl, fontWeight: 900 }}>{count}</div>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginTop: 2 }}>{stage}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search name, phone, or business..."
+          style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+            borderRadius: 8, padding: "8px 12px", fontSize: TYPE.sm, width: 260 }} />
+        {["all", "new", "contacted", "qualified", "won", "lost"].map(f => (
+          <button key={f} onClick={() => setStageFilter(f)} style={{
+            padding: "7px 12px", borderRadius: 7, fontSize: TYPE.sm, fontWeight: 700,
+            background: stageFilter === f ? C.glow + "66" : C.hi,
+            color: stageFilter === f ? C.gbr : C.mid,
+            border: "1px solid " + (stageFilter === f ? C.glow : C.bord),
+          } as any}>{f}</button>
+        ))}
+        <span style={{ color: C.dim, fontSize: TYPE.sm, marginLeft: "auto", alignSelf: "center" }}>
+          {filtered.length} leads
+        </span>
+      </div>
+
+      <Card>
+        {loading ? <div style={{ color: C.mid, textAlign: "center", padding: 40 }}>Loading...</div> :
+         filtered.length === 0 ? <div style={{ color: C.dim, textAlign: "center", padding: 40 }}>No leads match</div> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>{["Business","Name","Phone","Interest","Stage","Score","Calls","Last Contact"].map(h => (
+                  <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
+                    textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
+                    borderBottom: "1px solid " + C.bord, whiteSpace: "nowrap" }}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {filtered.map(l => (
+                  <tr key={l.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                    <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.tenants?.name || "—"}</td>
+                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>{l.name || "Unknown"}</td>
+                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.phone}</td>
+                    <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.interest || "—"}</td>
+                    <td style={{ padding: "10px" }}><Pill label={l.stage} color={stageColor(l.stage)} /></td>
+                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{l.score ?? 0}</td>
+                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.call_count ?? 1}</td>
+                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
+                      {l.last_contacted_at ? new Date(l.last_contacted_at).toLocaleDateString("en-IN") : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
