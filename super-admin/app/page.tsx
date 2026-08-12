@@ -565,15 +565,23 @@ function LiveCallsPanel({ token }: { token: string }) {
 // ── REVENUE PANEL ─────────────────────────────────────────
 function RevenuePanel({ token }: { token: string }) {
   const [stats, setStats] = useState<any>(null);
+  const [plans, setPlans] = useState<any[]>([]);
 
   useEffect(() => {
     fetch(`${API}/api/admin/stats`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json()).then(setStats);
+    // Was previously a hardcoded PLAN_PRICES object here, disconnected
+    // from the real editable plans table — a price changed in the
+    // Pricing Engine tab would silently never show up in MRR/ARR here.
+    // Reading the same table PricingEnginePanel actually writes to.
+    sb.from("plans").select("id,price_monthly_paise").then(({ data }) => setPlans(data || []));
   }, [token]);
 
-  const PLAN_PRICES = { starter: 1999, growth: 4999, scale: 9999, trial: 0 };
+  const planPrice = (planId: string) =>
+    (plans.find(p => p.id === planId)?.price_monthly_paise || 0) / 100;
+
   const mrr = stats ? Object.entries(stats.by_plan || {}).reduce((sum, [plan, count]: [string, any]) => {
-    return sum + ((PLAN_PRICES as any)[plan] || 0) * count;
+    return sum + planPrice(plan) * count;
   }, 0) : 0;
 
   return (
@@ -588,9 +596,9 @@ function RevenuePanel({ token }: { token: string }) {
         <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 14 }}>
           Revenue by Plan
         </div>
-        {Object.entries(PLAN_PRICES).map(([plan, price]) => {
+        {plans.map(({ id: plan }) => {
           const count = stats?.by_plan?.[plan] || 0;
-          const rev   = price * count;
+          const rev   = planPrice(plan) * count;
           return (
             <div key={plan} style={{ display: "flex", justifyContent: "space-between",
               alignItems: "center", padding: "10px 0", borderBottom: "1px solid " + C.bord + "44" }}>
@@ -873,8 +881,12 @@ function PlatformConfigPanel({ token }: { token: string }) {
           <span style={{ color: C.dim, fontSize: TYPE.xs }}>sec</span>
         </Row>
 
-        {(["n8n_url", "activepieces_url", "r2_public_url"] as const).map(key => (
-          <Row key={key} label={key.replace(/_/g, " ").toUpperCase()} desc={`Internal URL for ${key}`}>
+        {([
+          { key: "n8n_url" as const,          label: "n8n" },
+          { key: "activepieces_url" as const, label: "Activepieces" },
+          { key: "r2_public_url" as const,    label: "R2 Public URL" },
+        ]).map(({ key, label }) => (
+          <Row key={key} label={label} desc={`Internal URL for ${key}`}>
             <input
               value={cfg[key] || ""}
               onChange={e => setCfg(p => ({ ...p, [key]: e.target.value }))}
@@ -882,6 +894,13 @@ function PlatformConfigPanel({ token }: { token: string }) {
               style={{ width: 260, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
                 borderRadius: 6, padding: "7px 10px", fontSize: TYPE.sm }}
             />
+            {cfg[key] && (
+              <a href={cfg[key]} target="_blank" rel="noopener noreferrer" style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                color: C.glow, fontSize: TYPE.xs, fontWeight: 700, textDecoration: "none",
+                border: "1px solid " + C.glow + "44", borderRadius: 6, padding: "6px 10px",
+              }}>Open →</a>
+            )}
           </Row>
         ))}
       </Card>
@@ -1061,10 +1080,34 @@ function PricingEnginePanel({ token }: { token: string }) {
   const [edited, setEdited] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved]   = useState(false);
+  const [skuCfg, setSkuCfg] = useState<Record<string, string>>({});
+  const [skuSaving, setSkuSaving] = useState<string | null>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
   useEffect(() => {
     sb.from("plans").select("*").then(({ data }) => setPlans(data || []));
-  }, []);
+    // These 3 SKU cards used to be hardcoded strings with a label
+    // claiming "Update in Plans table above" — they weren't actually
+    // connected to anything. Now backed by platform_config, same
+    // table/pattern PlatformConfigPanel already uses.
+    fetch(`${API_URL}/api/platform/config`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then((rows: any[]) => {
+        const m: Record<string, string> = {};
+        for (const r of rows) m[r.key] = r.value;
+        setSkuCfg(m);
+      });
+  }, [token, API_URL]);
+
+  const saveSkuPrice = async (key: string, paise: number) => {
+    setSkuSaving(key);
+    await fetch(`${API_URL}/api/platform/config`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value: String(paise) }),
+    });
+    setSkuCfg(prev => ({ ...prev, [key]: String(paise) }));
+    setSkuSaving(null);
+  };
 
   const set = (planId: string, field: string, val: any) => {
     setEdited(prev => ({ ...prev, [planId]: { ...(prev[planId] || {}), [field]: val } }));
@@ -1157,17 +1200,32 @@ function PricingEnginePanel({ token }: { token: string }) {
       <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>Product Unit Pricing</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
         {[
-          { label: "AI Telecaller Unit",    icon: Bot,   color: C.glow, price: "₹5,999/mo" },
-          { label: "Human CRM Seat",        icon: User,  color: C.gbr,  price: "₹1,999/mo" },
-          { label: "Dedicated Jio DID",     icon: Phone, color: C.grn,  price: "₹1,999/mo" },
-        ].map(p => (
-          <Card key={p.label} hover>
-            <div style={{ marginBottom: 8 }}><p.icon size={24} color={p.color} /></div>
-            <div style={{ color: C.mid, fontSize: TYPE.xs, marginBottom: 4 }}>{p.label}</div>
-            <div style={{ color: p.color, fontSize: TYPE.lg, fontWeight: 900 }}>{p.price}</div>
-            <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 4 }}>Update in Plans table above</div>
-          </Card>
-        ))}
+          { key: "price_ai_telecaller_paise", label: "AI Telecaller Unit", icon: Bot,   color: C.glow, defaultPaise: 599900 },
+          { key: "price_human_crm_seat_paise", label: "Human CRM Seat",    icon: User,  color: C.gbr,  defaultPaise: 199900 },
+          { key: "price_jio_did_paise",        label: "Dedicated Jio DID", icon: Phone, color: C.grn,  defaultPaise: 199900 },
+        ].map(p => {
+          const paise = parseInt(skuCfg[p.key] || String(p.defaultPaise), 10);
+          return (
+            <Card key={p.key} hover>
+              <div style={{ marginBottom: 8 }}><p.icon size={24} color={p.color} /></div>
+              <div style={{ color: C.mid, fontSize: TYPE.xs, marginBottom: 4 }}>{p.label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ color: p.color, fontSize: TYPE.xs }}>₹</span>
+                <input
+                  type="number"
+                  defaultValue={Math.round(paise / 100)}
+                  onBlur={e => saveSkuPrice(p.key, parseInt(e.target.value || "0", 10) * 100)}
+                  style={{ width: 70, background: "transparent", border: "none", borderBottom: "1px solid " + p.color + "44",
+                    color: p.color, fontSize: TYPE.lg, fontWeight: 900, padding: "2px 0" }}
+                />
+                <span style={{ color: C.dim, fontSize: TYPE.xs }}>/mo</span>
+              </div>
+              <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 4 }}>
+                {skuSaving === p.key ? "Saving..." : "Click to edit, saves on blur"}
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
