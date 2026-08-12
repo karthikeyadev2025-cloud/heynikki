@@ -11,6 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
+  X, Tag, Clock, Download, UserPlus, MessageSquare,
 } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
@@ -488,71 +489,133 @@ function TenantsPanel({ token }: { token: string }) {
 // cross-tenant read/write (is_super_admin() in the leads policies),
 // so this queries Supabase directly, same pattern as TenantsPanel.
 
-function CrmPanel({ token: _ }: { token: string }) {
+function CrmPanel({ token }: { token: string }) {
   const [leads, setLeads]     = useState<any[]>([]);
+  const [stages, setStages]   = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
   const [stageFilter, setStageFilter] = useState("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [detailLead, setDetailLead] = useState<any>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await sb.from("leads")
-        .select("*, tenants(name)")
-        .order("last_contacted_at", { ascending: false })
-        .limit(500);
-      setLeads(data || []);
-      setLoading(false);
-    };
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, []);
+  const load = async () => {
+    const [{ data: leadRows }, { data: stageRows }] = await Promise.all([
+      sb.from("leads").select("*, tenants(name)").order("last_contacted_at", { ascending: false }).limit(500),
+      sb.from("crm_pipeline_stages").select("*").order("sort_order"),
+    ]);
+    setLeads(leadRows || []);
+    // De-dupe: a tenant-specific stage with the same name overrides the
+    // platform default of that name, rather than showing both.
+    const byName = new Map<string, any>();
+    for (const s of stageRows || []) {
+      if (!byName.has(s.name) || s.tenant_id) byName.set(s.name, s);
+    }
+    setStages([...byName.values()].sort((a, b) => a.sort_order - b.sort_order));
+    setLoading(false);
+  };
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, []);
 
-  const stageColor = (s: string) => ({
-    new: C.cyn, contacted: C.gold, qualified: C.gbr, won: C.grn, lost: C.dim,
-  } as Record<string, string>)[s] || C.mid;
+  const stageColor = (s: string) => stages.find(st => st.name === s)?.color || C.mid;
 
   const filtered = leads.filter(l => {
     const matchStage  = stageFilter === "all" || l.stage === stageFilter;
     const matchSearch = !search ||
       l.name?.toLowerCase().includes(search.toLowerCase()) ||
       l.phone?.includes(search) ||
-      l.tenants?.name?.toLowerCase().includes(search.toLowerCase());
+      l.tenants?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      l.tags?.some((t: string) => t.toLowerCase().includes(search.toLowerCase()));
     return matchStage && matchSearch;
   });
 
-  const counts = ["new", "contacted", "qualified", "won", "lost"].map(s => ({
-    stage: s, count: leads.filter(l => l.stage === s).length,
-  }));
+  const counts = stages.map(s => ({ stage: s.name, color: s.color, count: leads.filter(l => l.stage === s.name).length }));
+
+  const toggleSelect = (id: string) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const bulkSetStage = async (newStage: string) => {
+    const ids = [...selected];
+    await sb.from("leads").update({ stage: newStage }).in("id", ids);
+    await sb.from("lead_activities").insert(
+      ids.map(id => ({ lead_id: id, type: "stage_change", description: `Bulk-moved to "${newStage}"` }))
+    );
+    setSelected(new Set());
+    load();
+  };
+
+  const exportCsv = () => {
+    const rows = (selected.size > 0 ? filtered.filter(l => selected.has(l.id)) : filtered);
+    const header = ["Business","Name","Phone","Interest","Stage","Score","Deal Value","Tags","Calls","Last Contact"];
+    const csv = [header, ...rows.map(l => [
+      l.tenants?.name || "", l.name || "", l.phone || "", l.interest || "", l.stage || "",
+      l.score ?? 0, ((l.deal_value_paise || 0) / 100).toFixed(0), (l.tags || []).join("|"),
+      l.call_count ?? 1, l.last_contacted_at || "",
+    ])].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `leads-export-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 20 }}>
-        {counts.map(({ stage, count }) => (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${stages.length || 5},1fr)`, gap: 10, marginBottom: 20 }}>
+        {counts.map(({ stage, color, count }) => (
           <Card key={stage} style={{ textAlign: "center" }}>
-            <div style={{ color: stageColor(stage), fontSize: TYPE.xl, fontWeight: 900 }}>{count}</div>
+            <div style={{ color, fontSize: TYPE.xl, fontWeight: 900 }}>{count}</div>
             <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginTop: 2 }}>{stage}</div>
           </Card>
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search name, phone, or business..."
+          placeholder="Search name, phone, business, or tag..."
           style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
             borderRadius: 8, padding: "8px 12px", fontSize: TYPE.sm, width: 260 }} />
-        {["all", "new", "contacted", "qualified", "won", "lost"].map(f => (
-          <button key={f} onClick={() => setStageFilter(f)} style={{
+        <button onClick={() => setStageFilter("all")} style={{
+          padding: "7px 12px", borderRadius: 7, fontSize: TYPE.sm, fontWeight: 700,
+          background: stageFilter === "all" ? C.glow + "66" : C.hi,
+          color: stageFilter === "all" ? C.gbr : C.mid,
+          border: "1px solid " + (stageFilter === "all" ? C.glow : C.bord),
+        } as any}>all</button>
+        {stages.map(s => (
+          <button key={s.id} onClick={() => setStageFilter(s.name)} style={{
             padding: "7px 12px", borderRadius: 7, fontSize: TYPE.sm, fontWeight: 700,
-            background: stageFilter === f ? C.glow + "66" : C.hi,
-            color: stageFilter === f ? C.gbr : C.mid,
-            border: "1px solid " + (stageFilter === f ? C.glow : C.bord),
-          } as any}>{f}</button>
+            background: stageFilter === s.name ? s.color + "33" : C.hi,
+            color: stageFilter === s.name ? s.color : C.mid,
+            border: "1px solid " + (stageFilter === s.name ? s.color : C.bord),
+          } as any}>{s.name}</button>
         ))}
+        <button onClick={exportCsv} style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          padding: "7px 12px", borderRadius: 7, fontSize: TYPE.sm, fontWeight: 700,
+          background: C.hi, color: C.mid, border: "1px solid " + C.bord, cursor: "pointer",
+        }}><Download size={13} /> Export {selected.size > 0 ? `(${selected.size})` : "All"}</button>
         <span style={{ color: C.dim, fontSize: TYPE.sm, marginLeft: "auto", alignSelf: "center" }}>
           {filtered.length} leads
         </span>
       </div>
+
+      {selected.size > 0 && (
+        <Card style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, padding: "10px 16px" }}>
+          <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{selected.size} selected</span>
+          <span style={{ color: C.dim, fontSize: TYPE.sm }}>Move to:</span>
+          {stages.map(s => (
+            <button key={s.id} onClick={() => bulkSetStage(s.name)} style={{
+              padding: "5px 10px", borderRadius: 6, fontSize: TYPE.xs, fontWeight: 700,
+              background: s.color + "22", color: s.color, border: "1px solid " + s.color + "44", cursor: "pointer",
+            }}>{s.name}</button>
+          ))}
+          <button onClick={() => setSelected(new Set())} style={{
+            marginLeft: "auto", background: "none", border: "none", color: C.dim, cursor: "pointer",
+            display: "flex", alignItems: "center" }}><X size={14} /></button>
+        </Card>
+      )}
 
       <Card>
         {loading ? <div style={{ color: C.mid, textAlign: "center", padding: 40 }}>Loading...</div> :
@@ -560,7 +623,7 @@ function CrmPanel({ token: _ }: { token: string }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
-                <tr>{["Business","Name","Phone","Interest","Stage","Score","Calls","Last Contact"].map(h => (
+                <tr>{["","Business","Name","Phone","Stage","Deal Value","Tags","Score","Last Contact"].map(h => (
                   <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
                     textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
                     borderBottom: "1px solid " + C.bord, whiteSpace: "nowrap" }}>{h}</th>
@@ -568,14 +631,28 @@ function CrmPanel({ token: _ }: { token: string }) {
               </thead>
               <tbody>
                 {filtered.map(l => (
-                  <tr key={l.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                  <tr key={l.id} style={{ borderBottom: "1px solid " + C.bord + "33", cursor: "pointer" }}
+                    onClick={() => setDetailLead(l)}>
+                    <td style={{ padding: "10px" }} onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleSelect(l.id)} />
+                    </td>
                     <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.tenants?.name || "—"}</td>
                     <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>{l.name || "Unknown"}</td>
                     <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.phone}</td>
-                    <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.interest || "—"}</td>
                     <td style={{ padding: "10px" }}><Pill label={l.stage} color={stageColor(l.stage)} /></td>
+                    <td style={{ padding: "10px", color: C.grn, fontSize: TYPE.sm, fontWeight: 700 }}>
+                      {l.deal_value_paise ? `₹${(l.deal_value_paise / 100).toLocaleString()}` : "—"}
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {(l.tags || []).slice(0, 2).map((t: string) => (
+                          <span key={t} style={{ background: C.hi, color: C.mid, fontSize: TYPE.xs,
+                            padding: "2px 6px", borderRadius: 4 }}>{t}</span>
+                        ))}
+                        {(l.tags || []).length > 2 && <span style={{ color: C.dim, fontSize: TYPE.xs }}>+{l.tags.length - 2}</span>}
+                      </div>
+                    </td>
                     <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{l.score ?? 0}</td>
-                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.call_count ?? 1}</td>
                     <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
                       {l.last_contacted_at ? new Date(l.last_contacted_at).toLocaleDateString("en-IN") : "—"}
                     </td>
@@ -586,6 +663,183 @@ function CrmPanel({ token: _ }: { token: string }) {
           </div>
         )}
       </Card>
+
+      {detailLead && (
+        <LeadDetailDrawer lead={detailLead} stages={stages} token={token} apiUrl={API_URL}
+          onClose={() => setDetailLead(null)} onChanged={load} />
+      )}
+    </div>
+  );
+}
+
+// ── LEAD DETAIL DRAWER ─────────────────────────────────────
+// Assignment, deal value, tags, and the activity timeline — the parts
+// of "enterprise CRM" that don't fit in a table row.
+function LeadDetailDrawer({ lead, stages, token, apiUrl, onClose, onChanged }: {
+  lead: any; stages: any[]; token: string; apiUrl: string; onClose: () => void; onChanged: () => void;
+}) {
+  const [activities, setActivities] = useState<any[]>([]);
+  const [staff, setStaff]     = useState<any[]>([]);
+  const [note, setNote]       = useState("");
+  const [tagInput, setTagInput] = useState("");
+  const [dealValue, setDealValue] = useState(String((lead.deal_value_paise || 0) / 100));
+
+  useEffect(() => {
+    sb.from("lead_activities").select("*").eq("lead_id", lead.id)
+      .order("created_at", { ascending: false }).then(({ data }) => setActivities(data || []));
+    fetch(`${apiUrl}/api/admin/tenant-staff/${lead.tenant_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(setStaff).catch(() => setStaff([]));
+  }, [lead.id]);
+
+  const logActivity = async (type: string, description: string) => {
+    await sb.from("lead_activities").insert({ lead_id: lead.id, type, description });
+    sb.from("lead_activities").select("*").eq("lead_id", lead.id)
+      .order("created_at", { ascending: false }).then(({ data }) => setActivities(data || []));
+  };
+
+  const addNote = async () => {
+    if (!note.trim()) return;
+    await sb.from("leads").update({ notes: note }).eq("id", lead.id);
+    await logActivity("note", note);
+    setNote("");
+    onChanged();
+  };
+
+  const setStage = async (stageName: string) => {
+    await sb.from("leads").update({ stage: stageName }).eq("id", lead.id);
+    await logActivity("stage_change", `Moved to "${stageName}"`);
+    onChanged();
+  };
+
+  const setAssignee = async (userId: string) => {
+    await sb.from("leads").update({ assigned_to: userId || null }).eq("id", lead.id);
+    const person = staff.find(s => s.user_id === userId);
+    await logActivity("assignment", userId ? `Assigned to ${person?.email || userId}` : "Unassigned");
+    onChanged();
+  };
+
+  const saveDealValue = async () => {
+    const paise = Math.round(parseFloat(dealValue || "0") * 100);
+    await sb.from("leads").update({ deal_value_paise: paise }).eq("id", lead.id);
+    await logActivity("value_change", `Deal value set to ₹${dealValue}`);
+    onChanged();
+  };
+
+  const addTag = async () => {
+    if (!tagInput.trim()) return;
+    const newTags = [...(lead.tags || []), tagInput.trim()];
+    await sb.from("leads").update({ tags: newTags }).eq("id", lead.id);
+    await logActivity("tag_change", `Tagged "${tagInput.trim()}"`);
+    setTagInput("");
+    onChanged();
+  };
+
+  const removeTag = async (tag: string) => {
+    const newTags = (lead.tags || []).filter((t: string) => t !== tag);
+    await sb.from("leads").update({ tags: newTags }).eq("id", lead.id);
+    await logActivity("tag_change", `Removed tag "${tag}"`);
+    onChanged();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", zIndex: 999,
+      display: "flex", justifyContent: "flex-end" }} onClick={onClose}>
+      <div style={{ width: 440, maxWidth: "100%", height: "100%", background: C.surf,
+        borderLeft: "1px solid " + C.bord, overflowY: "auto", padding: 24 }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+          <div>
+            <div style={{ color: C.txt, fontSize: TYPE.lg, fontWeight: 900 }}>{lead.name || "Unknown"}</div>
+            <div style={{ color: C.dim, fontSize: TYPE.sm }}>{lead.phone} · {lead.tenants?.name}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.dim, cursor: "pointer" }}><X size={18} /></button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginBottom: 6 }}>Stage</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {stages.map(s => (
+              <button key={s.id} onClick={() => setStage(s.name)} style={{
+                padding: "6px 12px", borderRadius: 6, fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer",
+                background: lead.stage === s.name ? s.color + "33" : C.hi,
+                color: lead.stage === s.name ? s.color : C.mid,
+                border: "1px solid " + (lead.stage === s.name ? s.color : C.bord),
+              }}>{s.name}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginBottom: 6,
+            display: "flex", alignItems: "center", gap: 4 }}><UserPlus size={12} /> Assigned To</div>
+          <select value={lead.assigned_to || ""} onChange={e => setAssignee(e.target.value)} style={{
+            width: "100%", background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+            borderRadius: 6, padding: "8px 10px", fontSize: TYPE.sm,
+          }}>
+            <option value="">Unassigned</option>
+            {staff.map(s => <option key={s.user_id} value={s.user_id}>{s.email} ({s.role})</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginBottom: 6 }}>Deal Value</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="number" value={dealValue} onChange={e => setDealValue(e.target.value)}
+              style={{ flex: 1, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+                borderRadius: 6, padding: "8px 10px", fontSize: TYPE.sm }} />
+            <button onClick={saveDealValue} style={{ background: C.glow, color: "#fff", border: "none",
+              borderRadius: 6, padding: "8px 14px", fontSize: TYPE.sm, fontWeight: 700, cursor: "pointer" }}>Save</button>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginBottom: 6,
+            display: "flex", alignItems: "center", gap: 4 }}><Tag size={12} /> Tags</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {(lead.tags || []).map((t: string) => (
+              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                background: C.hi, color: C.mid, fontSize: TYPE.xs, padding: "3px 8px", borderRadius: 5 }}>
+                {t}
+                <X size={10} style={{ cursor: "pointer" }} onClick={() => removeTag(t)} />
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={tagInput} onChange={e => setTagInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addTag()}
+              placeholder="Add tag..." style={{ flex: 1, background: C.hi, border: "1px solid " + C.bord,
+                color: C.txt, borderRadius: 6, padding: "7px 10px", fontSize: TYPE.sm }} />
+            <button onClick={addTag} style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
+              borderRadius: 6, padding: "7px 14px", fontSize: TYPE.sm, cursor: "pointer" }}>Add</button>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase", marginBottom: 6,
+            display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> Activity Timeline</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input value={note} onChange={e => setNote(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addNote()}
+              placeholder="Add a note..." style={{ flex: 1, background: C.hi, border: "1px solid " + C.bord,
+                color: C.txt, borderRadius: 6, padding: "7px 10px", fontSize: TYPE.sm }} />
+            <button onClick={addNote} style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
+              borderRadius: 6, padding: "7px 10px", cursor: "pointer", display: "flex", alignItems: "center" }}>
+              <MessageSquare size={14} />
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {activities.length === 0 && <div style={{ color: C.dim, fontSize: TYPE.sm }}>No activity yet.</div>}
+            {activities.map(a => (
+              <div key={a.id} style={{ padding: "8px 10px", background: C.hi, borderRadius: 6 }}>
+                <div style={{ color: C.txt, fontSize: TYPE.sm }}>{a.description}</div>
+                <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
+                  {a.type} · {new Date(a.created_at).toLocaleString("en-IN")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

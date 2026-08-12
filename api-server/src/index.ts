@@ -762,6 +762,24 @@ app.get("/api/admin/tenants", verifySuperAdmin, async (req, res) => {
   res.json(data || []);
 });
 
+// Staff assignable to leads for a given tenant — needs auth.admin
+// (service-role only, not PostgREST-exposed) to resolve emails, so
+// this can't be a direct client-side Supabase query like most of the
+// CRM panel's other reads.
+app.get("/api/admin/tenant-staff/:tenantId", verifySuperAdmin, async (req, res) => {
+  try {
+    const { data: rows } = await sb.from("tenant_users")
+      .select("user_id, role").eq("tenant_id", req.params.tenantId);
+    const staff = await Promise.all((rows || []).map(async (r) => {
+      const { data } = await sb.auth.admin.getUserById(r.user_id);
+      return { user_id: r.user_id, role: r.role, email: data.user?.email || "unknown" };
+    }));
+    res.json(staff);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // All active calls
 app.get("/api/admin/live-calls", verifySuperAdmin, async (req, res) => {
   const { data } = await sb.from("calls").select(`
