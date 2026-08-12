@@ -14,7 +14,7 @@ DISCLOSURE_TEXT = (
 )
 
 # Updated voice list (Sarvam current voices for Telugu)
-VOICES = ["anushka", "manisha", "vidya"]
+VOICES = ["priya", "shreya", "kavya"]  # fixed: old names not valid on bulbul:v3
 
 ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)

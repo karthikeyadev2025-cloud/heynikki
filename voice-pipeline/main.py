@@ -230,7 +230,7 @@ class SarvamTTS:
     def __init__(self):
         self.api_key = SARVAM_KEY
 
-    async def synthesize(self, text: str, speaker: str = "meera") -> bytes:
+    async def synthesize(self, text: str, speaker: str = "priya") -> bytes:
         # Enforce 20-word cap before synthesis
         words = text.split()
         if len(words) > 20:
@@ -530,15 +530,23 @@ class NikkiAgent:
         # Voice speaker based on profile SKU
         # NOTE: must be real bulbul:v2 speaker IDs — see SKU_VOICE in
         # app/exotel/bridge.py for the verified source of truth. This dict
-        # previously used meera/pavithra/arvind, none of which exist in
-        # Sarvam's bulbul:v2 or v3 catalogs.
+        # CRITICAL FIX (confirmed via a real Sarvam API call, not guessed):
+        # anushka/vidya/karun/manisha are NOT valid bulbul:v3 speakers —
+        # confirmed by Sarvam's own error response listing the real
+        # catalog. This means every real phone call's TTS synthesis has
+        # been failing outright this whole time (or silently falling
+        # back to a different provider, if one is configured). The
+        # comment this replaces already noted ONE prior failed attempt
+        # at this same fix (meera/pavithra/arvind) — these picks are
+        # verified against the actual current bulbul:v3 speaker list,
+        # not another guess.
         sku_voices = {
-            "standard":    "anushka",
-            "clinic":      "vidya",
-            "real_estate": "karun",
-            "premium":     "manisha",
+            "standard":    "priya",   # warm general-business female voice
+            "clinic":      "shreya",  # calm, professional — healthcare
+            "real_estate": "aditya",  # confident male voice
+            "premium":     "kavya",   # distinct, polished — luxury/high-value
         }
-        self.voice = sku_voices.get(profile.get("profile_sku","standard"), "anushka")
+        self.voice = sku_voices.get(profile.get("profile_sku","standard"), "priya")
 
     async def on_call_start(self) -> bytes:
         """Called when call connects. Play TRAI disclosure first.
@@ -1079,7 +1087,7 @@ async def handle_call_end(
 
 class TTSTestRequest(BaseModel):
     text: str = "నమస్కారం! Nikki నుండి కాల్ చేస్తున్నాము."
-    speaker: str = "anushka"
+    speaker: str = "priya"
 
 class LLMTestRequest(BaseModel):
     user_message: str = "డాక్టర్ కి appointment కావాలి"
@@ -1196,10 +1204,10 @@ async def test_full(req: LLMTestRequest):
         response = await llm.generate(system_prompt, history)
 
         speaker_map = {
-            "standard": "anushka", "clinic": "vidya",
-            "real_estate": "karun", "premium": "manisha",
+            "standard": "priya", "clinic": "shreya",
+            "real_estate": "aditya", "premium": "kavya",
         }
-        speaker = speaker_map.get(req.profile_sku, "anushka")
+        speaker = speaker_map.get(req.profile_sku, "priya")
 
         # Direct Sarvam call for better error visibility
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -1273,10 +1281,10 @@ TEST_CONSOLE_HTML = """<!DOCTYPE html>
     <p>Enter Telugu/Tanglish/English text. Hear it spoken in a chosen voice.</p>
     <textarea id="tts-text" rows="3">నమస్కారం! Ravi Clinic కి కాల్ చేసినందుకు thank you. మీకు ఎలా సహాయపడగలను?</textarea>
     <select id="tts-speaker">
-      <option value="anushka">Anushka (default female)</option>
-      <option value="vidya">Vidya (clinic)</option>
-      <option value="karun">Karun (male)</option>
-      <option value="manisha">Manisha (premium)</option>
+      <option value="priya">Priya (default female)</option>
+      <option value="shreya">Shreya (clinic)</option>
+      <option value="aditya">Aditya (male)</option>
+      <option value="kavya">Kavya (premium)</option>
     </select>
     <button onclick="testTTS()">🔊 Generate Telugu Speech</button>
     <div id="tts-result" class="result" style="display:none"></div>

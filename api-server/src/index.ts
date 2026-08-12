@@ -1880,7 +1880,7 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
       body: JSON.stringify({
         inputs: [answer],
         target_language_code: "te-IN",
-        speaker: "anushka",
+        speaker: "priya",
         model: "bulbul:v3",
         pitch: 0,
         pace: 1.0,

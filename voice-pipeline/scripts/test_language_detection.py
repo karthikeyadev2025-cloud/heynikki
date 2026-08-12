@@ -43,7 +43,7 @@ async def main():
 
     for spoken_lang, text in TEST_PHRASES.items():
         print(f"--- Generating {LANGUAGE_NAMES[spoken_lang]} clip: {text!r}")
-        wav_pcm22k = await sarvam_tts(text, voice="anushka", target_language_code=spoken_lang)
+        wav_pcm22k = await sarvam_tts(text, voice="priya", target_language_code=spoken_lang)
         if not wav_pcm22k:
             print(f"    FAILED: TTS generation failed for {spoken_lang}, skipping")
             results.append((spoken_lang, None))

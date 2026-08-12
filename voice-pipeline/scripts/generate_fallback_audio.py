@@ -32,7 +32,7 @@ FALLBACK_TEXT = (
     "క్షమించండి, ప్రస్తుతం సాంకేతిక సమస్య ఉంది. "
     "దయచేసి కొద్ది సేపటి తర్వాత మళ్ళీ కాల్ చేయండి."
 )
-VOICE = "anushka"  # system-level fallback, not tied to any tenant's SKU voice
+VOICE = "priya"  # fixed: "anushka" is not a valid bulbul:v3 speaker (confirmed via live API error) — was the system-level fallback, not tied to any tenant's SKU voice
 EXOTEL_SR = 8000
 TTS_SR = 22050
 

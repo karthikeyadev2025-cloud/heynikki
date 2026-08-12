@@ -29,7 +29,7 @@ async def test_sarvam_tts():
                 json={
                     "inputs": ["నమస్కారం! ఇది Nikki Telugu AI రిసెప్షనిస్ట్."],
                     "target_language_code": "te-IN",
-                    "speaker": "meera",
+                    "speaker": "priya",  # fixed: meera not valid on bulbul:v3
                     "model": "bulbul:v3",
                     "speech_sample_rate": 8000,
                 }

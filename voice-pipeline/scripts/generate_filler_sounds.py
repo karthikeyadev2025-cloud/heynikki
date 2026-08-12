@@ -20,7 +20,7 @@ not less.
 3 languages × 4 fillers each = 12 files. Files named:
   fillers/te-IN_1.pcm, fillers/te-IN_2.pcm, ..., fillers/en-IN_4.pcm
 
-Voice: uses "anushka" for all fillers regardless of tenant SKU. Fillers
+Voice: uses "priya" for all fillers regardless of tenant SKU. Fillers
 are short (< 1 second) — the tenant's actual SKU voice takes over
 immediately after via speak_dynamic, so the voice consistency claim
 still holds for the substantive part of the reply.
@@ -62,7 +62,7 @@ FILLERS = {
     ],
 }
 
-VOICE = "anushka"
+VOICE = "priya"  # fixed: anushka is not a valid bulbul:v3 speaker
 EXOTEL_SR = 8000
 TTS_SR = 22050
 

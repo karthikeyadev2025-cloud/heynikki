@@ -16,10 +16,10 @@ const C = {
 };
 
 const PROFILE_SKUS = [
-  { id: "standard",    name: "Nikki Telugu Receptionist — Standard",    desc: "General business, retail, coaching",        icon: Building2, voice: "anushka" },
-  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Hospitals, clinics, diagnostic labs",       icon: Hospital, voice: "vidya"   },
-  { id: "real_estate", name: "Nikki Telugu Receptionist — Real Estate", desc: "Site visits, lead capture, property enquiries", icon: HardHat, voice: "karun"   },
-  { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: Star, voice: "manisha" },
+  { id: "standard",    name: "Nikki Telugu Receptionist — Standard",    desc: "General business, retail, coaching",        icon: Building2, voice: "priya" },
+  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Hospitals, clinics, diagnostic labs",       icon: Hospital, voice: "shreya"   },
+  { id: "real_estate", name: "Nikki Telugu Receptionist — Real Estate", desc: "Site visits, lead capture, property enquiries", icon: HardHat, voice: "aditya"   },
+  { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: Star, voice: "kavya" },
 ];
 
 // Voice sample URLs — public Supabase Storage bucket `voice-samples` serves
