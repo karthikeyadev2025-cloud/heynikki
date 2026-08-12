@@ -72,12 +72,24 @@ services:
       dockerfile: Dockerfile
     container_name: heynikki-api
     restart: always
-    ports:
-      - "127.0.0.1:4000:4000"
+    # network_mode: host, matching freeswitch — NOT a bridged container
+    # with a ports: mapping. freeswitch's ESL is bound strictly to
+    # 127.0.0.1 (intentionally, for security — see event_socket.conf.xml)
+    # which only accepts connections from processes sharing the exact
+    # same network namespace as the host. A bridged container reaching
+    # in via host.docker.internal/extra_hosts would NOT work here (that
+    # resolves to the Docker bridge gateway IP, a different interface
+    # than true loopback) — this was tried and reasoned through before
+    # landing on network_mode: host as the actual fix.
+    network_mode: host
     env_file: .env
     environment:
       - PORT=4000
-      - PIPELINE_URL=http://voice-pipeline:8000
+      # voice-pipeline also publishes at 127.0.0.1:8000 on the host, so
+      # this now reaches it the same way api-server reaches freeswitch —
+      # NOT via the bridge-network service name "voice-pipeline", which
+      # stops resolving once this container leaves the bridge network.
+      - PIPELINE_URL=http://127.0.0.1:8000
     depends_on:
       - voice-pipeline
     healthcheck:
@@ -142,6 +154,15 @@ services:
       - AP_ENGINE_EXECUTABLE_PATH=dist/packages/engine/main.js
       - AP_TELEMETRY_ENABLED=false
       - AP_TEMPLATES_SOURCE_URL=
+      # Was crash-looping every ~4s: "Host is required is null or
+      # undefined" from createStandaloneRedisConnection — Activepieces
+      # defaults to requiring a real Redis server and doesn't fall
+      # back gracefully when unset. MEMORY mode is the documented way
+      # to run without one — fine for this single-instance setup, but
+      # queue/job state resets on container restart. Add a real Redis
+      # service + AP_REDIS_HOST/AP_REDIS_PORT instead once this needs
+      # to survive restarts without losing in-flight automation state.
+      - AP_REDIS_TYPE=MEMORY
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s
@@ -153,9 +174,17 @@ services:
     image: nginx:alpine
     container_name: heynikki-nginx
     restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    # network_mode: host, not a ports: mapping. nginx.conf proxies to
+    # 127.0.0.1:4000 / :8000 / :5678 / :8080 for api-server /
+    # voice-pipeline / n8n / activepieces — those only resolve
+    # correctly if nginx shares the host's network namespace. As a
+    # bridged container (the previous setup), nginx's own 127.0.0.1
+    # was a separate namespace from all four upstreams, meaning every
+    # proxy_pass here was unreachable regardless of whether the
+    # upstream service itself was healthy — this is why the earlier
+    # "502 Bad Gateway" happened even once api-server was confirmed
+    # running clean.
+    network_mode: host
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro

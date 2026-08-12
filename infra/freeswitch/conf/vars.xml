@@ -16,13 +16,13 @@
   <X-PRE-PROCESS cmd="set" data="rtp_end_port=32768"/>
 
   <!-- NAT traversal: EC2's private interface IP differs from its public
-       IP, which Jio/Vi need in the SDP to send RTP back correctly. STUN
-       auto-detects it on each restart. STRONGLY prefer replacing this
-       with the EC2 Elastic IP directly (e.g. "203.0.113.50") once
-       allocated — STUN adds a dependency on an external server being
-       reachable at boot, and a churning IP breaks NAT ACLs. -->
-  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=stun:stun.freeswitch.org"/>
-  <X-PRE-PROCESS cmd="set" data="external_sip_ip=stun:stun.freeswitch.org"/>
+       IP, which Jio/Vi need in the SDP to send RTP back correctly.
+       Elastic IP, allocated 2026 (eipalloc-0adea37fe783d1b77) — static,
+       won't change on stop/start. Hardcoded below instead of STUN
+       auto-detection, which would add a boot-time dependency on an
+       external server for no reason now that the IP is fixed. -->
+  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=13.203.38.18"/>
+  <X-PRE-PROCESS cmd="set" data="external_sip_ip=13.203.38.18"/>
 
   <!-- Pull secrets from the container's environment (docker-compose env_file .env)
        into FreeSWITCH global vars, referenceable elsewhere as $${name}.

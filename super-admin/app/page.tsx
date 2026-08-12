@@ -616,57 +616,58 @@ function RevenuePanel({ token }: { token: string }) {
 }
 
 // ── API HEALTH PANEL ──────────────────────────────────────
-function APIHealthPanel({ token: _ }: { token: string }) {
-  const [providers, setProviders] = useState([
-    { name: "Sarvam AI (STT+TTS)", status: "checking", latency: 0, url: "https://api.sarvam.ai" },
-    { name: "Gemini 2.5 Flash",    status: "checking", latency: 0, url: "https://generativelanguage.googleapis.com" },
-    { name: "LiveKit Cloud",        status: "checking", latency: 0, url: "https://cloud.livekit.io" },
-    { name: "Exotel",               status: "checking", latency: 0, url: "https://api.exotel.com" },
-    { name: "Razorpay",             status: "checking", latency: 0, url: "https://api.razorpay.com" },
-    { name: "Supabase",             status: "checking", latency: 0, url: process.env.NEXT_PUBLIC_SUPABASE_URL || "" },
-  ]);
+function APIHealthPanel({ token }: { token: string }) {
+  const [providers, setProviders] = useState<any[]>([]);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
   useEffect(() => {
     const check = async () => {
-      const updated = await Promise.all(providers.map(async p => {
-        const start = Date.now();
-        try {
-          await fetch(p.url, { method: "HEAD", mode: "no-cors", signal: AbortSignal.timeout(3000) });
-          return { ...p, status: "ok", latency: Date.now() - start };
-        } catch {
-          return { ...p, status: "error", latency: 0 };
-        }
-      }));
-      setProviders(updated);
+      try {
+        const res = await fetch(`${API_URL}/api/admin/health`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        setProviders(data.providers || []);
+        setCheckedAt(data.checked_at || null);
+      } catch {
+        setProviders([]);
+      }
+      setLoading(false);
     };
     check();
     const t = setInterval(check, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [token]);
 
   return (
     <div>
       <div style={{ color: C.mid, fontSize: TYPE.sm, marginBottom: 16 }}>
-        Checks every 30 seconds · Circuit breaker auto-activates if error rate &gt;5%
+        Checked server-side every 30 seconds{checkedAt ? ` · last checked ${new Date(checkedAt).toLocaleTimeString()}` : ""}
       </div>
       <Card>
-        {providers.map(p => (
+        {loading ? (
+          <div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center", padding: "20px 0" }}>Checking...</div>
+        ) : providers.length === 0 ? (
+          <div style={{ color: C.red, fontSize: TYPE.sm, textAlign: "center", padding: "20px 0" }}>Could not reach health endpoint</div>
+        ) : providers.map(p => (
           <div key={p.name} style={{ display: "flex", justifyContent: "space-between",
             alignItems: "center", padding: "12px 0", borderBottom: "1px solid " + C.bord + "44" }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <span style={{ width: 10, height: 10, borderRadius: "50%",
-                background: p.status === "ok" ? C.grn : p.status === "checking" ? C.gold : C.red,
-                boxShadow: "0 0 6px " + (p.status === "ok" ? C.grn : p.status === "checking" ? C.gold : C.red),
-              }} />
+              <StatusDot ok={!!p.ok} />
               <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>{p.name}</span>
+              {p.configured === false && (
+                <Pill label="Not configured" color={C.dim} />
+              )}
             </div>
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {p.latency > 0 && (
-                <span style={{ color: p.latency < 400 ? C.grn : p.latency < 800 ? C.gold : C.red,
-                  fontSize: TYPE.sm, fontWeight: 700 }}>{p.latency}ms</span>
+              {p.latencyMs > 0 && (
+                <span style={{ color: p.latencyMs < 400 ? C.grn : p.latencyMs < 800 ? C.gold : C.red,
+                  fontSize: TYPE.sm, fontWeight: 700 }}>{p.latencyMs}ms</span>
               )}
-              <Pill label={p.status === "ok" ? "Healthy" : p.status === "checking" ? "Checking" : "Down"}
-                color={p.status === "ok" ? C.grn : p.status === "checking" ? C.gold : C.red} />
+              <Pill label={p.configured === false ? "Skipped" : p.ok ? "Healthy" : "Down"}
+                color={p.configured === false ? C.dim : p.ok ? C.grn : C.red} />
             </div>
           </div>
         ))}

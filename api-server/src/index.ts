@@ -851,12 +851,9 @@ app.get("/api/admin/audit-log", verifySuperAdmin, async (req, res) => {
 });
 
 // ════════════════════════════════════════════════
-// HEALTH
+// (health check consolidated below, near /ready — see FREESWITCH +
+// PLATFORM EXTENSIONS section)
 // ════════════════════════════════════════════════
-app.get("/health", (_, res) => res.json({
-  status: "ok", service: "nikki-api-server",
-  timestamp: new Date().toISOString(),
-}));
 
 // ════════════════════════════════════════════════
 // EMAIL HELPER (Resend)
@@ -1140,14 +1137,20 @@ app.post("/api/keys/:id/revoke", verifyInternal, async (req, res) => {
 // Railway / k8s probes hit these. Keep them DUMB and FAST.
 //   /health  — process is running (liveness, no deps checked)
 //   /ready   — process can serve traffic (touches DB)
+// NOTE: this used to be defined twice (once near line 856, simpler
+// version). Express only ever matches the FIRST-registered handler
+// for a given path, so that first one silently won every time and
+// this more complete version (uptime_ms, pid) never actually ran.
+// Consolidated into one.
 const STARTED_AT = Date.now();
 
 app.get("/health", (_req, res) => {
   res.json({
     status:     "ok",
-    service:    "nikki-api",
+    service:    "nikki-api-server",
     uptime_ms:  Date.now() - STARTED_AT,
     pid:        process.pid,
+    timestamp:  new Date().toISOString(),
   });
 });
 
@@ -1183,6 +1186,64 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // ════════════════════════════════════════════════════════════════
 
 import { fsl } from "./esl";
+
+// ── Aggregate platform health check ──────────────────────────
+// Sprint 3 requirement: "Add FreeSWITCH, n8n, Activepieces, R2 to
+// health checks" — previously the super-admin panel checked these
+// client-side with `mode: "no-cors"`, which always reports success
+// regardless of the actual HTTP status (browsers can't read the
+// response in no-cors mode) — so a genuinely down service would
+// still show "Healthy". Checking server-side here instead, where the
+// real status code is visible, and CORS doesn't apply at all.
+// Also drops LiveKit (removed from the codebase 2026-07-25 — dead
+// code, never called at runtime) and stops treating Exotel as if it
+// were still the primary telephony path now that FreeSWITCH is.
+async function checkUrl(url: string, timeoutMs = 3000): Promise<{ ok: boolean; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(timeoutMs) });
+    // Some APIs 404/405 a bare HEAD to their root but are still up —
+    // anything that isn't a network failure/timeout counts as reachable.
+    return { ok: res.status < 500, latencyMs: Date.now() - start };
+  } catch {
+    return { ok: false, latencyMs: Date.now() - start };
+  }
+}
+
+app.get("/api/admin/health", verifySuperAdmin, async (_req, res) => {
+  try {
+    const cfg = await getPlatformConfig();
+
+    const [freeswitch, n8n, activepieces, r2, sarvam, gemini, razorpay, supabase] =
+      await Promise.all([
+        fsl.getStatus().then(s => ({ ok: s.uptime !== "unavailable", latencyMs: 0 }))
+          .catch(() => ({ ok: false, latencyMs: 0 })),
+        cfg.n8n_url ? checkUrl(cfg.n8n_url) : Promise.resolve({ ok: false, latencyMs: 0 }),
+        cfg.activepieces_url ? checkUrl(cfg.activepieces_url) : Promise.resolve({ ok: false, latencyMs: 0 }),
+        cfg.r2_public_url ? checkUrl(cfg.r2_public_url) : Promise.resolve({ ok: false, latencyMs: 0 }),
+        checkUrl("https://api.sarvam.ai"),
+        checkUrl("https://generativelanguage.googleapis.com"),
+        checkUrl("https://api.razorpay.com"),
+        checkUrl(SUPABASE_URL),
+      ]);
+
+    res.json({
+      checked_at: new Date().toISOString(),
+      providers: [
+        { name: "FreeSWITCH",           configured: true,              ...freeswitch },
+        { name: "n8n",                  configured: !!cfg.n8n_url,           ...n8n },
+        { name: "Activepieces",         configured: !!cfg.activepieces_url,  ...activepieces },
+        { name: "Cloudflare R2",        configured: !!cfg.r2_public_url,     ...r2 },
+        { name: "Sarvam AI (STT+TTS)",  configured: true,              ...sarvam },
+        { name: "Gemini 2.5 Flash",     configured: true,              ...gemini },
+        { name: "Razorpay",             configured: true,              ...razorpay },
+        { name: "Supabase",             configured: true,              ...supabase },
+      ],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Platform config cache (60s TTL) ──────────────────────────
 let _platformConfigCache: Record<string, string> | null = null;

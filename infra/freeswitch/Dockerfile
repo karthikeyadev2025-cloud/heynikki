@@ -55,7 +55,8 @@ ARG MOD_AUDIO_STREAM_VERSION=v1.0.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git wget ca-certificates gnupg2 lsb-release sudo \
-        build-essential automake autoconf libtool libtool-bin pkg-config cmake \
+        build-essential automake autoconf libtool libtool-bin pkg-config cmake nasm \
+        libflite1 flite1-dev \
         libpcre3-dev libsqlite3-dev libcurl4-openssl-dev \
         libedit-dev libspeex-dev libspeexdsp-dev uuid-dev unixodbc-dev \
         libopus-dev libsndfile1-dev libldns-dev libtiff-dev libjpeg62-turbo-dev \
@@ -70,7 +71,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # that's what caused "checking for spandsp >= 3.0... no usable spandsp"
 # even with libspandsp-dev apt-installed. libks (SignalWire's own
 # library) has the same problem: no usable Debian package.
-RUN git clone --depth 1 https://github.com/signalwire/libks.git /usr/src/libks \
+# NOTE: libks specifically needs full clone history, not --depth 1 —
+# its CMakeLists.txt runs `git describe --tags` to generate a changelog
+# string, which fails on a shallow clone ("No names found, cannot
+# describe anything") and aborts the whole cmake configure step.
+RUN git clone https://github.com/signalwire/libks.git /usr/src/libks \
     && cd /usr/src/libks \
     && cmake . \
     && make -j"$(nproc)" \
@@ -103,16 +108,63 @@ RUN git clone --branch ${FREESWITCH_VERSION} --depth 1 \
 WORKDIR /usr/src/freeswitch
 RUN ./bootstrap.sh
 
+# mod_signalwire requires signalwire-client-c, a library we haven't
+# built (it's for SignalWire's own cloud SIP relay service — unused
+# here, nothing in dialplan/heynikki.xml touches it). Rather than build
+# yet another from-source library for an unused module, disable it in
+# FreeSWITCH's own source-level module list (modules.conf, a plain-text
+# file at the source root — NOT the runtime
+# conf/autoload_configs/modules.conf.xml, a different file with a
+# similar name). sed matches on "mod_signalwire" anywhere in the line
+# so it's robust to the exact path format, and is safe to run even if
+# the line is already commented (adds a second # which is still valid).
+# mod_lua failed needing Lua headers we never installed (nothing in
+# dialplan/heynikki.xml uses Lua — it's pure XML). Rather than fix that
+# one and likely hit the identical problem on mod_perl/mod_python3/
+# mod_v8/mod_managed next (same languages/ category, same "needs a
+# scripting-language runtime we don't use" reason), disabling the whole
+# category at once.
+# Rather than keep disabling one unused module at a time as each one
+# fails to build (mod_signalwire needed signalwire-client-c, mod_lua
+# needed Lua headers, mod_pgsql needed libpq-dev — a pattern that would
+# likely continue: mod_mongo, mod_shout, mod_portaudio, mod_soundtouch
+# are classic next failures for the identical reason), flip the whole
+# file: disable every module by default, then re-enable only the ones
+# dialplan/heynikki.xml actually uses. Confirmed against that file's
+# actual <action application="..."/> list before writing this:
+#   set, answer, playback, record_session, hangup, bridge, system
+#     -> mod_dptools / core (bridge, playback, record_session are
+#        compiled into libfreeswitch core itself, not separate modules,
+#        but mod_dptools covers the rest)
+#   speak ... flite|kal|...  -> asr_tts/mod_flite (the "speak" app
+#        itself is core; flite is the TTS engine it dispatches to)
+#   audio_stream -> mod_audio_stream, built separately below, not part
+#        of this file at all
+# Plus the baseline every FreeSWITCH install needs: endpoints/mod_sofia
+# (SIP), dialplans/mod_dialplan_xml, event_handlers/mod_event_socket
+# (ESL — api-server's esl.ts depends on this), loggers/mod_console +
+# mod_logfile, applications/mod_commands (API commands esl.ts calls),
+# formats/mod_sndfile + mod_native_file (record_session/playback file
+# I/O), say/mod_say_en (low-risk standard include).
+RUN sed -i -E '/^[a-z_]+\/mod_/s/^/#/' modules.conf \
+    && sed -i -E 's,^#(endpoints/mod_sofia|dialplans/mod_dialplan_xml|applications/mod_dptools|applications/mod_commands|event_handlers/mod_event_socket|loggers/mod_console|loggers/mod_logfile|formats/mod_sndfile|formats/mod_native_file|asr_tts/mod_flite|say/mod_say_en)$,\1,' modules.conf
+
 # --prefix=/usr matches the FHS layout most third-party FreeSWITCH
 # module build scripts (including mod_audio_stream's) expect to find
 # headers/libs at — avoids path-mismatch issues against a default
-# /usr/local/freeswitch prefix. --sysconfdir=/etc/freeswitch matches
+# /usr/local/freeswitch prefix. --sysconfdir=/etc matches
+# docker-compose.yml's existing bind mount of ./freeswitch/conf there
+# — NOTE: FreeSWITCH's own startup appends a "/freeswitch" subdirectory
+# onto sysconfdir automatically, so sysconfdir=/etc means it actually
+# reads config from /etc/freeswitch (confirmed by the real runtime
+# error when this was set to /etc/freeswitch: it looked for the
+# doubled path /etc/freeswitch/freeswitch/freeswitch.xml instead).
 # docker-compose.yml's existing bind mount of ./freeswitch/conf there.
 # PKG_CONFIG_PATH ensures the from-source libks/sofia-sip/spandsp
 # (installed to /usr/local by their own default cmake/configure
 # prefixes) are actually found ahead of any stale system paths.
 RUN PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:$PKG_CONFIG_PATH \
-    ./configure --prefix=/usr --sysconfdir=/etc/freeswitch --localstatedir=/var
+    ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
 RUN make -j"$(nproc)"
 RUN make install && ldconfig
 
@@ -158,5 +210,16 @@ RUN rm -rf /usr/src/freeswitch /usr/src/mod_audio_stream /usr/src/libks /usr/src
 EXPOSE 5060/udp 5060/tcp 5080/udp 5080/tcp 8021/tcp 16384-32768/udp
 
 # Foreground, no daemonization (-nc would background it, wrong for
-# Docker where the entrypoint process needs to stay PID 1).
+# Docker where the entrypoint process needs to stay PID 1). -conf/-log
+# passed explicitly and redundantly on top of the --sysconfdir fix
+# above — removes any remaining ambiguity about where FreeSWITCH looks
+# for config/logs at runtime, rather than relying solely on getting
+# the sysconfdir-plus-appended-subdirectory math right.
+# Foreground, no daemonization (-nc would background it, wrong for
+# Docker where the entrypoint process needs to stay PID 1). No -conf/
+# -log flags here — FreeSWITCH requires -conf, -log, AND -db together
+# or none at all ("You must specify all or none of -conf, -log, and
+# -db"), and the --sysconfdir=/etc fix above already makes the
+# compiled-in default resolve correctly to /etc/freeswitch, so no
+# flags are needed at all.
 CMD ["/usr/bin/freeswitch", "-nonat"]
