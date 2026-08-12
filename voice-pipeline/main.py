@@ -402,15 +402,39 @@ class SupabaseClient:
         }
 
     async def get_voice_profile(self, did_number: str) -> Optional[dict]:
+        # FIXED: was querying voice_profiles.did_number, a backward-compat
+        # column that super-admin's DID assignment panel never writes to —
+        # it only updates dids.tenant_id/voice_profile_id. That meant
+        # assigning a number in the panel did NOT actually route any real
+        # calls; this table's own migration comment says outright "dids
+        # table is source of truth", but this lookup was never updated to
+        # match. Now queries the real assignment record and embeds the
+        # linked voice_profiles row via PostgREST's embed syntax.
+        #
+        # Matches on the last 10 digits rather than an exact string match:
+        # dids.number is stored E.164 (+917XXXXXXXXX), but FreeSWITCH's
+        # destination_number could arrive as a bare 10-digit number
+        # depending on how the carrier's SIP trunk presents it — unverified
+        # against a real live call. An exact match would silently return
+        # zero results if the formats don't line up; a last-10-digits
+        # match is correct either way.
+        digits = "".join(c for c in did_number if c.isdigit())[-10:]
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{self.url}/rest/v1/voice_profiles",
+                    f"{self.url}/rest/v1/dids",
                     headers=self.headers,
-                    params={"did_number": f"eq.{did_number}", "select": "*", "limit": "1"}
+                    params={
+                        "number": f"like.*{digits}",
+                        "status": "eq.assigned",
+                        "select": "*,voice_profiles(*)",
+                        "limit": "1",
+                    }
                 )
                 data = resp.json()
-                return data[0] if data else None
+                if not data or not data[0].get("voice_profiles"):
+                    return None
+                return data[0]["voice_profiles"]
         except Exception as e:
             log.error(f"Supabase get_voice_profile: {e}")
             return None

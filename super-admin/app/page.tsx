@@ -1319,7 +1319,24 @@ function FreeSwitchPanel({ token }: { token: string }) {
   };
 
   const assignDid = async (didId: string, tenantId: string) => {
-    await sb.from("dids").update({ tenant_id: tenantId, status: "assigned", assigned_at: new Date().toISOString() }).eq("id", didId);
+    // FIXED: was only setting tenant_id, but voice-pipeline's real
+    // call-routing lookup needs voice_profile_id too (a tenant can have
+    // more than one voice_profiles row — no unique constraint on
+    // tenant_id). Resolves the tenant's voice profile (most recently
+    // created, if they have several) and sets both fields, so an
+    // assignment here actually routes real calls correctly.
+    const { data: profiles } = await sb.from("voice_profiles")
+      .select("id").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(1);
+    const voiceProfileId = profiles?.[0]?.id || null;
+    if (!voiceProfileId) {
+      alert("This tenant hasn't completed voice profile setup yet — the number will be marked assigned, but real calls won't route until they finish setup.");
+    }
+    await sb.from("dids").update({
+      tenant_id: tenantId,
+      voice_profile_id: voiceProfileId,
+      status: "assigned",
+      assigned_at: new Date().toISOString(),
+    }).eq("id", didId);
     await loadFS();
   };
 
