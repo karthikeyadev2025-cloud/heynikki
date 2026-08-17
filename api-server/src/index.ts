@@ -98,6 +98,11 @@ app.set("trust proxy", 1);
 const tightLimiter   = rateLimit({ windowMs: 15 * 60 * 1000, max:  30, standardHeaders: true, legacyHeaders: false });
 const webhookLimiter = rateLimit({ windowMs:      60 * 1000, max:  60, standardHeaders: true, legacyHeaders: false });
 const apiLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+// Fully unauthenticated (public landing page, no login) AND each
+// request costs real Sarvam API money — kept deliberately tight.
+// ~20 lines covers a full demo run-through; not generous enough for
+// meaningful cost abuse from a single IP.
+const publicTtsLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 
 // Apply webhook limiter ONLY to webhook paths (HMAC + token verification
 // already filter junk, but burst-cap protects against billing surprises).
@@ -511,6 +516,62 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
 }
 
 // WhatsApp trigger endpoint (called by voice pipeline after call)
+// Public, unauthenticated TTS for the landing page's demo widget.
+// FIXED a real, serious bug: the widget was never using Sarvam at
+// all — it spoke fake "Telugu" by phonetically transliterating text
+// into Tanglish and reading it with an ENGLISH voice
+// (utt.lang = "en-IN") via the browser's built-in speechSynthesis.
+// That's genuinely not Telugu speech, just an approximation of the
+// sound — explaining the "robotic, bad pronunciation, not a real
+// female voice" complaint precisely. This is the actual product's
+// real Sarvam bulbul:v3 voice, same as live calls and the dashboard
+// assistant, but reachable by anonymous visitors — no login exists
+// yet at this point in the funnel, hence the strict IP-based rate
+// limit above (publicTtsLimiter) rather than the usual auth checks.
+app.post("/api/public/tts", publicTtsLimiter, async (req, res) => {
+  const { text, emotion } = req.body as { text?: string; emotion?: string };
+  if (!text || text.length > 500) {
+    return res.status(400).json({ error: "text required, max 500 characters" });
+  }
+
+  // Mirrors the widget's existing emotion modes (energetic/cool/gentle)
+  // — same concept, mapped to Sarvam's real pace/pitch params instead
+  // of the browser TTS rate/pitch properties they replaced.
+  const EMOTION_PARAMS: Record<string, { pace: number; pitch: number }> = {
+    energetic: { pace: 1.08, pitch: 0.5 },
+    cool:      { pace: 1.0,  pitch: 0.2 },
+    gentle:    { pace: 0.92, pitch: 0 },
+  };
+  const { pace, pitch } = EMOTION_PARAMS[emotion || "energetic"] || EMOTION_PARAMS.energetic;
+
+  try {
+    const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
+      method: "POST",
+      headers: {
+        "api-subscription-key": process.env.SARVAM_API_KEY!,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: [text],
+        target_language_code: "te-IN",
+        speaker: "priya",
+        model: "bulbul:v3",
+        pitch, pace,
+        loudness: 1.2,
+        speech_sample_rate: 22050,
+        enable_preprocessing: true,
+      }),
+    });
+    if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);
+    const ttsData = await ttsResp.json() as any;
+    const audioBase64: string = ttsData.audios?.[0] || "";
+    res.json({ audio_base64: audioBase64, audio_mime: "audio/wav" });
+  } catch (err: any) {
+    console.error("[public-tts]", err);
+    res.status(500).json({ error: "Voice generation failed" });
+  }
+});
+
 app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   const { to, message, tenant_id, voice_profile_id, message_type, call_id, appointment_id } = req.body;
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });

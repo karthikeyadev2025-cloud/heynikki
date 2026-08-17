@@ -41,80 +41,6 @@ const SERVICES = [
   "Business Enquiry", "General Appointment",
 ];
 
-// ── Telugu to Phonetic Tanglish Transliteration Engine ────────
-// Converts Telugu script into clear phonetic Tanglish for browser TTS engines
-// to guarantee 100% fluent, human-sounding speech with ZERO mispronunciations.
-function toPhoneticSpeech(text: string): string {
-  let s = text;
-  // Remove emojis & symbols
-  s = s.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "");
-  s = s.replace(/[📋📅📱✨🎉🌟🙏😊😃👍😎🎯🌿🌸✓\n\r]/g, " ");
-
-  const mappings: [RegExp, string][] = [
-    [/నమస్కారం/g, "Namaskaram"],
-    [/అయ్యో/g, "Ayyo"],
-    [/అలాగే/g, "Alage"],
-    [/సరే/g, "Sare"],
-    [/సరేనండి/g, "Sarenandi"],
-    [/ధన్యవాదాలు/g, "Dhanyavadalu"],
-    [/చాలా/g, "Chala"],
-    [/సంతోషం/g, "Santhosham"],
-    [/ఆనందం/g, "Aanandam"],
-    [/అండి/g, "andi"],
-    [/గారు/g, "garu"],
-    [/మీరు/g, "meeru"],
-    [/మీ/g, "mee"],
-    [/పేరు/g, "peru"],
-    [/చెప్పండి/g, "cheppandi"],
-    [/చేద్దాం/g, "cheddam"],
-    [/చేసేశాను/g, "chesesanu"],
-    [/చేశారు/g, "chesaru"],
-    [/నోట్/g, "note"],
-    [/చేసుకున్నాను/g, "chesukunnanu"],
-    [/వచ్చింది/g, "vachindi"],
-    [/ఒక్క/g, "okka"],
-    [/నిమిషం/g, "nimisham"],
-    [/కాల్/g, "call"],
-    [/నంబర్/g, "number"],
-    [/బుక్/g, "book"],
-    [/కన్ఫర్మ్/g, "confirm"],
-    [/అయింది/g, "ayindi"],
-    [/పంపాము/g, "pampamu"],
-    [/పంపిస్తాను/g, "pampistanu"],
-    [/పంపిస్తానండి/g, "pampistanandi"],
-    [/ఉంటుంది/g, "untundi"],
-    [/సహాయం/g, "sahayam"],
-    [/కావాలి/g, "kavali"],
-    [/రోజు/g, "roju"],
-    [/టైమ్/g, "time"],
-    [/సమయం/g, "samayam"],
-    [/వివరాలు/g, "vivaralu"],
-    [/వివరాలన్నీ/g, "vivaralanni"],
-    [/సందేహం/g, "sandeham"],
-    [/ఉంటే/g, "unte"],
-    [/ఎప్పుడైనా/g, "eppudaina"],
-    [/కంగారు/g, "kangaru"],
-    [/పడకండి/g, "padakandi"],
-    [/క్షమించాలి/g, "kshaminchali"],
-    [/వినిపించలేదు/g, "vinipinchedhu"],
-    [/మళ్లీ/g, "malli"],
-    [/చెప్తారా/g, "cheptara"],
-    [/స్పష్టంగా/g, "spashtanga"],
-    [/ప్రశాంతంగా/g, "prashantanga"],
-    [/జాగ్రత్తగా/g, "jagrattaga"],
-    [/సురక్షితంగా/g, "surakshitanga"],
-  ];
-
-  for (const [pattern, rep] of mappings) {
-    s = s.replace(pattern, rep);
-  }
-
-  // Remove any leftover raw Telugu characters to avoid browser mangling
-  s = s.replace(/[\u0C00-\u0C7F]+/g, "");
-  // Clean multiple spaces
-  return s.replace(/\s+/g, " ").trim();
-}
-
 // ── Smart Name Extraction ─────────────────────────────────────
 function extractName(raw: string): string {
   let s = raw.trim();
@@ -284,71 +210,68 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const [autoListen, setAutoListen] = useState(true);
   const [emotion, setEmotion]       = useState<EmotionMode>("energetic");
   const [hasSTT, setHasSTT]         = useState(false);
-  const [englishVoice, setEnglishVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [started, setStarted]       = useState(false);
   const recogRef  = useRef<any>(null);
   const endRef    = useRef<HTMLDivElement>(null);
   const listenRef = useRef<() => void>(() => {});
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // ── Init voices ─────────────────────────────────────────────
+  // ── Init: detect browser STT support (input recognition is
+  // unaffected by the TTS fix — this is unrelated) ─────────────
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     setHasSTT(!!SR);
-    const load = () => {
-      const v = window.speechSynthesis.getVoices();
-      // Select best clear voice (en-IN female or en-US)
-      const selected =
-        v.find(x => x.lang === "en-IN" && x.name.toLowerCase().includes("female")) ||
-        v.find(x => x.lang === "en-IN") ||
-        v.find(x => x.lang.startsWith("en") && (x.name.toLowerCase().includes("zira") || x.name.toLowerCase().includes("samantha") || x.name.toLowerCase().includes("karen"))) ||
-        v.find(x => x.lang.startsWith("en")) ||
-        v[0] || null;
-      setEnglishVoice(selected);
-    };
-    load();
-    window.speechSynthesis.onvoiceschanged = load;
   }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, status]);
 
-  // ── TTS Audio Speech Output (Clean Phonetics) ────────────────
-  const speak = useCallback((text: string) => {
-    window.speechSynthesis.cancel();
-    // Convert to clean phonetic Tanglish string
-    const phoneticText = toPhoneticSpeech(text);
-    const utt = new SpeechSynthesisUtterance(phoneticText);
-    if (englishVoice) utt.voice = englishVoice;
-    utt.lang = "en-IN";
+  // ── TTS Audio Speech Output — real Sarvam voice ──────────────
+  // FIXED: was using the browser's speechSynthesis with lang="en-IN"
+  // (an ENGLISH voice) reading a phonetically-transliterated
+  // approximation of Telugu — not real Telugu speech at all, just an
+  // approximation of the sound. That's the actual cause of the
+  // "robotic, bad pronunciation, not a real female voice" complaint.
+  // Now fetches real Sarvam bulbul:v3 audio, the same voice used by
+  // live calls and the dashboard assistant.
+  const speak = useCallback(async (text: string) => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+      const res = await fetch(`${apiUrl}/api/public/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, emotion }),
+      });
+      if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
+      const data = await res.json();
+      if (!data.audio_base64) throw new Error("No audio returned");
 
-    if (emotion === "energetic") {
-      utt.rate  = 1.02;
-      utt.pitch = 1.22;
-    } else if (emotion === "cool") {
-      utt.rate  = 0.98;
-      utt.pitch = 1.12;
-    } else {
-      utt.rate  = 0.92;
-      utt.pitch = 1.06;
+      const audio = new Audio(`data:${data.audio_mime || "audio/wav"};base64,${data.audio_base64}`);
+      currentAudioRef.current = audio;
+      setStatus("speaking");
+      audio.onended = () => {
+        setStatus("idle");
+        if (autoListen && !confirmed) {
+          setTimeout(() => listenRef.current(), 500);
+        }
+      };
+      audio.onerror = () => {
+        setStatus("idle");
+        if (autoListen && !confirmed) {
+          setTimeout(() => listenRef.current(), 500);
+        }
+      };
+      await audio.play();
+    } catch (e) {
+      // Same fallback behavior as before on any failure — don't leave
+      // the conversation stuck if a single TTS call fails.
+      setStatus("idle");
+      if (autoListen && !confirmed) {
+        setTimeout(() => listenRef.current(), 500);
+      }
     }
-
-    utt.onstart = () => setStatus("speaking");
-    utt.onend = () => {
-      setStatus("idle");
-      if (autoListen && !confirmed) {
-        setTimeout(() => listenRef.current(), 500);
-      }
-    };
-    utt.onerror = () => {
-      setStatus("idle");
-      if (autoListen && !confirmed) {
-        setTimeout(() => listenRef.current(), 500);
-      }
-    };
-    setStatus("speaking");
-    window.speechSynthesis.speak(utt);
-  }, [englishVoice, autoListen, confirmed, emotion]);
+  }, [autoListen, confirmed, emotion]);
 
   const nikkiSay = useCallback((text: string) => {
     setMsgs(m => [...m, { role: "nikki", text }]);
@@ -382,7 +305,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
 
   // ── Hands-free Speech Recognition ───────────────────────────
   const startListening = useCallback(() => {
-    if (status === "speaking") window.speechSynthesis.cancel();
+    if (status === "speaking") currentAudioRef.current?.pause();
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     try { recogRef.current?.stop(); } catch (_) {}
@@ -424,7 +347,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const stopAll = useCallback(() => {
     setAutoListen(false);
     try { recogRef.current?.stop(); } catch (_) {}
-    window.speechSynthesis.cancel();
+    currentAudioRef.current?.pause();
     setStatus("idle");
   }, []);
 
@@ -455,7 +378,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   }, [nikkiSay, emotion]);
 
   const reset = () => {
-    window.speechSynthesis.cancel();
+    currentAudioRef.current?.pause();
     try { recogRef.current?.stop(); } catch (_) {}
     setMsgs([]); setConfirmed(false); setBooking({});
     setStage("name"); setAutoListen(true); setStarted(false);
