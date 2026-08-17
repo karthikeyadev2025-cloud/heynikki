@@ -143,9 +143,12 @@ export default function LandingPage() {
   return (
     <div style={{
       background: C.bg, minHeight: "100vh",
-      fontFamily: "'Inter', -apple-system, sans-serif",
+      fontFamily: "var(--font-body), 'Manrope', -apple-system, sans-serif",
       color: C.espresso, overflowX: "hidden",
     }}>
+      <style>{`
+        h1, h2, h3 { font-family: var(--font-display), 'Fraunces', Georgia, serif; }
+      `}</style>
       <style>{`
         @keyframes orb-float-1 { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(30px,-30px) scale(1.1)} }
         @keyframes orb-float-2 { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-25px,25px) scale(1.15)} }
@@ -232,12 +235,25 @@ export default function LandingPage() {
           gap: 64, alignItems: "center", position: "relative", zIndex: 1,
         }}>
           {/* Left Hero Copy */}
-          <div style={{ animation: "fade-in-up 0.8s ease-out" }}>
+          <div style={{ animation: "fade-in-up 0.8s ease-out", position: "relative" }}>
+            {/* Signature element: real Telugu script, large and warm,
+                behind the copy — sets up "this speaks actual Telugu"
+                visually before a single word is read or heard. */}
+            <div style={{
+              position: "absolute", top: -60, left: -20,
+              fontSize: 220, fontWeight: 700, color: C.teal,
+              opacity: 0.045, lineHeight: 1, userSelect: "none",
+              pointerEvents: "none", zIndex: 0,
+            }} aria-hidden="true">
+              నమస్కారం
+            </div>
+
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 10,
               background: "#fff", border: `1px solid ${C.borderHi}`,
               borderRadius: 30, padding: "6px 18px 6px 8px", marginBottom: 28,
               boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
+              position: "relative", zIndex: 1,
             }}>
               <div style={{
                 background: `linear-gradient(135deg, ${C.terracotta}, #F97316)`,
@@ -250,28 +266,29 @@ export default function LandingPage() {
                 color: C.teal, fontSize: 13, fontWeight: 800,
                 letterSpacing: "0.02em",
               }}>
-                Enterprise Voice AI · Telugu & English Dual Brain
+                Real Telugu — not an English voice faking it
               </span>
             </div>
 
             <h1 style={{
               fontSize: "clamp(38px, 4.6vw, 58px)",
-              fontWeight: 900, lineHeight: 1.1, margin: "0 0 24px",
-              letterSpacing: "-0.03em", color: C.espresso,
+              fontWeight: 600, lineHeight: 1.1, margin: "0 0 24px",
+              letterSpacing: "-0.02em", color: C.espresso,
+              position: "relative", zIndex: 1,
             }}>
-              Never Miss a Call.{" "}
+              An AI receptionist that{" "}
               <span style={{
                 backgroundImage: `linear-gradient(120deg, ${C.terracotta} 0%, #F97316 100%)`,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
-              }}>Ever.</span>
+              }}>actually speaks Telugu.</span>
             </h1>
 
             <p style={{
               color: C.textMid, fontSize: 18, lineHeight: 1.7,
               marginBottom: 38, maxWidth: 540, fontWeight: 400,
             }}>
-              Hey Nikki answers inbound calls sub-second in <strong>Telugu & English</strong>, books appointments, and triggers instant WhatsApp follow-ups — operating under your <strong>single business number</strong>.
+              No phonetic spelling tricks, no English voice pretending. Hey Nikki answers your calls in real Telugu and English, books appointments, and follows up on WhatsApp — all from your <strong>single business number</strong>.
             </p>
 
             <div style={{ display: "flex", gap: 16, marginBottom: 48, flexWrap: "wrap" }}>
@@ -303,7 +320,7 @@ export default function LandingPage() {
                 onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => { e.currentTarget.style.borderColor = C.borderHi; }}
               >
                 <IconVoiceWave size={18} color={C.teal} />
-                Try Live Agent
+                Hear It Speak Telugu
               </a>
             </div>
 
@@ -377,7 +394,7 @@ export default function LandingPage() {
               textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
             }}>DUAL OPERATIONAL ARCHITECTURE</div>
             <h2 style={{
-              fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 900,
+              fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 700,
               margin: "0 0 14px", letterSpacing: "-0.02em",
             }}>
               Two Brains. Two Eyes. <span style={{ color: C.teal }}>One Brand Number.</span>
@@ -467,7 +484,7 @@ export default function LandingPage() {
               color: C.teal, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
             }}>INTERACTIVE SAVINGS CALCULATOR</div>
-            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 42px)", fontWeight: 900, margin: 0 }}>
+            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 42px)", fontWeight: 700, margin: 0 }}>
               Calculate Your Monthly Receptionist Savings
             </h2>
           </div>
@@ -541,7 +558,7 @@ export default function LandingPage() {
               color: C.terracotta, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
             }}>ENTERPRISE PLATFORM FEATURES</div>
-            <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 900, margin: 0 }}>
+            <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 700, margin: 0 }}>
               Engineered for Real-World Reliability
             </h2>
           </div>
@@ -597,7 +614,7 @@ export default function LandingPage() {
               color: C.terracotta, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
             }}>TRANSPARENT PRICING</div>
-            <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 900, margin: "0 0 10px" }}>
+            <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 700, margin: "0 0 10px" }}>
               Plans for Every Business Size
             </h2>
             <p style={{ color: C.textMid, fontSize: 15 }}>
@@ -686,7 +703,7 @@ export default function LandingPage() {
               color: C.teal, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10,
             }}>FREQUENTLY ASKED QUESTIONS</div>
-            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 40px)", fontWeight: 900, margin: 0 }}>
+            <h2 style={{ fontSize: "clamp(26px, 3.5vw, 40px)", fontWeight: 700, margin: 0 }}>
               Got Questions? We Have Answers.
             </h2>
           </div>
@@ -753,7 +770,7 @@ export default function LandingPage() {
         <div style={{ maxWidth: 720, margin: "0 auto", position: "relative", zIndex: 1 }}>
           <h2 style={{
             color: "#fff", fontSize: "clamp(28px, 3.5vw, 42px)",
-            fontWeight: 900, margin: "0 0 16px", lineHeight: 1.2,
+            fontWeight: 700, margin: "0 0 16px", lineHeight: 1.2,
           }}>
             Ready to Automate Your Business Calls?
           </h2>
@@ -761,7 +778,7 @@ export default function LandingPage() {
             color: "rgba(255,255,255,0.85)", fontSize: 16,
             marginBottom: 36, lineHeight: 1.6,
           }}>
-            Join clinics, real estate firms, and businesses operating 24/7 with Hey Nikki.
+            Set up your AI receptionist in minutes — start with a 14-day free trial, no card required.
           </p>
           <a href="/signup" style={{
             display: "inline-block", padding: "16px 38px", borderRadius: 12,
