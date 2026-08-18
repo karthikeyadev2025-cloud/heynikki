@@ -102,7 +102,13 @@ const apiLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardH
 // request costs real Sarvam API money — kept deliberately tight.
 // ~20 lines covers a full demo run-through; not generous enough for
 // meaningful cost abuse from a single IP.
-const publicTtsLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
+// Fully unauthenticated (public landing page, no login) AND each
+// request costs real Sarvam API money — kept bounded, but raised
+// from an initial 20/15min after realizing a single full conversation
+// easily uses 6-10+ TTS calls (greeting + several back-and-forth
+// turns) — the original limit could exhaust itself within one or two
+// real test runs, not just from abuse.
+const publicTtsLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false });
 
 // Apply webhook limiter ONLY to webhook paths (HMAC + token verification
 // already filter junk, but burst-cap protects against billing surprises).

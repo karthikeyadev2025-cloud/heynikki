@@ -225,7 +225,14 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   }, []);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    // FIXED: block: "nearest" was missing — without it, scrollIntoView
+    // scrolls whatever ancestor container it needs to, including the
+    // whole page itself, not just this widget's own internal chat
+    // area. Since this effect fires on every message/status change
+    // (every listen/speak turn), the entire landing page was jumping
+    // around during a conversation. "nearest" keeps the scroll
+    // confined to the widget's own scrollable div.
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [msgs, status]);
 
   // ── TTS Audio Speech Output — real Sarvam voice ──────────────
