@@ -9,6 +9,7 @@
 // ────────────────────────────────────────────────────────────────
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Mic, Loader2, Volume2, CheckCircle2, RotateCcw, Play, Square, ArrowUp } from "lucide-react";
 
 declare global {
   interface Window {
@@ -399,6 +400,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
         @keyframes nk-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(229,83,61,0.4)} 50%{box-shadow:0 0 0 12px rgba(229,83,61,0)} }
         @keyframes nk-wave { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
         @keyframes nk-fade { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes nk-spin { to { transform: rotate(360deg); } }
+        .nk-spin { animation: nk-spin 0.8s linear infinite; }
       `}</style>
 
       {/* ── Header ─────────────────────────────────────── */}
@@ -426,21 +429,24 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               ))}
             </div>
           ) : (
-            <span style={{ fontSize: 18 }}>🎙️</span>
+            <Mic size={18} color="#fff" />
           )}
         </div>
 
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
+          <div style={{
+            fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em",
+            fontFamily: "var(--font-display), 'Fraunces', Georgia, serif",
+          }}>
             hey <span style={{ color: "#FCA5A5" }}>nikki</span>
           </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 500 }}>
-            {!started && "Fluent Tanglish Voice AI"}
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 500, display: "flex", alignItems: "center", gap: 5 }}>
+            {!started && "Real Telugu voice AI"}
             {started && status === "idle" && !confirmed && "● Listening to you..."}
-            {status === "listening" && "🎙️ Listening — speak naturally"}
-            {status === "thinking" && "💭 Thinking..."}
-            {status === "speaking" && "🗣️ Nikki speaking..."}
-            {confirmed && "✅ Booking confirmed!"}
+            {status === "listening" && (<><Mic size={11} /> Listening — speak naturally</>)}
+            {status === "thinking" && (<><Loader2 size={11} className="nk-spin" /> Thinking...</>)}
+            {status === "speaking" && (<><Volume2 size={11} /> Nikki speaking...</>)}
+            {confirmed && (<><CheckCircle2 size={11} /> Booking confirmed!</>)}
           </div>
         </div>
 
@@ -467,9 +473,9 @@ export default function VoiceChatWidget({ tenantId, compact }: {
           <button onClick={reset} title="Restart" style={{
             background: "rgba(255,255,255,0.15)", border: "none",
             color: "#fff", borderRadius: "50%", width: 28, height: 28,
-            cursor: "pointer", fontSize: 12, display: "flex",
+            cursor: "pointer", display: "flex",
             alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>↺</button>
+          }}><RotateCcw size={13} /></button>
         )}
       </div>
 
@@ -490,24 +496,28 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               width: 72, height: 72, borderRadius: "50%",
               background: `linear-gradient(135deg, ${B.terracotta}, ${B.teal})`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 32, color: "#fff", cursor: "pointer",
+              color: "#fff", cursor: "pointer",
               boxShadow: "0 12px 32px rgba(229,83,61,0.35)",
               transition: "transform 0.2s, box-shadow 0.2s",
             }}
               onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = "scale(1.08)"; }}
               onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = "scale(1)"; }}
-            >🎙️</div>
+            ><Mic size={30} /></div>
 
             <div>
-              <div style={{ color: B.espresso, fontWeight: 900, fontSize: 17, marginBottom: 6 }}>
-                Charming Tanglish Voice AI
+              <div style={{
+                color: B.espresso, fontWeight: 700, fontSize: 18, marginBottom: 6,
+                fontFamily: "var(--font-display), 'Fraunces', Georgia, serif",
+              }}>
+                Talk to Nikki
               </div>
               <div style={{ color: B.textMid, fontSize: 13, lineHeight: 1.6, maxWidth: 310 }}>
-                Crystal-clear <strong>Telugu & Tanglish</strong> voice speech with zero mispronunciations (Namaskaram, garu, Alage, Sare).
+                Real Telugu speech — the same voice your customers actually hear on a live call, not a demo approximation.
               </div>
             </div>
 
             <button onClick={start} style={{
+              display: "flex", alignItems: "center", gap: 8,
               padding: "12px 28px", borderRadius: 10,
               background: B.teal, color: "#fff", border: "none",
               cursor: "pointer", fontSize: 14, fontWeight: 800,
@@ -518,11 +528,11 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.transform = "translateY(-2px)"; }}
               onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.transform = "translateY(0)"; }}
             >
-              ▶ Start Conversation
+              <Play size={13} fill="#fff" /> Start Conversation
             </button>
 
             <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
-              {["⚡ Crystal Clear Phonetics", "🎙️ Hands-Free", "🌟 Zero Bot Glitch"].map(t => (
+              {["Real Sarvam voice", "Hands-free", "Books real appointments"].map(t => (
                 <span key={t} style={{ color: B.textDim, fontSize: 10, fontWeight: 600 }}>✓ {t}</span>
               ))}
             </div>
@@ -670,13 +680,13 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               style={{
                 width: 38, height: 38, borderRadius: "50%", border: "none",
                 background: status === "listening" ? B.terracotta : B.teal,
-                color: "#fff", cursor: "pointer", fontSize: 16,
+                color: "#fff", cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 flexShrink: 0,
                 boxShadow: status === "listening" ? "0 0 16px rgba(229,83,61,0.5)" : "none",
                 transition: "all 0.2s",
               }}>
-              {status === "listening" ? "⏹" : "🎙️"}
+              {status === "listening" ? <Square size={14} fill="#fff" /> : <Mic size={16} />}
             </button>
           )}
           <button
@@ -686,8 +696,9 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               width: 38, height: 38, borderRadius: 10, border: "none",
               background: input.trim() && status === "idle" ? B.terracotta : B.border,
               color: "#fff", cursor: input.trim() && status === "idle" ? "pointer" : "not-allowed",
-              fontSize: 15, flexShrink: 0, transition: "background 0.2s",
-            }}>↑</button>
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, transition: "background 0.2s",
+            }}><ArrowUp size={16} /></button>
         </div>
       )}
 
@@ -697,8 +708,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
           borderTop: `1px solid ${B.border}`, padding: "14px",
           background: "#ECFDF5", textAlign: "center",
         }}>
-          <div style={{ color: B.green, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-            ✅ WhatsApp confirmation sent to {booking.phone}
+          <div style={{ color: B.green, fontSize: 12, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <CheckCircle2 size={14} /> WhatsApp confirmation sent to {booking.phone}
           </div>
           <button onClick={reset} style={{
             padding: "9px 24px", borderRadius: 8,
