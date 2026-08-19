@@ -346,7 +346,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const [started, setStarted]       = useState(false);
   const recogRef  = useRef<any>(null);
   const endRef    = useRef<HTMLDivElement>(null);
-  const audioRef  = useRef<HTMLAudioElement | null>(null);
   const listenRef = useRef<() => void>(() => {});
 
   // ── Init voices ─────────────────────────────────────────────
@@ -371,57 +370,11 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, status]);
 
-  // ── High-Fidelity Audio TTS (Sarvam AI API Primary, SpeechSynthesis Fallback) ──
-  const speak = useCallback(async (text: string) => {
+  // ── TTS Speech Output (Phonetic Tanglish via Browser SpeechSynthesis) ──
+  const speak = useCallback((text: string) => {
     window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
 
-    setStatus("speaking");
-
-    const cleanText = text.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "").replace(/[📋📅📱✨🎉🌟🙏😊😃👍😎🎯🌿🌸✓\n\r]/g, " ").trim();
-
-    // 1. Try real Sarvam AI Neural TTS (/api/tts)
-    try {
-      const resp = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: cleanText,
-          speaker: emotion === "energetic" ? "anushka" : "meera",
-          target_language_code: "te-IN",
-        }),
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.audio) {
-          const audio = new Audio("data:audio/wav;base64," + data.audio);
-          audioRef.current = audio;
-          audio.onended = () => {
-            setStatus("idle");
-            if (autoListen && !confirmed) {
-              setTimeout(() => listenRef.current(), 500);
-            }
-          };
-          audio.onerror = () => {
-            fallbackSpeak(text);
-          };
-          await audio.play();
-          return;
-        }
-      }
-    } catch (_) {
-      // API call failed, fall back to browser TTS cleanly
-    }
-
-    // 2. Fallback SpeechSynthesis Engine
-    fallbackSpeak(text);
-  }, [autoListen, confirmed, emotion]);
-
-  const fallbackSpeak = useCallback((text: string) => {
+    // Convert to clean phonetic Tanglish for reliable browser pronunciation
     const phoneticText = toPhoneticSpeech(text);
     const utt = new SpeechSynthesisUtterance(phoneticText);
     if (englishVoice) utt.voice = englishVoice;
@@ -488,9 +441,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   // ── Hands-free Speech Recognition ───────────────────────────
   const startListening = useCallback(() => {
     window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
@@ -534,9 +484,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     setAutoListen(false);
     try { recogRef.current?.stop(); } catch (_) {}
     window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
     setStatus("idle");
   }, []);
 
@@ -568,9 +515,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
 
   const reset = () => {
     window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
     try { recogRef.current?.stop(); } catch (_) {}
     setMsgs([]); setConfirmed(false); setBooking({});
     setStage("name"); setAutoListen(true); setStarted(false);
