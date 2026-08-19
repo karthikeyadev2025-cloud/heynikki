@@ -183,7 +183,7 @@ function humanResponse(stage: string, booking: Booking, userText: string, emotio
   // 1. Handle Questions about Nikki
   if (isQuestionAboutNikki(cleanInput)) {
     return {
-      reply: "Hello! Nenu Nikki ni — mee AI voice receptionist! 😊 Appointment book cheయడానికి sahayam chestanu. Mee peru enti garu?",
+      reply: "Hello! Nenu Nikki ni — mee AI voice receptionist! 😊 Appointment book cheyadaniki sahayam chestanu. Mee peru enti garu?",
       nextStage: "name",
       done: false,
       updated,
@@ -467,21 +467,21 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     rec.interimResults = true;
     rec.lang           = "en-IN";
 
-    let finalTranscript = "";
+    let transcriptBuffer = "";
 
     rec.onstart  = () => { setStatus("listening"); setInput(""); };
     rec.onresult = (e: any) => {
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) { finalTranscript += t; }
+        if (e.results[i].isFinal) { transcriptBuffer += t; }
         else { interim += t; }
       }
-      setInput(finalTranscript || interim);
+      setInput(transcriptBuffer || interim);
     };
     rec.onend = () => {
-      const text = (finalTranscript || input).trim();
-      finalTranscript = "";
+      const text = transcriptBuffer.trim();
+      transcriptBuffer = "";
       if (text.length >= 2) {
         setInput("");
         sendToNikki(text);
@@ -491,7 +491,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     };
     rec.onerror = () => setStatus("idle");
     try { rec.start(); } catch (_) { setStatus("idle"); }
-  }, [status, input, sendToNikki]);
+  }, [sendToNikki]);
 
   listenRef.current = startListening;
 
