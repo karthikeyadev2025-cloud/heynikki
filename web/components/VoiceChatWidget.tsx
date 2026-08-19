@@ -74,19 +74,34 @@ function isQuestionAboutNikki(raw: string): boolean {
 
 function extractName(raw: string): string {
   let s = raw.trim();
-  s = s.replace(/^(my name is|i am|this is|call me|it's|i'm|నా పేరు|నేను|మాది|మా పేరు|నన్ను)\s+/i, "").trim();
-  s = s.replace(/[.!?,]+$/, "").trim();
+
+  // 1. Remove leading greetings & conversational starters ("hello my name is...", "hi i am...")
+  s = s.replace(/^(hi|hello|hey|hlo|hai|namaste|namaskaram|good morning|good afternoon|good evening|ey|yo|aaha|oho|ayyo)\b\s*/i, "").trim();
+
+  // 2. Remove common name lead-in phrases ("my name is", "i am", "na peru", "nenu", etc.)
+  s = s.replace(/^(my name is|my name's|i am|i'm|this is|call me|it's|myself|నా పేరు|నేను|మాది|మా పేరు|నన్ను|naa peru|na peru|nenu)\s*/i, "").trim();
+
+  // 3. Secondary pass for remaining greeting prefixes
+  s = s.replace(/^(hi|hello|hey|hlo|hai|namaste|namaskaram)\b\s*/i, "").trim();
+
+  // 4. Remove trailing punctuation
+  s = s.replace(/[.!?,]+$/g, "").trim();
+
   if (!s) return "";
 
-  // If the extracted word is just a greeting, return empty
-  if (GREETINGS_SET.has(s.toLowerCase())) return "";
+  // 5. Filter out filler/stop words ("is", "my", "me", "here", "garu", "andi", "name")
+  const stopWords = new Set([
+    "is", "a", "an", "the", "my", "me", "here", "garu", "andi", "this", "name",
+    "hi", "hello", "hey", "hlo", "hai", "namaste", "namaskaram", "please", "am"
+  ]);
 
-  const words = s.split(/\s+/).slice(0, 2);
-  // Filter out any word that's a greeting
-  const validWords = words.filter(w => !GREETINGS_SET.has(w.toLowerCase()));
-  if (validWords.length === 0) return "";
+  const words = s.split(/\s+/).filter(w => !stopWords.has(w.toLowerCase()) && w.length >= 2);
 
-  return validWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  if (words.length === 0) return "";
+
+  // Take up to 2 words as full name (e.g. "Karthikeyan", "Lakshmi Prasanna")
+  const nameWords = words.slice(0, 2);
+  return nameWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
 // ── Telugu to Phonetic Tanglish Transliteration Engine ────────
