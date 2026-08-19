@@ -1,11 +1,12 @@
 // components/VoiceChatWidget.tsx
-// Hey Nikki — Crystal-Clear Human Tanglish Voice Receptionist
+// Hey Nikki — Conversational Tanglish Voice AI Receptionist
 // ────────────────────────────────────────────────────────────────
-// Solution for Browser TTS Speech Engine:
-//   - Telugu-to-Phonetic Transliteration: Converts Telugu script into clean
-//     phonetic Tanglish before passing to SpeechSynthesis.
-//   - Zero Misspellings & Zero Browser Audio Mangling.
-//   - Dynamic Vocal Modulation: Rate 0.96x, Pitch 1.12x for warm human tone.
+// Smart Conversational Features:
+//   - Greeting & Small-Talk Detection: Handles "hi", "hello", "namaste",
+//     "who are you?" without mistaking them as the user's name!
+//   - Proper Name & Entity Extraction: Extracts actual names ("Karthik", "Ramesh").
+//   - Emotional Tanglish: Conversational Telugu/English with "garu" honorifics.
+//   - High-Fidelity Neural Audio TTS (Sarvam AI / Audio element / SpeechSynthesis fallback).
 // ────────────────────────────────────────────────────────────────
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -31,6 +32,7 @@ const B = {
   textMid:    "#475569",
   textDim:    "#94A3B8",
   green:      "#10B981",
+  purple:     "#8B5CF6",
 };
 
 interface Msg { role: "nikki" | "user"; text: string; }
@@ -42,27 +44,153 @@ const SERVICES = [
   "Business Enquiry", "General Appointment",
 ];
 
-// ── Smart Name Extraction ─────────────────────────────────────
+const GREETINGS_SET = new Set([
+  "hi", "hello", "hey", "hlo", "hai", "namaste", "namaskaram",
+  "good morning", "good afternoon", "good evening", "how are you",
+  "who are you", "what is your name", "what is ur name", "who r u",
+  "meeru evaru", "mee peru enti", "em chestav"
+]);
+
+// ── Smart Name Extraction & Greeting Filter ───────────────────
+function isPureGreeting(raw: string): boolean {
+  const clean = raw.trim().toLowerCase().replace(/[.!?,]+/g, "");
+  if (GREETINGS_SET.has(clean)) return true;
+  // If input is 1-2 words and only contains greeting words
+  const words = clean.split(/\s+/);
+  return words.every(w => GREETINGS_SET.has(w));
+}
+
+function isQuestionAboutNikki(raw: string): boolean {
+  const clean = raw.trim().toLowerCase();
+  return (
+    clean.includes("who are you") ||
+    clean.includes("who r u") ||
+    clean.includes("what is your name") ||
+    clean.includes("what is ur name") ||
+    clean.includes("meeru evaru") ||
+    clean.includes("mee peru")
+  );
+}
+
 function extractName(raw: string): string {
   let s = raw.trim();
   s = s.replace(/^(my name is|i am|this is|call me|it's|i'm|నా పేరు|నేను|మాది|మా పేరు|నన్ను)\s+/i, "").trim();
   s = s.replace(/[.!?,]+$/, "").trim();
   if (!s) return "";
+
+  // If the extracted word is just a greeting, return empty
+  if (GREETINGS_SET.has(s.toLowerCase())) return "";
+
   const words = s.split(/\s+/).slice(0, 2);
-  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  // Filter out any word that's a greeting
+  const validWords = words.filter(w => !GREETINGS_SET.has(w.toLowerCase()));
+  if (validWords.length === 0) return "";
+
+  return validWords.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
-// ── Energetic & Charming Responses ────────────────────────────
+// ── Telugu to Phonetic Tanglish Transliteration Engine ────────
+function toPhoneticSpeech(text: string): string {
+  let s = text;
+  s = s.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "");
+  s = s.replace(/[📋📅📱✨🎉🌟🙏😊😃👍😎🎯🌿🌸✓\n\r]/g, " ");
+
+  const mappings: [RegExp, string][] = [
+    [/నమస్కారం/g, "Namaskaram"],
+    [/అయ్యో/g, "Ayyo"],
+    [/అలాగే/g, "Alage"],
+    [/సరే/g, "Sare"],
+    [/సరేనండి/g, "Sarenandi"],
+    [/ధన్యవాదాలు/g, "Dhanyavadalu"],
+    [/చాలా/g, "Chala"],
+    [/సంతోషం/g, "Santhosham"],
+    [/ఆనందం/g, "Aanandam"],
+    [/అండి/g, "andi"],
+    [/గారు/g, "garu"],
+    [/మీరు/g, "meeru"],
+    [/మీ/g, "mee"],
+    [/పేరు/g, "peru"],
+    [/చెప్పండి/g, "cheppandi"],
+    [/చేద్దాం/g, "cheddam"],
+    [/చేసేశాను/g, "chesesanu"],
+    [/చేశారు/g, "chesaru"],
+    [/నోట్/g, "note"],
+    [/చేసుకున్నాను/g, "chesukunnanu"],
+    [/వచ్చింది/g, "vachindi"],
+    [/ఒక్క/g, "okka"],
+    [/నిమిషం/g, "nimisham"],
+    [/కాల్/g, "call"],
+    [/నంబర్/g, "number"],
+    [/బుక్/g, "book"],
+    [/కన్ఫర్మ్/g, "confirm"],
+    [/అయింది/g, "ayindi"],
+    [/పంపాము/g, "pampamu"],
+    [/పంపిస్తాను/g, "pampistanu"],
+    [/పంపిస్తానండి/g, "pampistanandi"],
+    [/ఉంటుంది/g, "untundi"],
+    [/సహాయం/g, "sahayam"],
+    [/కావాలి/g, "kavali"],
+    [/రోజు/g, "roju"],
+    [/టైమ్/g, "time"],
+    [/సమయం/g, "samayam"],
+    [/వివరాలు/g, "vivaralu"],
+    [/వివరాలన్నీ/g, "vivaralanni"],
+    [/సందేహం/g, "sandeham"],
+    [/ఉంటే/g, "unte"],
+    [/ఎప్పుడైనా/g, "eppudaina"],
+    [/కంగారు/g, "kangaru"],
+    [/పడకండి/g, "padakandi"],
+    [/క్షమించాలి/g, "kshaminchali"],
+    [/వినిపించలేదు/g, "vinipinchedhu"],
+    [/మళ్లీ/g, "malli"],
+    [/చెప్తారా/g, "cheptara"],
+    [/స్పష్టంగా/g, "spashtanga"],
+    [/ప్రశాంతంగా/g, "prashantanga"],
+    [/జాగ్రత్తగా/g, "jagrattaga"],
+    [/సురక్షితంగా/g, "surakshitanga"],
+  ];
+
+  for (const [pattern, rep] of mappings) {
+    s = s.replace(pattern, rep);
+  }
+
+  s = s.replace(/[\u0C00-\u0C7F]+/g, "");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+// ── Interactive Human Conversational Logic ───────────────────
 function humanResponse(stage: string, booking: Booking, userText: string, emotion: EmotionMode): {
   reply: string; nextStage: string; done: boolean; updated: Booking;
 } {
   const updated = { ...booking };
+  const cleanInput = userText.trim();
 
+  // 1. Handle Questions about Nikki
+  if (isQuestionAboutNikki(cleanInput)) {
+    return {
+      reply: "Hello! Nenu Nikki ni — mee AI voice receptionist! 😊 Appointment book cheయడానికి sahayam chestanu. Mee peru enti garu?",
+      nextStage: "name",
+      done: false,
+      updated,
+    };
+  }
+
+  // 2. Handle Casual Greetings (Hi, Hello, Hey) when expecting a name
+  if (stage === "name" && isPureGreeting(cleanInput)) {
+    return {
+      reply: "Hello! Hi! Namaskaram! 😊 Nenu Nikki ni. Mee peru enti garu? What is your name?",
+      nextStage: "name",
+      done: false,
+      updated,
+    };
+  }
+
+  // 3. Name Stage
   if (stage === "name") {
-    const name = extractName(userText);
+    const name = extractName(cleanInput);
     if (!name || name.length < 2) {
       return {
-        reply: "హ్మ్మ్... సరేనండి, మీ name ఒకసారి విడిగా మళ్లీ చెప్పండి, please?",
+        reply: "Hello! Namaskaram! 😊 Mee peru okka sari clear ga cheppandi garu, please?",
         nextStage: "name",
         done: false,
         updated,
@@ -94,8 +222,9 @@ function humanResponse(stage: string, booking: Booking, userText: string, emotio
     };
   }
 
+  // 4. Phone Stage
   if (stage === "phone") {
-    const digits = userText.replace(/[^0-9+]/g, "");
+    const digits = cleanInput.replace(/[^0-9+]/g, "");
     if (digits.length < 10) {
       return {
         reply: `${updated.name} garu, okka nimisham andi — number catch avvaledu. Mee 10 digit phone number malli cheptara?`,
@@ -130,8 +259,9 @@ function humanResponse(stage: string, booking: Booking, userText: string, emotio
     };
   }
 
+  // 5. Service Stage
   if (stage === "service") {
-    updated.service = userText.trim();
+    updated.service = cleanInput;
 
     const responses = {
       energetic: [
@@ -157,8 +287,9 @@ function humanResponse(stage: string, booking: Booking, userText: string, emotio
     };
   }
 
+  // 6. Slot Confirmation Stage
   if (stage === "slot") {
-    updated.slot = userText.trim();
+    updated.slot = cleanInput;
 
     const confirmations = {
       energetic: `Yay! 🎉 ${updated.name} garu, mee appointment super-successful ga confirm ayindi!\n\n` +
@@ -211,75 +342,118 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const [autoListen, setAutoListen] = useState(true);
   const [emotion, setEmotion]       = useState<EmotionMode>("energetic");
   const [hasSTT, setHasSTT]         = useState(false);
+  const [englishVoice, setEnglishVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [started, setStarted]       = useState(false);
   const recogRef  = useRef<any>(null);
   const endRef    = useRef<HTMLDivElement>(null);
+  const audioRef  = useRef<HTMLAudioElement | null>(null);
   const listenRef = useRef<() => void>(() => {});
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // ── Init: detect browser STT support (input recognition is
-  // unaffected by the TTS fix — this is unrelated) ─────────────
+  // ── Init voices ─────────────────────────────────────────────
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     setHasSTT(!!SR);
+    const load = () => {
+      const v = window.speechSynthesis.getVoices();
+      const selected =
+        v.find(x => x.lang === "en-IN" && x.name.toLowerCase().includes("female")) ||
+        v.find(x => x.lang === "en-IN") ||
+        v.find(x => x.lang.startsWith("en") && (x.name.toLowerCase().includes("zira") || x.name.toLowerCase().includes("samantha") || x.name.toLowerCase().includes("karen"))) ||
+        v.find(x => x.lang.startsWith("en")) ||
+        v[0] || null;
+      setEnglishVoice(selected);
+    };
+    load();
+    window.speechSynthesis.onvoiceschanged = load;
   }, []);
 
   useEffect(() => {
-    // FIXED: block: "nearest" was missing — without it, scrollIntoView
-    // scrolls whatever ancestor container it needs to, including the
-    // whole page itself, not just this widget's own internal chat
-    // area. Since this effect fires on every message/status change
-    // (every listen/speak turn), the entire landing page was jumping
-    // around during a conversation. "nearest" keeps the scroll
-    // confined to the widget's own scrollable div.
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, status]);
 
-  // ── TTS Audio Speech Output — real Sarvam voice ──────────────
-  // FIXED: was using the browser's speechSynthesis with lang="en-IN"
-  // (an ENGLISH voice) reading a phonetically-transliterated
-  // approximation of Telugu — not real Telugu speech at all, just an
-  // approximation of the sound. That's the actual cause of the
-  // "robotic, bad pronunciation, not a real female voice" complaint.
-  // Now fetches real Sarvam bulbul:v3 audio, the same voice used by
-  // live calls and the dashboard assistant.
+  // ── High-Fidelity Audio TTS (Sarvam AI API Primary, SpeechSynthesis Fallback) ──
   const speak = useCallback(async (text: string) => {
+    window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    setStatus("speaking");
+
+    const cleanText = text.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "").replace(/[📋📅📱✨🎉🌟🙏😊😃👍😎🎯🌿🌸✓\n\r]/g, " ").trim();
+
+    // 1. Try real Sarvam AI Neural TTS (/api/tts)
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
-      const res = await fetch(`${apiUrl}/api/public/tts`, {
+      const resp = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, emotion }),
+        body: JSON.stringify({
+          text: cleanText,
+          speaker: emotion === "energetic" ? "anushka" : "meera",
+          target_language_code: "te-IN",
+        }),
       });
-      if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
-      const data = await res.json();
-      if (!data.audio_base64) throw new Error("No audio returned");
 
-      const audio = new Audio(`data:${data.audio_mime || "audio/wav"};base64,${data.audio_base64}`);
-      currentAudioRef.current = audio;
-      setStatus("speaking");
-      audio.onended = () => {
-        setStatus("idle");
-        if (autoListen && !confirmed) {
-          setTimeout(() => listenRef.current(), 500);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.audio) {
+          const audio = new Audio("data:audio/wav;base64," + data.audio);
+          audioRef.current = audio;
+          audio.onended = () => {
+            setStatus("idle");
+            if (autoListen && !confirmed) {
+              setTimeout(() => listenRef.current(), 500);
+            }
+          };
+          audio.onerror = () => {
+            fallbackSpeak(text);
+          };
+          await audio.play();
+          return;
         }
-      };
-      audio.onerror = () => {
-        setStatus("idle");
-        if (autoListen && !confirmed) {
-          setTimeout(() => listenRef.current(), 500);
-        }
-      };
-      await audio.play();
-    } catch (e) {
-      // Same fallback behavior as before on any failure — don't leave
-      // the conversation stuck if a single TTS call fails.
+      }
+    } catch (_) {
+      // API call failed, fall back to browser TTS cleanly
+    }
+
+    // 2. Fallback SpeechSynthesis Engine
+    fallbackSpeak(text);
+  }, [autoListen, confirmed, emotion]);
+
+  const fallbackSpeak = useCallback((text: string) => {
+    const phoneticText = toPhoneticSpeech(text);
+    const utt = new SpeechSynthesisUtterance(phoneticText);
+    if (englishVoice) utt.voice = englishVoice;
+    utt.lang = "en-IN";
+
+    if (emotion === "energetic") {
+      utt.rate  = 1.02;
+      utt.pitch = 1.22;
+    } else if (emotion === "cool") {
+      utt.rate  = 0.98;
+      utt.pitch = 1.12;
+    } else {
+      utt.rate  = 0.92;
+      utt.pitch = 1.06;
+    }
+
+    utt.onstart = () => setStatus("speaking");
+    utt.onend = () => {
       setStatus("idle");
       if (autoListen && !confirmed) {
         setTimeout(() => listenRef.current(), 500);
       }
-    }
-  }, [autoListen, confirmed, emotion]);
+    };
+    utt.onerror = () => {
+      setStatus("idle");
+      if (autoListen && !confirmed) {
+        setTimeout(() => listenRef.current(), 500);
+      }
+    };
+    setStatus("speaking");
+    window.speechSynthesis.speak(utt);
+  }, [englishVoice, autoListen, confirmed, emotion]);
 
   const nikkiSay = useCallback((text: string) => {
     setMsgs(m => [...m, { role: "nikki", text }]);
@@ -313,7 +487,11 @@ export default function VoiceChatWidget({ tenantId, compact }: {
 
   // ── Hands-free Speech Recognition ───────────────────────────
   const startListening = useCallback(() => {
-    if (status === "speaking") currentAudioRef.current?.pause();
+    window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     try { recogRef.current?.stop(); } catch (_) {}
@@ -322,7 +500,7 @@ export default function VoiceChatWidget({ tenantId, compact }: {
     recogRef.current = rec;
     rec.continuous     = false;
     rec.interimResults = true;
-    rec.lang           = "en-IN"; // Dynamic Tanglish recognition
+    rec.lang           = "en-IN";
 
     let finalTranscript = "";
 
@@ -355,7 +533,10 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   const stopAll = useCallback(() => {
     setAutoListen(false);
     try { recogRef.current?.stop(); } catch (_) {}
-    currentAudioRef.current?.pause();
+    window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
     setStatus("idle");
   }, []);
 
@@ -386,7 +567,10 @@ export default function VoiceChatWidget({ tenantId, compact }: {
   }, [nikkiSay, emotion]);
 
   const reset = () => {
-    currentAudioRef.current?.pause();
+    window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
     try { recogRef.current?.stop(); } catch (_) {}
     setMsgs([]); setConfirmed(false); setBooking({});
     setStage("name"); setAutoListen(true); setStarted(false);
@@ -407,8 +591,6 @@ export default function VoiceChatWidget({ tenantId, compact }: {
         @keyframes nk-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(229,83,61,0.4)} 50%{box-shadow:0 0 0 12px rgba(229,83,61,0)} }
         @keyframes nk-wave { 0%,100%{transform:scaleY(0.4)} 50%{transform:scaleY(1)} }
         @keyframes nk-fade { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes nk-spin { to { transform: rotate(360deg); } }
-        .nk-spin { animation: nk-spin 0.8s linear infinite; }
       `}</style>
 
       {/* ── Header ─────────────────────────────────────── */}
@@ -436,24 +618,21 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               ))}
             </div>
           ) : (
-            <Mic size={18} color="#fff" />
+            <span style={{ fontSize: 18 }}>🎙️</span>
           )}
         </div>
 
         <div style={{ flex: 1 }}>
-          <div style={{
-            fontSize: 15, fontWeight: 700, color: "#fff", letterSpacing: "-0.01em",
-            fontFamily: "var(--font-display), 'Fraunces', Georgia, serif",
-          }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
             hey <span style={{ color: "#FCA5A5" }}>nikki</span>
           </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 500, display: "flex", alignItems: "center", gap: 5 }}>
-            {!started && "Real Telugu voice AI"}
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 2, fontWeight: 500 }}>
+            {!started && "Interactive Tanglish Voice AI"}
             {started && status === "idle" && !confirmed && "● Listening to you..."}
-            {status === "listening" && (<><Mic size={11} /> Listening — speak naturally</>)}
-            {status === "thinking" && (<><Loader2 size={11} className="nk-spin" /> Thinking...</>)}
-            {status === "speaking" && (<><Volume2 size={11} /> Nikki speaking...</>)}
-            {confirmed && (<><CheckCircle2 size={11} /> Booking confirmed!</>)}
+            {status === "listening" && "🎙️ Listening — speak naturally"}
+            {status === "thinking" && "💭 Thinking..."}
+            {status === "speaking" && "🗣️ Nikki speaking..."}
+            {confirmed && "✅ Booking confirmed!"}
           </div>
         </div>
 
@@ -480,9 +659,9 @@ export default function VoiceChatWidget({ tenantId, compact }: {
           <button onClick={reset} title="Restart" style={{
             background: "rgba(255,255,255,0.15)", border: "none",
             color: "#fff", borderRadius: "50%", width: 28, height: 28,
-            cursor: "pointer", display: "flex",
+            cursor: "pointer", fontSize: 12, display: "flex",
             alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}><RotateCcw size={13} /></button>
+          }}>↺</button>
         )}
       </div>
 
@@ -503,28 +682,24 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               width: 72, height: 72, borderRadius: "50%",
               background: `linear-gradient(135deg, ${B.terracotta}, ${B.teal})`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", cursor: "pointer",
+              fontSize: 32, color: "#fff", cursor: "pointer",
               boxShadow: "0 12px 32px rgba(229,83,61,0.35)",
               transition: "transform 0.2s, box-shadow 0.2s",
             }}
               onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = "scale(1.08)"; }}
               onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => { e.currentTarget.style.transform = "scale(1)"; }}
-            ><Mic size={30} /></div>
+            >🎙️</div>
 
             <div>
-              <div style={{
-                color: B.espresso, fontWeight: 700, fontSize: 18, marginBottom: 6,
-                fontFamily: "var(--font-display), 'Fraunces', Georgia, serif",
-              }}>
-                Talk to Nikki
+              <div style={{ color: B.espresso, fontWeight: 900, fontSize: 17, marginBottom: 6 }}>
+                Interactive Voice AI
               </div>
               <div style={{ color: B.textMid, fontSize: 13, lineHeight: 1.6, maxWidth: 310 }}>
-                Real Telugu speech — the same voice your customers actually hear on a live call, not a demo approximation.
+                Natural <strong>Telugu & Tanglish</strong> small-talk. Say "Hi", "Hello", or ask questions freely!
               </div>
             </div>
 
             <button onClick={start} style={{
-              display: "flex", alignItems: "center", gap: 8,
               padding: "12px 28px", borderRadius: 10,
               background: B.teal, color: "#fff", border: "none",
               cursor: "pointer", fontSize: 14, fontWeight: 800,
@@ -535,11 +710,11 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.transform = "translateY(-2px)"; }}
               onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.transform = "translateY(0)"; }}
             >
-              <Play size={13} fill="#fff" /> Start Conversation
+              ▶ Start Conversation
             </button>
 
             <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
-              {["Real Sarvam voice", "Hands-free", "Books real appointments"].map(t => (
+              {["💬 Small-Talk Ready", "🎙️ Hands-Free", "🌟 Real Human Feel"].map(t => (
                 <span key={t} style={{ color: B.textDim, fontSize: 10, fontWeight: 600 }}>✓ {t}</span>
               ))}
             </div>
@@ -683,17 +858,17 @@ export default function VoiceChatWidget({ tenantId, compact }: {
             <button
               onClick={status === "listening" ? stopAll : startListening}
               disabled={status === "thinking" || status === "speaking"}
-              title={status === "listening" ? "Stop" : "Speak in Telugu/English"}
+              title={status === "listening" ? "Stop" : "Speak"}
               style={{
                 width: 38, height: 38, borderRadius: "50%", border: "none",
                 background: status === "listening" ? B.terracotta : B.teal,
-                color: "#fff", cursor: "pointer",
+                color: "#fff", cursor: "pointer", fontSize: 16,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 flexShrink: 0,
                 boxShadow: status === "listening" ? "0 0 16px rgba(229,83,61,0.5)" : "none",
                 transition: "all 0.2s",
               }}>
-              {status === "listening" ? <Square size={14} fill="#fff" /> : <Mic size={16} />}
+              {status === "listening" ? "⏹" : "🎙️"}
             </button>
           )}
           <button
@@ -703,9 +878,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
               width: 38, height: 38, borderRadius: 10, border: "none",
               background: input.trim() && status === "idle" ? B.terracotta : B.border,
               color: "#fff", cursor: input.trim() && status === "idle" ? "pointer" : "not-allowed",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0, transition: "background 0.2s",
-            }}><ArrowUp size={16} /></button>
+              fontSize: 15, flexShrink: 0, transition: "background 0.2s",
+            }}>↑</button>
         </div>
       )}
 
@@ -715,8 +889,8 @@ export default function VoiceChatWidget({ tenantId, compact }: {
           borderTop: `1px solid ${B.border}`, padding: "14px",
           background: "#ECFDF5", textAlign: "center",
         }}>
-          <div style={{ color: B.green, fontSize: 12, fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <CheckCircle2 size={14} /> WhatsApp confirmation sent to {booking.phone}
+          <div style={{ color: B.green, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+            ✅ WhatsApp confirmation sent to {booking.phone}
           </div>
           <button onClick={reset} style={{
             padding: "9px 24px", borderRadius: 8,
