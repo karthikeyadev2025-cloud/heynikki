@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
-import { Fraunces, Manrope, JetBrains_Mono } from "next/font/google";
+import { Bricolage_Grotesque, Manrope, JetBrains_Mono, Noto_Sans_Telugu } from "next/font/google";
 import "./globals.css";
 import CookieBanner from "../components/CookieBanner";
 
@@ -12,10 +12,9 @@ import CookieBanner from "../components/CookieBanner";
 // JetBrains Mono for data/utility text (timestamps, call IDs, code-like
 // content). Real Telugu copy still renders via the system's Noto Sans
 // Telugu fallback — none of these three families include Telugu glyphs.
-const fraunces = Fraunces({
+const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  style: ["normal", "italic"],
+  weight: ["400", "500", "600", "700", "800"],
   variable: "--font-display",
   display: "swap",
 });
@@ -29,6 +28,17 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500"],
   variable: "--font-mono",
+  display: "swap",
+});
+
+// Real Telugu glyphs. The site previously had none — Telugu copy fell
+// back to whatever the OS happened to ship, which on most Windows
+// machines is nothing at all (tofu boxes). The call console renders
+// actual Telugu script, so this is load-bearing now, not decorative.
+const notoTelugu = Noto_Sans_Telugu({
+  subsets: ["telugu"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-telugu",
   display: "swap",
 });
 
@@ -71,9 +81,107 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Sprint 5 asked for JSON-LD and it was never added — the page had OG
+  // and Twitter tags only. Structured data is what puts the price, the
+  // languages and the local-business signals into Google's rich results,
+  // which for a Hyderabad SMB product is most of the organic traffic
+  // that matters. Kept as one graph so there's a single source to edit.
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://heynikki.in/#org",
+        name: "Hey Nikki",
+        url: "https://heynikki.in",
+        logo: "https://heynikki.in/icon-512.png",
+        areaServed: { "@type": "Country", name: "India" },
+        address: {
+          "@type": "PostalAddress",
+          addressLocality: "Hyderabad",
+          addressRegion: "Telangana",
+          addressCountry: "IN",
+        },
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://heynikki.in/#app",
+        name: "Hey Nikki — Telugu AI Receptionist",
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web, Android, iOS",
+        description:
+          "AI receptionist that answers your business calls in Telugu, Hindi and English, books appointments and confirms on WhatsApp.",
+        inLanguage: ["te", "hi", "en"],
+        publisher: { "@id": "https://heynikki.in/#org" },
+        offers: [
+          {
+            "@type": "Offer",
+            name: "AI Telecaller",
+            price: "5999",
+            priceCurrency: "INR",
+            url: "https://heynikki.in/#pricing",
+          },
+          {
+            "@type": "Offer",
+            name: "Human CRM Seat",
+            price: "1999",
+            priceCurrency: "INR",
+            url: "https://heynikki.in/#pricing",
+          },
+          {
+            "@type": "Offer",
+            name: "Dedicated Jio DID",
+            price: "1999",
+            priceCurrency: "INR",
+            url: "https://heynikki.in/#pricing",
+          },
+        ],
+      },
+      {
+        // Mirrors the on-page FAQ section verbatim. If the copy on the
+        // homepage changes, change it here too — Google penalises
+        // structured data that doesn't match visible content.
+        "@type": "FAQPage",
+        "@id": "https://heynikki.in/#faq",
+        mainEntity: [
+          {
+            "@type": "Question",
+            name: "Is it really Telugu, or English with a Telugu accent?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "Really Telugu. The speech model is trained on Telugu, not on English text spelled out phonetically. It handles Telangana and coastal Andhra differences, and switches to Hindi or English the moment your caller does.",
+            },
+          },
+          {
+            "@type": "Question",
+            name: "Do I have to change my number?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "No. Forward your existing number to Hey Nikki, or port it fully — both work. Your board, cards and Google listing stay exactly as they are.",
+            },
+          },
+          {
+            "@type": "Question",
+            name: "Do my callers know it's an AI?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "Yes. TRAI requires disclosure at the start of every automated call, and Hey Nikki does it.",
+            },
+          },
+        ],
+      },
+    ],
+  };
+
   return (
     <html lang="en">
-      <body className={`${fraunces.variable} ${manrope.variable} ${jetbrainsMono.variable}`}>
+      <body className={`${bricolage.variable} ${manrope.variable} ${jetbrainsMono.variable} ${notoTelugu.variable}`}>
+        <Script
+          id="heynikki-jsonld"
+          type="application/ld+json"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
         {children}
         <CookieBanner />
         {/* Razorpay checkout. Until 2026-07-24 this was never loaded, so the

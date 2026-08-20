@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/nikki-logo.jpg" width="120" alt="Nikki Logo" />
+  <img src="assets/jovio-logo.jpg" width="120" alt="Nikki Logo" />
 </p>
 
 <h1 align="center">Nikki — Telugu AI Receptionist</h1>
@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Telugu-First%20AI-10B981?style=flat-square" />
   <img src="https://img.shields.io/badge/Response-<700ms-F97316?style=flat-square" />
   <img src="https://img.shields.io/badge/Cost-₹3.28%2Fmin-10B981?style=flat-square" />
-  <img src="https://img.shields.io/badge/Stack-Sarvam%20%2B%20Gemini%20%2B%20LiveKit-8B5CF6?style=flat-square" />
+  <img src="https://img.shields.io/badge/Stack-Sarvam%20%2B%20Gemini%20%2B%20FreeSWITCH-8B5CF6?style=flat-square" />
 </p>
 
 ---
@@ -25,11 +25,11 @@
 
 ```
 nikki/
-├── voice-pipeline/     # Python FastAPI — Sarvam STT/TTS + Gemini LLM + LiveKit
+├── voice-pipeline/     # Python FastAPI — Sarvam STT/TTS + Gemini LLM (LiveKit removed 2026-07-25)
 ├── api-server/         # Node.js — Webhooks, Razorpay, WhatsApp, Tenant APIs
-├── dashboard/          # Next.js 14 — Customer web dashboard
-├── super-admin/        # Next.js 14 — Nikki Super Admin control panel
-├── web/                # Next.js 14 — Marketing website (jovio.in)
+├── super-admin/        # Next.js 14 — Super Admin control panel (admin.heynikki.in)
+├── web/                # Next.js 14 — Marketing site + client dashboard (heynikki.in)
+├── infra/              # EC2: docker-compose, FreeSWITCH conf, nginx, n8n workflows
 ├── flutter-app/        # Flutter 3.x — iOS + Android customer app
 ├── supabase/           # SQL schema + migrations
 └── assets/             # Nikki brand assets + logo
@@ -83,8 +83,8 @@ Copy `.env.example` → `.env` in each folder and fill in your values.
 
 ## Voice Pipeline Architecture
 ```
-Caller → Exotel (inbound) / Plivo (outbound)
-       → LiveKit AgentStream (WebSocket)
+Caller → Jio / Vi SIP trunk → FreeSWITCH (Exotel = fallback)
+       → FreeSWITCH mod_audio_stream (WebSocket)
        → Sarvam Saaras V3 (Telugu STT) <150ms
        → Gemini 2.5 Flash (LLM, 4-turn window) <80ms
        → Sarvam Bulbul V3 (Telugu TTS) <250ms
@@ -98,11 +98,11 @@ Caller → Exotel (inbound) / Plivo (outbound)
 ## Cost per Call Minute
 | Component | Cost |
 |-----------|------|
-| Exotel (inbound) | ₹0.45 |
+| SIP trunk (inbound) | ₹0.45 |
 | Sarvam STT | ₹1.50 |
 | Gemini LLM | ₹0.08 |
 | Sarvam TTS | ₹0.75 |
-| LiveKit Infra | ₹0.30 |
+| FreeSWITCH / EC2 | ₹0.30 |
 | DB & Misc | ₹0.20 |
 | **Total** | **₹3.28/min** |
 | You charge | ₹12–25/min |
@@ -114,15 +114,17 @@ Caller → Exotel (inbound) / Plivo (outbound)
 | STT | Sarvam Saaras V3 (Telugu primary) + Google Chirp 2 (fallback) |
 | TTS | Sarvam Bulbul V3 (8kHz telephony) + Azure Shruti (fallback) |
 | LLM | Gemini 2.5 Flash (primary) + GPT-4o-mini (fallback) |
-| Orchestration | LiveKit Agents (self-hosted, AWS Mumbai) |
-| Telephony | Exotel AgentStream (inbound) + Plivo (outbound) |
+| Telephony Engine | FreeSWITCH on EC2 Mumbai (`mod_audio_stream` WebSocket) |
+| SIP Trunks | Jio Enterprise (primary) + Vi Business (active-active failover); Exotel as Super-Admin-toggleable fallback |
 | Database | Supabase PostgreSQL + RLS |
 | Auth | Supabase Auth + Google OAuth |
 | Payments | Razorpay Subscriptions |
 | WhatsApp | Wati / 360dialog |
 | Frontend | Next.js 14 + Tailwind CSS |
 | Mobile | Flutter 3.x (iOS + Android) |
-| Deploy | Vercel (web) + AWS Mumbai ap-south-1 (pipeline) |
+| Recordings | Cloudflare R2 (zero egress) |
+| Automation | n8n (primary) + Activepieces, self-hosted on EC2 |
+| Deploy | Vercel (web) + AWS Mumbai ap-south-1 (EC2: FreeSWITCH, pipeline, API, n8n) |
 
 ## Subscription Plans
 | Plan | Price | Minutes | Profiles |

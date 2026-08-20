@@ -5,6 +5,7 @@ Run: uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
 import os
+import re
 import json
 import asyncio
 import logging
@@ -69,6 +70,7 @@ GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_SERVICE_KEY"]
 INTERNAL_SECRET= os.environ.get("INTERNAL_SECRET", "nikki-internal-secret-change-me")
+API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nikki")
@@ -885,6 +887,33 @@ _DEMO_PROFILE: dict = {
     "missed_call_guard_enabled": False,
 }
 
+_EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\u2190-\u21FF\u2B00-\u2BFF]",
+    flags=re.UNICODE,
+)
+
+def _clean_for_speech(text: str) -> str:
+    """
+    Strip anything a TTS engine would vocalise as junk.
+
+    Neural TTS does not silently skip an asterisk or a bullet — it
+    pronounces it, or inserts an unnatural pause where the symbol sat.
+    A reply peppered with "*", "-", "1." is the single most reliable
+    way to make a voice sound like it is reading a document aloud
+    rather than talking, so it gets removed here regardless of what
+    the model produced.
+    """
+    if not text:
+        return ""
+    s = _EMOJI_RE.sub("", text)
+    s = re.sub(r"[*_`#>|]+", " ", s)                    # markdown emphasis / fences
+    s = re.sub(r"^\s*[-•–]\s+", "", s, flags=re.M)      # bullet leaders
+    s = re.sub(r"^\s*\d+[.)]\s+", "", s, flags=re.M)    # numbered list leaders
+    s = re.sub(r"\n{2,}", "\n", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    return s.strip()
+
+
 class BrowserChatRequest(BaseModel):
     text:        str
     session_id:  str
@@ -929,14 +958,61 @@ async def browser_chat(req: BrowserChatRequest):
 
     agent = _get_or_create_widget_session(req.session_id, profile)
 
-    # Build system prompt for web widget context
+    # ── System prompt ────────────────────────────────────────────
+    # This is where "sounds like a bot reading a script" is won or lost.
+    #
+    # The previous version told the model to march the caller through
+    # name → phone → service → time in that fixed order and to answer
+    # "in English or Telugu/Tanglish". Two problems: an ordered
+    # interrogation is exactly what makes a receptionist sound like a
+    # form, and Tanglish in Latin script means Sarvam's Telugu TTS is
+    # handed English letters to pronounce — so it produced an English
+    # voice doing a Telugu impression.
+    #
+    # Now: Telugu script out (so Bulbul speaks real Telugu), and the
+    # model gathers the same four facts in whatever order the caller
+    # volunteers them, the way a human receptionist actually does.
     system_prompt = (
         build_system_prompt(profile) +
-        "\n\n[WIDGET CONTEXT] User is chatting via the web widget — not on a phone call. "
-        "Respond in English or Telugu/Tanglish. Keep responses SHORT (under 25 words). "
-        "Guide them to: share their name → phone number → choose a service → preferred time → confirm booking. "
-        "When you have name + phone + service + time, say: BOOKING_CONFIRMED: <summary>."
+        "\n\n[WEB CALL CONTEXT]"
+        "\nYou are on a live voice call. Your reply is spoken aloud by a Telugu "
+        "neural voice — so write it exactly as it should SOUND."
+        "\n\nHOW TO SPEAK:"
+        "\n- Reply in TELUGU SCRIPT (తెలుగు). Keep English words that Telugu speakers "
+        "genuinely use in English — appointment, doctor, WhatsApp, confirm, booking, timing."
+        "\n- ONE or TWO short sentences. Never more than 25 words. This is a phone call, "
+        "not a paragraph."
+        "\n- Talk like a warm Hyderabad receptionist, not a form: short acknowledgements "
+        "(అలాగే, సరే, అవునా), 'garu' with names, contractions, natural rhythm."
+        "\n- NEVER use emoji, bullet points, asterisks, markdown, or numbered lists. "
+        "They get read aloud as noise."
+        "\n- Never say you are an AI, a bot, or a model unless asked outright."
+        "\n- If the caller switches to Hindi or English, switch with them immediately "
+        "and stay there."
+        "\n\nWHAT YOU NEED:"
+        "\n- Their name, a 10-digit phone number, which service, and a preferred day/time."
+        "\n- Ask for ONE thing at a time, but in whatever order the conversation goes. "
+        "If they volunteer three of them in one breath, take all three and don't ask again."
+        "\n- Answer their actual questions first. If they ask about timings, price or "
+        "location, answer it, THEN continue booking. Never ignore a question to stay "
+        "on your script."
+        "\n- If you didn't catch something, ask once, plainly. Never invent details, "
+        "never guess a name or number."
+        "\n\nWHEN COMPLETE:"
+        "\nOnce you have all four, confirm naturally in Telugu AND append on a new line: "
+        "BOOKING_CONFIRMED: <name> | <phone> | <service> | <time>"
     )
+
+    # A first turn with no caller speech yet — the console opens the
+    # line and Nikki greets first, exactly like a real answered call.
+    is_call_start = req.text.strip() == "__CALL_START__"
+    if is_call_start:
+        req.text = (
+            "[The call has just connected. The caller has not spoken yet. "
+            "Greet them in Telugu the way a receptionist answers a business "
+            "line, say which business this is, and ask how you can help. "
+            "One sentence.]"
+        )
 
     history = list(agent.history)
     history.append({"role": "user", "content": req.text})
@@ -944,8 +1020,11 @@ async def browser_chat(req: BrowserChatRequest):
     llm = GeminiLLM()
     response_text = await llm.generate(system_prompt, history)
 
-    # Update agent history
-    agent.history.append({"role": "user", "content": req.text})
+    # Update agent history. The synthetic call-start instruction is NOT
+    # stored — it's stage direction for one turn, and leaving it in the
+    # transcript would have the model referring back to it later.
+    if not is_call_start:
+        agent.history.append({"role": "user", "content": req.text})
     agent.history.append({"role": "assistant", "content": response_text})
 
     # Detect booking confirmation
@@ -955,7 +1034,13 @@ async def browser_chat(req: BrowserChatRequest):
         booking_summary = response_text.split("BOOKING_CONFIRMED:")[-1].strip()
         response_text = response_text.split("BOOKING_CONFIRMED:")[0].strip()
         if not response_text:
-            response_text = f"✅ Booking confirmed! {booking_summary}"
+            response_text = "మీ appointment confirm అయింది. ధన్యవాదాలు!"
+
+    # Belt-and-braces cleanup before this reaches a text-to-speech engine.
+    # The prompt forbids emoji and markdown, but models drift, and every
+    # stray asterisk or bullet gets pronounced out loud as literal noise —
+    # which is precisely the "reading a document" sound we're removing.
+    response_text = _clean_for_speech(response_text)
 
     # Optional TTS via Sarvam (for richer voice experience)
     audio_b64 = None
@@ -1615,16 +1700,62 @@ async def freeswitch_ws(
 
     agent = NikkiAgent(profile, caller_number)
 
-    # Override call_id if API server pre-created the record
-    # (API server calls /api/v1/call/freeswitch/inbound before connecting)
-    agent.call_id = await db.save_call({
-        "tenant_id":        profile["tenant_id"],
-        "voice_profile_id": profile["id"],
-        "caller_number":    caller_number,
-        "direction":        "inbound",
-        "status":           "active",
-        "livekit_room_id":  fs_uuid,   # store FS UUID for ESL lookups
-    })
+    # ── Routing decision + call record (single source of truth) ──
+    # The API server owns both: it resolves DID → tenant → routing_mode,
+    # creates the calls row, and tells us how this call should be
+    # handled. Previously the pipeline created its own row and ignored
+    # routing_mode entirely, so a DID configured for human agents still
+    # got the bot, and /webhooks/freeswitch/inbound was dead code.
+    routing = {}
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.post(
+                f"{API_SERVER_URL}/webhooks/freeswitch/inbound",
+                headers={"X-Internal-Secret": INTERNAL_SECRET},
+                json={
+                    "did_number":    did_number,
+                    "caller_number": caller_number,
+                    "fs_uuid":       fs_uuid,
+                },
+            )
+            if r.status_code == 200:
+                routing = r.json()
+    except Exception as e:
+        log.warning(f"[FS] routing lookup failed ({e}) — defaulting to AI")
+
+    # Hand the call to human agents when the DID says so. The API server
+    # has already checked there is somebody to ring; if there wasn't, it
+    # returns "ai" instead so the caller never lands in silence.
+    if routing.get("routing_mode") == "human" and routing.get("ring_group"):
+        log.info(f"[FS] {fs_uuid}: routing_mode=human — transferring to ring group")
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                await client.post(
+                    f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
+                    headers={"X-Internal-Secret": INTERNAL_SECRET},
+                    json={
+                        "fs_uuid":       fs_uuid,
+                        "ring_group":    routing["ring_group"],
+                        "guard_seconds": routing.get("missed_call_seconds", 20),
+                    },
+                )
+        except Exception as e:
+            log.error(f"[FS] human transfer failed: {e} — continuing with AI")
+        else:
+            await ws.close(code=1000)
+            return
+
+    agent.call_id = routing.get("call_id")
+    if not agent.call_id:
+        # API server unreachable — still log the call so it isn't lost.
+        agent.call_id = await db.save_call({
+            "tenant_id":        profile["tenant_id"],
+            "voice_profile_id": profile["id"],
+            "caller_number":    caller_number,
+            "direction":        "inbound",
+            "status":           "active",
+            "livekit_room_id":  fs_uuid,
+        })
 
     call_start_ts = time.time()
     recording_pcm = bytearray()   # accumulate all PCM for R2 upload

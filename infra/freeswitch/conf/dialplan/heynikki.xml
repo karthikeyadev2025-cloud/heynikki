@@ -1,103 +1,140 @@
 <!-- ================================================================
   Hey Nikki — FreeSWITCH Dialplan
   Context: heynikki
-  Handles: Inbound from Jio/Vi, Click-to-Call, Missed Call Guard
+  Handles: Inbound from Jio/Vi, Human ring group, Missed Call Guard,
+           Click-to-Call, Outbound campaigns
   ================================================================ -->
 <include>
   <context name="heynikki">
 
     <!-- ============================================================
-      TRAI COMPLIANCE: All AI-handled calls must disclose automated
-      nature within first 5 seconds (TRAI TCCCPR-2018, amended 2023).
-      This announcement plays before audio streaming begins.
+      ROUTING DESIGN NOTE
+
+      The dids table has a routing_mode column (ai|human|hybrid|ivr)
+      and Super Admin shows it, but nothing enforced it — every inbound
+      call went to the AI regardless of the setting.
+
+      The routing decision is NOT made here in XML. mod_curl is not in
+      modules.conf.xml, so a ${curl(...)} lookup in the dialplan would
+      fail silently at runtime and take every inbound call with it.
+      Instead the voice pipeline makes the call: it already looks the
+      DID up on WebSocket connect, so when routing_mode is "human" it
+      asks the API server to uuid_transfer this channel into the
+      human_ ring-group extension below and closes the socket.
+
+      That keeps one DID lookup, one source of truth, and needs no
+      module that isn't already loaded.
+
+      TRAI COMPLIANCE: AI-handled calls must disclose their automated
+      nature within the first 5 seconds (TCCCPR-2018, amended 2023).
       ============================================================ -->
 
-    <!-- ── INBOUND CALLS FROM JIO / VI SIP TRUNK ──────────────── -->
+    <!-- ── INBOUND FROM JIO / VI SIP TRUNK ────────────────────── -->
     <extension name="inbound_sip_ai" continue="false">
       <condition field="destination_number" expression="^(\+?91\d{10}|\d{10})$">
 
-        <!-- Set channel variables -->
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="continue_on_fail=false"/>
         <action application="set" data="call_timeout=120"/>
         <action application="set" data="did_number=${destination_number}"/>
         <action application="set" data="caller_ani=${caller_id_number}"/>
 
-        <!-- Answer the call -->
         <action application="answer"/>
 
         <!-- TRAI AI disclosure (mandatory, within 5 seconds) -->
-        <!-- Uncomment when audio file is available:
+        <!-- Uncomment when the audio file is in place:
         <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/>
         -->
 
-        <!-- Start recording to shared volume -->
-        <action application="set" data="RECORD_STEREO=false"/>
-        <action application="set" data="recording_path=/tmp/recordings/${uuid}.wav"/>
-        <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
+        <!-- NOTE: deliberately no record_session on this leg.
+             The voice pipeline accumulates the same inbound PCM in
+             memory and uploads it to Cloudflare R2 on hangup. Recording
+             here as well wrote a SECOND copy of every call to
+             /tmp/recordings, and nothing ever deleted it — so the EC2
+             disk filled over time and took FreeSWITCH, the pipeline and
+             the API server down together. R2 is the single source of
+             truth for AI-handled calls. Human-mode calls DO record
+             here, since no pipeline sits in that path. -->
 
-        <!-- Stream audio to Hey Nikki voice pipeline via WebSocket -->
-        <!-- URL format: ws://HOST:PORT/ws/freeswitch/{did}/{caller}/{uuid} -->
         <action application="set" data="STREAM_MESSAGE_DEFLECTION=false"/>
         <action application="set" data="STREAM_BUFFER_SIZE=320"/>
         <action application="audio_stream"
           data="ws://127.0.0.1:8000/ws/freeswitch/${did_number}/${caller_ani}/${uuid}"/>
 
-        <!-- Post-call: notify API server -->
         <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:${billsec},&quot;hangup_cause&quot;:&quot;${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
 
       </condition>
     </extension>
 
-    <!-- ── MISSED CALL GUARD ──────────────────────────────────── -->
-    <!-- Fires when inbound call goes unanswered for 20 seconds  -->
+    <!-- ── HUMAN MODE — ring the tenant's telecallers ──────────
+      Reached by ESL uuid_transfer from the API server when the DID's
+      routing_mode is "human" (or hybrid escalates mid-call).
+      Destination carries the ring-group members and the guard timeout
+      as channel variables set by the transferring ESL command.
+      ============================================================ -->
+    <extension name="inbound_human" continue="false">
+      <condition field="destination_number" expression="^human_(.*)$">
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <!-- Missed Call Guard: bridge gives up after guard_seconds
+             (default 20) and falls through to the guard extension. -->
+        <action application="set" data="call_timeout=${cond(${guard_seconds} &gt; 0 ? ${guard_seconds} : 20)}"/>
+        <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
+        <action application="bridge" data="${ring_group}"/>
+        <!-- Nobody picked up in time -->
+        <action application="transfer" data="missed_${caller_ani} XML heynikki"/>
+      </condition>
+    </extension>
+
+    <!-- ── MISSED CALL GUARD ───────────────────────────────────
+      Previously unreachable: this extension existed but nothing ever
+      transferred to it, so the 20-second guard in the plan (and the
+      missed_call_seconds value in platform_config) did nothing at all.
+      inbound_human now falls through to it on ring-out.
+      ============================================================ -->
     <extension name="missed_call_guard" continue="false">
       <condition field="destination_number" expression="^missed_(.+)$">
         <action application="answer"/>
-        <!-- Fallback voice message (TTS or pre-recorded) -->
         <action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
-        <!-- Notify API server to fire WhatsApp follow-up via n8n -->
-        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${1}&quot;,&quot;did_number&quot;:&quot;${destination_number}&quot;}' &amp;"/>
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
         <action application="hangup"/>
       </condition>
     </extension>
 
     <!-- ── CLICK-TO-CALL (Human CRM) ─────────────────────────── -->
-    <!-- Initiated by API server ESL originate command           -->
-    <!-- Leg 1: rings agent; Leg 2: dials customer via Jio trunk -->
     <extension name="click_to_call_agent_leg" continue="false">
       <condition field="destination_number" expression="^ctc_agent_(\d+)$">
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="answer"/>
-        <!-- Brief ring tone for agent -->
         <action application="playback" data="tone_stream://%(2000,4000,440,480)"/>
         <action application="bridge" data="${ctc_customer_bridge}"/>
       </condition>
     </extension>
 
-    <!-- ── OUTBOUND CALLS (Click-to-Call customer leg) ───────── -->
+    <!-- ── OUTBOUND (Click-to-Call customer leg) ─────────────── -->
     <extension name="outbound_to_customer" continue="false">
       <condition field="destination_number" expression="^out_(\+?91\d{10}|\d{10})$">
-        <!-- Use Jio trunk as primary, Vi as failover -->
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="set" data="effective_caller_id_name=HeyNikki"/>
         <action application="bridge"
-          data="sofia/gateway/jio_primary/${1}|sofia/gateway/vi_failover/${1}"/>
+          data="sofia/gateway/jio_primary/$1|sofia/gateway/vi_failover/$1"/>
       </condition>
     </extension>
 
-    <!-- ── OUTBOUND AI CAMPAIGN CALLS ─────────────────────────── -->
+    <!-- ── OUTBOUND AI CAMPAIGN CALLS ─────────────────────────
+      The literal token "outbound" sits in the {did_number} position of
+      the WS path; the pipeline treats that as a sentinel and reads
+      campaign context from the campaign_id query param instead.
+      ============================================================ -->
     <extension name="outbound_campaign" continue="false">
       <condition field="destination_number" expression="^camp_(\+?91\d{10}|\d{10})$">
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="answer"/>
-        <!-- TRAI disclosure for outbound -->
         <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
-        <!-- Stream to AI pipeline for outbound script -->
         <action application="audio_stream"
-          data="ws://127.0.0.1:8000/ws/freeswitch/outbound/${1}/${uuid}?campaign_id=${campaign_id}"/>
+          data="ws://127.0.0.1:8000/ws/freeswitch/outbound/$1/${uuid}?campaign_id=${campaign_id}"/>
       </condition>
     </extension>
 

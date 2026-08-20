@@ -578,6 +578,217 @@ app.post("/api/public/tts", publicTtsLimiter, async (req, res) => {
   }
 });
 
+// ── PUBLIC REAL-VOICE CONVERSATION TURN ───────────────────────────
+// One round trip = one conversational turn, for the landing-page call
+// console. This is the honest version of the demo:
+//
+//   caller audio → Sarvam Saaras v3 (real Telugu STT)
+//                → Gemini via the pipeline's /api/v1/browser/chat
+//                  (real LLM, real per-session history, no script)
+//                → Sarvam Bulbul v3 (real Telugu neural TTS)
+//
+// The widget previously ran a 4-stage hardcoded state machine and spoke
+// through the browser's speechSynthesis with Telugu transliterated into
+// Latin ("Namaskaram"), which is why it sounded like something reading
+// out a script — because it literally was. It could not answer a question
+// that wasn't in the script, and it wasn't speaking Telugu at all.
+//
+// STT and TTS happen here rather than in the pipeline so that Sarvam
+// keys never leave the server, matching the "vendors behind internal
+// proxy routes" rule. Conversation STATE stays in the pipeline, which
+// already owns session history and booking detection — no second copy.
+//
+// Cost control matters: every turn spends real Sarvam + Gemini credits
+// and this route has no login in front of it. Hence the IP limiter, a
+// hard cap on audio size, and a per-session turn ceiling.
+const publicVoiceLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 80,                       // ~13 full demo conversations per IP per 15 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demo limit reached. Try again in a few minutes." },
+});
+
+const MAX_DEMO_TURNS = 14;
+const demoTurnCounts = new Map<string, { n: number; ts: number }>();
+
+function bumpDemoTurn(sessionId: string): number {
+  const now = Date.now();
+  // Sweep sessions older than 30 min so this map can't grow unbounded.
+  for (const [k, v] of demoTurnCounts) {
+    if (now - v.ts > 30 * 60 * 1000) demoTurnCounts.delete(k);
+  }
+  const cur = demoTurnCounts.get(sessionId);
+  const n = (cur?.n || 0) + 1;
+  demoTurnCounts.set(sessionId, { n, ts: now });
+  return n;
+}
+
+app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
+  const { audio_base64, mime_type, text, session_id } = req.body as {
+    audio_base64?: string;
+    mime_type?:    string;
+    text?:         string;
+    session_id?:   string;
+  };
+
+  const sessionId = (session_id || "").trim();
+  if (!sessionId || sessionId.length > 80) {
+    return res.status(400).json({ error: "session_id required" });
+  }
+  if (!audio_base64 && !text?.trim()) {
+    return res.status(400).json({ error: "audio_base64 or text required" });
+  }
+
+  const turnNo = bumpDemoTurn(sessionId);
+  if (turnNo > MAX_DEMO_TURNS) {
+    return res.status(429).json({
+      error: "demo_turn_limit",
+      reply: "Demo lo intha varake matladagalanu. Real number meeda unlimited — sign up cheyandi!",
+    });
+  }
+
+  const SARVAM_KEY = process.env.SARVAM_API_KEY;
+  if (!SARVAM_KEY) {
+    console.error("[voice-turn] SARVAM_API_KEY not configured");
+    return res.status(503).json({ error: "Voice service not configured" });
+  }
+
+  try {
+    // ── 1. Transcribe (real Telugu STT) ──────────────────────────
+    let transcript = (text || "").trim();
+
+    if (!transcript && audio_base64) {
+      // ~1.4MB of base64 ≈ 1MB of webm ≈ well over the 20s a single
+      // conversational turn should ever need. Reject rather than pay
+      // Sarvam to transcribe someone's uploaded album.
+      if (audio_base64.length > 1_400_000) {
+        return res.status(413).json({ error: "Audio too long — keep replies under ~20 seconds" });
+      }
+
+      const audioBuffer = Buffer.from(audio_base64, "base64");
+      const sttForm = new FormData();
+      const mime = mime_type || "audio/webm";
+      const ext  = mime.split("/")[1]?.split(";")[0] || "webm";
+      sttForm.append("file", new Blob([audioBuffer], { type: mime }), `turn.${ext}`);
+      sttForm.append("model", "saaras:v3");
+      sttForm.append("language_code", "te-IN");
+
+      const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
+        method: "POST",
+        headers: { "api-subscription-key": SARVAM_KEY },
+        body: sttForm as any,
+      });
+      if (!sttResp.ok) throw new Error(`Sarvam STT ${sttResp.status}`);
+      const sttData = await sttResp.json() as any;
+      transcript = (sttData.transcript || "").trim();
+    }
+
+    if (!transcript) {
+      // Silence or unintelligible audio. Answer the way a person would
+      // rather than erroring the UI out — this is a normal thing to
+      // happen on a phone call, not an exception.
+      return res.json({
+        transcript: "",
+        reply: "Sorry andi, vinipinchaledu. Malli cheptara?",
+        audio_base64: null,
+        booking_confirmed: false,
+        heard_nothing: true,
+        turn: turnNo,
+      });
+    }
+
+    // ── 2. Real LLM turn (pipeline owns session history) ─────────
+    let reply = "";
+    let bookingConfirmed = false;
+    let bookingSummary   = "";
+
+    try {
+      const chatResp = await fetch(`${PIPELINE_URL}/api/v1/browser/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Secret": INTERNAL_SECRET,
+        },
+        body: JSON.stringify({
+          text: transcript,
+          session_id: sessionId,
+          tts: false,           // TTS is done here, at full quality
+        }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!chatResp.ok) throw new Error(`pipeline chat ${chatResp.status}`);
+      const chatData = await chatResp.json() as any;
+      reply            = (chatData.response || "").trim();
+      bookingConfirmed = !!chatData.booking_confirmed;
+      bookingSummary   = chatData.booking_summary || "";
+    } catch (e: any) {
+      // The pipeline being down must not present as a broken page.
+      console.error("[voice-turn] pipeline unreachable:", e.message);
+      return res.status(502).json({
+        error: "pipeline_unreachable",
+        transcript,
+        reply: "Okka nimisham andi — connection problem. Malli try cheyandi.",
+      });
+    }
+
+    if (!reply) reply = "Cheppandi andi, vintunnanu.";
+
+    // ── 3. Speak it (real Telugu neural TTS) ─────────────────────
+    // Sarvam caps a single synthesis request; long replies get split
+    // and stitched client-side would be worse, so we bound the text
+    // instead — the system prompt already asks for <25 word answers.
+    let audioBase64: string | null = null;
+    try {
+      const speakText = reply.length > 480 ? reply.slice(0, 480) : reply;
+      const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
+        method: "POST",
+        headers: {
+          "api-subscription-key": SARVAM_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputs: [speakText],
+          target_language_code: "te-IN",
+          speaker: "priya",
+          model: "bulbul:v3",
+          // Slightly quicker and a touch brighter than the dashboard
+          // assistant. A receptionist answering a business line speaks
+          // faster than a read-aloud tool; flat pace is a big part of
+          // what makes synthetic speech sound like recital.
+          pace: 1.06,
+          pitch: 0.3,
+          loudness: 1.2,
+          speech_sample_rate: 22050,
+          enable_preprocessing: true,
+        }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!ttsResp.ok) throw new Error(`Sarvam TTS ${ttsResp.status}`);
+      const ttsData = await ttsResp.json() as any;
+      audioBase64 = ttsData.audios?.[0] || null;
+    } catch (e: any) {
+      // Text still returns — the console falls back to browser speech
+      // rather than going silent mid-conversation.
+      console.warn("[voice-turn] TTS failed:", e.message);
+    }
+
+    res.json({
+      transcript,
+      reply,
+      audio_base64: audioBase64,
+      audio_mime: "audio/wav",
+      booking_confirmed: bookingConfirmed,
+      booking_summary: bookingSummary,
+      turn: turnNo,
+      turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+    });
+  } catch (err: any) {
+    console.error("[voice-turn]", err.message);
+    res.status(500).json({ error: "Voice turn failed" });
+  }
+});
+
 app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   const { to, message, tenant_id, voice_profile_id, message_type, call_id, appointment_id } = req.body;
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });
@@ -1348,36 +1559,73 @@ async function getPlatformConfig(): Promise<Record<string, string>> {
 // ── Automation webhook dispatcher ──────────────────────────────
 // Fires to n8n OR activepieces based on platform_config.automation_engine.
 // Never throws — errors are logged but never block the call path.
+//
+// FAILOVER: the Super Admin toggle offers Activepieces, but no
+// Activepieces flows are checked into infra/ yet — only n8n workflows
+// exist. Previously, flipping that toggle sent every automation event
+// to an endpoint with nothing listening, and because this function
+// swallows all errors, WhatsApp follow-ups just quietly stopped. No
+// alert, no failed request visible to anyone.
+//
+// So a failed dispatch on the non-default engine now retries against
+// n8n rather than being dropped. Losing a customer's missed-call
+// follow-up is a real revenue event; a duplicate log line is not.
 async function fireAutomationWebhook(event: string, payload: object): Promise<void> {
-  try {
-    const cfg    = await getPlatformConfig();
-    const engine = cfg["automation_engine"] || "n8n";
-    const base   = engine === "n8n"
-      ? (cfg["n8n_url"] || process.env.N8N_WEBHOOK_BASE || "http://localhost:5678/webhook")
-      : (cfg["activepieces_url"] || process.env.ACTIVEPIECES_WEBHOOK_BASE || "http://localhost:8080/api/v1/webhooks");
+  const cfg    = await getPlatformConfig().catch(() => ({} as Record<string, string>));
+  const engine = cfg["automation_engine"] || "n8n";
 
-    const url = `${base.replace(/\/$/, "")}/${event}`;
-    await fetch(url, {
+  const n8nBase = (cfg["n8n_url"] || process.env.N8N_WEBHOOK_BASE || "http://localhost:5678/webhook").replace(/\/$/, "");
+  const apBase  = (cfg["activepieces_url"] || process.env.ACTIVEPIECES_WEBHOOK_BASE || "http://localhost:8080/api/v1/webhooks").replace(/\/$/, "");
+
+  const post = async (base: string) => {
+    const resp = await fetch(`${base}/${event}`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(payload),
       signal:  AbortSignal.timeout(5000),
     });
-    console.log(`[automation] ${engine} webhook fired: ${event}`);
+    // A 404 from the automation host means "no such flow" — that is a
+    // failure for our purposes even though fetch itself succeeded.
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  };
+
+  const primary = engine === "n8n" ? n8nBase : apBase;
+
+  try {
+    await post(primary);
+    console.log(`[automation] ${engine} fired: ${event}`);
+    return;
   } catch (err: any) {
-    console.error(`[automation] webhook failed for event=${event}:`, err.message);
+    console.error(`[automation] ${engine} failed for event=${event}: ${err.message}`);
   }
+
+  if (engine !== "n8n") {
+    try {
+      await post(n8nBase);
+      console.warn(`[automation] FAILOVER to n8n succeeded for event=${event} — ` +
+                   `check that Activepieces has a flow for this event`);
+      return;
+    } catch (err: any) {
+      console.error(`[automation] n8n failover ALSO failed for event=${event}: ${err.message}`);
+    }
+  }
+
+  console.error(`[automation] event=${event} was NOT delivered to any engine`);
 }
 
-// ── FreeSWITCH inbound webhook ────────────────────────────────
-// Called by FreeSWITCH dialplan/ESL when a call is answered
+// ── FreeSWITCH inbound routing lookup ─────────────────────────
+// Called by the voice pipeline on WebSocket connect — NOT by the
+// dialplan. This endpoint was previously dead code: the dialplan never
+// hit it, and the pipeline created its own call row, so the DID →
+// tenant → routing_mode lookup here never ran. It is now the single
+// place that decides how an inbound call is handled, and the single
+// place the call row is created.
 app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
   try {
     const { caller_number, did_number, fs_uuid } = req.body;
 
-    // Look up voice profile by DID number
     const { data: did } = await sb.from("dids")
-      .select("tenant_id, voice_profile_id")
+      .select("tenant_id, voice_profile_id, routing_mode, missed_call_guard, fallback_message")
       .eq("number", did_number)
       .single();
 
@@ -1386,7 +1634,6 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       return res.status(404).json({ error: "DID not found" });
     }
 
-    // Create call record
     const { data: callRow } = await sb.from("calls").insert({
       tenant_id:        did.tenant_id,
       voice_profile_id: did.voice_profile_id,
@@ -1396,24 +1643,62 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       livekit_room_id:  fs_uuid,   // reuse field for FS UUID
     }).select().single();
 
-    // Forward to voice pipeline
-    await fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/inbound`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
-      body: JSON.stringify({
-        call_id:          callRow?.id,
-        caller_number,
-        did_number,
-        fs_uuid,
-        tenant_id:        did.tenant_id,
-        voice_profile_id: did.voice_profile_id,
-      }),
-    });
+    // Resolve the ring group for human/hybrid routing.
+    let ringGroup = "";
+    if (did.routing_mode === "human" || did.routing_mode === "hybrid") {
+      const { data: agents } = await sb.from("tenant_users")
+        .select("phone")
+        .eq("tenant_id", did.tenant_id)
+        .not("phone", "is", null);
+      // Simultaneous ring across every agent with a phone on file.
+      ringGroup = (agents || [])
+        .map((a: any) => `sofia/gateway/jio_primary/${String(a.phone).replace(/[^0-9+]/g, "")}`)
+        .filter((s: string) => s.length > 32)
+        .join(",");
+    }
 
-    res.json({ ok: true, call_id: callRow?.id });
+    const cfg = await getPlatformConfig();
+    const guardSeconds = parseInt(cfg["missed_call_seconds"] || "20");
+
+    // A "human" DID with nobody to ring would drop the caller into
+    // silence, so fall back to the AI rather than to nothing.
+    const effectiveMode =
+      did.routing_mode === "human" && !ringGroup ? "ai" : (did.routing_mode || "ai");
+
+    if (did.routing_mode === "human" && !ringGroup) {
+      console.warn(`[FS Inbound] DID ${did_number} is human-routed but no agent has a phone — falling back to AI`);
+    }
+
+    res.json({
+      ok: true,
+      call_id:            callRow?.id,
+      tenant_id:          did.tenant_id,
+      voice_profile_id:   did.voice_profile_id,
+      routing_mode:       effectiveMode,
+      ring_group:         ringGroup,
+      missed_call_guard:  did.missed_call_guard !== false,
+      missed_call_seconds: guardSeconds,
+    });
   } catch (err: any) {
     console.error("[FS Inbound error]", err.message);
     res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// ── Transfer a live AI call to a human ring group ─────────────
+// Called by the pipeline for human-routed DIDs, and mid-call when a
+// caller asks for a person.
+app.post("/webhooks/freeswitch/transfer-to-human", verifyInternal, async (req, res) => {
+  try {
+    const { fs_uuid, ring_group, guard_seconds } = req.body;
+    if (!fs_uuid || !ring_group) {
+      return res.status(400).json({ error: "fs_uuid and ring_group required" });
+    }
+    await fsl.transferToHuman(fs_uuid, ring_group, parseInt(guard_seconds || "20"));
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[FS transfer-to-human]", err.message);
+    res.status(500).json({ error: "Transfer failed" });
   }
 });
 
@@ -1523,12 +1808,62 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     let fsUuid = "";
     if (engine === "freeswitch") {
       // Use FreeSWITCH ESL for 2-leg bridge
-      const agentNumber = agent_phone || user.phone || "agent";
+      const agentNumber = agent_phone || user.phone || "";
+      if (!agentNumber) {
+        return res.status(400).json({ error: "agent_phone required — no phone on your account" });
+      }
       fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
     } else {
-      // Exotel fallback — use Exotel Calls API
-      console.log("[CTC] Using Exotel fallback for click-to-call");
-      // Exotel originate call (existing logic)
+      // ── Exotel fallback ──────────────────────────────────────
+      // This branch was previously an empty stub with a console.log and
+      // a comment reading "(existing logic)". Flipping the Super Admin
+      // telephony toggle to Exotel therefore returned {ok:true,
+      // status:"dialing"}, wrote a click_to_call_log row and advanced
+      // the lead to "contacted" — while placing no call at all. A silent
+      // success is worse than a crash, because nobody goes looking.
+      const sid   = process.env.EXOTEL_SID   || "";
+      const key   = process.env.EXOTEL_API_KEY || "";
+      const token = process.env.EXOTEL_API_TOKEN || "";
+      const agentNumber = agent_phone || user.phone || "";
+
+      if (!sid || !key || !token) {
+        return res.status(503).json({
+          error: "Exotel is selected as the telephony engine but its credentials are not configured.",
+        });
+      }
+      if (!agentNumber) {
+        return res.status(400).json({ error: "agent_phone required — no phone on your account" });
+      }
+
+      // Exotel connects two numbers: From = agent (rings first, same
+      // agent-first reasoning as the FreeSWITCH leg), To = customer,
+      // CallerId = the tenant's Exotel DID.
+      const form = new URLSearchParams({
+        From:     agentNumber,
+        To:       customer_number,
+        CallerId: maskedCli,
+        CallType: "trans",
+        TimeLimit: "1800",
+      });
+
+      const exoResp = await fetch(
+        `https://${key}:${token}@api.exotel.com/v1/Accounts/${sid}/Calls/connect.json`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form.toString(),
+          signal: AbortSignal.timeout(15_000),
+        }
+      );
+
+      if (!exoResp.ok) {
+        const body = await exoResp.text().catch(() => "");
+        console.error("[CTC] Exotel connect failed:", exoResp.status, body.slice(0, 300));
+        return res.status(502).json({ error: "Exotel could not place the call" });
+      }
+
+      const exoData = await exoResp.json() as any;
+      fsUuid = exoData?.Call?.Sid || "";
     }
 
     // Log to click_to_call_log

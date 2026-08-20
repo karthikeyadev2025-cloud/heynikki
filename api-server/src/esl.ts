@@ -7,7 +7,11 @@ import net from "net";
 
 const FS_HOST     = process.env.FREESWITCH_HOST         || "127.0.0.1";
 const FS_PORT     = parseInt(process.env.FREESWITCH_ESL_PORT || "8021");
-const FS_PASSWORD = process.env.FREESWITCH_ESL_PASSWORD || "ClueCon";
+// No default. The stock FreeSWITCH password is "ClueCon" and it was the
+// fallback here — meaning a missing env var silently produced a working
+// connection secured by a password every attacker already knows. ESL has
+// full call control and no rate limiting, so this fails closed instead.
+const FS_PASSWORD = process.env.FREESWITCH_ESL_PASSWORD || "";
 
 export interface Channel {
   uuid:         string;
@@ -39,6 +43,9 @@ function parseESLResponse(raw: string): Record<string, string> {
 
 // ── Low-level ESL command sender ─────────────────────────────
 async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
+  if (!FS_PASSWORD) {
+    throw new Error("FREESWITCH_ESL_PASSWORD is not set — refusing to connect to ESL");
+  }
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     let buffer = "";
@@ -100,13 +107,19 @@ export class FreeSwitchESL {
 
   /**
    * Click-to-Call: initiates a 2-leg bridged call.
-   * Leg 1: rings the agent's phone/browser
-   * Leg 2: dials the customer via Jio SIP trunk
+   * Leg 1: rings the AGENT first.
+   * Leg 2: once the agent picks up, dials the customer via the Jio trunk.
    * The customer sees the masked CLI (the Jio DID assigned to the tenant).
    *
-   * @param agentNumber   Agent's internal extension or SIP URI
-   * @param customerNumber Customer's mobile number (E.164 preferred)
-   * @param maskedCli     Jio DID to show as caller ID to customer
+   * Agent-first is deliberate. Dialling the customer first means they
+   * answer to silence while the agent's phone is still ringing — the
+   * single fastest way to get hung up on. Ringing the agent first
+   * means the human is already on the line the moment the customer
+   * picks up.
+   *
+   * @param agentNumber    Agent's mobile/extension (E.164 or 10-digit)
+   * @param customerNumber Customer's mobile number
+   * @param maskedCli      Jio DID shown as caller ID to the customer
    * @returns FreeSWITCH channel UUID
    */
   async clickToCall(
@@ -114,32 +127,70 @@ export class FreeSwitchESL {
     customerNumber: string,
     maskedCli:      string
   ): Promise<string> {
-    // Sanitize numbers
     const clean = (n: string) => n.replace(/[^0-9+]/g, "");
     const customer = clean(customerNumber);
+    const agent    = clean(agentNumber);
     const masked   = clean(maskedCli);
 
-    // ESL originate: bridge agent + customer with masked CLI
-    // Dial agent first, then bridge to customer
-    const cmd = [
-      `api originate`,
-      `{origination_caller_id_number=${masked},`,
-      `origination_caller_id_name=HeyNikki,`,
-      `hangup_after_bridge=true}`,
-      `sofia/gateway/jio_primary/${customer}`,
-      `&bridge(user/${agentNumber})`,
-    ].join("");
+    if (!customer || !agent) {
+      throw new Error("Click-to-Call needs both an agent number and a customer number");
+    }
 
-    const response = await eslCommand(cmd);
-    const parsed   = parseESLResponse(response);
+    // FreeSWITCH originate syntax is whitespace-sensitive:
+    //
+    //   originate <vars><dial-string> <application>
+    //
+    // The {vars} block abuts the dial string with NO space, but there
+    // MUST be a space after "originate" and before the &bridge(...)
+    // application. Building this with .join("") produced
+    // "api originate{...}sofia/...&bridge(...)" — which FreeSWITCH
+    // cannot parse, so every click-to-call failed at runtime while
+    // still typechecking cleanly.
+    const vars = [
+      `origination_caller_id_number=${masked}`,
+      `origination_caller_id_name=HeyNikki`,
+      `hangup_after_bridge=true`,
+      `ignore_early_media=true`,
+      `originate_timeout=30`,
+    ].join(",");
 
-    // Response on success: "+OK <uuid>"
-    const match = response.match(/\+OK\s+([a-f0-9-]{36})/);
+    // Leg 1 = agent, bridged to Leg 2 = customer.
+    const cmd =
+      `api originate {${vars}}sofia/gateway/jio_primary/${agent} ` +
+      `&bridge({origination_caller_id_number=${masked}}sofia/gateway/jio_primary/${customer})`;
+
+    const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
+
+    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
     if (match) return match[1];
 
-    // If ESL failed
+    const parsed  = parseESLResponse(response);
     const errLine = Object.entries(parsed).find(([k]) => k.toLowerCase().includes("reply"));
-    throw new Error(`Click-to-Call failed: ${errLine?.[1] || response.slice(0, 100)}`);
+    throw new Error(`Click-to-Call failed: ${errLine?.[1] || response.slice(0, 160)}`);
+  }
+
+  /**
+   * Transfer a live channel into the human ring-group extension.
+   *
+   * This is what actually makes the dids.routing_mode column mean
+   * something. The pipeline calls it (via the API server) when a DID
+   * is set to "human", or when a caller mid-conversation asks for a
+   * person. Channel variables are set first so the dialplan's
+   * inbound_human extension knows who to ring and how long to wait
+   * before the missed-call guard fires.
+   */
+  async transferToHuman(
+    uuid:         string,
+    ringGroup:    string,
+    guardSeconds: number = 20
+  ): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/i.test(uuid)) throw new Error("Invalid channel uuid");
+    if (!ringGroup) throw new Error("ring_group required for human transfer");
+
+    // setvar before transfer — the extension reads both immediately.
+    await eslCommand(`api uuid_setvar ${uuid} ring_group ${ringGroup}`);
+    await eslCommand(`api uuid_setvar ${uuid} guard_seconds ${Math.max(5, guardSeconds)}`);
+    await eslCommand(`api uuid_transfer ${uuid} human_transfer XML heynikki`);
   }
 
   /**
@@ -220,14 +271,22 @@ export class FreeSwitchESL {
   async getStatus(): Promise<{ uptime: string; version: string; active_calls: number }> {
     try {
       const response = await eslCommand("api status");
-      const uptimeMatch = response.match(/UP\s+([\d\s\w,]+)/i);
+      const uptimeMatch  = response.match(/UP\s+([\d\s\w,]+)/i);
       const versionMatch = response.match(/FreeSWITCH Version ([\d.]+)/i);
-      const sessionsMatch = response.match(/(\d+)\s+session\(s\) since startup/i);
+
+      // "N session(s) since startup" is the lifetime total, not the live
+      // count — it was being reported to Super Admin as "active calls",
+      // so a healthy server that had handled 4,000 calls displayed 4,000
+      // concurrent channels. The live figure is "N session(s) - peak M",
+      // which FreeSWITCH prints separately.
+      const liveMatch =
+        response.match(/(\d+)\s+session\(s\)\s*-\s*peak/i) ||
+        response.match(/(\d+)\s+session\(s\)\s+current/i);
 
       return {
         uptime:       uptimeMatch?.[1]?.trim() || "unknown",
         version:      versionMatch?.[1] || "unknown",
-        active_calls: parseInt(sessionsMatch?.[1] || "0"),
+        active_calls: parseInt(liveMatch?.[1] || "0"),
       };
     } catch {
       return { uptime: "unavailable", version: "unavailable", active_calls: 0 };

@@ -56,3 +56,7 @@ flutter-app/android/*.keystore
 # SSH keys - NEVER commit
 *.pem
 *.key
+
+# TypeScript / Next build caches (regenerated on every build)
+*.tsbuildinfo
+next-env.d.ts

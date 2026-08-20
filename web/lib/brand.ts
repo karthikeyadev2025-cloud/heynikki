@@ -39,12 +39,15 @@ export const NIKKI = {
 } as const;
 
 // ── Legacy key aliases ──────────────────────────────────────────
-// A handful of pages (login, signup, LegalLayout, VoiceWidget, not-found,
+// A handful of pages (login, signup, LegalLayout, not-found,
 // CookieBanner) already hardcode the *new* teal/terracotta values but under
 // the *old* key names (mercury/surya/chandra/espresso/grad) inherited from
 // the navy/green system. These aliases let those files switch to importing
 // from here with a minimal diff. New code should use the real names above
 // (teal/terracotta/text) — don't write new code against these aliases.
+//
+// VoiceWidget was on this list until it was deleted; the landing page's
+// CallConsole replaced it and uses the ink/marigold palette directly.
 export const NIKKI_LEGACY_ALIASES = {
   mercury:  NIKKI.teal,
   surya:    NIKKI.terracotta,

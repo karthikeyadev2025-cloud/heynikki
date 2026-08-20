@@ -1,15 +1,20 @@
 // components/OwnerVoiceAssistant.tsx
 // Floating voice assistant for logged-in business owners — the
-// "owner mode" half of the dual-mode voice widget (the public
-// landing page's VoiceChatWidget is "visitor mode": a scripted demo
-// experience for people checking out the product before signing up).
+// "owner mode" half of the dual-mode voice experience. The public
+// landing page's CallConsole is "visitor mode".
 //
-// This one is real, not scripted: ask it "ఈరోజు ఎన్ని కాల్స్ వచ్చాయి?"
-// (how many calls today?) and it genuinely transcribes your voice via
-// Sarvam Saaras v3, asks Gemini against your own live business data,
-// and speaks the answer back via Sarvam Bulbul v3 — same models
-// already proven in the live phone pipeline, not the browser's weak
-// Web Speech API (which has little to no real Telugu support).
+// Both halves are now real. Visitor mode used to be a scripted demo
+// (a 4-stage state machine speaking transliterated Telugu through the
+// browser's speechSynthesis, in the since-deleted VoiceChatWidget);
+// it now runs the same Sarvam + Gemini stack this one does, via
+// /api/public/voice-turn.
+//
+// This one: ask it "ఈరోజు ఎన్ని కాల్స్ వచ్చాయి?" (how many calls today?)
+// and it transcribes your voice via Sarvam Saaras v3, asks Gemini
+// against your own live business data, and speaks the answer back via
+// Sarvam Bulbul v3 — the same models proven in the live phone
+// pipeline, not the browser's Web Speech API (which has little to no
+// real Telugu support).
 "use client";
 import { useState, useRef, useCallback } from "react";
 import { createClient } from "../lib/supabase";
