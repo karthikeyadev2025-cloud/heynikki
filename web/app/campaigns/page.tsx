@@ -275,9 +275,9 @@ export default function CampaignsPage() {
               <strong>Calls don&apos;t dial yet.</strong> You can build campaigns and
               upload numbers now — they&apos;re stored safely and opt-outs are
               respected — but three things are still outstanding before anything
-              actually rings: the dispatch endpoint in the voice pipeline, the
-              dispatcher worker, and outbound calling being enabled on the Exotel
-              account (Exotel must switch that on; it&apos;s off by default).
+              actually rings: the dispatch endpoint, the dispatcher worker, and
+              outbound calling being enabled on your account (it&apos;s off by
+              default and we switch it on for you).
             </div>
           </div>
         </Card>

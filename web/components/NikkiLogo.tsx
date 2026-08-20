@@ -1,107 +1,110 @@
 "use client";
 
+/**
+ * THE canonical Hey Nikki logo. Every surface uses this — nav, sidebar,
+ * auth pages, legal pages, 404.
+ *
+ * WHY THIS FILE IS NOW THE ONLY LOGO
+ * The site was running four different marks at once:
+ *   1. this component — voice-pulse bars in terracotta + teal, with a
+ *      "Nikki Technologies" subtitle
+ *   2. the landing nav — a lucide Phone glyph in a marigold-on-ink square
+ *   3. the dashboard sidebar — a glowing green dot and the bare word "Nikki"
+ *   4. the favicon — waveform bars in ink + marigold
+ * A customer moving from the landing page to signup to the dashboard saw
+ * three unrelated brands and two different company names.
+ *
+ * Unified on the voice-pulse mark: it's the one that means something (this
+ * is a voice product, the bars are an audio level meter) and it already
+ * matches the favicon and PWA icons, so the browser tab, the home-screen
+ * icon and the header now agree.
+ *
+ * The "Nikki Technologies" subtitle is gone. The brand is Hey Nikki
+ * (heynikki.in) — the old subtitle was leftover from an earlier naming
+ * pass and contradicted the wordmark directly above it.
+ */
+
+const INK      = "#0B1F33";
+const MARIGOLD = "#E9A72C";
+const TEAL     = "#12457A";
+const CREAM    = "#FFFFFF";
+
 interface Props {
   size?: number;
   showText?: boolean;
   variant?: "horizontal" | "icon" | "stacked";
+  /** true when sitting on a dark background (ink sections, sidebar) */
   dark?: boolean;
 }
 
-/**
- * Hey Nikki logo (2026-07-02 redesign, replacing the earlier "N" monogram).
- * Wordmark-forward rather than a monogram -- "Hey Nikki" is a spoken product
- * name in the Siri/Alexa mold, not an abstract initial. The mark is a small
- * voice-pulse (audio equalizer bars), directly representing the product
- * category rather than an arbitrary letterform. Built from simple filled
- * rects at varying heights -- safe, predictable geometry since this
- * environment can't render/preview SVG output before shipping it.
- *
- * Palette: warm terracotta + deep teal on a cream/espresso base -- moved
- * away from the earlier dark-navy + neon-green scheme, which read as a
- * generic "AI startup" template rather than a distinct brand.
- */
-const TERRACOTTA = "#E5533D";
-const TEAL = "#12457A";
-const ESPRESSO = "#0F172A";
-const CREAM = "#FFFFFF";
-
-export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal", dark = false }: Props) {
-  const textColor = dark ? CREAM : ESPRESSO;
+export default function NikkiLogo({
+  size = 40,
+  showText = true,
+  variant = "horizontal",
+  dark = false,
+}: Props) {
+  const textColor = dark ? CREAM : INK;
+  // On dark ground the ink bars would disappear, so the quiet bars go
+  // translucent white and the loud ones stay marigold either way.
+  const quietBar = dark ? "rgba(255,255,255,0.55)" : TEAL;
 
   const PulseMark = (
-    <svg
-      width={size} height={size}
-      viewBox="0 0 100 100"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ flexShrink: 0 }}
-      role="img"
-      aria-label="Hey Nikki voice pulse mark"
+    <span
+      aria-hidden
+      style={{
+        width: size, height: size, flexShrink: 0,
+        borderRadius: size * 0.24,
+        background: dark ? "rgba(255,255,255,0.08)" : INK,
+        display: "grid", placeItems: "center",
+      }}
     >
-      <rect x="12" y="35" width="14" height="30" rx="7" fill={TEAL} />
-      <rect x="32" y="18" width="14" height="64" rx="7" fill={TERRACOTTA} />
-      <rect x="52" y="8"  width="14" height="84" rx="7" fill={TERRACOTTA} />
-      <rect x="72" y="28" width="14" height="44" rx="7" fill={TEAL} />
-    </svg>
+      <svg
+        width={size * 0.66} height={size * 0.66}
+        viewBox="0 0 100 100"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label="Hey Nikki"
+      >
+        {/* Same four bars, same proportions, as icon.svg and the PWA icons. */}
+        <rect x="6"  y="34" width="16" height="32" rx="8" fill={dark ? quietBar : CREAM} />
+        <rect x="29" y="16" width="16" height="68" rx="8" fill={MARIGOLD} />
+        <rect x="52" y="8"  width="16" height="84" rx="8" fill={MARIGOLD} />
+        <rect x="75" y="26" width="16" height="48" rx="8" fill={dark ? quietBar : CREAM} />
+      </svg>
+    </span>
   );
 
   if (variant === "icon") return PulseMark;
 
+  const Wordmark = (
+    <span
+      style={{
+        fontFamily: "var(--font-display), system-ui, sans-serif",
+        fontSize: size * 0.46,
+        fontWeight: 700,
+        letterSpacing: "-0.025em",
+        color: textColor,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      Hey Nikki
+    </span>
+  );
+
   if (variant === "stacked") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+      <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: size * 0.24 }}>
         {PulseMark}
-        {showText && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{
-              fontSize: size * 0.4,
-              fontWeight: 800,
-              color: textColor,
-              letterSpacing: -size * 0.01,
-              lineHeight: 1,
-            }}>
-              hey <span style={{ color: TERRACOTTA }}>nikki</span>
-            </div>
-            <div style={{
-              fontSize: size * 0.12,
-              color: TEAL,
-              letterSpacing: size * 0.04,
-              fontWeight: 600,
-              marginTop: size * 0.08,
-              textTransform: "uppercase",
-            }}>
-              Nikki Technologies
-            </div>
-          </div>
-        )}
-      </div>
+        {showText && Wordmark}
+      </span>
     );
   }
 
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.22 }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: size * 0.26 }}>
       {PulseMark}
-      {showText && (
-        <div style={{ lineHeight: 1.1 }}>
-          <div style={{
-            fontSize: size * 0.5,
-            fontWeight: 800,
-            color: textColor,
-            letterSpacing: -size * 0.008,
-          }}>
-            hey <span style={{ color: TERRACOTTA }}>nikki</span>
-          </div>
-          <div style={{
-            fontSize: size * 0.13,
-            color: TEAL,
-            letterSpacing: size * 0.05,
-            fontWeight: 600,
-            marginTop: size * 0.05,
-            textTransform: "uppercase",
-          }}>
-            Nikki Technologies
-          </div>
-        </div>
-      )}
-    </div>
+      {showText && Wordmark}
+    </span>
   );
 }

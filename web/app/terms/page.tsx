@@ -1,13 +1,13 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Terms of Service — Nikki" };
+export const metadata = { title: "Terms of Service — Hey Nikki" };
 
 export default function Terms() {
   return (
     <LegalLayout title="Terms of Service" lastUpdated="29 June 2026">
       <p>
         These Terms govern your use of Nikki (the "<strong>Service</strong>"), provided by
-        Nikki Technologies ("<strong>Nikki</strong>", "we", "us"). By creating an
+        Hey Nikki ("<strong>Hey Nikki</strong>", "we", "us"). By creating an
         account, you agree to these Terms. If you don't agree, don't use the Service.
       </p>
 
@@ -72,7 +72,6 @@ export default function Terms() {
       <ul>
         <li>Sarvam AI (speech)</li>
         <li>Google Gemini (language understanding)</li>
-        <li>LiveKit (real-time audio)</li>
         <li>Supabase (data storage)</li>
         <li>Razorpay (payments)</li>
         <li>Wati (WhatsApp Business API)</li>

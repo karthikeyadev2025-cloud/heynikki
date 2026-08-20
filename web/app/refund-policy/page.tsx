@@ -1,12 +1,12 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Refund Policy — Nikki" };
+export const metadata = { title: "Refund Policy — Hey Nikki" };
 
 export default function Refund() {
   return (
     <LegalLayout title="Refund & Cancellation Policy" lastUpdated="29 June 2026">
       <p>
-        This Refund Policy describes when and how Nikki Technologies issues refunds
+        This Refund Policy describes when and how Hey Nikki issues refunds
         for subscription fees and related charges.
       </p>
 

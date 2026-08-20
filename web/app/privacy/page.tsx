@@ -1,12 +1,12 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Privacy Policy — Nikki" };
+export const metadata = { title: "Privacy Policy — Hey Nikki" };
 
 export default function Privacy() {
   return (
     <LegalLayout title="Privacy Policy" lastUpdated="29 June 2026">
       <p>
-        Nikki Technologies ("<strong>Nikki</strong>", "we", "us", "our") respects
+        Hey Nikki ("<strong>Hey Nikki</strong>", "we", "us", "our") respects
         your privacy and is committed to protecting your personal data. This Privacy Policy
         explains what data we collect, why, how we use it, and the rights you have over it
         under the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong> of
@@ -122,7 +122,7 @@ export default function Privacy() {
       <h2>Grievance Officer</h2>
       <p>
         <strong>Karthikeya</strong><br />
-        Nikki Technologies<br />
+        Hey Nikki<br />
         Hyderabad, Telangana, India<br />
         Email: <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a>
       </p>

@@ -22,9 +22,14 @@ const INTENT_COLORS: Record<string, string> = {
   transfer: C.gbr, emergency: C.red, unknown: C.dim,
 };
 
-// Cost constants for ROI calculation
-const HUMAN_SALARY_PER_CALL = 35;   // ₹ per call (receptionist salary amortised)
-const AI_COST_PER_CALL      = 4;    // ₹ per call (Sarvam STT + Gemini + infra)
+// ── Client-facing value constants ─────────────────────────────
+// AI_COST_PER_CALL (₹4 — our Sarvam + Gemini + infra unit cost) used to
+// live here and was rendered to the CUSTOMER as "AI Running Cost". A
+// tenant paying ₹5,999/month could read our cost basis straight off
+// their own dashboard and compute the margin. Removed entirely: our
+// cost of goods is not a customer-facing metric, and the number they
+// actually want is what the service is worth to them.
+const HUMAN_SALARY_PER_CALL = 35;   // ₹ per call — cost of doing this with staff
 const WA_CONVERSION_VALUE   = 800;  // ₹ revenue per WhatsApp lead that converts
 
 function Card({ children, title, subtitle, style }: {
@@ -119,10 +124,8 @@ export default function AnalyticsPage() {
   const avgDur           = totalCalls ? Math.round(calls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / totalCalls) : 0;
 
   // ROI
+  // Value delivered, not our cost of delivering it.
   const humanCostSaved   = aiHandled * HUMAN_SALARY_PER_CALL;
-  const aiTotalCost      = aiHandled * AI_COST_PER_CALL;
-  const netSaving        = humanCostSaved - aiTotalCost;
-  const roiPercent       = aiTotalCost > 0 ? Math.round((netSaving / aiTotalCost) * 100) : 0;
 
   // Lead funnel
   const newLeads         = leads.filter(l => l.stage === "new").length;
@@ -156,7 +159,7 @@ export default function AnalyticsPage() {
       missed:       dayCalls.filter(c => c.status === "missed").length,
       appointments: dayCalls.filter(c => c.appointment_created).length,
       leads:        dayLeads.length,
-      cost_saved:   dayCalls.filter(c => c.status === "completed").length * (HUMAN_SALARY_PER_CALL - AI_COST_PER_CALL),
+      cost_saved:   dayCalls.filter(c => c.status === "completed").length * HUMAN_SALARY_PER_CALL,
     };
   });
 
@@ -214,11 +217,9 @@ export default function AnalyticsPage() {
             padding: "16px 20px", marginBottom: 20,
             display: "flex", justifyContent: "space-around", flexWrap: "wrap", gap: 12 }}>
             {[
-              { label: "Human Cost Saved",   value: `₹${humanCostSaved.toLocaleString()}`, color: C.grn },
-              { label: "AI Running Cost",    value: `₹${aiTotalCost.toLocaleString()}`,    color: C.gold },
-              { label: "Net Saving",         value: `₹${netSaving.toLocaleString()}`,      color: C.gbr },
-              { label: "ROI",                value: `${roiPercent}×`,                      color: C.glow },
-              { label: "WA Revenue Est.",    value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.cyn },
+              { label: "Staff Cost Avoided", value: `₹${humanCostSaved.toLocaleString()}`, color: C.grn },
+              { label: "Calls Auto-Resolved", value: `${aiHandled}`,                       color: C.gbr },
+              { label: "WA Revenue Est.",     value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.cyn },
             ].map(s => (
               <div key={s.label} style={{ textAlign: "center" }}>
                 <div style={{ color: s.color, fontSize: 22, fontWeight: 900 }}>{s.value}</div>

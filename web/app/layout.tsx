@@ -47,7 +47,7 @@ export const metadata: Metadata = {
   title: "Hey Nikki — Telugu AI Receptionist for Indian Businesses",
   description: "Your business never misses a call. Hey Nikki answers in Telugu, Hindi and English — switching language mid-call, 24/7.",
   keywords: "Telugu AI, voice agent, AI receptionist, India, SMB, call answering, Hey Nikki",
-  authors: [{ name: "Nikki Technologies" }],
+  authors: [{ name: "Hey Nikki" }],
   alternates: {
     canonical: "https://heynikki.in",
   },
@@ -130,7 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           },
           {
             "@type": "Offer",
-            name: "Dedicated Jio DID",
+            name: "Dedicated Business Number",
             price: "1999",
             priceCurrency: "INR",
             url: "https://heynikki.in/#pricing",

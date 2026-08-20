@@ -1,72 +1,79 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Pricing — Nikki" };
+export const metadata = { title: "Pricing — Hey Nikki" };
 
+// ── Kept in step with the homepage on purpose ─────────────────
+// This page previously described a completely different product: a
+// minute-based ladder (Starter ₹1,999 / Growth ₹4,999 / Scale ₹9,999)
+// with a dedicated number at ₹200/month, dated 29 June. The homepage,
+// the Super Admin plans table and the v4.0 plan all use the current
+// module pricing, with a dedicated number at ₹1,999 — nearly 10× the
+// figure quoted here. Anyone clicking "Pricing" in the nav saw a
+// contradiction, and the lower number is the one they'd hold us to.
+// Aligned to the current model. If pricing changes, change it in both
+// places or move both to read from the plans table.
 export default function Pricing() {
   return (
-    <LegalLayout title="Pricing" lastUpdated="29 June 2026">
+    <LegalLayout title="Pricing" lastUpdated="20 August 2026">
       <p>
-        Simple INR pricing. All plans include the core Nikki Telugu AI receptionist, the
-        dashboard, mobile app, and TRAI-compliant call disclosure. GST (18%) is added at
-        checkout.
+        Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
+        AI receptionist, the dashboard, the mobile app, and TRAI-compliant call
+        disclosure. GST (18%) is added at checkout.
       </p>
 
-      <h2>Starter — ₹1,999/month</h2>
-      <ul>
-        <li>200 call-minutes per month</li>
-        <li>1 voice profile</li>
-        <li>WhatsApp appointment confirmations</li>
-        <li>Email support (24-hour response)</li>
-      </ul>
-
-      <h2>Growth — ₹4,999/month</h2>
-      <ul>
-        <li>600 call-minutes per month</li>
-        <li>3 voice profiles</li>
-        <li>Custom greetings &amp; appointment booking flows</li>
-        <li>Outbound WhatsApp campaigns</li>
-        <li>Priority email support (4-hour response)</li>
-        <li>Analytics dashboard</li>
-      </ul>
-
-      <h2>Scale — ₹9,999/month</h2>
-      <ul>
-        <li>1,500 call-minutes per month</li>
-        <li>10 voice profiles</li>
-        <li>Multi-branch support</li>
-        <li>API access for integrations</li>
-        <li>Custom integrations (CRM, calendar systems)</li>
-        <li>Dedicated customer success manager</li>
-      </ul>
-
-      <h2>Overage</h2>
       <p>
-        Calls beyond your plan's monthly minutes are charged at <strong>₹3/minute</strong>.
-        Overage is billed monthly with your subscription invoice. You can set monthly
-        spend limits in Dashboard → Billing.
+        Pricing is modular — most businesses start with the AI Telecaller alone and
+        add the others when they need them.
       </p>
 
-      <h2>Add-ons</h2>
+      <h2>AI Telecaller — ₹5,999/month</h2>
       <ul>
-        <li><strong>Additional voice profile:</strong> ₹500/month per profile</li>
-        <li><strong>Dedicated DID number:</strong> ₹200/month per number</li>
-        <li><strong>Long-term call recording retention (1 year):</strong> ₹500/month</li>
+        <li>Unlimited inbound calls on one number</li>
+        <li>Telugu, Hindi and English, switched mid-call</li>
+        <li>Appointments written straight to your dashboard</li>
+        <li>WhatsApp confirmation on every booking</li>
+        <li>Call recordings and full transcripts</li>
+        <li>Missed-call follow-up, sent automatically</li>
+      </ul>
+
+      <h2>Human CRM Seat — ₹1,999/month per seat</h2>
+      <ul>
+        <li>Click-to-call from your lead list</li>
+        <li>Caller history on screen before your telecaller picks up</li>
+        <li>Call disposition tagging and notes</li>
+        <li>Shared pipeline across your team</li>
+      </ul>
+
+      <h2>Dedicated Business Number — ₹1,999/month per number</h2>
+      <ul>
+        <li>A new business number, yours to keep</li>
+        <li>Or port the number you already use</li>
+        <li>Masked outbound caller ID</li>
+        <li>Automatic carrier failover</li>
       </ul>
 
       <h2>Free trial</h2>
       <p>
-        Every new account gets <strong>14 days free</strong> on any plan — no card
-        required. After the trial, choose a plan or your account becomes read-only.
+        Every new account gets <strong>14 days free</strong> — no card required. After
+        the trial, choose a plan or your account becomes read-only. Nothing is deleted.
+      </p>
+
+      <h2>Cancellation</h2>
+      <p>
+        Cancel any month from Dashboard → Billing. You keep access until the end of the
+        period you&apos;ve paid for, and your call recordings and transcripts stay
+        exportable.
       </p>
 
       <h2>Refunds</h2>
       <p>See our <a href="/refund-policy">Refund Policy</a> for full details.</p>
 
-      <h2>Need a custom plan?</h2>
+      <h2>Need something different?</h2>
       <p>
-        Volume discounts available for 10+ branches or 5,000+ minutes/month. Email
-        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume and
-        we'll send a quote.
+        Multi-branch businesses, high call volumes and custom integrations (CRM,
+        calendar systems) are quoted individually. Email
+        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume
+        and we&apos;ll come back with a price.
       </p>
     </LegalLayout>
   );

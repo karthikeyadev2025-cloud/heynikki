@@ -622,10 +622,9 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
               borderRadius: 8, padding: "10px 14px", marginTop: 16, fontSize: 12 }}>
               <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Settings size={13} /> How it works</div>
               <div style={{ color: C2.mid, lineHeight: 1.6 }}>
-                FreeSWITCH ESL fires a <code style={{ color: C2.gbr }}>CHANNEL_HANGUP</code> event
-                for every call. If the call duration is under <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>,
-                the API server triggers your automation engine (n8n or Activepieces) to send
-                a WhatsApp message using the <em>missed_call_followup</em> template.
+                Every call raises a hang-up event. If the call lasted under{" "}
+                <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>, we treat it as
+                missed and automatically send that caller a WhatsApp follow-up.
               </div>
             </div>
 

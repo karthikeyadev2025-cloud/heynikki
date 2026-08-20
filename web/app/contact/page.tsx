@@ -1,6 +1,6 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Contact — Nikki" };
+export const metadata = { title: "Contact — Hey Nikki" };
 
 export default function Contact() {
   return (
@@ -22,7 +22,7 @@ export default function Contact() {
 
       <h2>Registered office</h2>
       <p>
-        <strong>Nikki Technologies</strong><br />
+        <strong>Hey Nikki</strong><br />
         Hyderabad, Telangana, India
       </p>
       <p style={{ fontSize: 13, color: "#9CA3AF" }}>

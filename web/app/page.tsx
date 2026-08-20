@@ -15,6 +15,7 @@
 
 import { useState, useEffect } from "react";
 import CallConsole from "../components/CallConsole";
+import NikkiLogo from "../components/NikkiLogo";
 import {
   Phone, Users, ShieldCheck, MessageCircle, Languages,
   Clock, ArrowRight, Plus, Minus, IndianRupee,
@@ -65,6 +66,7 @@ function Section({ id, bg, children, style }: {
 // ══════════════════════════════════════════════════════════════
 export default function Home() {
   const [dailyCalls, setDailyCalls] = useState(40);
+  const [dealValue, setDealValue]   = useState(2000);
   const [openFaq, setOpenFaq]       = useState<number | null>(0);
   const [scrolled, setScrolled]     = useState(false);
 
@@ -75,10 +77,19 @@ export default function Home() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const missedPerDay = Math.round(dailyCalls * 0.3);
-  const humanMonthly = dailyCalls * 30 * 35;
-  const nikkiMonthly = dailyCalls * 30 * 4;
-  const saved        = humanMonthly - nikkiMonthly;
+  // Deliberately framed as revenue recovered, NOT as a cost comparison.
+  // The previous version computed "Hey Nikki: dailyCalls * 30 * 4" — which
+  // published our per-call cost basis on the marketing page, directly
+  // beside the ₹5,999 plan price. Any prospect could divide the two and
+  // read our margin, and it invites "why is it 4 rupees but you charge me
+  // 6 thousand". What the customer actually cares about is the business
+  // they're currently losing, so that's what this shows.
+  const missedPerDay   = Math.round(dailyCalls * 0.3);
+  const missedMonthly  = missedPerDay * 30;
+  // Conversion rate on a recovered missed call, kept conservative on
+  // purpose — an inflated number here reads as a sales pitch.
+  const recoveredDeals = Math.round(missedMonthly * 0.2);
+  const recovered      = recoveredDeals * dealValue;
 
   return (
     <main style={{ background: C.paper, color: C.text, fontFamily: BD, overflowX: "hidden" }}>
@@ -95,16 +106,8 @@ export default function Home() {
           maxWidth: 1180, margin: "0 auto", padding: "16px 5vw",
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20,
         }}>
-          <a href="/" style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-            <span aria-hidden style={{
-              width: 30, height: 30, borderRadius: 9, background: C.ink,
-              display: "grid", placeItems: "center",
-            }}>
-              <Phone size={15} color={C.marigold} />
-            </span>
-            <span style={{ fontFamily: D, fontSize: 19, fontWeight: 700, color: C.ink, letterSpacing: "-0.02em" }}>
-              Hey Nikki
-            </span>
+          <a href="/" aria-label="Hey Nikki home" style={{ textDecoration: "none" }}>
+            <NikkiLogo size={34} />
           </a>
 
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -189,7 +192,7 @@ export default function Home() {
         }}>
           {[
             ["< 700 ms", "First reply to the caller"],
-            ["₹4", "Per call, vs ₹35 with staff"],
+            ["Every call", "Answered, logged, followed up"],
             ["24 / 7", "Including Sunday, 2 AM, festival days"],
             ["3 languages", "Switched mid-sentence, mid-call"],
           ].map(([big, small]) => (
@@ -227,7 +230,7 @@ export default function Home() {
             {
               n: "01", state: "Ringing", tone: C.marigold, icon: Phone,
               title: "The call arrives on your own number",
-              body: "Your Jio or Vi line, forwarded or fully ported. Customers dial the number already on your board and your cards. Nothing about the number changes.",
+              body: "Your existing business line, forwarded or fully ported. Customers dial the number already on your board and your cards. Nothing about the number changes.",
             },
             {
               n: "02", state: "Live", tone: C.live, icon: Languages,
@@ -317,11 +320,12 @@ export default function Home() {
               fontFamily: D, fontSize: "clamp(28px, 3.6vw, 42px)", lineHeight: 1.12,
               letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 14px", color: C.ink,
             }}>
-              Move the slider to your call volume.
+              What is a missed call worth to you?
             </h2>
             <p style={{ fontSize: 16, lineHeight: 1.65, color: C.textMid, margin: "0 0 30px" }}>
-              Indian SMBs miss roughly 3 in 10 inbound calls — lunch, a walk-in customer,
-              a second line already busy. Here&apos;s what that costs.
+              Indian SMBs miss roughly 3 in 10 inbound calls — lunch, a walk-in
+              customer, a second line already busy. Those callers don&apos;t leave a
+              voicemail. They call the next business on the list.
             </p>
 
             <label htmlFor="calls" style={{
@@ -337,30 +341,41 @@ export default function Home() {
               id="calls" type="range" min={10} max={300} step={5}
               value={dailyCalls}
               onChange={(e) => setDailyCalls(Number(e.target.value))}
-              className="nk-range"
-              style={{ width: "100%" }}
+              className="nk-range" style={{ width: "100%" }}
             />
-            <p style={{ margin: "14px 0 0", fontSize: 14, color: C.textMid }}>
-              About <strong style={{ color: C.red }}>{missedPerDay} calls a day</strong> currently ring out unanswered.
-            </p>
+
+            <label htmlFor="deal" style={{
+              display: "flex", justifyContent: "space-between", alignItems: "baseline",
+              margin: "26px 0 10px", fontSize: 14, color: C.textMid,
+            }}>
+              <span>Average value of one customer</span>
+              <span style={{ fontFamily: M, fontSize: 22, color: C.ink, fontVariantNumeric: "tabular-nums" }}>
+                ₹{dealValue.toLocaleString("en-IN")}
+              </span>
+            </label>
+            <input
+              id="deal" type="range" min={500} max={50000} step={500}
+              value={dealValue}
+              onChange={(e) => setDealValue(Number(e.target.value))}
+              className="nk-range" style={{ width: "100%" }}
+            />
           </div>
 
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden", background: C.paper }}>
             {([
-              ["Receptionist on payroll", humanMonthly, C.textMid],
-              ["Hey Nikki", nikkiMonthly, C.teal],
-            ] as [string, number, string][]).map(([label, val, col]) => (
+              ["Calls ringing out, per day",   `${missedPerDay}`],
+              ["Missed calls, per month",      `${missedMonthly}`],
+              ["Customers you could recover",  `${recoveredDeals}`],
+            ] as [string, string][]).map(([label, val]) => (
               <div key={label} style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
                 padding: "17px 22px", borderBottom: `1px solid ${C.line}`,
               }}>
                 <span style={{ fontSize: 14.5, color: C.textMid }}>{label}</span>
                 <span style={{
-                  fontFamily: M, fontSize: 16.5, fontWeight: 600, color: col,
+                  fontFamily: M, fontSize: 16.5, fontWeight: 600, color: C.ink,
                   fontVariantNumeric: "tabular-nums",
-                }}>
-                  ₹{val.toLocaleString("en-IN")}
-                </span>
+                }}>{val}</span>
               </div>
             ))}
             <div style={{ padding: "26px 22px", background: C.ink, color: "#fff" }}>
@@ -368,24 +383,27 @@ export default function Home() {
                 fontFamily: M, fontSize: 11, letterSpacing: "0.14em",
                 textTransform: "uppercase", color: "rgba(255,255,255,0.5)", marginBottom: 8,
               }}>
-                You keep, every month
+                Business currently walking away
               </div>
               <div style={{
                 fontFamily: D, fontSize: "clamp(34px, 5vw, 48px)", fontWeight: 700,
                 letterSpacing: "-0.03em", display: "flex", alignItems: "center", gap: 2,
               }}>
                 <IndianRupee size={30} strokeWidth={2.2} />
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>{saved.toLocaleString("en-IN")}</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{recovered.toLocaleString("en-IN")}</span>
+                <span style={{ fontSize: 16, fontWeight: 500, opacity: 0.5, marginLeft: 6, alignSelf: "flex-end", paddingBottom: 8 }}>
+                  / month
+                </span>
               </div>
               <p style={{ margin: "10px 0 0", fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.55 }}>
-                Before counting the {missedPerDay} calls a day you&apos;re currently not answering at all.
+                Assumes 1 in 5 recovered calls becomes a customer. Your own rate is
+                probably higher — these are people who called you first.
               </p>
             </div>
           </div>
         </div>
       </Section>
 
-      {/* ══ PRICING ═════════════════════════════════════════ */}
       <Section id="pricing">
         <Eyebrow>Pricing</Eyebrow>
         <h2 style={{
@@ -407,8 +425,8 @@ export default function Home() {
               points: ["Click-to-call from the lead list", "Caller history on screen before pickup", "Call disposition and notes", "Shared pipeline with your team"],
             },
             {
-              name: "Dedicated Jio DID", price: "1,999", note: "per number / month",
-              points: ["A new business number, yours", "Or port the number you already use", "Masked outbound caller ID", "Active-active failover to Vi"],
+              name: "Dedicated Business Number", price: "1,999", note: "per number / month",
+              points: ["A new business number, yours", "Or port the number you already use", "Masked outbound caller ID", "Automatic carrier failover"],
             },
           ].map((p) => (
             <div key={p.name} style={{

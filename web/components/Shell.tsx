@@ -8,6 +8,7 @@ import {
   MessageCircle, Brain, Settings, CreditCard,
 } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
+import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
 
 const C = {
@@ -67,15 +68,16 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       display: "flex", flexDirection: "column", height: "100vh",
       position: "fixed", left: 0, top: 0, zIndex: 40,
     }}>
-      {/* Logo */}
+      {/* Logo — canonical NikkiLogo, same mark as the landing page and
+          the favicon. This used to be a glowing green dot plus the bare
+          word "Nikki", which shared nothing with the brand anywhere else
+          on the site. */}
       <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid " + C.bord }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.glow,
-            boxShadow: "0 0 8px " + C.glow, flexShrink: 0 }} />
-          <span style={{ color: C.txt, fontSize: 15, fontWeight: 900 }}>Nikki</span>
-        </div>
+        <a href="/dashboard" aria-label="Hey Nikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
+          <NikkiLogo size={30} dark />
+        </a>
         {tenant && (
-          <div style={{ color: C.dim, fontSize: 11, marginTop: 4, paddingLeft: 16 }}>
+          <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
             {tenant.name}
           </div>
         )}
