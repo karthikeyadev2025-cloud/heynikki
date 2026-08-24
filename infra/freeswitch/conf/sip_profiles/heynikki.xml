@@ -13,27 +13,28 @@
     <settings>
       <param name="context"                value="heynikki"/>
       <param name="sip-port"                value="5060"/>
-      <param name="rtp-ip"                  value="$${local_ip_v4}"/>
-      <param name="sip-ip"                  value="$${local_ip_v4}"/>
+      <!-- Bind explicitly to the Jio circuit interface (100.65.188.4).
+           $${local_ip_v4} picks whichever interface FreeSWITCH finds
+           first, and this host is dual-homed: the Jio circuit for SIP,
+           and separate broadband for the AI APIs. Guessing wrong means
+           SIP goes out of the internet NIC and Jio never sees it. -->
+      <param name="rtp-ip"                  value="$${JIO_LOCAL_IP}"/>
+      <param name="sip-ip"                  value="$${JIO_LOCAL_IP}"/>
 
-      <!-- EC2 sits behind a public IP that differs from its private
-           interface IP — required for correct SDP in NAT'd deployments.
-           Set these in .env once the EC2 elastic IP is known; until
-           then FreeSWITCH falls back to sip-ip/rtp-ip above, which
-           will NOT work across the public internet from Jio/Vi. -->
-      <param name="ext-rtp-ip"              value="$${external_rtp_ip}"/>
-      <param name="ext-sip-ip"              value="$${external_sip_ip}"/>
+      <!-- NO ext-sip-ip / ext-rtp-ip.
+           Those exist for a box behind NAT advertising a different
+           public address in its SDP. On a delivered circuit we speak
+           to Jio's SBC directly from 100.65.188.4 with no NAT between
+           us, so advertising anything else puts an unreachable address
+           in the SDP and the call connects with one-way or no audio. -->
 
       <param name="auth-calls"              value="false"/>
       <!-- Trunk-only profile: Jio/Vi are the only peers, authenticated
            via the gateway register above, not inbound challenge — so
            auth-calls stays false and access is restricted at the
            network layer instead. -->
-      <!-- REQUIRED BEFORE GO-LIVE — uncomment once real Jio/Vi gateway
-           IP ranges are filled into acl.conf.xml's
-           "heynikki-sip-trunks" list (see TODO there):
-      <param name="apply-inbound-acl" value="heynikki-sip-trunks"/>
-      -->
+      <!-- ACTIVE: acl.conf.xml now carries Jio's real SBC/media hosts. -->
+      <param name="apply-inbound-acl"       value="heynikki-sip-trunks"/>
 
       <param name="codec-prefs"             value="PCMU,PCMA"/>
       <param name="inbound-codec-negotiation" value="generous"/>

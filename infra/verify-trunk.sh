@@ -61,17 +61,20 @@ GW=$(fs "sofia status gateway")
 echo "$GW" | grep -qi "jio_primary" || warn "jio_primary gateway not found in sofia status"
 
 JIO_STATE=$(echo "$GW" | grep -A6 -i "jio_primary" | grep -i "^State" | head -1)
+# This trunk is IP-authenticated over a delivered circuit, so NOREG is
+# the CORRECT healthy state — there is no registration to succeed.
 case "$JIO_STATE" in
-  *REGED*)     ok "Jio trunk REGISTERED" ;;
-  *NOREG*)     ok "Jio trunk in NOREG (correct for IP-based auth — no registration expected)" ;;
-  *FAIL*|*FAIL_WAIT*|*TRYING*)
-    bad "Jio trunk failing to register: $JIO_STATE"
-    echo "           Common causes, in order of likelihood:"
-    echo "             - trunk is IP-based, not register-based, but config says register=true"
-    echo "             - JIO_SIP_HOST still set to the placeholder 'siptrunk.jio.com'"
-    echo "             - your EC2 public IP is not whitelisted on Jio's side"
-    echo "             - outbound UDP 5060 blocked by the security group" ;;
-  *) warn "Jio trunk state unclear: ${JIO_STATE:-<none>}" ;;
+  *NOREG*)     ok "Jio gateway NOREG — correct for IP-based circuit auth" ;;
+  *REGED*)     warn "Gateway is REGISTERED, but this trunk is IP-authenticated. Check register=false." ;;
+  *FAIL*|*TRYING*)
+    bad "Jio gateway unhealthy: $JIO_STATE"
+    echo "           On a circuit trunk this usually means OPTIONS ping is"
+    echo "           not reaching the SBC. Check in this order:"
+    echo "             - is this host actually ON the circuit? (ip addr | grep 100.65.188)"
+    echo "             - can you reach the SBC?  ping -c2 100.64.0.4"
+    echo "             - is SIP bound to the circuit NIC, not broadband?"
+    echo "               (fs_cli -x 'sofia status profile heynikki' | grep -i ip)" ;;
+  *) warn "Jio gateway state unclear: ${JIO_STATE:-<none>}" ;;
 esac
 
 if echo "$GW" | grep -qi "vi_failover"; then
@@ -125,16 +128,33 @@ else
   warn "JIO_SIP_HOST not set in this shell (may still be set inside the container)"
 fi
 
-# ── 7. Public IP — matters for IP-based auth ─────────────────
-hdr "7. Public IP"
-PUB=$(curl -sf -m 4 https://api.ipify.org 2>/dev/null || echo "")
-if [ -n "$PUB" ]; then
-  echo "           This host's public IP: $PUB"
-  echo "           If Jio uses IP-based auth, THIS is the address they must whitelist."
-  echo "           It must be an Elastic IP — a default EC2 IP changes on stop/start"
-  echo "           and every call dies until Jio re-whitelists you."
+# ── 7. Circuit connectivity ──────────────────────────────────
+# The single most common reason nothing works: the box isn't actually
+# on the Jio circuit, or SIP is leaving via the broadband NIC.
+hdr "7. Jio circuit"
+if ip addr 2>/dev/null | grep -q "100.65.188."; then
+  ok "Circuit interface present:"
+  ip addr | grep "100.65.188." | sed 's/^/           /'
 else
-  warn "Could not determine public IP"
+  bad "No interface holds a 100.65.188.x address — this host is NOT on the Jio circuit."
+  echo "           SIP cannot work from here. FreeSWITCH must run on a machine"
+  echo "           behind the Jio router, or reach it over a site-to-site VPN."
+fi
+
+if ping -c2 -W2 100.64.0.4 >/dev/null 2>&1; then
+  ok "Jio SBC 100.64.0.4 reachable"
+else
+  warn "Cannot ping Jio SBC 100.64.0.4 (some SBCs drop ICMP — not conclusive on its own)"
+fi
+
+# Dual-homed check: the AI APIs need ordinary internet, which the voice
+# circuit does not provide.
+if curl -sf -m 5 https://api.sarvam.ai >/dev/null 2>&1 || curl -sf -m 5 https://www.google.com >/dev/null 2>&1; then
+  ok "General internet reachable (needed for Sarvam / Gemini / Supabase)"
+else
+  bad "No internet route — the AI pipeline cannot reach Sarvam or Gemini."
+  echo "           The Jio voice circuit is typically SIP-only. This host needs a"
+  echo "           SECOND connection (broadband) for the AI APIs."
 fi
 
 # ── Summary ──────────────────────────────────────────────────

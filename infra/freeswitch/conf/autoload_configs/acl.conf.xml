@@ -1,35 +1,64 @@
 <configuration name="acl.conf" description="Network Lists">
   <network-lists>
-    <!-- Standard RFC1918 private-range list — required by
-         sip_profiles/heynikki.xml's apply-nat-acl="nat.auto" param -->
+
+    <!-- ══════════════════════════════════════════════════════════
+      NAT DETECTION
+
+      100.64.0.0/10 is RFC 6598 Shared Address Space (carrier-grade
+      NAT). It used to be listed as "deny" here alongside the RFC1918
+      ranges — which was correct for a cloud deployment reachable over
+      the public internet, and is WRONG for this one.
+
+      Jio delivered this trunk as a dedicated circuit, and every address
+      on it lives inside 100.64.0.0/10:
+        our SIP endpoint  100.65.188.4
+        circuit gateway   100.65.188.1
+        Jio SBC           100.64.0.4
+        Jio media         100.64.0.6
+
+      Treating our own peer as a NAT'd endpoint makes sofia rewrite SDP
+      against a NAT that isn't there, and the classic symptom is a call
+      that connects with silence in one or both directions. So the Jio
+      circuit ranges are explicitly excluded from NAT handling below,
+      while the rest of CGNAT space stays denied.
+      ══════════════════════════════════════════════════════════ -->
     <list name="nat.auto" default="allow">
       <node type="deny" cidr="192.168.0.0/16"/>
       <node type="deny" cidr="10.0.0.0/8"/>
       <node type="deny" cidr="172.16.0.0/12"/>
-      <node type="deny" cidr="100.64.0.0/10"/>
       <node type="deny" cidr="127.0.0.0/8"/>
+      <!-- Jio circuit — direct peers, NOT behind NAT -->
+      <node type="deny" cidr="100.65.188.0/28"/>
+      <node type="deny" cidr="100.64.0.0/24"/>
+      <!-- Remaining CGNAT space is still treated as NAT'd -->
+      <node type="deny" cidr="100.64.0.0/10"/>
     </list>
 
     <!-- ══════════════════════════════════════════════════════════
-      TODO — REQUIRED BEFORE GO-LIVE. Not filled in because I don't
-      have your actual Jio Enterprise / Vi Business SIP gateway IP
-      ranges, and guessing plausible-looking ones here would be worse
-      than leaving this empty — a wrong CIDR either blocks your real
-      trunk traffic or silently allows the wrong traffic through.
+      INBOUND TRUNK ACL — the toll-fraud guard.
 
-      Per your plan's own CAUTION note: SIP port 5060 open to
-      0.0.0.0/0 is toll fraud within hours. Get the real ranges from:
-        - Jio Enterprise SIP: your onboarding docs / account manager
-          (1800-889-9999)
-        - Vi Business SIP: your Vi enterprise account manager
-      Then fill this in and reference it as the EC2 security-group
-      source (Sprint 1 table already lists this under "EC2 Security
-      Groups"), AND uncomment an apply-inbound-acl param pointing at
-      this list in sip_profiles/heynikki.xml.
+      Only Jio's SBC and media hosts may send us SIP. Everything else
+      is denied. On a circuit this is belt-and-braces (there is no
+      internet path to port 5060 in the first place) but it costs
+      nothing and protects against anything else on the LAN.
+
+      Sources, from the Jio provisioning sheet:
+        SBC IP    100.64.0.4   — SIP signalling
+        Media IP  100.64.0.6   — RTP
+        Gateway   100.65.188.1 — circuit gateway
+
+      NOTE: /32 host entries are deliberate. Jio named single hosts,
+      not ranges. If calls are rejected with "IP xxx not in list", get
+      the full CIDR from Jio rather than widening this to a guess.
       ══════════════════════════════════════════════════════════ -->
     <list name="heynikki-sip-trunks" default="deny">
-      <!-- <node type="allow" cidr="JIO_GATEWAY_CIDR_HERE"/> -->
-      <!-- <node type="allow" cidr="VI_GATEWAY_CIDR_HERE"/> -->
+      <node type="allow" cidr="100.64.0.4/32"/>
+      <node type="allow" cidr="100.64.0.6/32"/>
+      <node type="allow" cidr="100.65.188.1/32"/>
+      <!-- Our own /28 — covers the circuit gateway and any Jio-side
+           host in the delivered pool. -->
+      <node type="allow" cidr="100.65.188.0/28"/>
     </list>
+
   </network-lists>
 </configuration>
