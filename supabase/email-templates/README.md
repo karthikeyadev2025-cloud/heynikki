@@ -14,9 +14,9 @@ Branded HTML for the auth emails Supabase sends. To install:
 | Invite User           | (use `magic-link.html` style — adapt) |
 
 3. Make sure these settings are also configured:
-   - **Site URL:** `https://jovio.in`
-   - **Redirect URLs:** add `https://jovio.in/reset-password`,
-     `https://dashboard.jovio.in/dashboard`, and any others you use.
+   - **Site URL:** `https://heynikki.in`
+   - **Redirect URLs:** add `https://heynikki.in/reset-password`,
+     `https://dashboard.heynikki.in/dashboard`, and any others you use.
    - **SMTP settings (Auth → SMTP Settings):** point at Resend or
      a real SMTP provider. The default Supabase SMTP is rate-limited
      and the From address is `noreply@mail.app.supabase.io`, which

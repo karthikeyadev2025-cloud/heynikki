@@ -20,7 +20,7 @@ wget -q "https://s3.${REGION}.amazonaws.com/amazoncloudwatch-agent-${REGION}/ubu
 sudo dpkg -i -E amazon-cloudwatch-agent.deb
 rm -f amazon-cloudwatch-agent.deb
 
-echo "▶ Installing Jovio CloudWatch config…"
+echo "▶ Installing Hey Nikki CloudWatch config…"
 sudo cp "$REPO_ROOT/infra/aws/cloudwatch-agent.json" \
         /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
@@ -40,5 +40,5 @@ echo ""
 echo "Verify status:"
 echo "   sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status"
 echo ""
-echo "Logs will appear in CloudWatch under log groups starting with /jovio/"
-echo "Metrics will appear in CloudWatch → Metrics → Jovio/EC2"
+echo "Logs will appear in CloudWatch under log groups starting with /heynikki/"
+echo "Metrics will appear in CloudWatch → Metrics → HeyNikki/EC2"

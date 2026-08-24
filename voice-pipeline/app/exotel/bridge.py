@@ -1183,7 +1183,7 @@ async def handle_exotel_ws(ws: WebSocket, provider: str = "exotel"):
 
 
 async def handle_widget_ws(ws: WebSocket):
-    """Website widget entry point — lets a visitor on jovio.in talk to
+    """Website widget entry point — lets a visitor on heynikki.in talk to
     Nikki directly through their browser microphone, no phone call
     needed. Reuses the exact same Session/VAD/STT/Gemini/TTS/barge-in/
     filler pipeline already built and tested for Exotel calls (this
@@ -1215,7 +1215,7 @@ async def handle_widget_ws(ws: WebSocket):
     behavior (autoplay policies, AudioContext quirks, mic permission
     flows) can only be verified by loading the widget in a real browser.
     See scripts/test_widget_local.html for a one-time manual verification
-    page — run that before trusting this live on jovio.in.
+    page — run that before trusting this live on heynikki.in.
     """
     log.info("INCOMING widget WS attempt")
     await ws.accept()

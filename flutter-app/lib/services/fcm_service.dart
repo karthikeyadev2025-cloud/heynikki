@@ -41,7 +41,7 @@ class FcmService {
       if (ctx != null && msg.notification != null) {
         ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
           content: Text(
-            '${msg.notification!.title ?? 'Jovio'}: ${msg.notification!.body ?? ''}',
+            '${msg.notification!.title ?? 'Hey Nikki'}: ${msg.notification!.body ?? ''}',
           ),
           duration: const Duration(seconds: 4),
           action: SnackBarAction(

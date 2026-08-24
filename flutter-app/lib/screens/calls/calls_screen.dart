@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme.dart';
-import '../../widgets/jovio_widgets.dart';
+import '../../widgets/heynikki_widgets.dart';
 
 class CallsScreen extends StatefulWidget {
   const CallsScreen({super.key});
@@ -16,12 +16,12 @@ class _CallsScreenState extends State<CallsScreen> {
   String? _tenantId;
 
   final _intentColors = {
-    'appointment': JovioColors.teal,
-    'enquiry':     JovioColors.purple,
-    'callback':    JovioColors.gold,
-    'transfer':    JovioColors.orange,
-    'emergency':   JovioColors.red,
-    'unknown':     JovioColors.dim,
+    'appointment': HeyNikkiColors.teal,
+    'enquiry':     HeyNikkiColors.purple,
+    'callback':    HeyNikkiColors.gold,
+    'transfer':    HeyNikkiColors.orange,
+    'emergency':   HeyNikkiColors.red,
+    'unknown':     HeyNikkiColors.dim,
   };
 
   @override
@@ -49,7 +49,7 @@ class _CallsScreenState extends State<CallsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Calls'), actions: [
-        IconButton(icon: const Icon(Icons.refresh_rounded, color: JovioColors.mid), onPressed: _load),
+        IconButton(icon: const Icon(Icons.refresh_rounded, color: HeyNikkiColors.mid), onPressed: _load),
       ]),
       body: Column(
         children: [
@@ -64,24 +64,24 @@ class _CallsScreenState extends State<CallsScreen> {
                   margin: const EdgeInsets.only(right: 8),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                   decoration: BoxDecoration(
-                    gradient: _filter == f ? JovioColors.gradient : null,
-                    color: _filter == f ? null : JovioColors.high,
+                    gradient: _filter == f ? HeyNikkiColors.gradient : null,
+                    color: _filter == f ? null : HeyNikkiColors.high,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _filter == f ? Colors.transparent : JovioColors.border),
+                    border: Border.all(color: _filter == f ? Colors.transparent : HeyNikkiColors.border),
                   ),
                   child: Text(f == 'all' ? 'All' : f[0].toUpperCase() + f.substring(1),
-                    style: TextStyle(color: _filter == f ? Colors.white : JovioColors.mid, fontSize: 12, fontWeight: FontWeight.w700)),
+                    style: TextStyle(color: _filter == f ? Colors.white : HeyNikkiColors.mid, fontSize: 12, fontWeight: FontWeight.w700)),
                 ),
               )).toList(),
             ),
           ),
           Expanded(
             child: _loading
-              ? const Center(child: CircularProgressIndicator(color: JovioColors.teal))
+              ? const Center(child: CircularProgressIndicator(color: HeyNikkiColors.teal))
               : _calls.isEmpty
-                ? const Center(child: Text('No calls yet', style: TextStyle(color: JovioColors.dim)))
+                ? const Center(child: Text('No calls yet', style: TextStyle(color: HeyNikkiColors.dim)))
                 : RefreshIndicator(
-                    color: JovioColors.teal, backgroundColor: JovioColors.surface,
+                    color: HeyNikkiColors.teal, backgroundColor: HeyNikkiColors.surface,
                     onRefresh: _load,
                     child: ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -89,12 +89,12 @@ class _CallsScreenState extends State<CallsScreen> {
                       itemBuilder: (_, i) {
                         final c = _calls[i];
                         final intent = c['intent'] ?? 'unknown';
-                        final col = _intentColors[intent] ?? JovioColors.dim;
+                        final col = _intentColors[intent] ?? HeyNikkiColors.dim;
                         final dur = c['duration_seconds'] ?? 0;
                         final durStr = dur > 60 ? '${dur ~/ 60}m ${dur % 60}s' : '${dur}s';
                         return GestureDetector(
                           onTap: () => _showDetail(c),
-                          child: JovioCard(
+                          child: HeyNikkiCard(
                             padding: const EdgeInsets.all(14),
                             child: Row(children: [
                               Container(width: 36, height: 36, decoration: BoxDecoration(
@@ -103,15 +103,15 @@ class _CallsScreenState extends State<CallsScreen> {
                                 child: Icon(c['direction'] == 'inbound' ? Icons.call_received_rounded : Icons.call_made_rounded, color: col, size: 18)),
                               const SizedBox(width: 12),
                               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: JovioColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
+                                Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: HeyNikkiColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
                                 const SizedBox(height: 3),
-                                Text('$durStr · ${_timeAgo(c['created_at'])}', style: const TextStyle(color: JovioColors.dim, fontSize: 11)),
+                                Text('$durStr · ${_timeAgo(c['created_at'])}', style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
                               ])),
                               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                                JovioPill(label: intent, color: col),
+                                HeyNikkiPill(label: intent, color: col),
                                 if (c['wa_sent'] == true) ...[
                                   const SizedBox(height: 4),
-                                  const Text('WA ✓', style: TextStyle(color: JovioColors.orange, fontSize: 10, fontWeight: FontWeight.w700)),
+                                  const Text('WA ✓', style: TextStyle(color: HeyNikkiColors.orange, fontSize: 10, fontWeight: FontWeight.w700)),
                                 ],
                               ]),
                             ]),
@@ -132,34 +132,34 @@ class _CallsScreenState extends State<CallsScreen> {
       context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
       builder: (_) => Container(
         height: MediaQuery.of(context).size.height * 0.75,
-        decoration: BoxDecoration(color: JovioColors.surface, borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          border: Border.all(color: JovioColors.border)),
+        decoration: BoxDecoration(color: HeyNikkiColors.surface, borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          border: Border.all(color: HeyNikkiColors.border)),
         child: Column(children: [
           Container(width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: JovioColors.border, borderRadius: BorderRadius.circular(2))),
+            decoration: BoxDecoration(color: HeyNikkiColors.border, borderRadius: BorderRadius.circular(2))),
           Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(c['caller_number'] ?? '', style: const TextStyle(color: JovioColors.text, fontSize: 16, fontWeight: FontWeight.w800)),
-                Text(_timeAgo(c['created_at']), style: const TextStyle(color: JovioColors.dim, fontSize: 12)),
+                Text(c['caller_number'] ?? '', style: const TextStyle(color: HeyNikkiColors.text, fontSize: 16, fontWeight: FontWeight.w800)),
+                Text(_timeAgo(c['created_at']), style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 12)),
               ])),
-              JovioPill(label: c['intent'] ?? 'unknown', color: _intentColors[c['intent']] ?? JovioColors.dim),
+              HeyNikkiPill(label: c['intent'] ?? 'unknown', color: _intentColors[c['intent']] ?? HeyNikkiColors.dim),
             ])),
-          const Divider(color: JovioColors.border, height: 24),
+          const Divider(color: HeyNikkiColors.border, height: 24),
           // Call journey
           Padding(padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(children: [
               for (final step in _buildJourney(c)) ...[
-                JovioPill(label: step, color: JovioColors.purple),
+                HeyNikkiPill(label: step, color: HeyNikkiColors.purple),
                 if (step != _buildJourney(c).last) const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4),
-                  child: Text('→', style: TextStyle(color: JovioColors.dim, fontSize: 10))),
+                  child: Text('→', style: TextStyle(color: HeyNikkiColors.dim, fontSize: 10))),
               ],
             ])),
           const SizedBox(height: 16),
           Expanded(
             child: transcript.isEmpty
-              ? const Center(child: Text('No transcript available', style: TextStyle(color: JovioColors.dim)))
+              ? const Center(child: Text('No transcript available', style: TextStyle(color: HeyNikkiColors.dim)))
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   itemCount: transcript.length,
@@ -173,10 +173,10 @@ class _CallsScreenState extends State<CallsScreen> {
                         padding: const EdgeInsets.all(12),
                         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
                         decoration: BoxDecoration(
-                          gradient: isAgent ? JovioColors.gradient : null,
-                          color: isAgent ? null : JovioColors.high,
+                          gradient: isAgent ? HeyNikkiColors.gradient : null,
+                          color: isAgent ? null : HeyNikkiColors.high,
                           borderRadius: BorderRadius.circular(12),
-                          border: isAgent ? null : Border.all(color: JovioColors.border),
+                          border: isAgent ? null : Border.all(color: HeyNikkiColors.border),
                         ),
                         child: Text(t['content'] ?? '', style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4)),
                       ),

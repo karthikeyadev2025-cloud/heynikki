@@ -16,8 +16,8 @@
 import { createClient } from "@supabase/supabase-js";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
-const FROM_EMAIL     = process.env.FROM_EMAIL     || "hello@jovio.in";
-const SITE_URL       = process.env.SITE_URL       || "https://jovio.in";
+const FROM_EMAIL     = process.env.FROM_EMAIL     || "hello@heynikki.in";
+const SITE_URL       = process.env.SITE_URL       || "https://heynikki.in";
 
 interface OnboardingStep {
   id:          string;
@@ -60,7 +60,7 @@ real calls yet?
     ${dashboardUrl}/calls — you'll see exactly what callers heard
     and what was booked.
   • If not: most likely the forwarding isn't active. Common fixes:
-    https://docs.jovio.in/call-forwarding
+    https://docs.heynikki.in/call-forwarding
 
 Any questions, just reply.
 

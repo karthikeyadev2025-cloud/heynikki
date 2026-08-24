@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme.dart';
-import '../../widgets/jovio_widgets.dart';
+import '../../widgets/heynikki_widgets.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -17,7 +17,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _OnboardPage(
       icon: '🏢',
       title: 'Your Business Never\nMisses a Call',
-      subtitle: 'Jovio answers every call in Telugu — 24/7, automatically.',
+      subtitle: 'Hey Nikki answers every call in Telugu — 24/7, automatically.',
       gradient: true,
     ),
     _OnboardPage(
@@ -46,10 +46,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const JovioLogo(size: 36),
+                  const HeyNikkiLogo(size: 36),
                   TextButton(
                     onPressed: () => context.go('/login'),
-                    child: const Text('Sign In', style: TextStyle(color: JovioColors.teal, fontWeight: FontWeight.w700)),
+                    child: const Text('Sign In', style: TextStyle(color: HeyNikkiColors.teal, fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),
@@ -78,24 +78,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       height: 8,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(4),
-                        gradient: _page == i ? JovioColors.gradient : null,
-                        color: _page == i ? null : JovioColors.border,
+                        gradient: _page == i ? HeyNikkiColors.gradient : null,
+                        color: _page == i ? null : HeyNikkiColors.border,
                       ),
                     )),
                   ),
                   const SizedBox(height: 24),
                   if (_page < _pages.length - 1)
-                    JovioButton(
+                    HeyNikkiButton(
                       label: 'Next →',
                       onTap: () => _controller.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut),
                     )
                   else
                     Column(children: [
-                      JovioButton(label: 'Start Free Trial', onTap: () => context.go('/signup')),
+                      HeyNikkiButton(label: 'Start Free Trial', onTap: () => context.go('/signup')),
                       const SizedBox(height: 12),
                       TextButton(
                         onPressed: () => context.go('/login'),
-                        child: const Text('Already have an account? Sign In', style: TextStyle(color: JovioColors.mid, fontSize: 13)),
+                        child: const Text('Already have an account? Sign In', style: TextStyle(color: HeyNikkiColors.mid, fontSize: 13)),
                       ),
                     ]),
                 ],
@@ -122,21 +122,21 @@ class _OnboardPage extends StatelessWidget {
         Container(
           width: 100, height: 100,
           decoration: BoxDecoration(
-            gradient: gradient ? JovioColors.gradient : null,
-            color: gradient ? null : JovioColors.surface,
+            gradient: gradient ? HeyNikkiColors.gradient : null,
+            color: gradient ? null : HeyNikkiColors.surface,
             borderRadius: BorderRadius.circular(28),
-            border: gradient ? null : Border.all(color: JovioColors.border),
+            border: gradient ? null : Border.all(color: HeyNikkiColors.border),
           ),
           child: Center(child: Text(icon, style: const TextStyle(fontSize: 44))),
         ),
         const SizedBox(height: 36),
         Text(title,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: JovioColors.text, fontSize: 28, fontWeight: FontWeight.w900, height: 1.2)),
+          style: const TextStyle(color: HeyNikkiColors.text, fontSize: 28, fontWeight: FontWeight.w900, height: 1.2)),
         const SizedBox(height: 16),
         Text(subtitle,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: JovioColors.mid, fontSize: 15, height: 1.6)),
+          style: const TextStyle(color: HeyNikkiColors.mid, fontSize: 15, height: 1.6)),
       ],
     ),
   );

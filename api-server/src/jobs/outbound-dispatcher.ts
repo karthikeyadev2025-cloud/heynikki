@@ -22,7 +22,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
-const PIPELINE_URL  = process.env.PIPELINE_URL || "https://pipeline.jovio.in";
+const PIPELINE_URL  = process.env.PIPELINE_URL || "https://pipeline.heynikki.in";
 const INTERNAL_SEC  = process.env.INTERNAL_SECRET!;
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);

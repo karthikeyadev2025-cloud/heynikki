@@ -9,7 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'theme.dart';
 import 'providers/auth_provider.dart';
 import 'services/fcm_service.dart';
-import 'widgets/jovio_widgets.dart';
+import 'widgets/heynikki_widgets.dart';
 import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/signup_screen.dart';
@@ -23,7 +23,7 @@ import 'screens/settings/settings_screen.dart';
 
 const kSupabaseUrl  = String.fromEnvironment('SUPABASE_URL',  defaultValue: 'https://wnawozdmmxuziucavngw.supabase.co');
 const kSupabaseAnon = String.fromEnvironment('SUPABASE_ANON', defaultValue: 'YOUR_ANON_KEY');
-const kApiUrl       = String.fromEnvironment('API_URL',       defaultValue: 'https://api.jovio.in');
+const kApiUrl       = String.fromEnvironment('API_URL',       defaultValue: 'https://api.heynikki.in');
 
 /// Navigator key — used by FcmService to route on push tap from any
 /// context (incl. background isolate handoff to UI).
@@ -49,7 +49,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/signup',          builder: (_, __) => const SignupScreen()),
       GoRoute(path: '/forgot-password', builder: (_, __) => const ForgotPasswordScreen()),
       ShellRoute(
-        builder: (ctx, state, child) => JovioShell(child: child, location: state.matchedLocation),
+        builder: (ctx, state, child) => HeyNikkiShell(child: child, location: state.matchedLocation),
         routes: [
           GoRoute(path: '/home',      builder: (_, __) => const HomeScreen()),
           GoRoute(path: '/calls',     builder: (_, __) => const CallsScreen()),
@@ -77,27 +77,27 @@ void main() async {
     // Firebase may not be configured in dev — keep app usable
     debugPrint('Firebase/FCM init skipped: $e');
   }
-  runApp(const ProviderScope(child: JovioApp()));
+  runApp(const ProviderScope(child: HeyNikkiApp()));
 }
 
-class JovioApp extends ConsumerWidget {
-  const JovioApp({super.key});
+class HeyNikkiApp extends ConsumerWidget {
+  const HeyNikkiApp({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp.router(
-      title: 'Jovio — Telugu AI Receptionist',
+      title: 'Hey Nikki — Telugu AI Receptionist',
       debugShowCheckedModeBanner: false,
-      theme: JovioTheme.dark,
+      theme: HeyNikkiTheme.dark,
       routerConfig: ref.watch(routerProvider),
     );
   }
 }
 
 // ── SHELL WITH BOTTOM NAV ─────────────────────────────────
-class JovioShell extends StatelessWidget {
+class HeyNikkiShell extends StatelessWidget {
   final Widget child;
   final String location;
-  const JovioShell({super.key, required this.child, required this.location});
+  const HeyNikkiShell({super.key, required this.child, required this.location});
 
   static const _nav = [
     _N('/home',      Icons.radio_button_checked_rounded, 'Reception'),
@@ -114,8 +114,8 @@ class JovioShell extends StatelessWidget {
       body: child,
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
-          color: JovioColors.surface,
-          border: Border(top: BorderSide(color: JovioColors.border)),
+          color: HeyNikkiColors.surface,
+          border: Border(top: BorderSide(color: HeyNikkiColors.border)),
         ),
         child: SafeArea(
           child: SizedBox(height: 60, child: Row(
@@ -126,13 +126,13 @@ class JovioShell extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                   ShaderMask(
-                    shaderCallback: (b) => (active ? JovioColors.gradient : const LinearGradient(colors: [JovioColors.dim, JovioColors.dim])).createShader(b),
+                    shaderCallback: (b) => (active ? HeyNikkiColors.gradient : const LinearGradient(colors: [HeyNikkiColors.dim, HeyNikkiColors.dim])).createShader(b),
                     child: Icon(e.value.icon, size: 22, color: Colors.white),
                   ),
                   const SizedBox(height: 3),
                   Text(e.value.label, style: TextStyle(
                     fontSize: 9, fontWeight: FontWeight.w600,
-                    color: active ? JovioColors.teal : JovioColors.dim)),
+                    color: active ? HeyNikkiColors.teal : HeyNikkiColors.dim)),
                 ]),
               ));
             }).toList(),

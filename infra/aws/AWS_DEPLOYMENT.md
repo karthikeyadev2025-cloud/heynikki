@@ -11,7 +11,7 @@ Nginx fronting the API + voice pipeline, CloudWatch for logs/metrics, certbot fo
                   Internet (Exotel, browsers, mobile apps)
                               │
                               ▼
-                  Route 53  (jovio.in, api.jovio.in, pipeline.jovio.in)
+                  Route 53  (heynikki.in, api.heynikki.in, pipeline.heynikki.in)
                               │
                               ▼
                 ┌─────────────────────────┐
@@ -139,7 +139,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ### 7. TLS (certbot)
 
 ```bash
-sudo certbot --nginx -d api.jovio.in -d pipeline.jovio.in
+sudo certbot --nginx -d api.heynikki.in -d pipeline.heynikki.in
 # Choose redirect-to-HTTPS
 # Auto-renewal is enabled by the certbot deb package; verify:
 sudo systemctl list-timers | grep certbot
@@ -162,13 +162,13 @@ In **Route 53 → Health checks → Create**:
 
 - Name: `nikki-api-health`
 - What to monitor: Endpoint by domain name
-- Domain: `api.jovio.in`
+- Domain: `api.heynikki.in`
 - Path: `/health`
 - Port: 443, HTTPS
 - Request interval: 30 seconds
 - Failure threshold: 3
 
-Repeat for `pipeline.jovio.in`. Optionally wire an SNS topic to notify your
+Repeat for `pipeline.heynikki.in`. Optionally wire an SNS topic to notify your
 phone/email when these fail.
 
 ---
@@ -234,7 +234,7 @@ Application code is already proxy-aware (`trust proxy: 1`). Migration steps:
 
 1. Spin up 2nd EC2 from an AMI of the current one
 2. Create ALB in front, target group on port 80 (Nginx), health check `/health`
-3. Point `api.jovio.in` and `pipeline.jovio.in` at the ALB
+3. Point `api.heynikki.in` and `pipeline.heynikki.in` at the ALB
 4. Each EC2's Nginx still terminates SSL — or move SSL to ALB and Nginx talks plain HTTP
 
 NO code change required for the move.

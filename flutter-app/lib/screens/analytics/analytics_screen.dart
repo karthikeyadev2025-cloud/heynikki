@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme.dart';
-import '../../widgets/jovio_widgets.dart';
+import '../../widgets/heynikki_widgets.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -53,14 +53,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ? _calls.map((c) => c['duration_seconds'] as int? ?? 0).reduce((a, b) => a + b) ~/ total
       : 0;
     final intents = _intentCounts;
-    final intentColors = [JovioColors.teal, JovioColors.orange, JovioColors.gold, JovioColors.purple, JovioColors.red];
+    final intentColors = [HeyNikkiColors.teal, HeyNikkiColors.orange, HeyNikkiColors.gold, HeyNikkiColors.purple, HeyNikkiColors.red];
 
     return Scaffold(
       appBar: AppBar(title: const Text('Analytics'), actions: [
-        IconButton(icon: const Icon(Icons.refresh_rounded, color: JovioColors.mid), onPressed: _init),
+        IconButton(icon: const Icon(Icons.refresh_rounded, color: HeyNikkiColors.mid), onPressed: _init),
       ]),
       body: _loading
-        ? const Center(child: CircularProgressIndicator(color: JovioColors.teal))
+        ? const Center(child: CircularProgressIndicator(color: HeyNikkiColors.teal))
         : SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -69,19 +69,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.5,
                 children: [
-                  JovioStat(value: '$total',   label: 'CALLS (30 DAYS)',  color: JovioColors.purple),
-                  JovioStat(value: '$appts',   label: 'APPOINTMENTS',     color: JovioColors.teal),
-                  JovioStat(value: '$waSent',  label: 'WHATSAPP SENT',    color: JovioColors.orange),
-                  JovioStat(value: '${avgDur}s', label: 'AVG DURATION',   color: JovioColors.gold),
+                  HeyNikkiStat(value: '$total',   label: 'CALLS (30 DAYS)',  color: HeyNikkiColors.purple),
+                  HeyNikkiStat(value: '$appts',   label: 'APPOINTMENTS',     color: HeyNikkiColors.teal),
+                  HeyNikkiStat(value: '$waSent',  label: 'WHATSAPP SENT',    color: HeyNikkiColors.orange),
+                  HeyNikkiStat(value: '${avgDur}s', label: 'AVG DURATION',   color: HeyNikkiColors.gold),
                 ],
               ),
               const SizedBox(height: 20),
 
               // 7-day line chart
-              JovioCard(
+              HeyNikkiCard(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const Text('Call Volume — Last 7 Days',
-                    style: TextStyle(color: JovioColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                    style: TextStyle(color: HeyNikkiColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 16),
                   SizedBox(
                     height: 160,
@@ -95,15 +95,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           getTitlesWidget: (v, _) {
                             final d = DateTime.now().subtract(Duration(days: (6 - v).toInt()));
                             final days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-                            return Text(days[d.weekday % 7], style: const TextStyle(color: JovioColors.dim, fontSize: 10));
+                            return Text(days[d.weekday % 7], style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 10));
                           })),
                       ),
                       borderData: FlBorderData(show: false),
                       lineBarsData: [LineChartBarData(
                         spots: _weekSpots,
-                        isCurved: true, color: JovioColors.teal, barWidth: 2.5,
+                        isCurved: true, color: HeyNikkiColors.teal, barWidth: 2.5,
                         dotData: const FlDotData(show: true),
-                        belowBarData: BarAreaData(show: true, color: JovioColors.teal.withOpacity(0.1)),
+                        belowBarData: BarAreaData(show: true, color: HeyNikkiColors.teal.withOpacity(0.1)),
                       )],
                     )),
                   ),
@@ -112,10 +112,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               const SizedBox(height: 16),
 
               // Intent breakdown
-              if (intents.isNotEmpty) JovioCard(
+              if (intents.isNotEmpty) HeyNikkiCard(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const Text('Intent Breakdown',
-                    style: TextStyle(color: JovioColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+                    style: TextStyle(color: HeyNikkiColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 14),
                   ...intents.entries.toList().asMap().entries.map((e) {
                     final col = intentColors[e.key % intentColors.length];
@@ -123,10 +123,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: Row(children: [
-                        SizedBox(width: 90, child: Text(e.value.key, style: const TextStyle(color: JovioColors.mid, fontSize: 12))),
+                        SizedBox(width: 90, child: Text(e.value.key, style: const TextStyle(color: HeyNikkiColors.mid, fontSize: 12))),
                         Expanded(child: ClipRRect(
                           borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(value: pct, minHeight: 8, backgroundColor: JovioColors.border,
+                          child: LinearProgressIndicator(value: pct, minHeight: 8, backgroundColor: HeyNikkiColors.border,
                             valueColor: AlwaysStoppedAnimation(col)),
                         )),
                         const SizedBox(width: 8),

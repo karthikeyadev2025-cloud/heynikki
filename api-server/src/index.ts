@@ -1188,7 +1188,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
       "Content-Type":  "application/json",
     },
     body: JSON.stringify({
-      from:    `Nikki <noreply@${process.env.FROM_EMAIL || "jovio.in"}>`,
+      from:    `Nikki <noreply@${process.env.FROM_EMAIL || "heynikki.in"}>`,
       to:      [user.email],
       subject: t.subject,
       html:    t.html,

@@ -1,7 +1,7 @@
-// lib/theme.dart — Jovio brand theme
+// lib/theme.dart — Hey Nikki brand theme
 import 'package:flutter/material.dart';
 
-class JovioColors {
+class HeyNikkiColors {
   static const bg       = Color(0xFF07070F);
   static const surface  = Color(0xFF0D0D1A);
   static const high     = Color(0xFF13132A);
@@ -21,35 +21,35 @@ class JovioColors {
   );
 }
 
-class JovioTheme {
+class HeyNikkiTheme {
   static ThemeData get dark => ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
-    scaffoldBackgroundColor: JovioColors.bg,
+    scaffoldBackgroundColor: HeyNikkiColors.bg,
     colorScheme: const ColorScheme.dark(
-      primary: JovioColors.teal,
-      secondary: JovioColors.orange,
-      surface: JovioColors.surface,
-      error: JovioColors.red,
+      primary: HeyNikkiColors.teal,
+      secondary: HeyNikkiColors.orange,
+      surface: HeyNikkiColors.surface,
+      error: HeyNikkiColors.red,
     ),
     appBarTheme: const AppBarTheme(
-      backgroundColor: JovioColors.surface,
-      foregroundColor: JovioColors.text,
+      backgroundColor: HeyNikkiColors.surface,
+      foregroundColor: HeyNikkiColors.text,
       elevation: 0,
-      titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: JovioColors.text),
+      titleTextStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: HeyNikkiColors.text),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: JovioColors.high,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: JovioColors.border)),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: JovioColors.border)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: JovioColors.teal, width: 1.5)),
-      labelStyle: const TextStyle(color: JovioColors.mid),
-      hintStyle: const TextStyle(color: JovioColors.dim),
+      fillColor: HeyNikkiColors.high,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: HeyNikkiColors.border)),
+      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: HeyNikkiColors.border)),
+      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: HeyNikkiColors.teal, width: 1.5)),
+      labelStyle: const TextStyle(color: HeyNikkiColors.mid),
+      hintStyle: const TextStyle(color: HeyNikkiColors.dim),
     ),
     cardTheme: CardTheme(
-      color: JovioColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: JovioColors.border)),
+      color: HeyNikkiColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: HeyNikkiColors.border)),
       elevation: 0,
     ),
   );

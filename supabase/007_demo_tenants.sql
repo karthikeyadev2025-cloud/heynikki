@@ -1,5 +1,5 @@
 -- ────────────────────────────────────────────────────────
--- 007_demo_tenants.sql — Demo flow on jovio.in/demo
+-- 007_demo_tenants.sql — Demo flow on heynikki.in/demo
 -- ────────────────────────────────────────────────────────
 
 alter table tenants drop constraint if exists tenants_plan_check;

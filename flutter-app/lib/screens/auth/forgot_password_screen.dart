@@ -35,7 +35,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
         email,
         // Deep-link back into the dashboard; mobile users typically don't
         // run a reset-password page in-app, the web flow is simpler.
-        redirectTo: 'https://jovio.in/reset-password',
+        redirectTo: 'https://heynikki.in/reset-password',
       );
     } on AuthException catch (e) {
       // Only surface rate-limit errors. For everything else fall through
@@ -54,12 +54,12 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: JovioColors.bg,
+      backgroundColor: HeyNikkiColors.bg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: JovioColors.text),
+          icon: const Icon(Icons.arrow_back_rounded, color: HeyNikkiColors.text),
           onPressed: () => context.go('/login'),
         ),
       ),
@@ -72,14 +72,14 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
               const SizedBox(height: 16),
               const Text(
                 'Reset your password',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: JovioColors.text),
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: HeyNikkiColors.text),
               ),
               const SizedBox(height: 8),
               Text(
                 _sent
                   ? "If an account exists for that email, we've sent a reset link. Check your inbox — including spam."
-                  : "Enter the email on your Jovio account and we'll send you a reset link.",
-                style: const TextStyle(fontSize: 14, color: JovioColors.mid, height: 1.5),
+                  : "Enter the email on your Hey Nikki account and we'll send you a reset link.",
+                style: const TextStyle(fontSize: 14, color: HeyNikkiColors.mid, height: 1.5),
               ),
               const SizedBox(height: 28),
 
@@ -89,15 +89,15 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   keyboardType: TextInputType.emailAddress,
                   autocorrect:  false,
                   enableSuggestions: false,
-                  style: const TextStyle(color: JovioColors.text),
+                  style: const TextStyle(color: HeyNikkiColors.text),
                   decoration: InputDecoration(
                     labelText: 'Email',
-                    labelStyle: const TextStyle(color: JovioColors.mid),
+                    labelStyle: const TextStyle(color: HeyNikkiColors.mid),
                     filled: true,
-                    fillColor: JovioColors.high,
+                    fillColor: HeyNikkiColors.high,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: JovioColors.border),
+                      borderSide: const BorderSide(color: HeyNikkiColors.border),
                     ),
                   ),
                 ),
@@ -108,11 +108,11 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color: JovioColors.red.withOpacity(0.15),
-                      border: Border.all(color: JovioColors.red),
+                      color: HeyNikkiColors.red.withOpacity(0.15),
+                      border: Border.all(color: HeyNikkiColors.red),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(_error!, style: const TextStyle(color: JovioColors.red, fontSize: 13)),
+                    child: Text(_error!, style: const TextStyle(color: HeyNikkiColors.red, fontSize: 13)),
                   ),
 
                 SizedBox(
@@ -120,8 +120,8 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   child: ElevatedButton(
                     onPressed: _loading ? null : _submit,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: JovioColors.teal,
-                      foregroundColor: JovioColors.bg,
+                      backgroundColor: HeyNikkiColors.teal,
+                      foregroundColor: HeyNikkiColors.bg,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     child: _loading
@@ -135,8 +135,8 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   child: OutlinedButton(
                     onPressed: () => context.go('/login'),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: JovioColors.border),
-                      foregroundColor: JovioColors.text,
+                      side: const BorderSide(color: HeyNikkiColors.border),
+                      foregroundColor: HeyNikkiColors.text,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                     child: const Text('← Back to login', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),

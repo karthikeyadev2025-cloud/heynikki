@@ -660,5 +660,5 @@ create policy "docs_tenant_access" on storage.objects for all
 -- DONE
 -- Nikki — Telugu AI Receptionist
 -- Powered by Nikki Tech Labs
--- © 2026 Nikki Technologies
+-- © 2026 Hey Nikki
 -- ══════════════════════════════════════════════════════════════

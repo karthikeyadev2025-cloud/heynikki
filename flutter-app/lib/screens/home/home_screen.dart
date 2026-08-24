@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../theme.dart';
-import '../../widgets/jovio_widgets.dart';
+import '../../widgets/heynikki_widgets.dart';
 import '../../providers/auth_provider.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -73,15 +73,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const JovioLogo(size: 32),
+        title: const HeyNikkiLogo(size: 32),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh_rounded, color: JovioColors.mid), onPressed: _load),
+          IconButton(icon: const Icon(Icons.refresh_rounded, color: HeyNikkiColors.mid), onPressed: _load),
         ],
       ),
       body: _loading
-        ? const Center(child: CircularProgressIndicator(color: JovioColors.teal))
+        ? const Center(child: CircularProgressIndicator(color: HeyNikkiColors.teal))
         : RefreshIndicator(
-            color: JovioColors.teal, backgroundColor: JovioColors.surface,
+            color: HeyNikkiColors.teal, backgroundColor: HeyNikkiColors.surface,
             onRefresh: _load,
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -92,10 +92,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
                   mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.6,
                   children: [
-                    JovioStat(value: '${_stats['total'] ?? 0}',        label: 'CALLS TODAY',       color: JovioColors.purple),
-                    JovioStat(value: '${_stats['appointments'] ?? 0}', label: 'APPOINTMENTS',      color: JovioColors.teal),
-                    JovioStat(value: '${_stats['missed'] ?? 0}',       label: 'MISSED (HANDLED)',  color: JovioColors.gold),
-                    JovioStat(value: '${_stats['wa_sent'] ?? 0}',      label: 'WHATSAPP SENT',     color: JovioColors.orange),
+                    HeyNikkiStat(value: '${_stats['total'] ?? 0}',        label: 'CALLS TODAY',       color: HeyNikkiColors.purple),
+                    HeyNikkiStat(value: '${_stats['appointments'] ?? 0}', label: 'APPOINTMENTS',      color: HeyNikkiColors.teal),
+                    HeyNikkiStat(value: '${_stats['missed'] ?? 0}',       label: 'MISSED (HANDLED)',  color: HeyNikkiColors.gold),
+                    HeyNikkiStat(value: '${_stats['wa_sent'] ?? 0}',      label: 'WHATSAPP SENT',     color: HeyNikkiColors.orange),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -131,66 +131,66 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget _sectionHeader(String title, int count) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(title, style: const TextStyle(color: JovioColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
-      JovioPill(label: '$count', color: JovioColors.teal),
+      Text(title, style: const TextStyle(color: HeyNikkiColors.text, fontSize: 14, fontWeight: FontWeight.w800)),
+      HeyNikkiPill(label: '$count', color: HeyNikkiColors.teal),
     ]),
   );
 
-  Widget _emptyState(String msg) => JovioCard(
+  Widget _emptyState(String msg) => HeyNikkiCard(
     child: Center(child: Padding(
       padding: const EdgeInsets.all(16),
-      child: Text(msg, style: const TextStyle(color: JovioColors.dim, fontSize: 13)),
+      child: Text(msg, style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 13)),
     )),
   );
 
-  Widget _liveCallCard(Map<String, dynamic> c) => JovioCard(
-    borderColor: JovioColors.teal.withOpacity(0.4),
+  Widget _liveCallCard(Map<String, dynamic> c) => HeyNikkiCard(
+    borderColor: HeyNikkiColors.teal.withOpacity(0.4),
     padding: const EdgeInsets.all(12),
     child: Row(children: [
       Container(width: 8, height: 8, decoration: BoxDecoration(
-        color: JovioColors.teal, shape: BoxShape.circle,
-        boxShadow: [BoxShadow(color: JovioColors.teal.withOpacity(0.5), blurRadius: 8)])),
+        color: HeyNikkiColors.teal, shape: BoxShape.circle,
+        boxShadow: [BoxShadow(color: HeyNikkiColors.teal.withOpacity(0.5), blurRadius: 8)])),
       const SizedBox(width: 10),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: JovioColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
-        Text('${c['direction']} · ${c['intent'] ?? 'active'}', style: const TextStyle(color: JovioColors.dim, fontSize: 11)),
+        Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: HeyNikkiColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
+        Text('${c['direction']} · ${c['intent'] ?? 'active'}', style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
       ])),
-      JovioPill(label: 'LIVE', color: JovioColors.teal),
+      HeyNikkiPill(label: 'LIVE', color: HeyNikkiColors.teal),
     ]),
   );
 
   Widget _appointmentCard(Map<String, dynamic> a) {
-    final colors = {'confirmed': JovioColors.teal, 'cancelled': JovioColors.red};
-    final col    = colors[a['status']] ?? JovioColors.gold;
-    return JovioCard(
+    final colors = {'confirmed': HeyNikkiColors.teal, 'cancelled': HeyNikkiColors.red};
+    final col    = colors[a['status']] ?? HeyNikkiColors.gold;
+    return HeyNikkiCard(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(a['caller_name'] ?? a['caller_number'] ?? '',
-            style: const TextStyle(color: JovioColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
+            style: const TextStyle(color: HeyNikkiColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
           Text('${a['service'] ?? 'General'} · ${a['slot_date'] ?? ''} ${a['slot_time'] ?? ''}',
-            style: const TextStyle(color: JovioColors.dim, fontSize: 11)),
+            style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
         ])),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          JovioPill(label: a['status'] ?? 'confirmed', color: col),
+          HeyNikkiPill(label: a['status'] ?? 'confirmed', color: col),
           if (a['wa_confirmed'] == true) ...[
             const SizedBox(height: 4),
-            const Text('WA ✓', style: TextStyle(color: JovioColors.teal, fontSize: 10, fontWeight: FontWeight.w700)),
+            const Text('WA ✓', style: TextStyle(color: HeyNikkiColors.teal, fontSize: 10, fontWeight: FontWeight.w700)),
           ],
         ]),
       ]),
     );
   }
 
-  Widget _missedCard(Map<String, dynamic> c) => JovioCard(
+  Widget _missedCard(Map<String, dynamic> c) => HeyNikkiCard(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     child: Row(children: [
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: JovioColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
-        Text(_timeAgo(c['created_at']), style: const TextStyle(color: JovioColors.dim, fontSize: 11)),
+        Text(c['caller_number'] ?? 'Unknown', style: const TextStyle(color: HeyNikkiColors.text, fontSize: 13, fontWeight: FontWeight.w700)),
+        Text(_timeAgo(c['created_at']), style: const TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
       ])),
       if (c['wa_sent'] == true)
-        const JovioPill(label: 'WA SENT', color: JovioColors.orange),
+        const HeyNikkiPill(label: 'WA SENT', color: HeyNikkiColors.orange),
     ]),
   );
 

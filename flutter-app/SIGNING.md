@@ -159,7 +159,7 @@ Before submitting either store:
 - [ ] Screenshots — 6.7" iPhone (1290×2796), 5.5" iPhone (1242×2208), tablet optional. Show: login, dashboard, calls list, setup, billing.
 - [ ] Promotional graphic (Play Store) — 1024×500
 - [ ] App description (en, te) — ≤ 4000 chars
-- [ ] Privacy policy URL — `https://jovio.in/privacy` (already live)
+- [ ] Privacy policy URL — `https://heynikki.in/privacy` (already live)
 - [ ] Data safety form (Play Console) — declare: account data, phone numbers (callers), audio recordings, all encrypted in transit, AES-256 at rest
 - [ ] Export compliance (App Store) — declare uses of encryption (AES-256-GCM for recordings)
 

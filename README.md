@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/jovio-logo.jpg" width="120" alt="Nikki Logo" />
+  <img src="assets/heynikki-logo.jpg" width="120" alt="Hey Nikki" />
 </p>
 
 <h1 align="center">Nikki — Telugu AI Receptionist</h1>
@@ -32,7 +32,7 @@ nikki/
 ├── infra/              # EC2: docker-compose, FreeSWITCH conf, nginx, n8n workflows
 ├── flutter-app/        # Flutter 3.x — iOS + Android customer app
 ├── supabase/           # SQL schema + migrations
-└── assets/             # Nikki brand assets + logo
+└── assets/             # Hey Nikki brand assets + logo
 ```
 
 ## Quick Start
@@ -144,6 +144,6 @@ Caller → Jio / Vi SIP trunk → FreeSWITCH (Exotel = fallback)
 ---
 
 <p align="center">
-  <strong>© 2026 Nikki Technologies</strong><br/>
+  <strong>© 2026 Hey Nikki</strong><br/>
   <em>Powered by Nikki Tech Labs</em>
 </p>

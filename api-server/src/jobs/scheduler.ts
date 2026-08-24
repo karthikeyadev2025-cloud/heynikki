@@ -205,7 +205,7 @@ export async function runDailySummaries(): Promise<number> {
       msg += `\n🔥 Worth calling back:\n`;
       for (const l of hot) msg += `• ${l.name || "Unknown"} — ${l.phone}\n`;
     }
-    msg += `\nపూర్తి details: https://jovio.in/dashboard`;
+    msg += `\nపూర్తి details: https://heynikki.in/dashboard`;
 
     try {
       const r = await fetch(`${API_URL}/api/whatsapp/send`, {
