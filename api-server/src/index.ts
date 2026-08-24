@@ -616,15 +616,19 @@ app.post("/api/public/tts", publicTtsLimiter, async (req, res) => {
     return res.status(400).json({ error: "text required, max 500 characters" });
   }
 
-  // Mirrors the widget's existing emotion modes (energetic/cool/gentle)
-  // — same concept, mapped to Sarvam's real pace/pitch params instead
-  // of the browser TTS rate/pitch properties they replaced.
-  const EMOTION_PARAMS: Record<string, { pace: number; pitch: number }> = {
-    energetic: { pace: 1.08, pitch: 0.5 },
-    cool:      { pace: 1.0,  pitch: 0.2 },
-    gentle:    { pace: 0.92, pitch: 0 },
+  // Mirrors the widget's emotion modes (energetic/cool/gentle), mapped
+  // to Sarvam's pace param.
+  //
+  // pitch and loudness are deliberately absent: Bulbul V3 rejects both
+  // with a 400 ("currently not supported for the Bulbul V3 model"), so
+  // passing them made this endpoint fail for EVERY request regardless
+  // of emotion. Pace is the only prosody control V3 accepts.
+  const EMOTION_PACE: Record<string, number> = {
+    energetic: 1.08,
+    cool:      1.0,
+    gentle:    0.92,
   };
-  const { pace, pitch } = EMOTION_PARAMS[emotion || "energetic"] || EMOTION_PARAMS.energetic;
+  const pace = EMOTION_PACE[emotion || "energetic"] ?? EMOTION_PACE.energetic;
 
   try {
     const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
@@ -638,8 +642,7 @@ app.post("/api/public/tts", publicTtsLimiter, async (req, res) => {
         target_language_code: "te-IN",
         speaker: "priya",
         model: "bulbul:v3",
-        pitch, pace,
-        loudness: 1.2,
+        pace,
         speech_sample_rate: 22050,
         enable_preprocessing: true,
       }),
@@ -828,13 +831,18 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
           target_language_code: "te-IN",
           speaker: "priya",
           model: "bulbul:v3",
-          // Slightly quicker and a touch brighter than the dashboard
-          // assistant. A receptionist answering a business line speaks
-          // faster than a read-aloud tool; flat pace is a big part of
-          // what makes synthetic speech sound like recital.
+          // Slightly quicker than default. A receptionist answering a
+          // business line speaks faster than a read-aloud tool, and flat
+          // pace is much of what makes synthetic speech sound like
+          // recital.
+          //
+          // NOTE: do NOT add pitch or loudness here. Bulbul V3 rejects
+          // both with a 400 ("currently not supported for the Bulbul V3
+          // model"), and because the TTS call is wrapped in a try/catch
+          // that only warns, the failure surfaces as audio_base64: null
+          // — Nikki replies in text with no voice at all, which looks
+          // like a broken audio pipeline rather than a bad parameter.
           pace: 1.06,
-          pitch: 0.3,
-          loudness: 1.2,
           speech_sample_rate: 22050,
           enable_preprocessing: true,
         }),
@@ -2381,9 +2389,8 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
         target_language_code: "te-IN",
         speaker: "priya",
         model: "bulbul:v3",
-        pitch: 0,
+        // No pitch/loudness — Bulbul V3 400s on both.
         pace: 1.0,
-        loudness: 1.2,
         speech_sample_rate: 22050,
         enable_preprocessing: true,
       }),
