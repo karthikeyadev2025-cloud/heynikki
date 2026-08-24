@@ -1,20 +1,30 @@
-<!-- FreeSWITCH SIP Profiles — Jio Primary + Vi Failover -->
+<!-- FreeSWITCH SIP Profiles — Jio Primary (+ Vi failover, when purchased) -->
 <include>
 
   <!-- ── JIO ENTERPRISE SIP TRUNK — PRIMARY ─────────────────── -->
+  <!--
+    AUTH MODE: this gateway is written for REGISTRATION-based auth
+    (username + password, register=true). Many Indian enterprise SIP
+    trunks are instead IP-BASED: no credentials at all, the carrier
+    whitelists your public IP.
+
+    Confirm which one Jio has given you BEFORE debugging. If it is
+    IP-based, registration will never succeed no matter what you put in
+    the credentials, and the fix is to set register=false and rely on
+    the proxy + ACL alone.
+
+    JIO_SIP_HOST in infra/.env still ships as the placeholder
+    "siptrunk.jio.com" — replace it with the real SBC address from your
+    onboarding pack.
+  -->
   <gateway name="jio_primary">
-    <!--
-      Jio Enterprise SIP Gateway
-      Fill your actual Jio SIP credentials from the enterprise portal.
-      Contact: Jio Business helpline 1800-889-9999
-    -->
     <param name="username"               value="$${JIO_SIP_USERNAME}"/>
     <param name="auth-username"          value="$${JIO_SIP_USERNAME}"/>
     <param name="password"               value="$${JIO_SIP_PASSWORD}"/>
     <param name="realm"                  value="$${JIO_SIP_HOST}"/>
     <param name="proxy"                  value="$${JIO_SIP_HOST}"/>
     <param name="from-domain"            value="$${JIO_SIP_HOST}"/>
-    <param name="register"               value="true"/>
+    <param name="register"               value="$${JIO_SIP_REGISTER}"/>
     <param name="register-transport"     value="udp"/>
     <param name="retry-seconds"          value="30"/>
     <param name="ping"                   value="25"/>
@@ -23,35 +33,43 @@
     <param name="caller-id-in-from"      value="false"/>
     <param name="contact-params"         value="tport=udp"/>
     <param name="context"                value="heynikki"/>
-    <!-- Codec: G.711 PCMU/PCMA for 8kHz telephony (matches Sarvam TTS) -->
+    <!-- G.711 PCMU/PCMA, 8kHz telephony — matches the pipeline's audio path.
+         If Jio offers G.729, decline it: the pipeline cannot decode it. -->
     <param name="codec-prefs"            value="PCMU,PCMA"/>
-    <!-- Calls per second limit (anti-fraud) -->
+    <!-- Anti-fraud: raise only to the concurrency Jio actually sold you. -->
     <param name="calls-per-second"       value="5"/>
   </gateway>
 
-  <!-- ── VI BUSINESS SIP TRUNK — FAILOVER ──────────────────── -->
-  <gateway name="vi_failover">
-    <!--
-      Vi Business SIP Gateway (Vodafone Idea)
-      Fill your Vi enterprise SIP credentials.
-      Contact: Vi Business support or your enterprise account manager.
-    -->
-    <param name="username"               value="$${VI_SIP_USERNAME}"/>
-    <param name="auth-username"          value="$${VI_SIP_USERNAME}"/>
-    <param name="password"               value="$${VI_SIP_PASSWORD}"/>
-    <param name="realm"                  value="$${VI_SIP_HOST}"/>
-    <param name="proxy"                  value="$${VI_SIP_HOST}"/>
-    <param name="from-domain"            value="$${VI_SIP_HOST}"/>
-    <param name="register"               value="true"/>
-    <param name="register-transport"     value="udp"/>
-    <param name="retry-seconds"          value="60"/>
-    <param name="ping"                   value="30"/>
-    <param name="expire-seconds"         value="3600"/>
-    <param name="caller-id-in-from"      value="false"/>
-    <param name="context"                value="heynikki"/>
-    <param name="codec-prefs"            value="PCMU,PCMA"/>
-    <param name="calls-per-second"       value="5"/>
-    <!-- Vi is standby — only used if Jio registration fails -->
-  </gateway>
+  <!-- ══════════════════════════════════════════════════════════
+    VI BUSINESS SIP TRUNK — FAILOVER. NOT YET PURCHASED.
+
+    Disabled on purpose. While VI_SIP_HOST points at a placeholder,
+    FreeSWITCH retries registration every 60s forever and fills the log
+    with failures that look identical to a real Jio problem — exactly
+    the noise you don't want while debugging the trunk that matters.
+
+    The dialplan already survives Vi being absent: outbound_to_customer
+    bridges "jio_primary|vi_failover" and FreeSWITCH skips a gateway
+    that isn't defined.
+
+    TO ENABLE: set VI_SIP_* in infra/.env, then uncomment the block
+    below (it is kept as text, not as an XML comment, because XML
+    comments cannot nest).
+
+    gateway name="vi_failover"
+      username           $${VI_SIP_USERNAME}
+      auth-username      $${VI_SIP_USERNAME}
+      password           $${VI_SIP_PASSWORD}
+      realm / proxy / from-domain   $${VI_SIP_HOST}
+      register           true
+      register-transport udp
+      retry-seconds      60
+      ping               30
+      expire-seconds     3600
+      caller-id-in-from  false
+      context            heynikki
+      codec-prefs        PCMU,PCMA
+      calls-per-second   5
+    ══════════════════════════════════════════════════════════ -->
 
 </include>
