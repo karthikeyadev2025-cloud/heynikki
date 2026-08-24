@@ -1,0 +1,219 @@
+{
+  "name": "Hey Nikki — Interested Lead WhatsApp Brochure (Meta Cloud API)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "interested-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "trigger-missed-call",
+      "name": "Webhook — Missed Call",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "caller_number",
+              "value": "={{ $json.body.caller_number }}"
+            },
+            {
+              "name": "business_name",
+              "value": "={{ $json.body.business_name }}"
+            },
+            {
+              "name": "tenant_id",
+              "value": "={{ $json.body.tenant_id }}"
+            },
+            {
+              "name": "call_id",
+              "value": "={{ $json.body.call_id }}"
+            },
+            {
+              "name": "wa_number",
+              "value": "={{ $json.body.whatsapp_number || $json.body.caller_number }}"
+            },
+            {
+              "name": "service",
+              "value": "={{ $json.body.service }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.body.lead_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-vars",
+      "name": "Extract Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $env.META_WA_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headers": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.WATI_API_KEY }}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": []
+        },
+        "body": {
+          "body": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"interested_lead_brochure\",\n    \"language\": {\n      \"code\": \"en\"\n    },\n    \"components\": [\n      {\n        \"type\": \"body\",\n        \"parameters\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"{{ $node['Extract Fields'].json.business_name }}\"\n          }\n        ]\n      }\n    ]\n  }\n}"
+        },
+        "options": {},
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.META_WA_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "id": "send-wa",
+      "name": "Send WhatsApp — Interested Lead WhatsApp Brochure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/wa_dispatch_log",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headers": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "body": {
+          "contentType": "json",
+          "body": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"brochure\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
+        },
+        "options": {}
+      },
+      "id": "log-supabase",
+      "name": "Log to Supabase wa_dispatch_log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\": true}"
+      },
+      "id": "respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Missed Call": {
+      "main": [
+        [
+          {
+            "node": "Extract Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Fields": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp — Missed Call Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp — Missed Call Template": {
+      "main": [
+        [
+          {
+            "node": "Log to Supabase wa_dispatch_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Supabase wa_dispatch_log": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    "heynikki",
+    "missed-call",
+    "whatsapp"
+  ]
+}

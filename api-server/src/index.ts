@@ -494,16 +494,91 @@ async function updateMinuteLimit(tenantId: string, planId: string) {
 // ════════════════════════════════════════════════
 // WHATSAPP AUTOMATION
 // ════════════════════════════════════════════════
+// TWO PROVIDERS, ONE INTERFACE.
+//
+// Wati is a reseller that wraps Meta's WhatsApp Business API and
+// charges a monthly fee per account on top of Meta's per-conversation
+// pricing. That model suits ONE business managing its own number; it
+// does not suit a platform onboarding a WhatsApp sender for every
+// tenant, where the per-account fee multiplies.
+//
+// Meta Cloud API direct removes the middleman and, more importantly,
+// supports Embedded Signup — which is how tenants connect their own
+// number programmatically instead of somebody doing it by hand in a
+// dashboard.
+//
+// Both are kept because switching a live messaging path in one step is
+// how you lose customer follow-ups. Set WHATSAPP_PROVIDER=meta to move,
+// and set it back if something misbehaves.
+//
+// NOTE ON SESSION MESSAGES: both paths below send free-form text, which
+// WhatsApp only permits inside the 24-hour customer service window
+// (i.e. after the customer messaged you). Outside that window Meta
+// requires a pre-approved TEMPLATE and will reject plain text. The
+// missed-call follow-up is exactly that case — it goes out through the
+// n8n workflows, which use the template endpoint.
+type WhatsAppResult = { ok: boolean; error?: string };
+
+async function sendViaWati(to: string, message: string): Promise<WhatsAppResult> {
+  if (!WATI_KEY || !WATI_URL) return { ok: false, error: "Wati not configured" };
+  const resp = await fetch(`${WATI_URL}/api/v1/sendSessionMessage/${to.replace("+", "")}`, {
+    method:  "POST",
+    headers: { "Authorization": `Bearer ${WATI_KEY}`, "Content-Type": "application/json" },
+    body:    JSON.stringify({ messageText: message }),
+    signal:  AbortSignal.timeout(10_000),
+  });
+  if (resp.status === 200 || resp.status === 201) return { ok: true };
+  return { ok: false, error: `Wati HTTP ${resp.status}` };
+}
+
+async function sendViaMeta(to: string, message: string): Promise<WhatsAppResult> {
+  const token   = process.env.META_WA_TOKEN || "";
+  const phoneId = process.env.META_WA_PHONE_NUMBER_ID || "";
+  const version = process.env.META_WA_API_VERSION || "v21.0";
+  if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
+
+  // Meta wants the number in E.164 WITHOUT a leading +.
+  const msisdn = to.replace(/[^\d]/g, "");
+
+  const resp = await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type:    "individual",
+      to:                msisdn,
+      type:              "text",
+      text:              { preview_url: false, body: message },
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (resp.ok) return { ok: true };
+
+  // Meta's errors are actually useful — surface them rather than a bare
+  // status code, because "template required" and "invalid token" need
+  // very different fixes and both present as a 400.
+  const body = await resp.json().catch(() => ({} as any));
+  const detail = body?.error?.message || `HTTP ${resp.status}`;
+  return { ok: false, error: `Meta: ${detail}` };
+}
+
 async function sendWhatsApp(to: string, message: string, tenantId: string,
   voiceProfileId: string, messageType: string, callId?: string, apptId?: string) {
-  if (!WATI_KEY || !WATI_URL) return false;
+  const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
+
+  let result: WhatsAppResult;
   try {
-    const resp = await fetch(`${WATI_URL}/api/v1/sendSessionMessage/${to.replace("+","")}`, {
-      method:  "POST",
-      headers: { "Authorization": `Bearer ${WATI_KEY}`, "Content-Type": "application/json" },
-      body:    JSON.stringify({ messageText: message }),
-    });
-    const ok = resp.status === 200 || resp.status === 201;
+    result = provider === "meta"
+      ? await sendViaMeta(to, message)
+      : await sendViaWati(to, message);
+  } catch (err: any) {
+    result = { ok: false, error: err.message };
+  }
+
+  if (!result.ok) console.error(`[WhatsApp/${provider}]`, result.error);
+
+  try {
     await sb.from("wa_dispatch_log").insert({
       tenant_id:        tenantId,
       voice_profile_id: voiceProfileId,
@@ -512,13 +587,14 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
       message_type:     messageType,
       to_number:        to,
       message_body:     message,
-      status:           ok ? "sent" : "failed",
+      status:           result.ok ? "sent" : "failed",
     });
-    return ok;
   } catch (err: any) {
-    console.error("[WhatsApp error]", err.message);
-    return false;
+    // A logging failure must never swallow a successful send.
+    console.error("[WhatsApp log error]", err.message);
   }
+
+  return result.ok;
 }
 
 // WhatsApp trigger endpoint (called by voice pipeline after call)
