@@ -29,15 +29,77 @@
       nature within the first 5 seconds (TCCCPR-2018, amended 2023).
       ============================================================ -->
 
+    <!-- ══════════════════════════════════════════════════════════
+      DID NORMALISATION — runs first, on every inbound call.
+
+      Jio does NOT send one consistent format. Observed on the live
+      trunk, both from the same DID:
+          08633502031      national, leading zero
+          +918633502031    E.164
+
+      The old inbound extension matched "^(\+?91\d{10}|\d{10})$",
+      which accepts +91… and bare 10-digit but NOT the leading-zero
+      form — 08633502031 is eleven digits and matches neither branch.
+      Every call arriving in that format fell straight through to the
+      catch-all and was answered with a 404. The caller hears the line
+      reject them and nothing is logged as a call at all, so the
+      failure is invisible from the dashboard.
+
+      These three extensions strip whatever prefix arrived and leave a
+      canonical 10-digit did_number for everything downstream. They use
+      continue="true" so routing carries on to the real extension, and
+      inline="true" so the variable is set DURING routing and is
+      therefore visible to the conditions below (a plain set executes
+      after routing completes and would be too late).
+
+      Order matters: +91/91 first, then leading zero, then bare — so
+      918633502031 is read as a country code rather than as a
+      ten-digit number with junk on the end.
+      ══════════════════════════════════════════════════════════ -->
+    <extension name="normalize_did_e164" continue="true">
+      <condition field="destination_number" expression="^\+?91(\d{10})$">
+        <action application="set" data="did_number=$1" inline="true"/>
+      </condition>
+    </extension>
+
+    <extension name="normalize_did_national" continue="true">
+      <condition field="destination_number" expression="^0(\d{10})$">
+        <action application="set" data="did_number=$1" inline="true"/>
+      </condition>
+    </extension>
+
+    <extension name="normalize_did_local" continue="true">
+      <condition field="destination_number" expression="^(\d{10})$">
+        <action application="set" data="did_number=$1" inline="true"/>
+      </condition>
+    </extension>
+
+    <!-- Caller ID arrives with the same inconsistency. Normalising it
+         too means a repeat caller matches the SAME lead row whether
+         this call came in as 0xxxxxxxxxx or +91xxxxxxxxxx — otherwise
+         one human becomes two leads and their history splits. -->
+    <extension name="normalize_caller" continue="true">
+      <condition field="caller_id_number" expression="^\+?91(\d{10})$">
+        <action application="set" data="caller_ani=$1" inline="true"/>
+        <anti-action application="set" data="caller_ani=${caller_id_number}" inline="true"/>
+      </condition>
+    </extension>
+
+    <extension name="normalize_caller_national" continue="true">
+      <condition field="caller_ani" expression="^0(\d{10})$">
+        <action application="set" data="caller_ani=$1" inline="true"/>
+      </condition>
+    </extension>
+
     <!-- ── INBOUND FROM JIO / VI SIP TRUNK ────────────────────── -->
     <extension name="inbound_sip_ai" continue="false">
-      <condition field="destination_number" expression="^(\+?91\d{10}|\d{10})$">
+      <!-- Keys off the normalised did_number, not the raw dialled
+           string, so every prefix format Jio sends lands here. -->
+      <condition field="${did_number}" expression="^\d{10}$">
 
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="continue_on_fail=false"/>
         <action application="set" data="call_timeout=120"/>
-        <action application="set" data="did_number=${destination_number}"/>
-        <action application="set" data="caller_ani=${caller_id_number}"/>
 
         <action application="answer"/>
 
@@ -112,8 +174,12 @@
     </extension>
 
     <!-- ── OUTBOUND (Click-to-Call customer leg) ─────────────── -->
+    <!-- Accepts out_ with any prefix form and hands Jio a single
+         consistent format. Which format Jio WANTS on outbound is still
+         unconfirmed — if calls fail with 404 from their SBC, try
+         prefixing 0 or +91 in the bridge string below. -->
     <extension name="outbound_to_customer" continue="false">
-      <condition field="destination_number" expression="^out_(\+?91\d{10}|\d{10})$">
+      <condition field="destination_number" expression="^out_(?:\+?91|0)?(\d{10})$">
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="set" data="effective_caller_id_name=HeyNikki"/>
@@ -128,7 +194,7 @@
       campaign context from the campaign_id query param instead.
       ============================================================ -->
     <extension name="outbound_campaign" continue="false">
-      <condition field="destination_number" expression="^camp_(\+?91\d{10}|\d{10})$">
+      <condition field="destination_number" expression="^camp_(?:\+?91|0)?(\d{10})$">
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="answer"/>

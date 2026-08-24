@@ -1624,20 +1624,40 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
   try {
     const { caller_number, did_number, fs_uuid } = req.body;
 
+    // Jio sends Indian numbers in inconsistent formats on the same
+    // trunk — 08633502031 and +918633502031 have both been observed for
+    // the same DID. The dialplan normalises before calling us, but this
+    // endpoint is also reachable from the pipeline and from tests, so
+    // normalise here too rather than trust the caller.
+    //
+    // For caller_number this is not cosmetic: without it the same human
+    // becomes two separate leads depending on how the network happened
+    // to format their number that day, and their call history splits.
+    const toTenDigit = (n: unknown): string => {
+      const s = String(n ?? "").replace(/[^\d+]/g, "");
+      const m = s.match(/^(?:\+?91|0)?(\d{10})$/);
+      return m ? m[1] : s;
+    };
+
+    const didDigits = toTenDigit(did_number);
+    const caller    = toTenDigit(caller_number);
+
+    // Match the stored DID on its last 10 digits so a row saved as
+    // "+918633502031" still matches a call that arrived as "08633502031".
     const { data: did } = await sb.from("dids")
       .select("tenant_id, voice_profile_id, routing_mode, missed_call_guard, fallback_message")
-      .eq("number", did_number)
+      .like("number", `%${didDigits}`)
       .single();
 
     if (!did) {
-      console.warn(`[FS Inbound] Unknown DID: ${did_number}`);
+      console.warn(`[FS Inbound] Unknown DID: ${did_number} (normalised: ${didDigits})`);
       return res.status(404).json({ error: "DID not found" });
     }
 
     const { data: callRow } = await sb.from("calls").insert({
       tenant_id:        did.tenant_id,
       voice_profile_id: did.voice_profile_id,
-      caller_number,
+      caller_number:    caller,
       direction:        "inbound",
       status:           "active",
       livekit_room_id:  fs_uuid,   // reuse field for FS UUID
