@@ -1788,6 +1788,9 @@ async def freeswitch_ws(
     speech_buf    = bytearray()   # current utterance buffer
     silence_count = 0
     speech_count  = 0
+    frame_secs     = None         # measured from the first frame received
+    silence_needed = _SILENCE_FRAMES
+    speech_needed  = _MIN_SPEECH_FRAMES
     cfg           = {}
     disclosure_sent = False
 
@@ -1827,6 +1830,25 @@ async def freeswitch_ws(
             if message.get("type") == "websocket.receive" and message.get("bytes"):
                 frame = bytes(message["bytes"])
 
+                # Derive the VAD counters from the ACTUAL frame duration
+                # rather than assuming 20ms. mod_audio_stream's
+                # STREAM_BUFFER_SIZE (320 in the dialplan) is milliseconds,
+                # not bytes, so frames arrive far longer than 20ms. The
+                # hard-coded _SILENCE_FRAMES=16 therefore demanded ~5.1s of
+                # CONTINUOUS silence before STT fired — longer than any
+                # natural pause, which is why STT never fired once in
+                # production. Deriving from len(frame) is correct whatever
+                # the unit turns out to be.
+                if frame_secs is None:
+                    frame_secs = max(len(frame) / (8000 * 2), 0.001)
+                    silence_needed = max(1, round(0.60 / frame_secs))
+                    speech_needed  = max(1, round(0.06 / frame_secs))
+                    log.info(
+                        f"[FS] {fs_uuid}: frame={len(frame)}B "
+                        f"({frame_secs*1000:.0f}ms) silence_needed={silence_needed} "
+                        f"speech_needed={speech_needed}"
+                    )
+
                 # Accumulate full recording
                 recording_pcm.extend(frame)
 
@@ -1844,7 +1866,7 @@ async def freeswitch_ws(
                         speech_buf.extend(frame)  # include trailing silence
 
                 # Fire STT when we hit silence after speech
-                if silence_count >= _SILENCE_FRAMES and speech_count >= _MIN_SPEECH_FRAMES:
+                if silence_count >= silence_needed and speech_count >= speech_needed:
                     utterance_pcm = bytes(speech_buf)
                     speech_buf    = bytearray()
                     speech_count  = 0
