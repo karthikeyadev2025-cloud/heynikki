@@ -1133,6 +1133,25 @@ async def health():
 # Confirmed bookings are saved to Supabase so they appear in admin.
 # ════════════════════════════════════════════════════════════════
 
+# The landing-page wake-word agent talks about Hey Nikki itself, not about a
+# pretend clinic. _DEMO_PROFILE below is the simulated INBOUND CALL demo (a
+# customer ringing a business), which is a different product story — note its
+# business_name is "Hey Nikki Demo", which does not match the "hey nikki"
+# routing in build_system_prompt, so it correctly stays a generic receptionist.
+_PRODUCT_PROFILE: dict = {
+    "id":            "product",
+    "tenant_id":     "demo",
+    "profile_sku":   "standard",     # business_name routes it to the heynikki SKU
+    "display_name":  "నిక్కి",
+    "business_name": "Hey Nikki",
+    "open_time":     "00:00",
+    "close_time":    "23:59",
+    "open_days":     ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+    "services":      ["AI Telecaller", "Human CRM Seat", "Dedicated Business Number"],
+    "appointment_types": ["Demo", "Callback"],
+    "missed_call_guard_enabled": False,
+}
+
 _DEMO_PROFILE: dict = {
     "id":             "demo",
     "tenant_id":      "demo",
@@ -1178,6 +1197,9 @@ class BrowserChatRequest(BaseModel):
     session_id:  str
     tenant_id:   Optional[str] = None   # if authenticated visitor, use real profile
     tts:         bool = False            # True = also return Sarvam TTS audio bytes
+    # "product" = the landing-page assistant explaining Hey Nikki's own
+    # features and pricing. Anything else keeps the inbound-call demo.
+    persona:     Optional[str] = None
 
 class BookingSaveRequest(BaseModel):
     name:        str
@@ -1199,7 +1221,7 @@ async def browser_chat(req: BrowserChatRequest):
     authenticated widget (tenant_id provided).
     """
     # Pick voice profile: real tenant profile or fallback demo
-    profile = _DEMO_PROFILE
+    profile = _PRODUCT_PROFILE if (req.persona or "") == "product" else _DEMO_PROFILE
     if req.tenant_id and req.tenant_id != "demo":
         db = SupabaseClient()
         try:

@@ -740,11 +740,14 @@ function bumpDemoTurn(sessionId: string): number {
 }
 
 app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
-  const { audio_base64, mime_type, text, session_id } = req.body as {
+  const { audio_base64, mime_type, text, session_id, persona } = req.body as {
     audio_base64?: string;
     mime_type?:    string;
     text?:         string;
     session_id?:   string;
+    // "product" = landing-page assistant describing Hey Nikki itself.
+    // Omitted = the simulated inbound-call demo.
+    persona?:      string;
   };
 
   const sessionId = (session_id || "").trim();
@@ -828,6 +831,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         body: JSON.stringify({
           text: transcript,
           session_id: sessionId,
+          persona: persona === "product" ? "product" : undefined,
           tts: false,           // TTS is done here, at full quality
         }),
         signal: AbortSignal.timeout(12_000),

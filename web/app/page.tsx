@@ -15,6 +15,7 @@
 
 import { useState, useEffect } from "react";
 import CallConsole from "../components/CallConsole";
+import WakeWordNikki from "../components/WakeWordNikki";
 import NikkiLogo from "../components/NikkiLogo";
 import {
   Phone, Users, ShieldCheck, MessageCircle, Languages,
@@ -178,6 +179,13 @@ export default function Home() {
             <p style={{ margin: "22px 0 0", fontFamily: M, fontSize: 12, color: C.textDim, letterSpacing: "0.04em" }}>
               Live in 60 seconds · Keep your existing number · No app for your customers
             </p>
+
+            {/* Sits BESIDE the call demo, not instead of it. The call demo
+                shows the product being sold; this shows Nikki explaining it.
+                Two different jobs. */}
+            <div style={{ marginTop: 28 }}>
+              <WakeWordNikki />
+            </div>
           </div>
 
           <CallConsole />

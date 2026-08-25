@@ -70,3 +70,7 @@ infra/freeswitch/conf/tls/
 # be committed — docker-compose.yml is shared with the EC2 frontend.
 docker-compose.override.yml
 **/docker-compose.override.yml
+
+# Next.js deps installed by the containerised typecheck/build
+web/node_modules/
+web/.next/

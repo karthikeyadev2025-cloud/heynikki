@@ -23,3 +23,83 @@ h1, h2, h3, .font-display {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ── "Hey Nikki" wake-word assistant ─────────────────────────────────────
+   Bars idle-breathe when she is waiting and track real mic energy once the
+   analyser is live, so the animation is a truthful signal that the mic is
+   on — not decoration. Colour shifts per phase so the state is readable at
+   a glance without reading the caption. */
+.wwn { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+.wwn-bars {
+  display: flex; align-items: center; justify-content: center;
+  gap: 3px; height: 64px;
+}
+.wwn-bars span {
+  width: 3px; height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #7DD3FC, #38BDF8);
+  transform-origin: center;
+  transform: scaleY(0.06);
+  transition: transform 90ms linear, background 300ms ease, opacity 300ms ease;
+  opacity: 0.55;
+}
+.wwn-bars.idle span,
+.wwn-bars.listening span { animation: wwnBreathe 2.4s ease-in-out infinite; }
+.wwn-bars.listening span { opacity: 0.85; }
+.wwn-bars.recording span {
+  background: linear-gradient(180deg, #86EFAC, #22C55E);
+  opacity: 1; animation: none;
+}
+.wwn-bars.thinking span {
+  background: linear-gradient(180deg, #FDE68A, #F59E0B);
+  animation: wwnBreathe 900ms ease-in-out infinite;
+}
+.wwn-bars.speaking span {
+  background: linear-gradient(180deg, #C4B5FD, #8B5CF6);
+  opacity: 1; animation: none;
+}
+@keyframes wwnBreathe {
+  0%, 100% { transform: scaleY(0.10); }
+  50%      { transform: scaleY(0.34); }
+}
+
+/* Deliberately lowercase and quiet — it is a status line, not a headline. */
+.wwn-caption {
+  margin: 0; font-size: 13px; letter-spacing: 0.02em;
+  color: #94A3B8; text-transform: lowercase;
+  animation: wwnFade 420ms ease;
+}
+@keyframes wwnFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.wwn-cta {
+  appearance: none; border: 0; cursor: pointer;
+  padding: 11px 22px; border-radius: 999px;
+  background: #38BDF8; color: #06121F;
+  font-size: 14px; font-weight: 600;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.wwn-cta:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(56,189,248,0.28); }
+.wwn-cta:focus-visible { outline: 2px solid #7DD3FC; outline-offset: 3px; }
+
+.wwn-off {
+  appearance: none; background: none; border: 0; cursor: pointer;
+  font-size: 12px; color: #64748B; text-decoration: underline; text-underline-offset: 3px;
+}
+.wwn-off:hover { color: #94A3B8; }
+
+.wwn-note, .wwn-err { margin: 0; font-size: 12px; max-width: 34ch; text-align: center; }
+.wwn-note { color: #64748B; }
+.wwn-err  { color: #FCA5A5; }
+
+.wwn-lines { width: 100%; max-width: 44ch; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.wwn-lines p {
+  margin: 0; font-size: 13.5px; line-height: 1.5;
+  animation: wwnFade 260ms ease;
+}
+.wwn-lines p span {
+  display: inline-block; min-width: 44px;
+  font-size: 11px; text-transform: lowercase; color: #64748B;
+}
+.wwn-lines p.you   { color: #CBD5E1; }
+.wwn-lines p.nikki { color: #F1F5F9; }
