@@ -60,3 +60,7 @@ flutter-app/android/*.keystore
 # TypeScript / Next build caches (regenerated on every build)
 *.tsbuildinfo
 next-env.d.ts
+
+# FreeSWITCH auto-generates TLS key material here at runtime (root-owned,
+# container-created). Never commit private keys.
+infra/freeswitch/conf/tls/
