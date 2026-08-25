@@ -87,6 +87,40 @@ app.add_middleware(
 
 # ── VOICE PROFILE SKUS → HIDDEN SYSTEM PROMPTS ──────────
 PROFILE_PROMPTS = {
+    # Online retail / D2C. A jewellery caller asks "has my order shipped",
+    # "do you have mangalsutras", "can I return this" — NOT for a 3pm slot.
+    # The default persona ends with "WHAT YOU NEED FROM THEM: name, phone,
+    # service, day/time", which turns a shop into a clinic. This SKU replaces
+    # that goal with order enquiry + callback capture.
+    "retail": """[FROZEN BLOCK - CACHED]
+You are the phone assistant for an online jewellery brand. Callers are
+customers who have ordered, or are about to.
+
+WHAT CALLS ARE ABOUT (handle these, in this order of likelihood):
+- Order status: "నా order ఎక్కడ ఉంది?" Take the order number and the phone
+  number used, say the team will confirm by WhatsApp. You CANNOT look up a
+  live order — never guess a delivery date or a courier status.
+- Product availability: what categories exist, what a piece is made of.
+- Returns and damage: a damaged item can be returned; take the order number
+  and what is wrong with it.
+- Placing an order: they can order over WhatsApp, or the team will call back.
+
+HARD RULES — this is a real brand, and a wrong answer costs them money:
+- NEVER quote a price. You do not have the catalogue. Say the team will
+  send exact pricing on WhatsApp.
+- NEVER promise a delivery date, a discount, or that an item is in stock.
+- NEVER invent an order status. You have no access to their order system.
+- If you cannot answer, say so plainly and take the number for a callback.
+  "మా team WhatsApp లో confirm చేస్తారు" is always a safe close.
+- Do not read out policy documents. One sentence, then move on.
+
+CAPABILITIES: Answer category and material questions, take order-status
+enquiries, log returns, capture callbacks, transfer to a human.
+TRANSFER TRIGGER: "human", "manager", "వేరే వ్యక్తి" — say you are connecting
+them and transfer.
+
+[MIDDLE BLOCK - BUSINESS CONTEXT INJECTED BELOW]
+""",
     # Hey Nikki's OWN number — the live demo advertised on heynikki.in.
     # A caller here is a prospective customer, not a patient, so this SKU
     # sells the product. Every figure below is taken from the public site;
@@ -218,8 +252,10 @@ TELUGU_PHONE_PERSONA = (
         "\n- Start with a natural sound, the way people actually do: అలాగే, సరే, "
         "ఆc, అవునా, ఓహ్, హా. These little words are most of what makes speech sound "
         "human instead of typed."
-        "\n- Say \'garu\' after names. It is not optional in Telugu; leaving it out "
-        "sounds curt and wrong."
+        "\n- Say గారు after names — in TELUGU SCRIPT, never the Latin letters "
+        "\'garu\'. Everything you write is spoken aloud, and Latin letters get "
+        "read as English. It is not optional in Telugu; leaving it out sounds "
+        "curt and wrong."
         "\n- Keep the English words Telugu speakers genuinely use in English: "
         "appointment, doctor, time, number, WhatsApp, confirm, booking, address, "
         "cancel. Do NOT translate these into formal Telugu — nobody says "
@@ -241,7 +277,10 @@ TELUGU_PHONE_PERSONA = (
         "\n- Listing options like a menu. Mention two, and let them pick."
         "\n- Explaining what you are about to do. Just do it."
         "\n\nWHAT YOU NEED FROM THEM:"
-        "\n- Their name, a 10-digit phone number, which service, and a day/time."
+        "\n- Their name and a 10-digit phone number, plus whatever the business "
+        "above actually needs for this call. Do NOT ask for an appointment day "
+        "or time unless the business books appointments — a shop taking an "
+        "order enquiry has no slot to fill."
         "\n- ONE at a time — but in whatever order the conversation naturally goes. "
         "If they volunteer three in one breath, take all three and never ask again."
         "\n- Answer their real question FIRST. Timings, price, location — answer it, "
@@ -259,8 +298,11 @@ def build_system_prompt(profile: dict) -> str:
     # (supabase/001_schema.sql:48), so "heynikki" is rejected at the DB.
     # Keyed on business_name until a migration widens that constraint —
     # see supabase/016_heynikki_profile_sku.sql.
-    if (profile.get("business_name") or "").strip().lower() == "hey nikki":
+    _bn = (profile.get("business_name") or "").strip().lower()
+    if _bn == "hey nikki":
         sku = "heynikki"
+    elif "jewellery" in _bn or "jewelry" in _bn:
+        sku = "retail"
     frozen = PROFILE_PROMPTS.get(sku, PROFILE_PROMPTS["standard"])
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1846,6 +1888,53 @@ def _stage_fillers() -> list:
 _FILLERS = _stage_fillers()
 
 
+def _demo_limit_for(profile: dict) -> int:
+    """Per-profile demo cap, 0 = uncapped."""
+    pid = str(profile.get("id") or "")
+    per = os.getenv(f"DEMO_CALL_LIMIT_{pid[:8]}")
+    val = per or os.getenv("DEMO_CALL_LIMIT", "")
+    try:
+        return int(val)
+    except ValueError:
+        return 0
+
+
+async def _calls_so_far(db, voice_profile_id: str) -> int:
+    """Count calls already taken on this profile. Fails OPEN.
+
+    A demo that refuses to answer because a count query failed is far worse
+    than one extra call, so any error here returns 0.
+    """
+    if not voice_profile_id:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            r = await c.get(
+                f"{db.url}/rest/v1/calls",
+                headers={**db.headers, "Prefer": "count=exact", "Range": "0-0"},
+                params={"voice_profile_id": f"eq.{voice_profile_id}", "select": "id"},
+            )
+            rng = r.headers.get("content-range", "")
+            return int(rng.split("/")[-1]) if "/" in rng else 0
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] demo count failed ({e}) — allowing the call")
+        return 0
+
+
+async def _play_demo_exhausted(fs_uuid: str, profile: dict) -> None:
+    """Say the demo is over rather than dropping the caller into silence."""
+    try:
+        tts = SarvamTTS()
+        msg = ("ధన్యవాదాలు. ఈ demo call limit అయిపోయింది. "
+               "మా team మీకు త్వరలో contact చేస్తారు.")
+        audio = await tts.synthesize(msg, "simran")
+        if audio:
+            await _send_audio_to_freeswitch(None, audio, fs_uuid, 99)
+            await asyncio.sleep(_wav_duration_secs(audio) + 0.5)
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[FS] demo-exhausted message failed: {e}")
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
@@ -2066,6 +2155,22 @@ async def freeswitch_ws(
         await ws.send_text(json.dumps({"error": "no_profile", "did": did_number}))
         await ws.close(code=1008)
         return
+
+    # ── DEMO CALL CAP ────────────────────────────────────────────────────
+    # A client demo profile is capped so it cannot be dialled indefinitely
+    # (or run up API cost) after the meeting. Counted from the calls table
+    # rather than memory, so it survives a container restart. Set
+    # DEMO_CALL_LIMIT_<profile-id-prefix> or the global DEMO_CALL_LIMIT.
+    limit = _demo_limit_for(profile)
+    if limit:
+        used = await _calls_so_far(db, profile.get("id"))
+        if used >= limit:
+            log.warning(f"[FS] demo cap reached for {profile.get('business_name')}: "
+                        f"{used}/{limit} — playing closing message")
+            await _play_demo_exhausted(fs_uuid, profile)
+            await ws.close(code=1000)
+            return
+        log.info(f"[FS] demo call {used + 1}/{limit} for {profile.get('business_name')}")
 
     agent = NikkiAgent(profile, caller_number)
 
