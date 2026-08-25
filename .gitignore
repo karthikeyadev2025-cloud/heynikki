@@ -64,3 +64,9 @@ next-env.d.ts
 # FreeSWITCH auto-generates TLS key material here at runtime (root-owned,
 # container-created). Never commit private keys.
 infra/freeswitch/conf/tls/
+
+# Host-specific compose overrides (e.g. disabling nginx on the on-prem
+# telephony box, where it has no certs and proxies nothing). Must never
+# be committed — docker-compose.yml is shared with the EC2 frontend.
+docker-compose.override.yml
+**/docker-compose.override.yml
