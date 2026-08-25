@@ -1626,28 +1626,82 @@ def _wav_to_pcm16(audio: bytes) -> bytes:
         return audio
 
 
-async def _send_audio_to_freeswitch(ws, audio: bytes, sample_rate: int = 8000) -> None:
-    """Play audio back down the mod_audio_stream socket.
+_TTS_SPOOL = "/tmp/recordings"
 
-    mod_audio_stream has NO binary playback path. Its processMessage expects
-    a JSON TEXT frame; the module's own symbol table lists exactly
-    type/streamAudio/audioData/audioDataType/raw/sampleRate, and it errors
-    with "no data in streamAudio" or "unsupported audio type" otherwise.
-    The previous code called ws.send_bytes(<wav>), which the module silently
-    discarded - the caller heard nothing at all on every call, even with TTS
-    returning 200.
+
+async def _esl_api(command: str, timeout: float = 5.0) -> str:
+    """Minimal async ESL client — enough to issue one api command.
+
+    The pipeline is network_mode: host, so FreeSWITCH's event socket is on
+    127.0.0.1:8021 (it binds loopback only; see event_socket.conf.xml).
     """
-    pcm = _wav_to_pcm16(audio)
-    if not pcm:
+    host = os.getenv("FREESWITCH_ESL_HOST", "127.0.0.1")
+    port = int(os.getenv("FREESWITCH_ESL_PORT", "8021"))
+    pw   = os.getenv("FREESWITCH_ESL_PASSWORD", "ClueCon")
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        await asyncio.wait_for(reader.readuntil(b"\n\n"), timeout)      # auth/request
+        writer.write(f"auth {pw}\n\n".encode())
+        await writer.drain()
+        await asyncio.wait_for(reader.readuntil(b"\n\n"), timeout)      # +OK accepted
+        writer.write(f"api {command}\n\n".encode())
+        await writer.drain()
+        hdr = await asyncio.wait_for(reader.readuntil(b"\n\n"), timeout)
+        body = b""
+        for line in hdr.split(b"\n"):
+            if line.lower().startswith(b"content-length:"):
+                n = int(line.split(b":")[1].strip())
+                body = await asyncio.wait_for(reader.readexactly(n), timeout)
+        return body.decode("utf-8", "replace").strip()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _send_audio_to_freeswitch(ws, audio: bytes, fs_uuid: str, seq: int = 0) -> None:
+    """Play TTS audio to the caller.
+
+    IMPORTANT: mod_audio_stream in this build is CAPTURE-ONLY. Its symbol
+    table has switch_core_media_bug_read but no write-replace, no
+    switch_core_file_* and no broadcast - it can stream audio out to this
+    websocket but cannot inject any back into the call. ws.send_bytes() was
+    silently discarded, and so was a correctly-formed streamAudio JSON frame
+    (no spool file was ever written). That is why the caller heard nothing
+    while Sarvam TTS returned 200 OK.
+
+    So playback goes through FreeSWITCH itself: write the WAV to the volume
+    both containers share (/tmp/recordings, see docker-compose.yml) and ask
+    FreeSWITCH to play it into the A-leg via uuid_broadcast. The file is
+    removed once queued - /tmp is tmpfs here, so leaving them would consume
+    RAM against a 5.6GB ceiling.
+    """
+    if not audio or not fs_uuid:
         return
-    await ws.send_text(json.dumps({
-        "type": "streamAudio",
-        "data": {
-            "audioDataType": "raw",
-            "sampleRate":    sample_rate,
-            "audioData":     base64.b64encode(pcm).decode("ascii"),
-        },
-    }))
+    path = os.path.join(_TTS_SPOOL, f"tts_{fs_uuid}_{seq}.wav")
+    try:
+        os.makedirs(_TTS_SPOOL, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(audio)
+            f.flush()
+            os.fsync(f.fileno())
+        res = await _esl_api(f"uuid_broadcast {fs_uuid} {path} aleg")
+        if not res.startswith("+OK"):
+            log.warning(f"[FS] {fs_uuid}: uuid_broadcast returned {res!r}")
+    except Exception as e:  # noqa: BLE001 - playback must never kill the call
+        log.error(f"[FS] {fs_uuid}: playback failed: {e}")
+    finally:
+        # Queued by FreeSWITCH by now; broadcast reads it asynchronously, so
+        # give it a moment before reclaiming the tmpfs space.
+        async def _cleanup(p: str) -> None:
+            await asyncio.sleep(60)
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        asyncio.create_task(_cleanup(path))
 
 
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
@@ -1832,6 +1886,7 @@ async def freeswitch_ws(
     speech_buf    = bytearray()   # current utterance buffer
     silence_count = 0
     speech_count  = 0
+    turn_seq       = 0            # unique suffix per TTS clip for this call
     frame_secs     = None         # measured from the first frame received
     silence_needed = _SILENCE_FRAMES
     speech_needed  = _MIN_SPEECH_FRAMES
@@ -1845,7 +1900,7 @@ async def freeswitch_ws(
         # Send TRAI disclosure audio immediately on connect
         disclosure_audio = await agent.on_call_start()
         if disclosure_audio:
-            await _send_audio_to_freeswitch(ws, disclosure_audio)
+            await _send_audio_to_freeswitch(ws, disclosure_audio, fs_uuid, 0)
         disclosure_sent = True
 
         # Main audio loop
@@ -1922,7 +1977,8 @@ async def freeswitch_ws(
                     # STT → LLM → TTS pipeline (reuse existing NikkiAgent)
                     response_audio = await agent.on_speech(wav_bytes)
                     if response_audio:
-                        await _send_audio_to_freeswitch(ws, response_audio)
+                        turn_seq += 1
+                        await _send_audio_to_freeswitch(ws, response_audio, fs_uuid, turn_seq)
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
