@@ -116,9 +116,24 @@ app.use("/webhooks", webhookLimiter);
 // Apply generic limiter to API paths.
 app.use("/api",      apiLimiter);
 
-// Raw body for webhook HMAC verification
+// Raw body for webhook HMAC verification.
+//
+// ONLY /webhooks/razorpay may take the raw body. It verifies an HMAC over
+// the exact bytes received and then JSON.parses them itself, so it needs
+// the Buffer intact.
+//
+// This used to match the whole /webhooks/ prefix, which silently broke
+// every other webhook route: express.raw() leaves req.body as a Buffer,
+// and destructuring a Buffer yields undefined for every field. The
+// FreeSWITCH hangup handler therefore looked up livekit_room_id=undefined
+// (matching no row, so no call was ever marked completed and every
+// duration stayed 0) and then evaluated parseInt(undefined || "0") < 5
+// && undefined !== "NORMAL_CLEARING" as true, firing the missed-call
+// automation for EVERY call regardless of how long it lasted. The
+// exotel, lead-capture and remaining freeswitch routes were equally
+// affected. Keep this exact-path, not a prefix.
 app.use((req, res, next) => {
-  if (req.path.startsWith("/webhooks/")) {
+  if (req.path === "/webhooks/razorpay") {
     express.raw({ type: "application/json" })(req, res, next);
   } else {
     express.json()(req, res, next);

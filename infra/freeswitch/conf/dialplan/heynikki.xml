@@ -123,10 +123,17 @@
         <!-- Armed BEFORE park on purpose. park blocks until the caller
              hangs up and the dialplan does NOT resume afterwards, so an
              action placed after it never runs. `expand` defers the
-             variable expansion to hangup time — billsec and hangup_cause
+             variable expansion to hook time — billsec and hangup_cause
              are both empty while the call is still up, which is why the
-             backslashes are there. -->
-        <action application="set" data="api_hangup_hook=expand system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:\${billsec},&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+             backslashes are there.
+
+             api_reporting_hook, NOT api_hangup_hook: the hangup hook runs
+             during CS_HANGUP, before the CDR variables are computed, so
+             billsec arrived as 0 and hangup_cause empty. A 22s call that
+             ended NORMAL_CLEARING was therefore misfiled as a missed call
+             by the <5s check in api-server's /webhooks/freeswitch/hangup.
+             CS_REPORTING runs after the CDR is finalised. -->
+        <action application="set" data="api_reporting_hook=expand system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:\${billsec},&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
 
         <!-- mod_audio_stream registers uuid_audio_stream as an API, NOT an
              application — there is no `audio_stream` app, so the old
