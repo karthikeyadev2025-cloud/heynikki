@@ -1798,8 +1798,29 @@ async def _esl_api(command: str, timeout: float = 5.0) -> str:
             pass
 
 
-_FILLER_DIR = pathlib.Path(__file__).resolve().parent / "assets" / "fillers"
-_FILLERS = sorted(_FILLER_DIR.glob("*.wav")) if _FILLER_DIR.is_dir() else []
+# Fillers ship inside the pipeline image, but uuid_broadcast is executed by
+# FreeSWITCH in a DIFFERENT container, which has no /app. The only path both
+# containers share is /tmp/recordings (docker-compose.yml). Copy them there
+# once at startup and hand FreeSWITCH a path it can actually open — the first
+# attempt broadcast /app/assets/... and silently played nothing.
+_FILLER_SRC = pathlib.Path(__file__).resolve().parent / "assets" / "fillers"
+_FILLER_DIR = pathlib.Path(_TTS_SPOOL) / "fillers"
+
+
+def _stage_fillers() -> list:
+    try:
+        _FILLER_DIR.mkdir(parents=True, exist_ok=True)
+        for src in sorted(_FILLER_SRC.glob("*.wav")):
+            dst = _FILLER_DIR / src.name
+            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+                dst.write_bytes(src.read_bytes())
+        return sorted(_FILLER_DIR.glob("*.wav"))
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] could not stage fillers: {e}")
+        return []
+
+
+_FILLERS = _stage_fillers()
 
 
 async def _play_filler(fs_uuid: str) -> None:
