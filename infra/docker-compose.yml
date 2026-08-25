@@ -49,8 +49,17 @@ services:
       dockerfile: Dockerfile
     container_name: heynikki-pipeline
     restart: always
-    ports:
-      - "127.0.0.1:8000:8000"   # Nginx proxies externally; never expose raw
+    # network_mode: host, not a ports: mapping — same reason nginx uses it.
+    # As a bridged container the pipeline's own 127.0.0.1 was a separate
+    # namespace from api-server (which is host-mode), so API_SERVER_URL of
+    # http://127.0.0.1:4000 resolved to the pipeline itself. Every call
+    # logged "routing lookup failed — defaulting to AI", which meant DIDs
+    # set to routing_mode=human silently got the bot, transfer-to-human
+    # could never fire, and the fallback insert created a duplicate calls
+    # row. Dropping the ports: mapping is paired with binding uvicorn to
+    # 127.0.0.1 in the pipeline Dockerfile — otherwise host mode would
+    # publish it on the public interface.
+    network_mode: host
     volumes:
       - /tmp/recordings:/tmp/recordings   # shared with FreeSWITCH
     env_file: .env

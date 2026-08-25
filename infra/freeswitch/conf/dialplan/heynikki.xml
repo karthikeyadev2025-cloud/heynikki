@@ -93,6 +93,19 @@
 
     <!-- ── INBOUND FROM JIO / VI SIP TRUNK ────────────────────── -->
     <extension name="inbound_sip_ai" continue="false">
+      <!-- Conditions AND together. This first one is a guard, not a match:
+           did_number is a CHANNEL VARIABLE and survives uuid_transfer, so
+           when esl.ts transfers a live call to "human_transfer" the dialplan
+           re-runs from the top with did_number still set to the 10-digit DID.
+           Without this guard the condition below matched again and
+           continue="false" stopped routing here — inbound_human and
+           missed_call_guard were unreachable, every routing_mode=human DID
+           silently got the AI a second time (new audio stream, duplicate
+           hangup hook, no record_session), and the caller heard the bot
+           restart from its greeting. Nothing errored, so it was invisible.
+           Requiring the DIALLED string to look like a phone number keeps
+           human_/missed_/ctc_/out_/camp_ destinations out of this extension. -->
+      <condition field="destination_number" expression="^(?:\+?91|0)?\d{10}$"/>
       <!-- Keys off the normalised did_number, not the raw dialled
            string, so every prefix format Jio sends lands here. -->
       <condition field="${did_number}" expression="^\d{10}$">
@@ -133,7 +146,15 @@
              ended NORMAL_CLEARING was therefore misfiled as a missed call
              by the <5s check in api-server's /webhooks/freeswitch/hangup.
              CS_REPORTING runs after the CDR is finalised. -->
-        <action application="set" data="api_reporting_hook=expand system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:\${billsec},&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+        <!-- Without these two, FreeSWITCH invokes the hook API with a NULL
+             session, so `expand` has no channel and every ${...} resolves
+             to empty. That produced "duration":, — invalid JSON — and
+             express rejected the POST with 400 entity.parse.failed before
+             the handler ever ran. duration is also quoted below so a failed
+             expansion degrades to 0 rather than breaking the payload. -->
+        <action application="set" data="process_cdr=true"/>
+        <action application="set" data="session_in_hangup_hook=true"/>
+        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
 
         <!-- mod_audio_stream registers uuid_audio_stream as an API, NOT an
              application — there is no `audio_stream` app, so the old

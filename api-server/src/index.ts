@@ -133,8 +133,14 @@ app.use("/api",      apiLimiter);
 // exotel, lead-capture and remaining freeswitch routes were equally
 // affected. Keep this exact-path, not a prefix.
 app.use((req, res, next) => {
-  if (req.path === "/webhooks/razorpay") {
+  if (req.path.replace(/\/+$/, "") === "/webhooks/razorpay") {
     express.raw({ type: "application/json" })(req, res, next);
+  } else if (req.path.startsWith("/webhooks/exotel/")) {
+    // Exotel posts application/x-www-form-urlencoded (CallSid, Status,
+    // Duration, From/To...). express.json() ignores a non-JSON content type
+    // and leaves req.body = {}, so every field read below silently became
+    // "" — indistinguishable from a real empty value. Needs urlencoded.
+    express.urlencoded({ extended: false })(req, res, next);
   } else {
     express.json()(req, res, next);
   }
@@ -256,6 +262,42 @@ app.post("/webhooks/exotel/inbound/:token", async (req, res) => {
 app.post("/webhooks/exotel/status/:token", async (req, res) => {
   if (!checkExotelToken(req, res)) return;
 
+  try {
+    const body = req.body as Record<string, string>;
+    const callSid = body.CallSid || "";
+    const status  = body.Status  || "";
+    const duration = parseInt(body.Duration || "0");
+    console.log(`[Exotel] Status: ${callSid} → ${status}, ${duration}s`);
+
+    if (status === "completed" && callSid) {
+      // Match the specific call by its Exotel SID. This previously filtered
+      // on .eq("status","active").limit(1) with no reference to callSid at
+      // all, so an Exotel status callback would close whichever active call
+      // the query happened to return — potentially another tenant's live
+      // call, stamped with a foreign duration. It was inert only because
+      // req.body was a Buffer and callSid was always "", which the guard
+      // above rejected; parsing the body correctly re-arms it.
+      const { error: exoErr } = await sb.from("calls")
+        .update({ status: "completed", duration_seconds: duration })
+        .eq("exotel_call_sid", callSid);
+      if (exoErr) console.error("[Exotel status] update failed:", exoErr.message);
+    }
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[Exotel status error]", err.message);
+    res.json({ ok: true });
+  }
+});
+
+// NOTE: /webhooks/lead-capture used to be defined INSIDE the body of the
+// exotel status handler above — it was nested after that handler's opening
+// brace, so it was only ever registered as a side effect of an Exotel status
+// callback arriving, and only after checkExotelToken passed. EXOTEL_WEBHOOK_TOKEN
+// is unset here, so the token check failed closed and the route was never
+// registered at all: every lead POST got Express's HTML 404 and was dropped
+// silently. Re-registering it per request would also have grown the router
+// stack unboundedly. It must stay at module scope.
+
 // ── Instant lead capture ────────────────────────────────
 // Public webhook: a website form, Facebook Lead Ad (via Zapier/Make), or
 // Google Form submission posts here. This is Hey Nikki's answer to "the
@@ -353,27 +395,6 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
   } catch (err: any) {
     console.error("[lead-capture] error:", err.message);
     if (!res.headersSent) res.status(500).json({ error: "Internal error" });
-  }
-});
-
-  try {
-    const body = req.body as Record<string, string>;
-    const callSid = body.CallSid || "";
-    const status  = body.Status  || "";
-    const duration = parseInt(body.Duration || "0");
-    console.log(`[Exotel] Status: ${callSid} → ${status}, ${duration}s`);
-
-    if (status === "completed" && callSid) {
-      // Update call record by exotel_sid if we stored it
-      await sb.from("calls")
-        .update({ status: "completed", duration_seconds: duration })
-        .eq("status", "active")
-        .limit(1); // In production, match by call_sid
-    }
-    res.json({ ok: true });
-  } catch (err: any) {
-    console.error("[Exotel status error]", err.message);
-    res.json({ ok: true });
   }
 });
 
@@ -1827,18 +1848,24 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     const { fs_uuid, duration, hangup_cause, did_number, caller_number } = req.body;
 
     // Find call by FS UUID
-    const { data: callRow } = await sb.from("calls")
+    // supabase-js RESOLVES {data:null,error} on failure rather than throwing,
+    // so the enclosing try/catch never sees a DB problem. Without checking
+    // error, a failed query is indistinguishable from "no such call" and the
+    // completion update below is silently skipped.
+    const { data: callRow, error: selErr } = await sb.from("calls")
       .select("id, tenant_id, voice_profile_id")
       .eq("livekit_room_id", fs_uuid)
       .single();
+    if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
 
     if (callRow) {
       // Update call status
-      await sb.from("calls").update({
+      const { error: updErr } = await sb.from("calls").update({
         status:           "completed",
         duration_seconds: parseInt(duration || "0"),
         updated_at:       new Date().toISOString(),
       }).eq("id", callRow.id);
+      if (updErr) console.error("[FS Hangup] completion update failed:", updErr.message);
 
       // Trigger R2 upload in voice pipeline (async)
       fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/hangup`, {
@@ -1875,10 +1902,19 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
   try {
     const { caller_number, did_number } = req.body;
 
-    // Look up tenant from DID
-    const { data: did } = await sb.from("dids")
+    // Match on the last 10 digits, same as /webhooks/freeswitch/inbound.
+    // dids.number is stored E.164 ("+918633502031") but the dialplan posts
+    // the normalised 10-digit form ("8633502031"), so .eq() could never
+    // match and this whole route was a silent no-op. Commit 54f251d fixed
+    // the inbound route and missed this one.
+    const didDigits10 = String(did_number ?? "").replace(/[^\d+]/g, "")
+      .match(/^(?:\+?91|0)?(\d{10})$/)?.[1] ?? String(did_number ?? "");
+    const { data: did, error: didErr } = await sb.from("dids")
       .select("tenant_id, voice_profile_id")
-      .eq("number", did_number).single();
+      .like("number", `%${didDigits10}`).single();
+
+    if (didErr) console.error("[FS missed-call] DID lookup failed:", didErr.message);
+    if (!did) console.warn(`[FS missed-call] no DID row matched ${did_number} — automation skipped`);
 
     if (did) {
       // Get voice profile for WhatsApp number
