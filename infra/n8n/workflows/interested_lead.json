@@ -166,18 +166,7 @@
       "main": [
         [
           {
-            "node": "Send WhatsApp — Missed Call Template",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send WhatsApp — Missed Call Template": {
-      "main": [
-        [
-          {
-            "node": "Log to Supabase wa_dispatch_log",
+            "node": "Send WhatsApp — Interested Lead WhatsApp Brochure",
             "type": "main",
             "index": 0
           }
@@ -194,15 +183,21 @@
           }
         ]
       ]
+    },
+    "Send WhatsApp — Interested Lead WhatsApp Brochure": {
+      "main": [
+        [
+          {
+            "node": "Log to Supabase wa_dispatch_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
-  },
-  "tags": [
-    "heynikki",
-    "missed-call",
-    "whatsapp"
-  ]
+  }
 }
