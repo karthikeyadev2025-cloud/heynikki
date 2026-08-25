@@ -132,7 +132,13 @@
              here, since no pipeline sits in that path. -->
 
         <action application="set" data="STREAM_MESSAGE_DEFLECTION=false"/>
-        <action application="set" data="STREAM_BUFFER_SIZE=320"/>
+        <!-- 100ms, not 320. The VAD can only decide on frame boundaries, so the
+             frame size is its granularity: at 520ms frames the 0.60s silence
+             target rounded to ONE frame and 520ms became the floor. 100ms
+             frames let the pipeline wait 0.40s and act on it promptly.
+             Must be a multiple of 20ms or the module silently falls back to
+             20ms ("Buffer size of %s is not a multiple of 20ms"). -->
+        <action application="set" data="STREAM_BUFFER_SIZE=100"/>
         <!-- Armed BEFORE park on purpose. park blocks until the caller
              hangs up and the dialplan does NOT resume afterwards, so an
              action placed after it never runs. `expand` defers the
