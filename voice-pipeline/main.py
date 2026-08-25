@@ -110,6 +110,10 @@ HARD RULES — this is a real brand, and a wrong answer costs them money:
   send exact pricing on WhatsApp.
 - NEVER promise a delivery date, a discount, or that an item is in stock.
 - NEVER invent an order status. You have no access to their order system.
+- NEVER state where the business is located, where it ships from, or how
+  long it has existed unless that fact is in the block below. On a live
+  call it answered "మాది Hyderabad నే" — a city that appears nowhere on
+  their site. An invented location is as damaging as an invented price.
 - If you cannot answer, say so plainly and take the number for a callback.
   "మా team WhatsApp లో confirm చేస్తారు" is always a safe close.
 - Do not read out policy documents. One sentence, then move on.
@@ -787,16 +791,19 @@ class NikkiAgent:
         # later completes. An unconditional insert here created a SECOND row
         # with no fs_uuid: transcript and intent landed on one row, status and
         # duration on the other, and nothing could join them.
-        if self.call_id:
-            return
-        self.call_id = await self.db.save_call({
-            "tenant_id":        self.profile["tenant_id"],
-            "voice_profile_id": self.profile["id"],
-            "caller_number":    self.caller_num,
-            "direction":        "inbound",
-            "status":           "active",
-        })
-        log.info(f"Call started: {self.call_id} from {self.caller_num}")
+        # Skip only the INSERT — never the disclosure below. An earlier
+        # version returned here outright, and because the FreeSWITCH handler
+        # sets call_id from /webhooks/freeswitch/inbound BEFORE calling this,
+        # that meant the TRAI disclosure was skipped on every real call.
+        if not self.call_id:
+            self.call_id = await self.db.save_call({
+                "tenant_id":        self.profile["tenant_id"],
+                "voice_profile_id": self.profile["id"],
+                "caller_number":    self.caller_num,
+                "direction":        "inbound",
+                "status":           "active",
+            })
+            log.info(f"Call started: {self.call_id} from {self.caller_num}")
 
         # TRAI mandatory disclosure — non-skippable. Prefer pre-recorded.
         assets_dir = pathlib.Path(__file__).resolve().parent / "assets"
