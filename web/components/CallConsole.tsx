@@ -97,6 +97,11 @@ export default function CallConsole() {
   const endedRef    = useRef(false);
   const logRef      = useRef<HTMLDivElement>(null);
   const autoStopRef = useRef<number | null>(null);
+  // Guards answer() against re-entry. A ref, not state: answer() is a
+  // useCallback and reading callState inside it would capture a stale
+  // value unless callState were in the deps array — which would
+  // recreate the callback on every state change and defeat the point.
+  const answeringRef = useRef(false);
 
   useEffect(() => { voiceRef.current = voice; }, [voice]);
 
@@ -252,6 +257,12 @@ export default function CallConsole() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, session_id: sessionRef.current }),
+        // A turn does STT + Gemini + TTS server-side and normally lands
+        // in under 4s. Without a ceiling, a stalled mobile connection
+        // leaves the caller watching the thinking dots forever with no
+        // way back — the fetch never settles, so neither does the UI.
+        // 45s is generous for a slow 3G upload and still recovers.
+        signal: AbortSignal.timeout(45_000),
       });
       const data = await r.json();
 
@@ -283,9 +294,16 @@ export default function CallConsole() {
           beginListening();
         }
       });
-    } catch {
-      setError("Couldn't reach Nikki. Check your connection.");
+    } catch (err: any) {
+      // AbortError means our own timeout fired, which is worth saying
+      // differently: "slow" is actionable, "unreachable" is not.
+      setError(err?.name === "TimeoutError" || err?.name === "AbortError"
+        ? "That took too long — the line may be slow. Try again."
+        : "Couldn't reach Nikki. Check your connection.");
       setVoice("idle");
+      // Reopen the mic so the caller can simply retry by speaking,
+      // rather than being stranded on an error with no next step.
+      if (!endedRef.current) beginListening();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playReply]);
@@ -343,6 +361,15 @@ export default function CallConsole() {
 
   // ── Answer ──────────────────────────────────────────────────
   const answer = useCallback(async () => {
+    // Guard against a second invocation. Without this, a double-tap —
+    // ordinary behaviour on a phone — starts TWO calls: two getUserMedia
+    // grants, two AudioContexts, two __CALL_START__ turns, and the
+    // second run overwrites the refs so the first stream and context
+    // leak with no way to close them. The visible symptom is a mic
+    // indicator that stays lit after the call ends.
+    if (answeringRef.current) return;
+    answeringRef.current = true;
+
     setCallState("connecting");
     endedRef.current = false;
 
@@ -386,6 +413,7 @@ export default function CallConsole() {
   const reset = useCallback(() => {
     teardown();
     endedRef.current = false;
+    answeringRef.current = false;
     sessionRef.current = `web-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     setCallState("ringing"); setVoice("idle"); setLines([]);
     setSeconds(0); setTyped(""); setBooking(""); setError("");
@@ -417,7 +445,13 @@ export default function CallConsole() {
       background: `linear-gradient(168deg, ${K.ink} 0%, ${K.inkSoft} 100%)`,
       border: `1px solid ${K.hairline}`, borderRadius: 20, overflow: "hidden",
       boxShadow: "0 32px 80px -24px rgba(11,31,51,0.55), 0 0 0 1px rgba(255,255,255,0.04) inset",
-      display: "flex", flexDirection: "column", minHeight: 560,
+      display: "flex", flexDirection: "column",
+      // 560 fixed was taller than the usable viewport on a small phone
+      // (an iPhone SE has ~560px left after browser chrome), which
+      // pushed the answer button below the fold on the one screen where
+      // it has to be visible. min() lets it shrink on short screens and
+      // keeps the roomier layout on a laptop.
+      minHeight: "min(560px, 78vh)",
     }}>
 
       {/* Header */}
@@ -517,7 +551,14 @@ export default function CallConsole() {
 
           {/* Transcript */}
           <div ref={logRef} role="log" aria-live="polite" aria-label="Call transcript"
-            style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 12, maxHeight: 250 }}>
+            style={{
+              flex: 1, overflowY: "auto", padding: 18,
+              display: "flex", flexDirection: "column", gap: 12,
+              maxHeight: "min(250px, 34vh)",
+              // -webkit-overflow-scrolling gives iOS momentum scrolling;
+              // without it the transcript feels stuck on an iPhone.
+              WebkitOverflowScrolling: "touch",
+            }}>
             {lines.map((l, i) => (
               <div key={i} style={{
                 alignSelf: l.who === "nikki" ? "flex-start" : "flex-end", maxWidth: "86%",
