@@ -1798,6 +1798,33 @@ async def _esl_api(command: str, timeout: float = 5.0) -> str:
             pass
 
 
+_FILLER_DIR = pathlib.Path(__file__).resolve().parent / "assets" / "fillers"
+_FILLERS = sorted(_FILLER_DIR.glob("*.wav")) if _FILLER_DIR.is_dir() else []
+
+
+async def _play_filler(fs_uuid: str) -> None:
+    """Say "I heard you" the instant speech ends, while the turn is computed.
+
+    Measured on a live call: 0.52s VAD + ~1.0s STT + 1.23s LLM + 1.29s TTS
+    = roughly 4.2s of pure silence before Nikki said anything. A human
+    receptionist never goes quiet that long — they say "హా.." and keep the
+    line alive. This is perceived latency, not real latency: the turn takes
+    just as long, but the caller stops feeling ignored and stops repeating
+    themselves into the gap.
+
+    Fired and forgotten — it must never delay or fail the actual reply. A
+    different filler each turn, because the same one every time sounds more
+    robotic than silence.
+    """
+    if not _FILLERS or not fs_uuid:
+        return
+    try:
+        pick = _FILLERS[int.from_bytes(os.urandom(2), "big") % len(_FILLERS)]
+        await _esl_api(f"uuid_broadcast {fs_uuid} {pick} aleg")
+    except Exception as e:  # noqa: BLE001 - cosmetic only
+        log.debug(f"[FS] filler skipped: {e}")
+
+
 async def _send_audio_to_freeswitch(ws, audio: bytes, fs_uuid: str, seq: int = 0) -> None:
     """Play TTS audio to the caller.
 
@@ -2107,6 +2134,10 @@ async def freeswitch_ws(
                     speech_buf    = bytearray()
                     speech_count  = 0
                     silence_count = 0
+
+                    # Fire the filler BEFORE any network call, so it lands
+                    # while STT/LLM/TTS are still running rather than after.
+                    asyncio.create_task(_play_filler(fs_uuid))
 
                     # Convert raw PCM → WAV for STT
                     wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
