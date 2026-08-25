@@ -207,6 +207,18 @@ RUN rm -rf /usr/src/freeswitch /usr/src/mod_audio_stream /usr/src/libks /usr/src
 # modules.conf.xml (mounted at /etc/freeswitch from ../conf) already has
 # <load module="mod_audio_stream"/> — nothing further to wire up here.
 
+# curl is required by the dialplan's hangup webhook, which fires via the
+# `system` application (see conf/dialplan/heynikki.xml, api_hangup_hook).
+# The base image does NOT ship curl, so `system curl ...` failed silently
+# with "command not found" and /webhooks/freeswitch/hangup was never
+# reached — the API server had no record of any call ending. `system`
+# gives no visible error for a missing binary, which is why this went
+# unnoticed. Kept as the last layer so the FreeSWITCH compile layers
+# above stay cached on rebuild.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 5060/udp 5060/tcp 5080/udp 5080/tcp 8021/tcp 16384-32768/udp
 
 # Foreground, no daemonization (-nc would background it, wrong for
