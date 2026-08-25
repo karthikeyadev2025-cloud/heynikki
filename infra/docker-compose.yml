@@ -62,6 +62,10 @@ services:
     network_mode: host
     volumes:
       - /tmp/recordings:/tmp/recordings   # shared with FreeSWITCH
+      # Call logs must outlive the container. A rebuild recreates it and
+      # Docker discards the container's logs with it, which has already
+      # destroyed the evidence from two real calls.
+      - ./logs/pipeline:/app/logs
     env_file: .env
     environment:
       - PORT=8000

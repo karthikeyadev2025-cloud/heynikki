@@ -76,6 +76,23 @@ API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nikki")
 
+# Also log to a file on a mounted volume. Docker keeps container logs inside
+# the container, so `docker compose up -d` after a rebuild DESTROYS them —
+# twice now a real call's transcript was lost to a deploy minutes later,
+# leaving nothing to debug with. Rotating, capped, and outside the image.
+try:
+    from logging.handlers import RotatingFileHandler as _RFH
+    _LOG_DIR = os.getenv("PIPELINE_LOG_DIR", "/app/logs")
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _fh = _RFH(os.path.join(_LOG_DIR, "pipeline.log"),
+               maxBytes=20 * 1024 * 1024, backupCount=5)
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    _fh.setLevel(logging.INFO)
+    logging.getLogger().addHandler(_fh)
+    log.info(f"file logging -> {_LOG_DIR}/pipeline.log")
+except Exception as _e:  # noqa: BLE001 - logging must never break startup
+    log.warning(f"file logging unavailable: {_e}")
+
 # ── FASTAPI APP ──────────────────────────────────────────
 app = FastAPI(title="Nikki Voice Pipeline")
 
