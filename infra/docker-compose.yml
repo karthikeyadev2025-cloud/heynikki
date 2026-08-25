@@ -168,6 +168,15 @@ services:
       # service + AP_REDIS_HOST/AP_REDIS_PORT instead once this needs
       # to survive restarts without losing in-flight automation state.
       - AP_REDIS_TYPE=MEMORY
+      # Same failure mode as AP_REDIS_TYPE above, for the database:
+      # with AP_DB_TYPE unset Activepieces defaults to POSTGRES and dies
+      # on startup with "SYSTEM_PROP_NOT_DEFINED: AP_POSTGRES_DATABASE".
+      # There is no postgres service in this stack, so SQLITE3 is the
+      # intended mode — it persists into the activepieces_data volume
+      # mounted at /root/.activepieces above. PM2 restarts the app on
+      # each crash, so the container reports "running" while nothing
+      # ever listens on :80; the healthcheck is what actually catches it.
+      - AP_DB_TYPE=SQLITE3
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s
