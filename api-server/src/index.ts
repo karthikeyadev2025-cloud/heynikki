@@ -2469,7 +2469,14 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+// Bind loopback ONLY. This service runs with network_mode: host, so
+// app.listen(PORT) alone binds 0.0.0.0 and publishes the API — including the
+// admin and ESL-backed routes — on the box's public interface. Every
+// consumer is local: FreeSWITCH's dialplan, the voice pipeline, and
+// cloudflared, which fronts it publicly and terminates TLS. Override with
+// BIND_HOST only if something genuinely off-box must reach it directly.
+const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
+app.listen(Number(PORT), BIND_HOST, () => {
   console.log(`Nikki API Server running on port ${PORT}`);
 });
 

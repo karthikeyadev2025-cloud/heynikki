@@ -192,6 +192,42 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── Cloudflare Tunnel ─────────────────────────────────────────
+  # Replaces the EC2 box as the public ingress. Outbound-only: cloudflared
+  # dials Cloudflare, so this host needs NO open ports, NO static IP and NO
+  # TLS certs, and CGNAT stops mattering. That was the only thing EC2
+  # uniquely provided.
+  #
+  # Why the API server stays HERE rather than moving to Vercel: seven routes
+  # open a raw TCP socket to FreeSWITCH's event socket on 127.0.0.1:8021
+  # (click-to-call, transfer-to-human, live channels, trunk status, hangup,
+  # reload). A serverless function cannot hold that socket, and ESL is not
+  # HTTP. Six rate limiters and the demo-turn counter also keep state in
+  # process memory, which resets on every serverless invocation.
+  #
+  # Token mode: public hostnames are configured in the Cloudflare dashboard
+  # (Zero Trust > Networks > Tunnels), so routing changes need no redeploy.
+  # Point them at:
+  #     api.heynikki.in          -> http://127.0.0.1:4000
+  #     n8n.heynikki.in          -> http://127.0.0.1:5678
+  #     activepieces.heynikki.in -> http://127.0.0.1:8080
+  # Do NOT expose the voice pipeline (8000) or FreeSWITCH ESL (8021)
+  # publicly — the pipeline is reached over loopback by FreeSWITCH and the
+  # API server, and ESL has full call control with no rate limiting.
+  #
+  # Requires TUNNEL_TOKEN in .env. Started explicitly so a missing token
+  # cannot crash-loop the stack:
+  #     docker compose --profile tunnel up -d cloudflared
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: heynikki-tunnel
+    restart: always
+    profiles: ["tunnel"]
+    network_mode: host          # so 127.0.0.1 means the same as it does to
+                                # api-server, n8n and activepieces
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    env_file: .env
+
   # ── Nginx Reverse Proxy + SSL ─────────────────────────────────
   nginx:
     image: nginx:alpine
