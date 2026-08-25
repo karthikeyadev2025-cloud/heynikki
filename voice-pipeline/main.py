@@ -713,13 +713,21 @@ class NikkiAgent:
         # at this same fix (meera/pavithra/arvind) — these picks are
         # verified against the actual current bulbul:v3 speaker list,
         # not another guess.
+        # Measured across all 14 Telugu-capable Sarvam voices (median F0 /
+        # pitch spread): most cluster at 208-253Hz. simran is 208Hz with a
+        # 42Hz spread — deeper than average AND more expressive, which is
+        # what reads as husky-but-alive rather than husky-but-flat. neha is
+        # deeper still (172Hz) if a darker voice is ever wanted.
         sku_voices = {
-            "standard":    "priya",   # warm general-business female voice
+            "standard":    "simran",
             "clinic":      "shreya",  # calm, professional — healthcare
             "real_estate": "aditya",  # confident male voice
             "premium":     "kavya",   # distinct, polished — luxury/high-value
         }
-        self.voice = sku_voices.get(profile.get("profile_sku","standard"), "priya")
+        self.voice = sku_voices.get(profile.get("profile_sku","standard"), "simran")
+        # Hey Nikki's own line is one brand voice regardless of SKU.
+        if (profile.get("business_name") or "").strip().lower() == "hey nikki":
+            self.voice = "simran"
 
     async def on_call_start(self) -> bytes:
         """Called when call connects. Play TRAI disclosure first.
