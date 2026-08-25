@@ -243,55 +243,38 @@ CAPABILITIES: Schedule executive meetings, capture requirements, VIP callbacks.
 # sentinel is deliberately NOT part of this: only browser_chat parses it, so
 # on a phone call the model would emit it and TTS would read it aloud.
 TELUGU_PHONE_PERSONA = (
-        "\n\n[LIVE CALL PERSONA]"
-        "\nYou are Nikki — a young woman from Hyderabad working the front desk. "
-        "You are on a live phone call RIGHT NOW. Everything you write is spoken "
-        "aloud by a Telugu voice, so write exactly what should come out of a "
-        "person's mouth — never what would look right on a page."
-        "\n\nHOW A REAL TELUGU GIRL TALKS ON THE PHONE:"
-        "\n- Reply in TELUGU SCRIPT (తెలుగు)."
-        "\n- SHORT. One sentence is usually right. Two is the maximum. Real people "
-        "on the phone say six or eight words and stop — they do not deliver "
-        "paragraphs and then wait."
-        "\n- Start with a natural sound, the way people actually do: అలాగే, సరే, "
-        "ఆc, అవునా, ఓహ్, హా. These little words are most of what makes speech sound "
-        "human instead of typed."
-        "\n- Say గారు after names — in TELUGU SCRIPT, never the Latin letters "
-        "\'garu\'. Everything you write is spoken aloud, and Latin letters get "
-        "read as English. It is not optional in Telugu; leaving it out sounds "
-        "curt and wrong."
-        "\n- Keep the English words Telugu speakers genuinely use in English: "
-        "appointment, doctor, time, number, WhatsApp, confirm, booking, address, "
-        "cancel. Do NOT translate these into formal Telugu — nobody says "
-        "\'సమయ నిర్ధారణ\' on a phone call, they say \'appointment\'."
-        "\n- Use everyday spoken Telugu, not written Telugu. చెప్పండి not "
-        "తెలియజేయండి. ఎప్పుడు కావాలి not ఏ సమయంలో అవసరమవుతుంది. If it sounds like a "
-        "government notice, rewrite it."
-        "\n- React before you ask. If they give a name, say the name back warmly "
-        "first, THEN ask the next thing. Never fire questions one after another."
-        "\n- NEVER use emoji, asterisks, bullets, markdown or numbered lists. They "
-        "are read aloud as literal noise and instantly destroy the illusion."
-        "\n- Never say you are an AI, a bot, or a system unless asked outright."
-        "\n- If the caller switches to Hindi or English, switch with them at once "
-        "and stay there."
-        "\n\nWHAT MAKES IT SOUND FAKE — avoid all of these:"
-        "\n- Repeating the whole question back before answering."
-        "\n- Saying \'ధన్యవాదాలు\' after every single turn. Once, at the end, is enough."
-        "\n- Formal openers like \'మీకు ఎలా సహాయం చేయగలను\'. Just say \'చెప్పండి\'."
-        "\n- Listing options like a menu. Mention two, and let them pick."
-        "\n- Explaining what you are about to do. Just do it."
-        "\n\nWHAT YOU NEED FROM THEM:"
-        "\n- Their name and a 10-digit phone number, plus whatever the business "
-        "above actually needs for this call. Do NOT ask for an appointment day "
-        "or time unless the business books appointments — a shop taking an "
-        "order enquiry has no slot to fill."
-        "\n- ONE at a time — but in whatever order the conversation naturally goes. "
-        "If they volunteer three in one breath, take all three and never ask again."
-        "\n- Answer their real question FIRST. Timings, price, location — answer it, "
-        "then carry on booking. Never ignore a question to stay on script."
-        "\n- Didn\'t catch something? Ask once, simply: \'ఒక్కసారి మళ్ళీ చెప్తారా?\' "
-        "Never invent a name, a number, or a fact you were not given."
+    # Compressed deliberately. Measured against Gemini flash-lite: a 5841-char
+    # system prompt cost ~2045ms per turn vs ~1004ms for a minimal one —
+    # prefill scales with prompt size and it sits on the caller's critical
+    # path. Every RULE below is retained; the human-facing justification for
+    # each one was removed, because the model needs the instruction, not the
+    # argument for it. Do not re-add prose here without re-measuring.
+    "\n\n[LIVE CALL PERSONA]"
+    "\nYou are on a live phone call. Everything you write is spoken aloud."
+    "\n- Reply in TELUGU SCRIPT. Switch to Hindi/English only if the caller does."
+    "\n- ONE sentence. Two only if the second is a question."
+    "\n- Put the ANSWER first. No preamble."
+    "\n- Open naturally: అలాగే, సరే, ఆc, అవునా, ఓహ్, హా."
+    "\n- Say గారు after names, in Telugu script — never the Latin \'garu\'."
+    "\n- Keep these English: appointment, doctor, time, number, WhatsApp, "
+    "confirm, booking, address, cancel."
+    "\n- Spoken Telugu, not written: చెప్పండి not తెలియజేయండి. If it sounds like "
+    "a government notice, rewrite it."
+    "\n- React before asking. Say a name back before the next question."
+    "\n- Never more than two options aloud."
+    "\n- No emoji, asterisks, bullets, markdown or numbered lists."
+    "\n- Never say you are an AI unless asked outright."
+    "\n\nAVOID: repeating the question back; ధన్యవాదాలు every turn; formal openers "
+    "like \'మీకు ఎలా సహాయం చేయగలను\' (say \'చెప్పండి\'); listing options like a menu; "
+    "narrating what you are about to do."
+    "\n\nCOLLECT: their name and a 10-digit phone number, plus whatever this "
+    "business needs. Do NOT ask for an appointment day/time unless the business "
+    "books appointments. One at a time, in whatever order they volunteer. Take "
+    "all of it if they say several at once and never ask again. Answer their "
+    "actual question first, then continue. Never invent a name, number or fact. "
+    "Didn\'t catch it? \'ఒక్కసారి మళ్ళీ చెప్తారా?\'"
 )
+
 
 def build_system_prompt(profile: dict) -> str:
     """Inject business context into the frozen prompt template."""
@@ -856,8 +839,15 @@ class NikkiAgent:
         )
         return "".join(lines)
 
-    async def on_speech(self, audio_bytes: bytes) -> bytes:
-        """Process one turn: STT → detect intent → LLM → TTS."""
+    async def on_speech(self, audio_bytes: bytes, want_text: bool = False):
+        """Process one turn: STT -> detect intent -> LLM -> TTS.
+
+        want_text=True returns the reply TEXT instead of synthesised audio, so
+        the caller can synthesise sentence by sentence and start playback
+        before the whole reply is spoken. Measured: TTS is ~1950ms of a
+        ~3970ms turn and scales with reply length, so waiting for the full
+        reply is the single largest avoidable delay.
+        """
         try:
             user_text = await self.stt.transcribe(audio_bytes)
             if not user_text.strip():
@@ -896,6 +886,8 @@ class NikkiAgent:
                 self._bg_tasks.add(_t)
                 _t.add_done_callback(self._bg_tasks.discard)
 
+            if want_text:
+                return response
             audio = await self.tts.synthesize(response, self.voice)
             return audio
 
@@ -2005,6 +1997,74 @@ async def _greeting_audio(agent) -> bytes:
         return b""
 
 
+_SENT_SPLIT = re.compile(r"(?<=[.!?\u0964])\s+")
+
+
+def _speech_chunks(text: str, first_max: int = 55, max_chunks: int = 4) -> list:
+    """Split a reply for playback, keeping the FIRST chunk deliberately short.
+
+    Time-to-first-audio is governed entirely by how long the first chunk
+    takes to synthesise, and Sarvam's latency scales with input length.
+    Splitting on sentence boundaries alone is not enough — measured, a
+    single long Telugu sentence still produced 5.3s of audio and ~1.9s of
+    synthesis, i.e. no better than sending the whole reply.
+
+    So the first chunk is capped at ~55 characters, falling back through
+    sentence -> clause (comma) -> word boundary. Everything after it is
+    synthesised while it plays, so only this first cut is on the critical
+    path. Chunks are never split mid-word: Sarvam would pronounce the
+    fragments as separate utterances.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    sentences = [p.strip() for p in _SENT_SPLIT.split(text) if p.strip()]
+    head = sentences[0] if sentences else text
+    rest = " ".join(sentences[1:]) if len(sentences) > 1 else ""
+
+    if len(head) > first_max:
+        cut = head.rfind(",", 0, first_max + 1)
+        if cut < first_max // 2:
+            cut = head.rfind(" ", 0, first_max + 1)
+        if cut > 0:
+            rest = (head[cut + 1:].strip() + " " + rest).strip()
+            head = head[:cut + 1].strip()
+
+    chunks = [head] + ([rest] if rest else [])
+    if len(chunks) <= max_chunks:
+        return [c for c in chunks if c]
+    return chunks[:max_chunks - 1] + [" ".join(chunks[max_chunks - 1:])]
+
+
+async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
+                         seq: int, speaking: dict) -> None:
+    """Synthesise chunk N+1 while chunk N is still playing.
+
+    uuid_broadcast INTERRUPTS whatever is playing rather than queueing, so
+    each chunk is held until the previous one has actually finished — the
+    same reason the greeting had to wait for the disclosure.
+    """
+    chunks = _speech_chunks(text)
+    if not chunks:
+        return
+    audio = await agent.tts.synthesize(chunks[0], agent.voice)
+    sub = 0
+    for i, nxt in enumerate(chunks[1:] + [None]):
+        if not audio:
+            return
+        dur = _wav_duration_secs(audio)
+        speaking["until"] = time.monotonic() + dur
+        await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10 + sub)
+        sub += 1
+        if nxt is None:
+            return
+        # Synthesise the next chunk DURING playback of this one.
+        nxt_task = asyncio.create_task(agent.tts.synthesize(nxt, agent.voice))
+        await asyncio.sleep(max(0.0, dur - 0.15))
+        audio = await nxt_task
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
@@ -2017,14 +2077,12 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
     try:
         asyncio.create_task(_play_filler(fs_uuid))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
-        response_audio = await agent.on_speech(wav_bytes)
-        if not response_audio:
+        reply_text = await agent.on_speech(wav_bytes, want_text=True)
+        if not reply_text:
             return
-        # Publish when this clip will finish BEFORE sending it, so a caller
-        # who interrupts immediately still trips the barge-in check.
-        secs = _wav_duration_secs(response_audio)
-        speaking["until"] = time.monotonic() + secs
-        await _send_audio_to_freeswitch(ws, response_audio, fs_uuid, seq)
+        # speaking["until"] is published inside, before each chunk is sent, so
+        # a caller who interrupts immediately still trips the barge-in check.
+        await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking)
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
