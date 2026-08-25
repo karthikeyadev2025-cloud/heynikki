@@ -374,8 +374,12 @@ class GeminiLLM:
         )
 
     async def generate(self, system_prompt: str, history: list[dict]) -> str:
-        # Keep only last 4 turns (rolling window cost control)
-        recent = history[-8:] if len(history) > 8 else history
+        # 12 exchanges, not 4. A booking needs name, phone, service and time;
+        # at 4 exchanges the earliest facts fell out of context mid-call and
+        # the model re-asked for them. Slot state above is the real fix, but
+        # the window also has to be wide enough to hold the thread of the
+        # conversation itself.
+        recent = history[-24:] if len(history) > 24 else history
 
         parts_history = []
         for turn in recent:
@@ -629,6 +633,13 @@ class NikkiAgent:
         self.llm         = GeminiLLM()
         self.db          = SupabaseClient()
         self.history     : list[dict] = []
+        # Facts survive OUTSIDE the rolling history window. Without this the
+        # caller's name and number scrolled out after 4 exchanges and Nikki
+        # asked for them again — on a real call the caller ended up saying
+        # "ఎన్ని సార్లు చెప్పాలి నా పేరు ఫోన్ నెంబరు?" and Nikki invented
+        # "సిస్టమ్ లో సేవ్ అవ్వలేదు" to explain it.
+        self.slots       : dict = {"name": None, "phone": None,
+                                   "service": None, "when": None}
         self.call_id     : Optional[str] = None
         self.intent      : str = "unknown"
         self.transcript  : list[dict] = []
@@ -685,6 +696,44 @@ class NikkiAgent:
         )
         return await self.tts.synthesize(self.TRAI_DISCLOSURE, self.voice)
 
+    _PHONE_RE = re.compile(r"[6-9]\d{9}")
+
+    def _harvest_slots(self, text: str) -> None:
+        """Pull durable facts out of a turn so they outlive the history window."""
+        if not self.slots.get("phone"):
+            m = self._PHONE_RE.search(re.sub(r"\D", "", text or ""))
+            if m:
+                self.slots["phone"] = m.group(0)
+                log.info(f"slot: phone={m.group(0)}")
+
+    def _known_facts_block(self) -> str:
+        """Re-state confirmed facts every turn, and forbid inventing a booking.
+
+        The rolling window is a cost control, not a memory: anything older than
+        it is simply gone. Facts therefore have to be re-injected, and the
+        model has to be told explicitly not to claim a booking it cannot
+        support — on a live call it twice said "మీ appointment confirm అయింది"
+        while holding no phone number at all.
+        """
+        known = {k: v for k, v in self.slots.items() if v}
+        lines = ["\n\n[FACTS ALREADY COLLECTED — never ask for these again]"]
+        for k, v in known.items():
+            lines.append(f"\n- {k}: {v}")
+        # Only assert what was actually extracted. An earlier version also
+        # listed the un-harvested slots as "still missing", which was simply
+        # false once the caller had said them — it contradicted the model's
+        # own context and is exactly the kind of thing that makes it re-ask.
+        if not known:
+            lines.append("\n- (nothing extracted yet — rely on the conversation above)")
+        lines.append(
+            "\nNever invent a reason you lost their details, and never say the "
+            "system failed to save something. If a fact is listed here, you "
+            "have it. Only say the appointment is booked once the caller has "
+            "actually given you a name, a phone number, a service and a time "
+            "in this conversation — never before, and never twice."
+        )
+        return "".join(lines)
+
     async def on_speech(self, audio_bytes: bytes) -> bytes:
         """Process one turn: STT → detect intent → LLM → TTS."""
         try:
@@ -693,6 +742,7 @@ class NikkiAgent:
                 return await self.tts.synthesize("మళ్ళీ చెప్పగలరా?", self.voice)
 
             log.info(f"STT: {user_text}")
+            self._harvest_slots(user_text)
             self.transcript.append({"role": "user", "content": user_text, "ts": datetime.now().isoformat()})
             self.history.append({"role": "user", "content": user_text})
 
@@ -704,8 +754,12 @@ class NikkiAgent:
                 return await self._handle_transfer()
 
             # Generate response
-            response = await self.llm.generate(self.system_prompt, self.history)
+            response = await self.llm.generate(
+                self.system_prompt + self._known_facts_block(), self.history)
             log.info(f"LLM: {response}")
+            # The model often normalises spoken digits ("ట్రిపుల్ ఎయిట్...")
+            # into a real number in its reply, so harvest that side too.
+            self._harvest_slots(response)
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
