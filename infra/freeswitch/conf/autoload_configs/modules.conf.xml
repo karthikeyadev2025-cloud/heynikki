@@ -16,7 +16,13 @@
     <!-- File I/O — record_session (call recording), speak/TTS fallback -->
     <load module="mod_sndfile"/>
     <load module="mod_native_file"/>
-    <!-- <load module="mod_flite"/> -->
+    <!-- Required by missed_call_guard's `speak` action. The `speak` app
+         itself is core (mod_dptools) so it does NOT error when flite is
+         absent — switch_ivr_speak_text just fails to resolve the engine and
+         returns, and mod_dptools ignores the return value. The caller hears
+         silence and is then hung up on. mod_flite.so is already built into
+         the image (see Dockerfile), it was only unloaded. -->
+    <load module="mod_flite"/>
 
     <!-- Streams audio to the voice-pipeline WebSocket. Third-party module —
          built into the freeswitch image via infra/freeswitch/Dockerfile,

@@ -181,7 +181,11 @@
         <action application="set" data="continue_on_fail=true"/>
         <!-- Missed Call Guard: bridge gives up after guard_seconds
              (default 20) and falls through to the guard extension. -->
-        <action application="set" data="call_timeout=${cond(${guard_seconds} &gt; 0 ? ${guard_seconds} : 20)}"/>
+        <!-- ${cond(...)} evaluates to the literal string "-ERR" when
+             guard_seconds is unset (verified: `cond  > 0 ? : 20` -> -ERR),
+             which silently became the call_timeout. The :-20 default keeps
+             cond well-formed no matter who transferred here. -->
+        <action application="set" data="call_timeout=${cond(${guard_seconds:-20} &gt; 0 ? ${guard_seconds:-20} : 20)}"/>
         <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
         <action application="bridge" data="${ring_group}"/>
         <!-- Nobody picked up in time -->
@@ -196,7 +200,11 @@
       inbound_human now falls through to it on ring-out.
       ============================================================ -->
     <extension name="missed_call_guard" continue="false">
-      <condition field="destination_number" expression="^missed_(.+)$">
+      <!-- (.*) not (.+): a withheld/anonymous CLI makes caller_ani empty, so
+           the transfer target is bare "missed_". With (.+) that failed to
+           match and the call fell through to catch_all, which answers 404 on
+           an already-answered channel. The webhook handles an empty caller. -->
+      <condition field="destination_number" expression="^missed_(.*)$">
         <action application="answer"/>
         <action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
         <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>

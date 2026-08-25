@@ -693,6 +693,7 @@ class NikkiAgent:
         # asked for them again — on a real call the caller ended up saying
         # "ఎన్ని సార్లు చెప్పాలి నా పేరు ఫోన్ నెంబరు?" and Nikki invented
         # "సిస్టమ్ లో సేవ్ అవ్వలేదు" to explain it.
+        self._bg_tasks   : set = set()
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         self.call_id     : Optional[str] = None
@@ -737,6 +738,14 @@ class NikkiAgent:
         the WAV is missing (dev environments, or before
         generate_trai_disclosure.py has been run).
         """
+        # Only insert if the FreeSWITCH handler has not already created the
+        # row. It sets call_id from /webhooks/freeswitch/inbound, which is the
+        # row carrying livekit_room_id=fs_uuid — the one the hangup webhook
+        # later completes. An unconditional insert here created a SECOND row
+        # with no fs_uuid: transcript and intent landed on one row, status and
+        # duration on the other, and nothing could join them.
+        if self.call_id:
+            return
         self.call_id = await self.db.save_call({
             "tenant_id":        self.profile["tenant_id"],
             "voice_profile_id": self.profile["id"],
@@ -829,7 +838,13 @@ class NikkiAgent:
 
             # If appointment booked, handle async (don't delay audio)
             if self.intent == "appointment":
-                asyncio.create_task(self._handle_appointment_booking(user_text, response))
+                # Keep a reference: asyncio holds only a weak one, so an
+                # unreferenced task can be garbage-collected mid-await and
+                # the booking silently lost on a fast hangup.
+                _t = asyncio.create_task(
+                    self._handle_appointment_booking(user_text, response))
+                self._bg_tasks.add(_t)
+                _t.add_done_callback(self._bg_tasks.discard)
 
             audio = await self.tts.synthesize(response, self.voice)
             return audio
@@ -1831,6 +1846,40 @@ def _stage_fillers() -> list:
 _FILLERS = _stage_fillers()
 
 
+async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
+                    seq: int, speaking: dict) -> None:
+    """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
+
+    Runs detached so the receive loop keeps reading frames while Nikki is
+    talking. That is what makes barge-in possible at all — and it means a
+    cancel here must leave the call healthy, so CancelledError is allowed
+    to propagate untouched and everything else is swallowed.
+    """
+    try:
+        asyncio.create_task(_play_filler(fs_uuid))
+        wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
+        response_audio = await agent.on_speech(wav_bytes)
+        if not response_audio:
+            return
+        # Publish when this clip will finish BEFORE sending it, so a caller
+        # who interrupts immediately still trips the barge-in check.
+        secs = _wav_duration_secs(response_audio)
+        speaking["until"] = time.monotonic() + secs
+        await _send_audio_to_freeswitch(ws, response_audio, fs_uuid, seq)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[FS] {fs_uuid}: turn failed: {e}")
+
+
+def _wav_duration_secs(audio: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as wf:
+            return wf.getnframes() / float(wf.getframerate() or 8000)
+    except Exception:  # noqa: BLE001
+        return len(audio) / (8000.0 * 2)
+
+
 async def _play_filler(fs_uuid: str) -> None:
     """Say "I heard you" the instant speech ends, while the turn is computed.
 
@@ -1917,7 +1966,10 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
     r2_bucket     = os.environ.get("R2_BUCKET", "heynikki-recordings")
     r2_public_url = os.environ.get("R2_PUBLIC_URL", "")
 
-    if not all([cf_account_id, r2_access_key, r2_secret]):
+    # r2_public_url included deliberately: without it the upload succeeds but
+    # recording_url is stored as "/tenant/call.wav" — a relative path no
+    # dashboard can play, and nothing errors to tell you.
+    if not all([cf_account_id, r2_access_key, r2_secret, r2_public_url]):
         log.warning("[FS] R2 credentials not set — skipping recording upload")
         return ""
 
@@ -2080,6 +2132,10 @@ async def freeswitch_ws(
     silence_count = 0
     speech_count  = 0
     turn_seq       = 0            # unique suffix per TTS clip for this call
+    turn_task      = None         # in-flight STT->LLM->TTS turn (cancellable)
+    # Mutable so the detached turn task can publish when her audio will
+    # finish; a plain local could not be written from inside the task.
+    speaking       = {"until": 0.0}
     frame_secs     = None         # measured from the first frame received
     silence_needed = _SILENCE_FRAMES
     speech_needed  = _MIN_SPEECH_FRAMES
@@ -2157,6 +2213,20 @@ async def freeswitch_ws(
                     if speech_count > 0:
                         speech_buf.extend(frame)  # include trailing silence
 
+                # ── BARGE-IN ──────────────────────────────────────────────
+                # The caller started talking while Nikki is still speaking.
+                # Cut her off, exactly as a person would be cut off. This is
+                # only possible because the turn below runs as a task: the
+                # previous code awaited it inline, so this loop was blocked
+                # for the whole reply and the caller's audio just queued —
+                # she physically could not be interrupted.
+                if is_speech and time.monotonic() < speaking["until"]:
+                    speaking["until"] = 0.0
+                    asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
+                    if turn_task and not turn_task.done():
+                        turn_task.cancel()
+                    log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted")
+
                 # Fire STT when we hit silence after speech
                 if silence_count >= silence_needed and speech_count >= speech_needed:
                     utterance_pcm = bytes(speech_buf)
@@ -2164,18 +2234,15 @@ async def freeswitch_ws(
                     speech_count  = 0
                     silence_count = 0
 
-                    # Fire the filler BEFORE any network call, so it lands
-                    # while STT/LLM/TTS are still running rather than after.
-                    asyncio.create_task(_play_filler(fs_uuid))
+                    # Drop an in-flight turn: its answer is to a question the
+                    # caller has already moved on from.
+                    if turn_task and not turn_task.done():
+                        turn_task.cancel()
 
-                    # Convert raw PCM → WAV for STT
-                    wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
-
-                    # STT → LLM → TTS pipeline (reuse existing NikkiAgent)
-                    response_audio = await agent.on_speech(wav_bytes)
-                    if response_audio:
-                        turn_seq += 1
-                        await _send_audio_to_freeswitch(ws, response_audio, fs_uuid, turn_seq)
+                    turn_seq += 1
+                    turn_task = asyncio.create_task(
+                        _run_turn(agent, ws, fs_uuid, utterance_pcm,
+                                  turn_seq, speaking))
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
@@ -2204,7 +2271,11 @@ async def freeswitch_ws(
             await db.update_call(agent.call_id, updates)
 
         # Fire post-call automation (missed call if < 8s)
-        if duration < 8:
+        # Disabled: api-server/src/index.ts fires the same "missed-call" event
+        # from /webhooks/freeswitch/hangup, where billsec and hangup_cause are
+        # both available. Firing here too ran the tenant's follow-up flow twice
+        # for one call.
+        if False and duration < 8:
             await _fire_automation_webhook("missed-call", {
                 "caller_number": caller_number,
                 "did_number":    did_number,

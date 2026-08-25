@@ -39,8 +39,15 @@
       <param name="codec-prefs"             value="PCMU,PCMA"/>
       <param name="inbound-codec-negotiation" value="generous"/>
       <param name="dtmf-type"               value="rfc2833"/>
-      <param name="rtp-timeout-sec"         value="300"/>
-      <param name="rtp-hold-timeout-sec"    value="1800"/>
+      <!-- media_timeout/media_hold_timeout supersede rtp-timeout-sec and
+           rtp-hold-timeout-sec, which log a deprecation warning on every
+           profile load. NOTE THE UNITS: the old params were SECONDS, these
+           are MILLISECONDS — copying 300 across verbatim would tear calls
+           down after 300ms. -->
+      <variables>
+        <variable name="media_timeout"      value="300000" direction="inbound"/>
+        <variable name="media_hold_timeout" value="1800000" direction="inbound"/>
+      </variables>
       <param name="disable-register"        value="false"/>
       <param name="apply-nat-acl"           value="nat.auto"/>
     </settings>
