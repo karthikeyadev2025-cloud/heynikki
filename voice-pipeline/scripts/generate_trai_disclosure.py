@@ -13,8 +13,12 @@ DISCLOSURE_TEXT = (
     "మీరు ఏ సమయంలో అయినా 'human' అని చెబితే మన staff కి transfer చేస్తాను."
 )
 
-# Updated voice list (Sarvam current voices for Telugu)
-VOICES = ["priya", "shreya", "kavya"]  # fixed: old names not valid on bulbul:v3
+# Must cover EVERY speaker sku_voices in main.py can select, or that SKU
+# silently falls through to a runtime TTS round-trip at call start — and to
+# no disclosure at all if Sarvam is slow or down, which is a TRAI breach,
+# not a cosmetic miss. "aditya" was missing here, so the real_estate SKU
+# never had an asset.
+VOICES = ["priya", "shreya", "aditya", "kavya"]
 
 ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,7 +32,14 @@ async def synthesize(voice: str) -> bytes:
                 "inputs": [DISCLOSURE_TEXT],
                 "target_language_code": "te-IN",
                 "speaker": voice,
-                "model": "bulbul:v2",
+                # v3, matching TTSEngine.synthesize in main.py. This said v2,
+                # so any asset it produced came from a different model than
+                # the live voice — an audible mismatch mid-call.
+                "model": "bulbul:v3",
+                # Telephony is 8kHz G.711. Generating at the default 22050
+                # forces FreeSWITCH to resample every playback.
+                "speech_sample_rate": 8000,
+                "enable_preprocessing": True,
             },
         )
         r.raise_for_status()
