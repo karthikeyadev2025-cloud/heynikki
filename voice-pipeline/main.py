@@ -313,6 +313,7 @@ def build_system_prompt(profile: dict) -> str:
     appt_types = ", ".join(profile.get("appointment_types", []))
 
     return f"""{frozen}
+Your name: {profile.get('display_name') or 'నిక్కి'} (this is what you call yourself)
 Business: {profile.get('business_name', 'Our Business')}
 Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
@@ -1935,6 +1936,46 @@ async def _play_demo_exhausted(fs_uuid: str, profile: dict) -> None:
         log.error(f"[FS] demo-exhausted message failed: {e}")
 
 
+def _assistant_name(profile: dict) -> str:
+    """What she calls herself. Per-tenant, not always "Nikki"."""
+    return (profile.get("display_name") or "నిక్కి").strip()
+
+
+def _greeting_text(profile: dict) -> str:
+    """Warm brand greeting, spoken right after the TRAI disclosure.
+
+    Previously the caller heard the disclosure and then silence — she waited
+    for them to speak first, which on a phone call reads as a dead line.
+    """
+    biz  = (profile.get("business_name") or "").strip()
+    name = _assistant_name(profile)
+    return (f"నమస్కారం! Welcome to {biz}. నేను {name}. "
+            f"చెప్పండి, మీకు ఏం కావాలి?")
+
+
+async def _greeting_audio(agent) -> bytes:
+    """Greeting audio, cached per profile on first use.
+
+    Cached to the shared spool so every later call on that profile plays it
+    instantly instead of paying a TTS round-trip at answer time — the same
+    reason the TRAI disclosure is pre-generated. Works for any tenant with
+    no per-tenant asset to build.
+    """
+    pid = str((agent.profile or {}).get("id") or "default")
+    path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}.wav"
+    try:
+        if path.exists() and path.stat().st_size > 1000:
+            return path.read_bytes()
+        audio = await agent.tts.synthesize(_greeting_text(agent.profile), agent.voice)
+        if audio:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(audio)
+        return audio or b""
+    except Exception as e:  # noqa: BLE001 - never block the call on a greeting
+        log.warning(f"greeting failed: {e}")
+        return b""
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
@@ -2255,7 +2296,17 @@ async def freeswitch_ws(
         disclosure_audio = await agent.on_call_start()
         if disclosure_audio:
             await _send_audio_to_freeswitch(ws, disclosure_audio, fs_uuid, 0)
+            # uuid_broadcast returns as soon as the clip is QUEUED, not when
+            # it finishes. Without waiting, the greeting cuts the disclosure
+            # off mid-sentence — and the disclosure is the regulatory part.
+            await asyncio.sleep(_wav_duration_secs(disclosure_audio) + 0.2)
         disclosure_sent = True
+
+        greet = await _greeting_audio(agent)
+        if greet:
+            await _send_audio_to_freeswitch(ws, greet, fs_uuid, 1)
+            speaking["until"] = time.monotonic() + _wav_duration_secs(greet)
+            turn_seq = 1
 
         # Main audio loop
         while True:
