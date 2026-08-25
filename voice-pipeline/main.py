@@ -305,7 +305,18 @@ class GeminiLLM:
 
     def __init__(self):
         self.api_key = GEMINI_KEY
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+        self.base_url = (
+            # GEMINI_MODEL holds a MODEL NAME, not a URL — compose the URL
+            # from it. gemini-2.0-flash-exp is retired and 404s;
+            # gemini-2.5-flash / -flash-lite are closed to new keys. Of what
+            # this key can reach, gemini-3.6-flash is a reasoning model and
+            # took 17.6s for one short reply (measured) — unusable mid-call,
+            # and it rejects thinkingBudget:0 so thinking cannot be disabled.
+            # gemini-flash-lite-latest answers the same prompt in 0.85s.
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{os.getenv('GEMINI_MODEL') or 'gemini-flash-lite-latest'}"
+            ":generateContent"
+        )
 
     async def generate(self, system_prompt: str, history: list[dict]) -> str:
         # Keep only last 4 turns (rolling window cost control)
@@ -340,15 +351,17 @@ class GeminiLLM:
         }
 
         try:
-            # AQ. keys (new format since June 19 2026) use Bearer auth
-            # AIza keys (old format) use ?key= query param
-            is_auth_key = self.api_key.startswith(("AQ.", "IQ.", "EQ."))
-            if is_auth_key:
-                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
-                params = {}
-            else:
-                headers = {"Content-Type": "application/json"}
-                params = {"key": self.api_key}
+            # x-goog-api-key works for BOTH key formats, so no branching.
+            # The previous code sent AQ./IQ./EQ. keys as Authorization: Bearer,
+            # which this key is rejected with 401. Measured against the live
+            # API with one AQ. key:
+            #     Authorization: Bearer  -> 401
+            #     ?key=<key>             -> 200
+            #     x-goog-api-key: <key>  -> 200
+            # Bearer is for OAuth access tokens, not API keys.
+            headers = {"Content-Type": "application/json",
+                       "x-goog-api-key": self.api_key}
+            params: dict = {}
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
                     self.base_url,
@@ -1317,7 +1330,8 @@ async def test_llm(req: LLMTestRequest):
         response = await llm.generate(system_prompt, history)
         return {
             "response": response,
-            "model": "gemini-2.5-flash",
+            # Label only — llm.generate() decides the real model.
+            "model": os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest"),
             "user_message": req.user_message,
         }
     except Exception as e:
