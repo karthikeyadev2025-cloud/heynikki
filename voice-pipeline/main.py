@@ -1606,6 +1606,50 @@ def _rms(audio_bytes: bytes) -> float:
     return (sum(s*s for s in samples) / len(samples)) ** 0.5
 
 
+def _wav_to_pcm16(audio: bytes) -> bytes:
+    """Strip a RIFF/WAV container down to raw little-endian PCM16 samples.
+
+    Sarvam TTS (and the Azure fallback, which requests
+    riff-8khz-16bit-mono-pcm) both return a WAV container. mod_audio_stream
+    plays RAW L16 only, so the 44-byte header has to come off or it is
+    rendered as a click followed by shifted audio.
+    """
+    if not audio:
+        return b""
+    if audio[:4] != b"RIFF":
+        return audio  # already raw
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as wf:
+            return wf.readframes(wf.getnframes())
+    except Exception as e:  # noqa: BLE001 - never let playback kill the call
+        log.warning(f"[FS] WAV parse failed ({e}); sending payload as-is")
+        return audio
+
+
+async def _send_audio_to_freeswitch(ws, audio: bytes, sample_rate: int = 8000) -> None:
+    """Play audio back down the mod_audio_stream socket.
+
+    mod_audio_stream has NO binary playback path. Its processMessage expects
+    a JSON TEXT frame; the module's own symbol table lists exactly
+    type/streamAudio/audioData/audioDataType/raw/sampleRate, and it errors
+    with "no data in streamAudio" or "unsupported audio type" otherwise.
+    The previous code called ws.send_bytes(<wav>), which the module silently
+    discarded - the caller heard nothing at all on every call, even with TTS
+    returning 200.
+    """
+    pcm = _wav_to_pcm16(audio)
+    if not pcm:
+        return
+    await ws.send_text(json.dumps({
+        "type": "streamAudio",
+        "data": {
+            "audioDataType": "raw",
+            "sampleRate":    sample_rate,
+            "audioData":     base64.b64encode(pcm).decode("ascii"),
+        },
+    }))
+
+
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
     """Wrap raw PCM16 bytes into a valid WAV container for Sarvam STT."""
     buf = io.BytesIO()
@@ -1801,7 +1845,7 @@ async def freeswitch_ws(
         # Send TRAI disclosure audio immediately on connect
         disclosure_audio = await agent.on_call_start()
         if disclosure_audio:
-            await ws.send_bytes(disclosure_audio)
+            await _send_audio_to_freeswitch(ws, disclosure_audio)
         disclosure_sent = True
 
         # Main audio loop
@@ -1878,7 +1922,7 @@ async def freeswitch_ws(
                     # STT → LLM → TTS pipeline (reuse existing NikkiAgent)
                     response_audio = await agent.on_speech(wav_bytes)
                     if response_audio:
-                        await ws.send_bytes(response_audio)
+                        await _send_audio_to_freeswitch(ws, response_audio)
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
