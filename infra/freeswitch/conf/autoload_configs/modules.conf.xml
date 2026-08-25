@@ -16,7 +16,7 @@
     <!-- File I/O — record_session (call recording), speak/TTS fallback -->
     <load module="mod_sndfile"/>
     <load module="mod_native_file"/>
-    <load module="mod_flite"/>
+    <!-- <load module="mod_flite"/> -->
 
     <!-- Streams audio to the voice-pipeline WebSocket. Third-party module —
          built into the freeswitch image via infra/freeswitch/Dockerfile,

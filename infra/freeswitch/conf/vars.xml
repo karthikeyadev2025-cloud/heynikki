@@ -31,6 +31,13 @@
        substitute in static config like gateway params or ESL settings.
        Always use $${name} (double-dollar) outside the dialplan. -->
   <X-PRE-PROCESS cmd="env-set" data="FREESWITCH_ESL_PASSWORD=$FREESWITCH_ESL_PASSWORD"/>
+  <!-- Console verbosity, set in docker-compose.yml. Consumed by
+       autoload_configs/console.conf.xml. -->
+  <X-PRE-PROCESS cmd="env-set" data="FREESWITCH_LOG_LEVEL=$FREESWITCH_LOG_LEVEL"/>
+  <!-- Local IP of the Jio circuit NIC. sip_profiles/heynikki.xml binds
+       sip-ip/rtp-ip to this; without the env-set the profile gets the
+       literal string "$${JIO_LOCAL_IP}" and fails to bind. -->
+  <X-PRE-PROCESS cmd="env-set" data="JIO_LOCAL_IP=$JIO_LOCAL_IP"/>
   <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_HOST=$JIO_SIP_HOST"/>
   <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_USERNAME=$JIO_SIP_USERNAME"/>
   <X-PRE-PROCESS cmd="env-set" data="JIO_SIP_PASSWORD=$JIO_SIP_PASSWORD"/>

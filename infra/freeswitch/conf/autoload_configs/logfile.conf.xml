@@ -1,0 +1,29 @@
+<!--
+  logfile.conf — mod_logfile is loaded in modules.conf.xml but without
+  this file it has no config and writes nothing, so the logs volume
+  mounted at /var/log/freeswitch (see docker-compose.yml) stayed empty.
+
+  This is the durable copy: `docker logs` is capped by the log driver
+  and lost on container recreate, which matters when you are trying to
+  reconstruct what a call did after the fact. Kept at "all" regardless
+  of the console level so post-mortem detail survives even when the
+  console is quiet.
+-->
+<configuration name="logfile.conf" description="File Logging">
+  <settings>
+    <param name="rotate-on-hup" value="true"/>
+  </settings>
+  <profiles>
+    <profile name="default">
+      <settings>
+        <param name="logfile" value="/var/log/freeswitch/freeswitch.log"/>
+        <param name="rollover" value="10485760"/>  <!-- 10 MB -->
+        <param name="maximum-rotate" value="10"/>  <!-- ~100 MB ceiling -->
+        <param name="uuid" value="true"/>
+      </settings>
+      <mappings>
+        <map name="all" value="console,debug,info,notice,warning,err,crit,alert"/>
+      </mappings>
+    </profile>
+  </profiles>
+</configuration>

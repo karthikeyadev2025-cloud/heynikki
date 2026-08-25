@@ -1,0 +1,26 @@
+<!--
+  sofia.conf — the wrapper mod_sofia looks for at load time.
+
+  Without this file mod_sofia aborts with "Open of sofia.conf failed"
+  and FreeSWITCH boots with NO SIP at all: nothing listens on 5060 and
+  `sofia status` is not even a registered command. Everything else comes
+  up fine, so `status` still says "ready" — the failure is silent unless
+  you check for mod_sofia specifically.
+
+  freeswitch.xml only includes autoload_configs/*.xml, so this file is
+  also the only thing that pulls in ../sip_profiles/ — that directory is
+  referenced from nowhere else in the tree.
+-->
+<configuration name="sofia.conf" description="sofia Endpoint">
+  <global_settings>
+    <param name="log-level" value="0"/>
+    <!-- auto-restart false: a profile that fails to bind should stay down
+         and be visible in `sofia status`, not flap silently in a loop. -->
+    <param name="auto-restart" value="false"/>
+    <param name="debug-presence" value="0"/>
+  </global_settings>
+
+  <profiles>
+    <X-PRE-PROCESS cmd="include" data="../sip_profiles/*.xml"/>
+  </profiles>
+</configuration>

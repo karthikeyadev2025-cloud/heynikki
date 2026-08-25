@@ -32,7 +32,12 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD", "fs_cli", "-x", "status"]
+      # Must pass -p: the ESL password is non-default (vars.xml pulls it
+      # from FREESWITCH_ESL_PASSWORD), and bare `fs_cli` tries "ClueCon",
+      # fails auth, and the container never becomes healthy — which also
+      # blocks voice-pipeline's depends_on: service_healthy.
+      # CMD-SHELL (not CMD) so $FREESWITCH_ESL_PASSWORD expands.
+      test: ["CMD-SHELL", "fs_cli -p \"$$FREESWITCH_ESL_PASSWORD\" -x status | grep -q ^UP"]
       interval: 30s
       timeout: 10s
       retries: 3

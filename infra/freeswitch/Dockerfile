@@ -215,11 +215,19 @@ EXPOSE 5060/udp 5060/tcp 5080/udp 5080/tcp 8021/tcp 16384-32768/udp
 # above — removes any remaining ambiguity about where FreeSWITCH looks
 # for config/logs at runtime, rather than relying solely on getting
 # the sysconfdir-plus-appended-subdirectory math right.
-# Foreground, no daemonization (-nc would background it, wrong for
-# Docker where the entrypoint process needs to stay PID 1). No -conf/
+# -nf: no forking, so FreeSWITCH stays PID 1 for Docker.
+# Deliberately NO -nc. -nc suppresses mod_console's stdout entirely
+# (verified: with -nc, `docker logs` is empty even when warnings are
+# being logged), which leaves the container with no log output at all.
+# Note that stdout here is a pipe, so it is BLOCK-buffered, not line-
+# buffered: `docker logs` arrives in chunks and a quiet system can sit
+# on a partial buffer for a long time. That is not a hung boot — it
+# fooled us once already. For realtime/durable logs read
+# freeswitch/logs/freeswitch.log (mod_logfile), not `docker logs`.
+# No -conf/
 # -log flags here — FreeSWITCH requires -conf, -log, AND -db together
 # or none at all ("You must specify all or none of -conf, -log, and
 # -db"), and the --sysconfdir=/etc fix above already makes the
 # compiled-in default resolve correctly to /etc/freeswitch, so no
 # flags are needed at all.
-CMD ["/usr/bin/freeswitch", "-nonat"]
+CMD ["/usr/bin/freeswitch", "-nonat", "-nf"]

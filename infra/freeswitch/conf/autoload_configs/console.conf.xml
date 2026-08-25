@@ -1,0 +1,25 @@
+<!--
+  console.conf — makes mod_console write to stdout, i.e. `docker logs`.
+
+  Without this file mod_console loads but emits nothing on its own. With
+  CMD's -nc (no interactive console loop) that means ZERO container log
+  output; without -nc you get partial output from the console loop that
+  dies once it hits a TTY-less stdin. Either way the boot is invisible.
+  This is what makes a failure like "Open of sofia.conf failed" show up
+  in `docker logs` instead of having to be dug out over ESL.
+
+  loglevel comes from FREESWITCH_LOG_LEVEL (set in docker-compose.yml).
+  At the default "warning" this stays quiet on a healthy boot but still
+  surfaces every err/crit/alert — which is the part you need.
+-->
+<configuration name="console.conf" description="Console Logger">
+  <mappings>
+    <map name="all" value="console,debug,info,notice,warning,err,crit,alert"/>
+  </mappings>
+  <settings>
+    <!-- No ANSI colour: these lines go to the Docker log driver, where
+         escape codes are noise rather than colour. -->
+    <param name="colorize" value="false"/>
+    <param name="loglevel" value="$${FREESWITCH_LOG_LEVEL}"/>
+  </settings>
+</configuration>
