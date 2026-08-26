@@ -836,6 +836,10 @@ class NikkiAgent:
         # "సిస్టమ్ లో సేవ్ అవ్వలేదు" to explain it.
         self._bg_tasks   : set = set()
         self.caller_history: dict = {}
+        self.fs_uuid     : str = ""      # set by the FreeSWITCH handler
+        self.ring_group  : str = ""      # who to ring on a human request
+        self.guard_seconds: int = 20
+        self.transfer_requested: bool = False
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         self.call_id     : Optional[str] = None
@@ -984,7 +988,10 @@ class NikkiAgent:
 
             # Check for transfer trigger
             if self.intent == "transfer":
-                return await self._handle_transfer()
+                msg = await self._handle_transfer()
+                self.history.append({"role": "assistant", "content": msg})
+                log.info(f"LLM (transfer): {msg}")
+                return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
             # Generate response
             response = await self.llm.generate(
@@ -1109,7 +1116,16 @@ class NikkiAgent:
 
     def _detect_intent(self, text: str) -> str:
         text_lower = text.lower()
-        transfer_words = ["human","person","manager","staff","real","వేరే","నిజంగా","మనిషి","transfer"]
+        # Sarvam returns TELUGU SCRIPT, so Latin keywords never matched what a
+        # caller actually says. On a live call he said "హ్యూమన్" three times and
+        # then "ట్రాన్స్ఫర్ చేస్తా అన్నారు"; none of them fired, and he was
+        # instead quoted the price of the Human CRM Seat. Transliterations are
+        # what land here, not English words.
+        transfer_words = [
+            "human", "person", "manager", "staff", "real", "transfer",
+            "హ్యూమన్", "హ్యుమన్", "ట్రాన్స్ఫర్", "ట్రాన్స్‌ఫర్", "స్టాఫ్",
+            "మేనేజర్", "వేరే", "నిజంగా", "మనిషి", "మనిషితో", "మాట్లాడాలి",
+        ]
         appt_words     = ["appointment","appt","book","schedule","date","time","booking","అపాయింట్మెంట్","బుక్"]
         callback_words = ["call back","callback","later","తర్వాత","మళ్ళీ"]
         emergency_words= ["emergency","urgent","108","ambulance","accident"]
@@ -1120,13 +1136,23 @@ class NikkiAgent:
         if any(w in text_lower for w in callback_words):  return "callback"
         return "enquiry"
 
-    async def _handle_transfer(self) -> bytes:
-        """Warm transfer to client's staff."""
-        msg = "ఒక్క నిమిషం — మీకు staff కి connect చేస్తున్నాను."
-        audio = await self.tts.synthesize(msg, self.voice)
-        # Signal to LiveKit to initiate SIP transfer
-        # Actual transfer logic handled by LiveKit dispatch rules
-        return audio
+    async def _handle_transfer(self):
+        """Ask for a real transfer, or say plainly that there is nobody to ring.
+
+        This previously synthesised "connecting you to staff" and returned —
+        the comment said the transfer was "handled by LiveKit dispatch rules",
+        which stopped being true when the stack moved to FreeSWITCH. It
+        promised a human and delivered nothing, which is worse than declining.
+
+        Sets transfer_requested so the websocket handler performs the actual
+        uuid_transfer via the API server and closes the leg.
+        """
+        if not self.ring_group:
+            # Never claim a transfer we cannot make.
+            return ("క్షమించండి, ఇప్పుడు staff అందుబాటులో లేరు. "
+                    "మీ number చెప్తే మా team మీకు callback చేస్తుంది.")
+        self.transfer_requested = True
+        return "అలాగే, ఒక్క నిమిషం — మా staff కి connect చేస్తున్నాను."
 
     async def _handle_appointment_booking(self, user_text: str, response: str):
         """Extract appointment details and save + send WhatsApp."""
@@ -2232,9 +2258,33 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         reply_text = await agent.on_speech(wav_bytes, want_text=True)
         if not reply_text:
             return
+        # The log showed STT and an LLM reply landing AFTER "Call ended" —
+        # work billed against a channel nobody is on any more.
+        if getattr(ws, "client_state", None) is not None and \
+           str(getattr(ws, "client_state", "")).endswith("DISCONNECTED"):
+            log.info(f"[FS] {fs_uuid}: call already ended — dropping reply")
+            return
         # speaking["until"] is published inside, before each chunk is sent, so
         # a caller who interrupts immediately still trips the barge-in check.
         await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking)
+
+        if getattr(agent, "transfer_requested", False):
+            agent.transfer_requested = False
+            log.info(f"[FS] {fs_uuid}: caller asked for a human — transferring")
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    await client.post(
+                        f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
+                        headers={"X-Internal-Secret": INTERNAL_SECRET},
+                        json={"fs_uuid": fs_uuid,
+                              "ring_group": agent.ring_group,
+                              "guard_seconds": agent.guard_seconds},
+                    )
+                await ws.close(code=1000)
+            except Exception as e:  # noqa: BLE001
+                # She has already said she is connecting them, so failing
+                # silently here would strand the caller mid-promise.
+                log.error(f"[FS] {fs_uuid}: transfer failed: {e}")
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001
@@ -2477,6 +2527,13 @@ async def freeswitch_ws(
     except Exception as e:
         log.warning(f"[FS] routing lookup failed ({e}) — defaulting to AI")
 
+    # Give the agent what a mid-call transfer needs. Without this it could
+    # only ever promise one: the working path below fires at call START for
+    # routing_mode=human and was never reachable when a caller ASKED.
+    agent.fs_uuid      = fs_uuid
+    agent.ring_group   = routing.get("ring_group") or ""
+    agent.guard_seconds = routing.get("missed_call_seconds", 20)
+
     # Hand the call to human agents when the DID says so. The API server
     # has already checked there is somebody to ring; if there wasn't, it
     # returns "ai" instead so the caller never lands in silence.
@@ -2643,10 +2700,21 @@ async def freeswitch_ws(
                     speech_count  = 0
                     silence_count = 0
 
-                    # Drop an in-flight turn: its answer is to a question the
-                    # caller has already moved on from.
+                    # Drop an in-flight turn only if this is a REAL new
+                    # utterance. On a live call the caller said "ఓకే", "ఉమ్",
+                    # "Human" while Nikki was still working, and each one
+                    # cancelled the answer in flight — so four of his turns got
+                    # no reply at all, including two requests for a human.
+                    # Backchannels are not new questions.
+                    words = len(utterance_pcm) / (8000 * 2)
                     if turn_task and not turn_task.done():
-                        turn_task.cancel()
+                        if words >= 0.7:
+                            turn_task.cancel()
+                        else:
+                            log.info(f"[FS] {fs_uuid}: short backchannel "
+                                     f"({words:.1f}s) — letting the reply finish")
+                            speech_buf = bytearray()
+                            continue
 
                     turn_seq += 1
                     turn_task = asyncio.create_task(
