@@ -1193,6 +1193,109 @@ app.get("/api/admin/live-calls", verifySuperAdmin, async (req, res) => {
 });
 
 // Suspend tenant + kill switch
+// ── DID INVENTORY + ASSIGNMENT ────────────────────────────────
+// The bottleneck to onboarding a second client. Everything else existed:
+// signup creates the tenant via the handle_new_user trigger, the setup page
+// collects business details, routing reads dids -> voice_profiles. But there
+// was no way to hand a number to a tenant except editing rows by hand.
+//
+// dids.status drives routing: get_voice_profile only matches status='assigned'
+// (voice-pipeline). A number in any other state simply never reaches a caller.
+app.get("/api/admin/dids", verifySuperAdmin, async (_req, res) => {
+  const { data, error } = await sb.from("dids")
+    .select("number, status, provider, tenant_id, voice_profile_id, routing_mode, created_at")
+    .order("number");
+  if (error) return res.status(500).json({ error: error.message });
+
+  const tenantIds = [...new Set((data || []).map(d => d.tenant_id).filter(Boolean))];
+  const { data: tenants } = tenantIds.length
+    ? await sb.from("tenants").select("id, name, status").in("id", tenantIds)
+    : { data: [] as any[] };
+  const byId = new Map((tenants || []).map(t => [t.id, t]));
+
+  res.json({
+    total:     (data || []).length,
+    available: (data || []).filter(d => d.status !== "assigned").length,
+    dids: (data || []).map(d => ({ ...d, tenant: byId.get(d.tenant_id) || null })),
+  });
+});
+
+app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) => {
+  const number   = String(req.params.number || "").replace(/\D/g, "").slice(-10);
+  const adminId  = (req as any).user.id;
+  const { tenant_id, business_name, profile_sku, routing_mode } = req.body as {
+    tenant_id?: string; business_name?: string;
+    profile_sku?: string; routing_mode?: string;
+  };
+  if (!number || number.length !== 10) return res.status(400).json({ error: "10-digit number required" });
+  if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+
+  const { data: did, error: didErr } = await sb.from("dids")
+    .select("number, status, tenant_id").like("number", `%${number}`).single();
+  if (didErr || !did) return res.status(404).json({ error: `DID ${number} not in inventory` });
+  // Reassigning a live number silently would send another tenant's callers to
+  // the wrong business, so it has to be released first.
+  if (did.status === "assigned" && did.tenant_id && did.tenant_id !== tenant_id) {
+    return res.status(409).json({ error: "Already assigned to another tenant — release it first" });
+  }
+
+  const { data: tenant } = await sb.from("tenants").select("id, name").eq("id", tenant_id).single();
+  if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+  // Reuse this tenant's profile if it has one; a second profile would leave
+  // the older one orphaned and routing would pick whichever the join returned.
+  let { data: profile } = await sb.from("voice_profiles")
+    .select("id").eq("tenant_id", tenant_id).limit(1).maybeSingle();
+
+  if (!profile) {
+    const { data: created, error: vpErr } = await sb.from("voice_profiles").insert({
+      tenant_id,
+      business_name: business_name || tenant.name,
+      display_name:  "నిక్కి",
+      profile_sku:   profile_sku || "standard",
+      did_number:    number,
+      routing_mode:  routing_mode || "ai",
+      status:        "active",
+    }).select("id").single();
+    if (vpErr) return res.status(500).json({ error: `profile: ${vpErr.message}` });
+    profile = created;
+  }
+
+  const { error: updErr } = await sb.from("dids").update({
+    tenant_id,
+    voice_profile_id: profile!.id,
+    routing_mode:     routing_mode || "ai",
+    status:           "assigned",     // required — routing ignores any other state
+  }).eq("number", did.number);
+  if (updErr) return res.status(500).json({ error: `did: ${updErr.message}` });
+
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: adminId, action: "assign_did",
+    target_tenant_id: tenant_id, details: { number, voice_profile_id: profile!.id },
+  }).then(r => r.error && console.error("[assign_did] audit:", r.error.message));
+
+  res.json({ ok: true, number: did.number, tenant: tenant.name, voice_profile_id: profile!.id });
+});
+
+app.post("/api/admin/dids/:number/release", verifySuperAdmin, async (req, res) => {
+  const number  = String(req.params.number || "").replace(/\D/g, "").slice(-10);
+  const adminId = (req as any).user.id;
+  const { data: did } = await sb.from("dids").select("number, tenant_id").like("number", `%${number}`).single();
+  if (!did) return res.status(404).json({ error: "DID not found" });
+
+  const { error } = await sb.from("dids")
+    .update({ tenant_id: null, voice_profile_id: null, status: "available" })
+    .eq("number", did.number);
+  if (error) return res.status(500).json({ error: error.message });
+
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: adminId, action: "release_did",
+    target_tenant_id: did.tenant_id, details: { number: did.number },
+  }).then(r => r.error && console.error("[release_did] audit:", r.error.message));
+
+  res.json({ ok: true, number: did.number });
+});
+
 app.post("/api/admin/tenants/:id/suspend", verifySuperAdmin, async (req, res) => {
   const tenantId = req.params.id;
   const adminId  = (req as any).user.id;
