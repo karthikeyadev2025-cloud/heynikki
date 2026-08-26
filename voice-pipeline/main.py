@@ -2308,6 +2308,80 @@ async def _spool_janitor() -> None:
             log.warning(f"spool janitor: {e}")
 
 
+async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
+                              did_number: str, duration: int) -> None:
+    """Rate the conversation and write a lead. Runs AFTER hangup.
+
+    Deliberately off the critical path: the caller is already gone, so an
+    extra second of LLM time costs nothing, and a failure here must never
+    affect a call. Until now an AI call detected an intent keyword and threw
+    it away — the human CRM path mapped dispositions to lead stages, but a
+    call Nikki handled produced no lead at all.
+
+    The model returns STRUCTURED JSON, not prose. Scores are clamped and the
+    stage is validated against the enum, because a hallucinated stage would
+    violate the check constraint and lose the whole lead.
+    """
+    try:
+        turns = [t for t in (agent.transcript or []) if t.get("content")]
+        if len(turns) < 2 or duration < 5:
+            return                      # a hangup with no conversation is not a lead
+
+        convo = "\n".join(
+            f"{'Caller' if t['role'] == 'user' else 'Nikki'}: {t['content']}"
+            for t in turns[-24:]
+        )
+        prompt = (
+            "Rate this phone conversation for a business. Reply with ONLY a JSON "
+            "object, no markdown fence:\n"
+            '{"score":0-100,"stage":"new|contacted|qualified|won|lost",'
+            '"intent":"short_snake_case","interest":"what they asked about",'
+            '"summary":"one sentence in English"}\n'
+            "score: how likely this caller is to become a customer. A booking "
+            "or a clear commitment is 80+. A price enquiry is 50-70. A wrong "
+            "number, abuse or an immediate hangup is under 20.\n\n"
+            f"{convo}"
+        )
+        raw = await agent.llm.generate("You classify sales calls. Output JSON only.",
+                                       [{"role": "user", "content": prompt}])
+        txt = re.sub(r"^```(?:json)?|```$", "", (raw or "").strip(), flags=re.M).strip()
+        m = re.search(r"\{.*\}", txt, re.S)
+        if not m:
+            log.warning(f"[FS] {fs_uuid}: lead scoring returned no JSON")
+            return
+        d = json.loads(m.group(0))
+
+        score = max(0, min(100, int(d.get("score") or 0)))
+        _VALID_STAGES = ("new", "contacted", "qualified", "won", "lost")
+        stage = d.get("stage") if d.get("stage") in _VALID_STAGES else "contacted"
+
+        digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+        prof   = agent.profile or {}
+        row = {
+            "tenant_id": prof.get("tenant_id"),
+            "phone":     digits,
+            "name":      (agent.slots or {}).get("name"),
+            "intent":    str(d.get("intent") or "")[:64] or None,
+            "interest":  str(d.get("interest") or "")[:200] or None,
+            "notes":     str(d.get("summary") or "")[:500] or None,
+            "stage":     stage,
+            "score":     score,
+            "source":    "inbound_call",
+            "first_call_id": agent.call_id,
+        }
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            r = await c.post(f"{agent.db.url}/rest/v1/leads",
+                             headers={**agent.db.headers, "Prefer": "return=minimal"},
+                             json=row)
+        if r.status_code >= 300:
+            log.warning(f"[FS] {fs_uuid}: lead insert {r.status_code} {r.text[:120]}")
+        else:
+            log.info(f"[FS] {fs_uuid}: lead scored {score}/100 stage={stage} "
+                     f"intent={row['intent']}")
+    except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
+        log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
@@ -2833,6 +2907,11 @@ async def freeswitch_ws(
             }, cfg)
 
         log.info(f"[FS] {fs_uuid}: cleanup complete, r2={r2_url or 'skipped'}")
+
+        # Rate the conversation and create the lead. After cleanup on purpose:
+        # the recording upload matters more than the score, and this must not
+        # delay it.
+        await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
 
 
 # ── FreeSWITCH REST shim endpoints ───────────────────────────────────────────

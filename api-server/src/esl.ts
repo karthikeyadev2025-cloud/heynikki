@@ -170,6 +170,65 @@ export class FreeSwitchESL {
   }
 
   /**
+   * Dial a customer and hand the answered call to the AI.
+   *
+   * The existing /outbound path in the voice pipeline returns 503 unless
+   * Exotel is configured — it was written before the move to FreeSWITCH and
+   * never dialled on our own trunk. This does, using the same originate
+   * syntax as clickToCall above (note the whitespace rules there; they
+   * apply here too).
+   *
+   * Three-argument form: originate <dial-string> <exten> <dialplan> <context>.
+   * The answered leg is dropped into camp_<number>, which the
+   * outbound_campaign extension matches — it starts uuid_audio_stream and
+   * parks, so the pipeline drives the conversation exactly as it does for an
+   * inbound call. That extension existed but nothing ever produced a camp_
+   * destination, so it was unreachable code until now.
+   *
+   * origination_caller_id_number MUST be a DID we actually own. A spoofed CLI
+   * on an Indian trunk gets the trunk suspended, not just the call rejected.
+   */
+  async originateOutbound(
+    customerNumber: string,
+    callerIdNumber: string,
+    campaignId?:    string,
+    timeoutSec = 35
+  ): Promise<string> {
+    const clean = (n: string) => n.replace(/[^0-9+]/g, "");
+    const customer = clean(customerNumber);
+    const cli      = clean(callerIdNumber);
+    if (!customer) throw new Error("Outbound needs a customer number");
+    if (!cli)      throw new Error("Outbound needs a caller ID we own");
+
+    const digits = customer.replace(/\D/g, "").slice(-10);
+    if (digits.length !== 10) throw new Error(`Bad customer number: ${customerNumber}`);
+
+    const vars = [
+      `origination_caller_id_number=${cli}`,
+      `origination_caller_id_name=HeyNikki`,
+      // Do NOT treat ringback as answer — otherwise the AI starts talking to
+      // a ringing phone and the first seconds of the pitch are lost.
+      `ignore_early_media=true`,
+      `originate_timeout=${timeoutSec}`,
+      campaignId ? `campaign_id=${campaignId}` : `campaign_id=`,
+      `outbound_call=true`,
+    ].join(",");
+
+    const cmd =
+      `api originate {${vars}}sofia/gateway/jio_primary/${digits} ` +
+      `camp_${digits} XML heynikki`;
+
+    const response = await eslCommand(cmd, (timeoutSec + 10) * 1000);
+    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
+    if (match) return match[1];
+
+    // NO_ANSWER / USER_BUSY / CALL_REJECTED are normal campaign outcomes, not
+    // faults — the caller sees them as a status, not an error.
+    const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
+    throw new Error(`originate failed: ${reason}`);
+  }
+
+  /**
    * Transfer a live channel into the human ring-group extension.
    *
    * This is what actually makes the dids.routing_mode column mean

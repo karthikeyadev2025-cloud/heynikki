@@ -1193,6 +1193,104 @@ app.get("/api/admin/live-calls", verifySuperAdmin, async (req, res) => {
 });
 
 // Suspend tenant + kill switch
+// ── OUTBOUND CAMPAIGNS ────────────────────────────────────────
+// Upload a list, dial it on our own trunk, hand answered calls to the AI.
+//
+// COMPLIANCE IS NOT OPTIONAL HERE. Outbound commercial calling in India is
+// governed by TCCCPR: DLT registration, consent records, DND scrubbing and
+// a 9am-9pm window. The penalty for getting it wrong is the TRUNK being
+// disconnected, which would take the inbound business down with it. So:
+//   - recipients land as 'pending', never 'queued' — the dispatcher scrubs
+//     DND before any number is dialled
+//   - consent is recorded per recipient at upload, not assumed
+//   - campaigns carry a calling window and the dispatcher enforces it
+// The scrubDnd() in jobs/outbound-dispatcher.ts is still a STUB. Wire a
+// real provider before dialling a list you did not collect consent for.
+app.post("/api/campaigns", verifyJWT, async (req, res) => {
+  const tenantId = (req as any).tenantId;
+  const { name, voice_profile_id, window_start, window_end, max_concurrent } = req.body as any;
+  if (!name) return res.status(400).json({ error: "name required" });
+
+  const { data, error } = await sb.from("campaigns").insert({
+    tenant_id: tenantId, name,
+    voice_profile_id: voice_profile_id || null,
+    status: "draft",
+    window_start: window_start ?? 9,      // IST. 9-21 is the legal window.
+    window_end:   window_end   ?? 21,
+    max_concurrent: Math.min(Number(max_concurrent) || 3, 5),
+  }).select("*").single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post("/api/campaigns/:id/recipients", verifyJWT, async (req, res) => {
+  const tenantId = (req as any).tenantId;
+  const { rows, csv, consented } = req.body as
+    { rows?: any[]; csv?: string; consented?: boolean };
+
+  const { data: camp } = await sb.from("campaigns")
+    .select("id, tenant_id, total_contacts").eq("id", req.params.id).single();
+  if (!camp || camp.tenant_id !== tenantId) return res.status(404).json({ error: "Campaign not found" });
+
+  // Accept either parsed rows or raw CSV text pasted from Excel.
+  let parsed: any[] = Array.isArray(rows) ? rows : [];
+  if (!parsed.length && typeof csv === "string" && csv.trim()) {
+    const lines = csv.trim().split(/\r?\n/);
+    const head  = lines[0].split(/[,\t;]/).map(h => h.trim().toLowerCase());
+    const iPhone = head.findIndex(h => /phone|mobile|number|contact/.test(h));
+    const iName  = head.findIndex(h => /name/.test(h));
+    // No recognisable header means the first line is data, not headers —
+    // otherwise a headerless paste silently loses its first contact.
+    const start = iPhone === -1 ? 0 : 1;
+    for (let i = start; i < lines.length; i++) {
+      const c = lines[i].split(/[,\t;]/);
+      parsed.push({
+        phone: (iPhone === -1 ? c[0] : c[iPhone]) || "",
+        name:  (iName  === -1 ? c[1] : c[iName])  || "",
+      });
+    }
+  }
+
+  const seen = new Set<string>();
+  const clean = parsed.map(r => {
+    const digits = String(r.phone ?? "").replace(/\D/g, "").slice(-10);
+    return { digits, name: String(r.name ?? "").trim() };
+  }).filter(r => {
+    // Indian mobiles start 6-9. Anything else is a landline, a typo or a
+    // stray spreadsheet column, and dialling it wastes trunk capacity.
+    if (!/^[6-9]\d{9}$/.test(r.digits)) return false;
+    if (seen.has(r.digits)) return false;      // duplicates burn channels twice
+    seen.add(r.digits);
+    return true;
+  });
+
+  if (!clean.length) return res.status(400).json({ error: "No valid 10-digit mobile numbers found" });
+
+  const { error } = await sb.from("outbound_recipients").insert(
+    clean.map(r => ({
+      campaign_id: req.params.id,
+      tenant_id:   tenantId,
+      phone:       r.digits,
+      name:        r.name || null,
+      // 'pending' — NOT 'queued'. The dispatcher must scrub DND first.
+      status:      "pending",
+      consented:   consented === true,
+    }))
+  );
+  if (error) return res.status(500).json({ error: error.message });
+
+  await sb.from("campaigns")
+    .update({ total_contacts: (camp.total_contacts || 0) + clean.length })
+    .eq("id", req.params.id);
+
+  res.json({
+    ok: true,
+    accepted: clean.length,
+    rejected: parsed.length - clean.length,
+    note: "Recipients are pending DND scrubbing and will not be dialled until it runs.",
+  });
+});
+
 // ── KYC REVIEW ────────────────────────────────────────────────
 // The carrier requires customer verification before a number is handed
 // over, so this is what the assign step should wait on. Documents live in
