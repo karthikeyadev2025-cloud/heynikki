@@ -423,18 +423,28 @@ export default function Home() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(268px, 1fr))", gap: 18 }}>
           {[
+            // These MUST match /api/platform/pricing, which reads
+            // platform_config and is what the billing page charges. They are
+            // literals here because this page is prerendered on Vercel and
+            // cannot reach the on-prem API at build time — so treat them as a
+            // mirror, not a source, and change platform_config first.
+            //
+            // The previous card advertised "Unlimited inbound" at Rs 5,999 —
+            // a plan that does not exist in billing, for a service that is
+            // metered by minutes. A prospect was quoted it on the phone and
+            // would then have seen metered tiers at signup.
             {
-              name: "AI Telecaller", price: "5,999", note: "per month",
+              name: "Pay as you go", price: "3.50", note: "per minute",
+              points: ["No monthly commitment", "Telugu, Hindi and English", "Inbound reception on one number", "Recordings and transcripts"],
+            },
+            {
+              name: "Growth", price: "4,999", note: "per month",
               highlight: true, badge: "Most businesses start here",
-              points: ["Unlimited inbound on one number", "Telugu, Hindi and English", "Appointments to your dashboard", "WhatsApp confirmation on every booking", "Recordings and transcripts"],
+              points: ["600 minutes included", "3 numbers, 1 CRM seat", "5 calls at once", "Appointments to your dashboard", "WhatsApp confirmation on every booking"],
             },
             {
-              name: "Human CRM Seat", price: "1,999", note: "per seat / month",
-              points: ["Click-to-call from the lead list", "Caller history on screen before pickup", "Call disposition and notes", "Shared pipeline with your team"],
-            },
-            {
-              name: "Dedicated Business Number", price: "1,999", note: "per number / month",
-              points: ["A new business number, yours", "Or port the number you already use", "Masked outbound caller ID", "Automatic carrier failover"],
+              name: "Add what you need", price: "1,999", note: "per seat or number / month",
+              points: ["Human CRM seat — click-to-call, caller history, dispositions", "Extra business number, new or ported", "Starter Rs 1,999 · Scale Rs 9,999", "Extra minutes Rs 15 each"],
             },
           ].map((p) => (
             <div key={p.name} style={{
