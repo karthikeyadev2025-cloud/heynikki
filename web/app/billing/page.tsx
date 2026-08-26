@@ -15,7 +15,31 @@ const C = {
   grn: NIKKI.emerald, red: NIKKI.red, txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
+// Concurrency can never exceed what the trunk physically carries. The Jio
+// circuit is 10 channels TOTAL across the whole platform, so a plan
+// advertising more than that is a promise no amount of software can keep.
+// Raise these only after buying channels, not before.
 const PLANS = [
+  {
+    // Entry tier added because the monthly-only ladder lost on price
+    // comparison before a prospect ever heard the voice: a competitor sells
+    // pay-as-you-go at Rs 3.5/min with zero setup, so an SMB doing 200
+    // minutes a month compares Rs 700 against our Rs 1,999 and stops
+    // reading. This keeps a low entry point without discounting the tiers
+    // that suit real volume — above ~570 minutes Starter is already cheaper
+    // than per-minute, and the page says so rather than hiding it.
+    id: "payg", name: "Pay as you go", price: 0, annual: 0,
+    minutes: 0, profiles: 1, numbers: 1, concurrent: 2,
+    perMinute: 3.5,
+    color: C.mid,
+    features: [
+      "Rs 3.5 per minute of talk-time",
+      "No monthly commitment",
+      "Telugu + Tanglish AI",
+      "Inbound reception on one number",
+      "Recordings 30 days",
+    ],
+  },
   {
     id: "starter", name: "Starter", price: 1999, annual: 1599,
     minutes: 200, profiles: 1, numbers: 1, concurrent: 2,
@@ -30,7 +54,7 @@ const PLANS = [
   },
   {
     id: "scale", name: "Scale", price: 9999, annual: 7999,
-    minutes: 1500, profiles: 10, numbers: 10, concurrent: 15,
+    minutes: 1500, profiles: 10, numbers: 10, concurrent: 10,
     color: C.gold,
     features: ["Everything in Growth","10 voice profiles","API access + webhooks","Team members (5 seats)","Custom integrations"],
   },
@@ -247,7 +271,7 @@ export default function BillingPage() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 14 }}>
               {PLANS.map(plan => {
                 const isCurrent = tenant?.plan === plan.id;
                 const price = annual ? plan.annual : plan.price;
@@ -273,8 +297,10 @@ export default function BillingPage() {
                       {plan.name}
                     </div>
                     <div style={{ marginBottom: 4 }}>
-                      <span style={{ color: C.txt, fontSize: 22, fontWeight: 900 }}>₹{price.toLocaleString()}</span>
-                      <span style={{ color: C.dim, fontSize: 11 }}>/mo</span>
+                      <span style={{ color: C.txt, fontSize: 22, fontWeight: 900 }}>
+                      {(plan as any).perMinute ? `₹${(plan as any).perMinute}` : `₹${price.toLocaleString()}`}
+                    </span>
+                      <span style={{ color: C.dim, fontSize: 11 }}>{(plan as any).perMinute ? "/min" : "/mo"}</span>
                     </div>
                     <div style={{ color: C.dim, fontSize: 10, marginBottom: 14 }}>
                       {plan.minutes} mins · {plan.profiles} profile{plan.profiles > 1 ? "s" : ""} · {plan.numbers} number{plan.numbers > 1 ? "s" : ""}
