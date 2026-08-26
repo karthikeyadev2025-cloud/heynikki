@@ -97,6 +97,20 @@ except Exception as _e:  # noqa: BLE001 - logging must never break startup
 # ── FASTAPI APP ──────────────────────────────────────────
 app = FastAPI(title="Nikki Voice Pipeline")
 
+_JANITOR_TASK = None
+
+
+@app.on_event("startup")
+async def _start_janitor() -> None:
+    # Reference held module-level: asyncio keeps only a weak one, so an
+    # unreferenced task can be garbage-collected mid-sleep and silently stop.
+    global _JANITOR_TASK
+    try:
+        _JANITOR_TASK = asyncio.create_task(_spool_janitor())
+        log.info("spool janitor started")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"spool janitor not started: {e}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -976,7 +990,14 @@ class NikkiAgent:
         try:
             user_text = await self.stt.transcribe(audio_bytes)
             if not user_text.strip():
-                return await self.tts.synthesize("మళ్ళీ చెప్పగలరా?", self.voice)
+                # MUST respect want_text. Returning audio here made
+                # _speech_chunks run a regex over bytes — "cannot use a string
+                # pattern on a bytes-like object" — which killed the whole turn
+                # and gave the caller SILENCE instead of "say that again".
+                # Seen 4 times on live calls, including on a request for a human.
+                log.info("STT returned nothing — asking the caller to repeat")
+                msg = "ఒక్కసారి మళ్ళీ చెప్తారా?"
+                return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
             log.info(f"STT: {user_text}")
             self._harvest_slots(user_text)
@@ -1041,8 +1062,9 @@ class NikkiAgent:
             return audio
 
         except Exception as e:
-            log.error(f"on_speech error: {e}")
-            return await self.tts.synthesize("క్షమించండి, technical issue. మళ్ళీ try చేయండి.", self.voice)
+            log.exception(f"on_speech error: {e}")   # stack, not just the message
+            msg = "క్షమించండి, ఒక్కసారి మళ్ళీ చెప్తారా?"
+            return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
     async def save_recording(self, raw_audio_bytes: bytes) -> Optional[str]:
         """Encrypt call recording with AES-256-GCM and upload to Supabase storage.
@@ -2138,14 +2160,15 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     """
     biz  = (profile.get("business_name") or "").strip()
     name = _assistant_name(profile)
+    # No "నమస్కారం" here — the TRAI disclosure that plays immediately before
+    # already opens with it, and the caller was hearing it twice. Every second
+    # of this is time the caller cannot speak, so it stays short.
     if (history or {}).get("previous_calls"):
         # Recognition, not a script. A caller who rang before should not be
         # greeted as a stranger — that is the single most machine-like thing
         # a receptionist can do.
-        return (f"నమస్కారం! {biz} కి మళ్ళీ స్వాగతం. నేను {name}. "
-                f"చెప్పండి, ఈసారి ఏం కావాలి?")
-    return (f"నమస్కారం! Welcome to {biz}. నేను {name}. "
-            f"చెప్పండి, మీకు ఏం కావాలి?")
+        return f"{biz} కి మళ్ళీ స్వాగతం! నేను {name}. చెప్పండి, ఈసారి ఏం కావాలి?"
+    return f"{biz} కి స్వాగతం! నేను {name}. చెప్పండి, మీకు ఏం కావాలి?"
 
 
 async def _greeting_audio(agent) -> bytes:
@@ -2223,6 +2246,11 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
     each chunk is held until the previous one has actually finished — the
     same reason the greeting had to wait for the disclosure.
     """
+    if isinstance(text, (bytes, bytearray)):
+        # Should be unreachable now, but a wrong type here used to cost the
+        # caller a whole turn of silence. Fail loudly instead of crashing.
+        log.error("_speak_chunked got bytes, expected text — dropping turn")
+        return
     chunks = _speech_chunks(text)
     if not chunks:
         return
@@ -2241,6 +2269,43 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
         nxt_task = asyncio.create_task(agent.tts.synthesize(nxt, agent.voice))
         await asyncio.sleep(max(0.0, dur - 0.15))
         audio = await nxt_task
+
+
+async def _spool_janitor() -> None:
+    """Keep the shared spool from growing without bound.
+
+    /tmp is a 5.6GB TMPFS on this host, so anything left here consumes RAM,
+    not disk — a previous incident filled the disk with recordings and took
+    FreeSWITCH, the pipeline and the API server down together. Per-clip
+    cleanup already runs 60s after each broadcast, but that is a timer inside
+    a task: if a turn is cancelled (barge-in cancels turns routinely) the
+    timer can go with it. This is the backstop that does not depend on any
+    call completing normally.
+
+    Deliberately does NOT touch fillers/ or the TTS cache, which are meant to
+    persist and are separately bounded.
+    """
+    spool = pathlib.Path(_TTS_SPOOL)
+    while True:
+        try:
+            await asyncio.sleep(600)
+            cutoff = time.time() - 900          # 15 minutes
+            removed = 0
+            for f in spool.glob("tts_*.wav"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink(); removed += 1
+                except OSError:
+                    pass
+            for f in spool.glob("greet_*.wav.part"):
+                try: f.unlink()
+                except OSError: pass
+            if removed:
+                log.info(f"spool janitor: removed {removed} stale clip(s)")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a janitor must never kill the app
+            log.warning(f"spool janitor: {e}")
 
 
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
