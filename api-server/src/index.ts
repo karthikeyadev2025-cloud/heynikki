@@ -1193,6 +1193,54 @@ app.get("/api/admin/live-calls", verifySuperAdmin, async (req, res) => {
 });
 
 // Suspend tenant + kill switch
+// ── PRICING CATALOGUE ─────────────────────────────────────────
+// ONE source of truth for what things cost, read from platform_config so a
+// super admin changes prices in one place.
+//
+// This exists because pricing had drifted into three different answers: the
+// billing page hardcoded Starter/Growth/Scale, the landing page and the
+// voice agent quoted AI Telecaller / CRM Seat / Number, and platform_config
+// held prices nothing read. A caller was quoted Rs 5,999 "unlimited" and
+// then shown metered tiers that did not include that plan. Hardcoding in
+// three places guarantees they drift again, so nothing may hardcode a price
+// after this — read it here.
+//
+// Structure: ONE base plan (tier or pay-as-you-go) plus per-unit add-ons.
+// That reconciles both models rather than picking a winner — the tiers are
+// bundles of the same units the landing page sells individually.
+app.get("/api/platform/pricing", async (_req, res) => {
+  try {
+    const cfg = await getPlatformConfig();
+    const paise = (k: string, d: number) => Number(cfg[k] ?? d) || d;
+
+    const tiers = ["plan_tier_1", "plan_tier_2", "plan_tier_3"]
+      .map(k => { try { return cfg[k] ? JSON.parse(cfg[k]) : null; } catch { return null; } })
+      .filter(Boolean);
+
+    // Concurrency can never exceed what the trunk physically carries, whatever
+    // a tier claims. Clamped here so a mis-typed config cannot sell capacity
+    // that does not exist — Scale previously advertised 15 against 10 channels.
+    const maxCh = paise("trunk_max_channels", 10);
+    for (const t of tiers) t.concurrent = Math.min(Number(t.concurrent) || 1, maxCh);
+
+    res.json({
+      currency: "INR",
+      per_minute_paise: paise("price_per_minute_paise", 350),
+      overage_paise:    paise("plan_overage_paise", 1500),
+      addons: {
+        ai_telecaller_paise: paise("price_ai_telecaller_paise", 599900),
+        crm_seat_paise:      paise("price_human_crm_seat_paise", 199900),
+        number_paise:        paise("price_jio_did_paise", 199900),
+      },
+      tiers,
+      trunk_max_channels: maxCh,
+      gst_extra: true,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "pricing unavailable" });
+  }
+});
+
 // ── OUTBOUND CAMPAIGNS ────────────────────────────────────────
 // Upload a list, dial it on our own trunk, hand answered calls to the AI.
 //

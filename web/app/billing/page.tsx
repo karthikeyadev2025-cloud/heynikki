@@ -19,7 +19,11 @@ const C = {
 // circuit is 10 channels TOTAL across the whole platform, so a plan
 // advertising more than that is a promise no amount of software can keep.
 // Raise these only after buying channels, not before.
-const PLANS = [
+// FALLBACK ONLY. The live catalogue comes from /api/platform/pricing, which
+// reads platform_config — one place a super admin edits. These literals exist
+// so the page still renders if the API is unreachable; they are NOT the
+// source of truth and must never be edited to change a price.
+const PLANS_FALLBACK = [
   {
     // Entry tier added because the monthly-only ladder lost on price
     // comparison before a prospect ever heard the voice: a competitor sells
@@ -93,11 +97,43 @@ function UsageRing({ used, total }: { used: number; total: number }) {
 }
 
 export default function BillingPage() {
+  const [PLANS, setPlans]     = useState<any[]>(PLANS_FALLBACK);
   const [tenant, setTenant]   = useState<Tenant | null>(null);
   const [usage, setUsage]     = useState<CallMinutes | null>(null);
   const [annual, setAnnual]   = useState(false);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+
+  // Pull the live catalogue so this page and the voice agent quote the same
+  // numbers. Falls back silently to the literals above — a pricing page that
+  // fails to render is worse than one a few minutes stale.
+  useEffect(() => {
+    fetch(`${API_URL}/api/platform/pricing`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d?.tiers?.length) return;
+        const rupees = (x: number) => Math.round((Number(x) || 0) / 100);
+        const tiers = d.tiers.map((t: any, i: number) => ({
+          id: t.id, name: t.name,
+          price:  rupees(t.monthly_paise),
+          annual: Math.round(rupees(t.monthly_paise) * 0.8),   // -20%, as advertised
+          minutes: t.minutes, profiles: t.seats || 1,
+          numbers: t.numbers, concurrent: t.concurrent,
+          color: [C.mid, C.gbr, C.gold][i] || C.mid,
+          popular: i === 1,
+          features: PLANS_FALLBACK.find((p: any) => p.id === t.id)?.features || [],
+        }));
+        const payg = {
+          id: "payg", name: "Pay as you go", price: 0, annual: 0,
+          minutes: 0, profiles: 1, numbers: 1, concurrent: 2,
+          perMinute: (Number(d.per_minute_paise) || 350) / 100,
+          color: C.mid,
+          features: PLANS_FALLBACK.find((p: any) => p.id === "payg")?.features || [],
+        };
+        setPlans([payg, ...tiers]);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const sb = createClient();
@@ -305,7 +341,7 @@ export default function BillingPage() {
                     <div style={{ color: C.dim, fontSize: 10, marginBottom: 14 }}>
                       {plan.minutes} mins · {plan.profiles} profile{plan.profiles > 1 ? "s" : ""} · {plan.numbers} number{plan.numbers > 1 ? "s" : ""}
                     </div>
-                    {plan.features.map(f => (
+                    {plan.features.map((f: string) => (
                       <div key={f} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
                         <Check size={11} color={C.grn} />
                         <span style={{ color: C.mid, fontSize: 11 }}>{f}</span>

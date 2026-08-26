@@ -177,18 +177,10 @@ WHAT IT DOES (state only these):
 - 24/7 including Sundays and festivals. First reply under 700ms.
 - Keep your existing number — forward or port it. Live in ~60 seconds.
 
-PRICING (never quote a figure not listed):
-- AI Telecaller: Rs 5,999/month. Inbound on one number, Telugu/Hindi/
-  English, dashboard, WhatsApp confirmation, recordings.
-  Do NOT say "unlimited". Plans are metered by minutes and the billing page
-  sells 200/600/1500-minute tiers — promising unlimited on the phone and
-  billing by the minute at signup is a quote we cannot honour.
-  If asked how many minutes, say the team will confirm the right plan.
-- Human CRM Seat: Rs 1,999/seat/month. Click-to-call, caller history before
-  pickup, disposition notes, shared pipeline.
-- Dedicated Business Number: Rs 1,999/number/month. New or ported number,
-  masked outbound caller ID, carrier failover.
-- GST extra. Cancel any month. Recordings stay the customer's.
+PRICING: the live catalogue is injected below under [CURRENT PRICING].
+Quote ONLY from it. Never quote a figure that is not there, never say
+"unlimited" — plans are metered by minutes — and never add plans together
+(see the arithmetic rule above). GST is extra on everything.
 
 NEVER DO ARITHMETIC. Do not add up plans or quote a monthly total for a
 combination. Tested: asked for 3 numbers and 2 seats, the models answered
@@ -325,6 +317,48 @@ TELUGU_PHONE_PERSONA = (
 )
 
 
+_PRICING_CACHE: dict = {"at": 0.0, "text": ""}
+
+
+async def _refresh_pricing() -> None:
+    """Pull the live catalogue so Nikki quotes what the billing page charges.
+
+    Pricing used to be hardcoded here AND in the billing page AND in
+    platform_config, which is how a caller ended up quoted Rs 5,999
+    "unlimited" for a plan that did not exist. The API server owns it now;
+    this only formats it for speech.
+
+    Cached for 10 minutes and failure-tolerant: if the catalogue cannot be
+    fetched Nikki simply has no prices to quote, which is far better than
+    quoting stale ones.
+    """
+    if time.time() - _PRICING_CACHE["at"] < 600:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            r = await c.get(f"{API_SERVER_URL}/api/platform/pricing")
+        if r.status_code != 200:
+            return
+        d = r.json()
+        rup = lambda p: f"{int(p) // 100:,}"
+        lines = ["\n\n[CURRENT PRICING — quote only these figures]"]
+        for t in d.get("tiers", []):
+            lines.append(
+                f"\n- {t.get('name')}: Rs {rup(t.get('monthly_paise', 0))}/month, "
+                f"{t.get('minutes')} minutes, {t.get('numbers')} number(s), "
+                f"{t.get('concurrent')} calls at once."
+            )
+        a = d.get("addons", {})
+        lines.append(f"\n- Pay as you go: Rs {int(d.get('per_minute_paise', 350)) / 100:.2f} per minute, no monthly commitment.")
+        lines.append(f"\n- Extra CRM seat: Rs {rup(a.get('crm_seat_paise', 0))}/seat/month.")
+        lines.append(f"\n- Extra number: Rs {rup(a.get('number_paise', 0))}/number/month.")
+        lines.append(f"\n- Extra minutes beyond the plan: Rs {int(d.get('overage_paise', 1500)) / 100:.2f} per minute.")
+        lines.append("\nGST extra. Cancel any month.")
+        _PRICING_CACHE.update({"at": time.time(), "text": "".join(lines)})
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"pricing refresh skipped: {e}")
+
+
 def build_system_prompt(profile: dict) -> str:
     """Inject business context into the frozen prompt template."""
     sku = profile.get("profile_sku", "standard")
@@ -357,7 +391,7 @@ Appointment Types: {appt_types or 'General appointment'}
 Current Time: {now}
 
 [LIVE BLOCK - conversation history appended here, max 5 turns]
-""" + TELUGU_PHONE_PERSONA
+""" + TELUGU_PHONE_PERSONA + _PRICING_CACHE.get("text", "")
 
 # ── SARVAM STT ───────────────────────────────────────────
 class SarvamSTT:
@@ -2744,6 +2778,7 @@ async def freeswitch_ws(
         # Load before greeting so a returning caller is recognised in the
         # very first sentence, which is where it actually lands.
         try:
+            await _refresh_pricing()
             agent.caller_history = await db.get_caller_history(
                 caller_number, (profile or {}).get("id", ""))
             if agent.caller_history.get("previous_calls"):
