@@ -37,6 +37,10 @@ const ROTATING = [
   "in telugu, hindi and english",
 ];
 const STORAGE_KEY = "heynikki.voice.enabled";
+// Must be absolute. A relative "/api/..." resolves against the Vercel domain,
+// where no such route exists — the agent would 404 in production while
+// working perfectly in local dev. CallConsole already does this; this did not.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
 type Phase = "idle" | "listening" | "recording" | "thinking" | "speaking";
 type Line  = { who: "you" | "nikki"; text: string };
@@ -172,7 +176,7 @@ export default function WakeWordNikki() {
     });
 
     try {
-      const r = await fetch("/api/public/voice-turn", {
+      const r = await fetch(`${API_URL}/api/public/voice-turn`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

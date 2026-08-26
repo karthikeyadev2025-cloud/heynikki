@@ -177,7 +177,10 @@ export default function Home() {
             </div>
 
             <p style={{ margin: "22px 0 0", fontFamily: M, fontSize: 12, color: C.textDim, letterSpacing: "0.04em" }}>
-              Live in 60 seconds · Keep your existing number · No app for your customers
+              {/* Setup is a same-day handover, not self-serve: a number is assigned
+                  from the admin panel after verification, so "60 seconds" was a
+                  promise the onboarding flow cannot keep. */}
+              Live the same day · Keep your existing number · No app for your customers
             </p>
 
             {/* Sits BESIDE the call demo, not instead of it. The call demo
@@ -199,8 +202,13 @@ export default function Home() {
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 26,
         }}>
           {[
-            ["< 700 ms", "First reply to the caller"],
-            ["Every call", "Answered, logged, followed up"],
+              // MEASURED, not aspirational. Anything here can be tested on the
+              // demo call in front of a prospect, so it has to survive that.
+              // The previous "< 700 ms first reply" was off by roughly 4x:
+              // measured end to end it is ~0.5s before she starts speaking
+              // (an acknowledgement) and ~2.5s to a full spoken answer.
+              ["~0.5 s", "Before she starts speaking"],
+              ["~2.5 s", "To a full spoken answer"],
             ["24 / 7", "Including Sunday, 2 AM, festival days"],
             ["3 languages", "Switched mid-sentence, mid-call"],
           ].map(([big, small]) => (
