@@ -4,6 +4,7 @@ FastAPI + LiveKit Agents + Sarvam STT/TTS + Gemini LLM
 Run: uvicorn main:app --host 0.0.0.0 --port 8000
 """
 
+import difflib
 import hashlib
 import os
 import re
@@ -146,8 +147,9 @@ Transfer on "human", "manager", "వేరే వ్యక్తి".
     "heynikki": """[FROZEN BLOCK - CACHED]
 You are Nikki, the assistant for Hey Nikki itself — a Telugu AI receptionist
 service for Indian businesses, Hyderabad. The caller is a business owner
-evaluating it. Answer their question, then get name, number and what business
-they run, and book a demo or callback.
+evaluating it. Answer their question FIRST and fully. Collecting their name,
+number and business is secondary — ask once when it fits, never twice in a
+row, and never instead of answering what they actually said.
 
 WHAT IT DOES (state only these):
 - Answers a business's existing number in real Telugu; switches to Hindi or
@@ -272,7 +274,16 @@ TELUGU_PHONE_PERSONA = (
     "\n\nAVOID: repeating the question back; ధన్యవాదాలు every turn; formal openers "
     "like \'మీకు ఎలా సహాయం చేయగలను\' (say \'చెప్పండి\'); listing options like a menu; "
     "narrating what you are about to do."
-    "\n\nCOLLECT: their name and a 10-digit phone number, plus whatever this "
+    "\n\nNEVER LOOP. Do not ask for the same thing twice in a row. If they did "
+    "not give it, drop it and move the conversation on — ask again much later, "
+    "or not at all. Asking a third time is worse than never getting it."
+    "\n\nANSWER THE PERSON. If they are confused, annoyed, joking, testing you, "
+    "insulting you, or asking about YOU rather than the business — respond to "
+    "THAT, in one short sentence, and do not restate your request in the same "
+    "turn. \'ఏం మాట్లాడుతున్నావ్\' means you are not making sense: say sorry, say "
+    "plainly what you can do, and stop. A caller who repeats themselves or "
+    "sounds irritated is telling you the last reply failed — never send it again."
+    "\n\nCOLLECT (secondary — helping comes first): their name and a 10-digit phone number, plus whatever this "
     "business needs. Do NOT ask for an appointment day/time unless the business "
     "books appointments. One at a time, in whatever order they volunteer. Take "
     "all of it if they say several at once and never ask again. Answer their "
@@ -937,6 +948,27 @@ class NikkiAgent:
                     self._handle_appointment_booking(user_text, response))
                 self._bg_tasks.add(_t)
                 _t.add_done_callback(self._bg_tasks.discard)
+
+            # Deterministic anti-loop backstop. Prompt rules are advisory and a
+            # small model still repeats itself: on a live call Nikki demanded
+            # the caller's phone number six times in a row, in near-identical
+            # words, while he was telling her she was not making sense. Compare
+            # against the last thing she said and regenerate once if it is
+            # essentially the same sentence.
+            prev = next((h["content"] for h in reversed(self.history[:-1])
+                         if h.get("role") == "assistant"), "")
+            if prev and response:
+                sim = difflib.SequenceMatcher(None, prev.strip(), response.strip()).ratio()
+                if sim > 0.72:
+                    log.info(f"anti-loop: reply {sim:.0%} similar to previous — regenerating")
+                    response = await self.llm.generate(
+                        self.system_prompt + self._known_facts_block() +
+                        "\n\nYou JUST said: \"" + prev + "\"\n"
+                        "Do not say that again, and do not ask for the same thing "
+                        "again. Respond to what the caller actually just said, in "
+                        "one short sentence.",
+                        self.history)
+                    log.info(f"LLM (retry): {response}")
 
             if want_text:
                 return response
