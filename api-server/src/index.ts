@@ -1193,6 +1193,60 @@ app.get("/api/admin/live-calls", verifySuperAdmin, async (req, res) => {
 });
 
 // Suspend tenant + kill switch
+// ── KYC REVIEW ────────────────────────────────────────────────
+// The carrier requires customer verification before a number is handed
+// over, so this is what the assign step should wait on. Documents live in
+// the PRIVATE kyc-documents bucket; only metadata and the decision are
+// stored in the table.
+//
+// Approval is deliberately server-side on the service key. RLS lets a
+// tenant insert and read its own rows but NOT write the review columns, so
+// a tenant cannot approve itself.
+app.get("/api/admin/kyc", verifySuperAdmin, async (req, res) => {
+  const status = String(req.query.status || "pending");
+  const { data, error } = await sb.from("kyc_documents")
+    .select("id, tenant_id, doc_type, file_name, mime_type, size_bytes, status, storage_path, created_at")
+    .eq("status", status)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const ids = [...new Set((data || []).map(d => d.tenant_id))];
+  const { data: tenants } = ids.length
+    ? await sb.from("tenants").select("id, name").in("id", ids)
+    : { data: [] as any[] };
+  const byId = new Map((tenants || []).map(t => [t.id, t.name]));
+
+  // Short-lived signed URLs — the bucket is private and must stay that way.
+  // Generated per request rather than stored, so a leaked response expires.
+  const docs = await Promise.all((data || []).map(async d => {
+    const { data: signed } = await sb.storage.from("kyc-documents")
+      .createSignedUrl(d.storage_path, 300);
+    return { ...d, tenant_name: byId.get(d.tenant_id) || null, url: signed?.signedUrl || null };
+  }));
+  res.json({ count: docs.length, documents: docs });
+});
+
+app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
+  const adminId = (req as any).user.id;
+  const { decision, note } = req.body as { decision?: string; note?: string };
+  if (!["approved", "rejected"].includes(String(decision))) {
+    return res.status(400).json({ error: "decision must be approved or rejected" });
+  }
+  const { data, error } = await sb.from("kyc_documents").update({
+    status: decision, review_note: note || null,
+    reviewed_by: adminId, reviewed_at: new Date().toISOString(),
+  }).eq("id", req.params.id).select("id, tenant_id, status").single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: adminId, action: `kyc_${decision}`,
+    target_tenant_id: data?.tenant_id, details: { kyc_id: req.params.id, note: note || null },
+  }).then(r => r.error && console.error("[kyc review] audit:", r.error.message));
+
+  res.json({ ok: true, ...data });
+});
+
 // ── DID INVENTORY + ASSIGNMENT ────────────────────────────────
 // The bottleneck to onboarding a second client. Everything else existed:
 // signup creates the tenant via the handle_new_user trigger, the setup page

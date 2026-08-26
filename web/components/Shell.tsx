@@ -5,7 +5,7 @@ import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard,
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck
 } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import NikkiLogo from "./NikkiLogo";
@@ -27,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/analytics",   icon: BarChart3,     label: "Analytics"   },
   { href: "/whatsapp",    icon: MessageCircle, label: "WhatsApp"    },  // restored v4.0
   { href: "/knowledge",   icon: Brain,         label: "Teach Nikki" },
+  { href: "/verification", icon: ShieldCheck,  label: "Verification" },
   { href: "/setup",       icon: Settings,      label: "Setup"       },
   { href: "/billing",     icon: CreditCard,    label: "Billing"     },
 ];
