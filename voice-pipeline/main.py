@@ -281,6 +281,14 @@ TELUGU_PHONE_PERSONA = (
     "\n\nAVOID: repeating the question back; ధన్యవాదాలు every turn; formal openers "
     "like \'మీకు ఎలా సహాయం చేయగలను\' (say \'చెప్పండి\'); listing options like a menu; "
     "narrating what you are about to do."
+    "\n\nSOUND LIKE A PERSON, not a form:"
+    "\n- React to what they said BEFORE answering: ఓహ్ అలాగా, అర్థమైంది, అవునా."
+    "\n- Vary your wording. Never open two replies the same way in one call."
+    "\n- Not every reply needs a question at the end. Sometimes just answer "
+    "and let them speak."
+    "\n- Use their name occasionally once you know it — not every sentence."
+    "\n- Small talk, jokes, teasing: answer briefly and warmly like a person "
+    "would, then carry on. Do not lecture, and do not pretend to be human."
     "\n\nNEVER LOOP. Do not ask for the same thing twice in a row. If they did "
     "not give it, drop it and move the conversation on — ask again much later, "
     "or not at all. Asking a third time is worse than never getting it."
@@ -639,6 +647,39 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
+    async def get_caller_history(self, caller_number: str, voice_profile_id: str) -> dict:
+        """What we already know about this caller, for a human opening.
+
+        Nothing made Nikki feel more like a machine than greeting a caller
+        who had rung five times that day exactly as if he were a stranger.
+        A receptionist says "మళ్ళీ కాల్ చేశారు కదా" — recognition is most of
+        what makes a business feel like it knows you.
+
+        Returns {} on any failure: a cold greeting is a small loss, a failed
+        call is not.
+        """
+        digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+        if not digits or not voice_profile_id:
+            return {}
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(
+                    f"{self.url}/rest/v1/calls",
+                    headers=self.headers,
+                    params={"caller_number": f"like.*{digits}",
+                            "voice_profile_id": f"eq.{voice_profile_id}",
+                            "select": "id,created_at,intent,status",
+                            "order": "created_at.desc", "limit": "5"},
+                )
+                rows = r.json() if r.status_code == 200 else []
+                if not isinstance(rows, list) or not rows:
+                    return {}
+                return {"previous_calls": len(rows), "last_call_at": rows[0].get("created_at"),
+                        "last_intent": next((x.get("intent") for x in rows if x.get("intent")), None)}
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"caller history lookup failed: {e}")
+            return {}
+
     async def get_voice_profile(self, did_number: str) -> Optional[dict]:
         # FIXED: was querying voice_profiles.did_number, a backward-compat
         # column that super-admin's DID assignment panel never writes to —
@@ -794,6 +835,7 @@ class NikkiAgent:
         # "ఎన్ని సార్లు చెప్పాలి నా పేరు ఫోన్ నెంబరు?" and Nikki invented
         # "సిస్టమ్ లో సేవ్ అవ్వలేదు" to explain it.
         self._bg_tasks   : set = set()
+        self.caller_history: dict = {}
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         self.call_id     : Optional[str] = None
@@ -891,7 +933,16 @@ class NikkiAgent:
         while holding no phone number at all.
         """
         known = {k: v for k, v in self.slots.items() if v}
-        lines = ["\n\n[FACTS ALREADY COLLECTED — never ask for these again]"]
+        lines = []
+        h = self.caller_history or {}
+        if h.get("previous_calls"):
+            lines.append(
+                f"\n\n[THIS CALLER HAS RUNG BEFORE — {h['previous_calls']} time(s)]"
+                "\nAcknowledge it once, naturally, early — then move on. Do not "
+                "recite their history back at them, and never claim to remember "
+                "a detail you were not given below."
+            )
+        lines.append("\n\n[FACTS ALREADY COLLECTED — never ask for these again]")
         for k, v in known.items():
             lines.append(f"\n- {k}: {v}")
         # Only assert what was actually extracted. An earlier version also
@@ -2053,7 +2104,7 @@ def _assistant_name(profile: dict) -> str:
     return (profile.get("display_name") or "నిక్కి").strip()
 
 
-def _greeting_text(profile: dict) -> str:
+def _greeting_text(profile: dict, history: dict | None = None) -> str:
     """Warm brand greeting, spoken right after the TRAI disclosure.
 
     Previously the caller heard the disclosure and then silence — she waited
@@ -2061,6 +2112,12 @@ def _greeting_text(profile: dict) -> str:
     """
     biz  = (profile.get("business_name") or "").strip()
     name = _assistant_name(profile)
+    if (history or {}).get("previous_calls"):
+        # Recognition, not a script. A caller who rang before should not be
+        # greeted as a stranger — that is the single most machine-like thing
+        # a receptionist can do.
+        return (f"నమస్కారం! {biz} కి మళ్ళీ స్వాగతం. నేను {name}. "
+                f"చెప్పండి, ఈసారి ఏం కావాలి?")
     return (f"నమస్కారం! Welcome to {biz}. నేను {name}. "
             f"చెప్పండి, మీకు ఏం కావాలి?")
 
@@ -2074,11 +2131,15 @@ async def _greeting_audio(agent) -> bytes:
     no per-tenant asset to build.
     """
     pid = str((agent.profile or {}).get("id") or "default")
-    path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}.wav"
+    # Separate cache entry per variant, or a returning caller would be served
+    # the stranger greeting from cache and the recognition would never be heard.
+    variant = "back" if (agent.caller_history or {}).get("previous_calls") else "new"
+    path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}_{variant}.wav"
     try:
         if path.exists() and path.stat().st_size > 1000:
             return path.read_bytes()
-        audio = await agent.tts.synthesize(_greeting_text(agent.profile), agent.voice)
+        audio = await agent.tts.synthesize(
+            _greeting_text(agent.profile, agent.caller_history), agent.voice)
         if audio:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(audio)
@@ -2479,6 +2540,17 @@ async def freeswitch_ws(
             # off mid-sentence — and the disclosure is the regulatory part.
             await asyncio.sleep(_wav_duration_secs(disclosure_audio) + 0.2)
         disclosure_sent = True
+
+        # Load before greeting so a returning caller is recognised in the
+        # very first sentence, which is where it actually lands.
+        try:
+            agent.caller_history = await db.get_caller_history(
+                caller_number, (profile or {}).get("id", ""))
+            if agent.caller_history.get("previous_calls"):
+                log.info(f"[FS] {fs_uuid}: returning caller — "
+                         f"{agent.caller_history['previous_calls']} previous call(s)")
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"[FS] caller history skipped: {e}")
 
         greet = await _greeting_audio(agent)
         if greet:
