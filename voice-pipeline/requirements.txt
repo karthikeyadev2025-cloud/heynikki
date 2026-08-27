@@ -13,3 +13,8 @@ botocore>=1.35.0
 # dead code, never called at runtime, and the source of fresh-install
 # failures (documented version-pin conflict). The pipeline uses a custom
 # RMS VAD and raw WebSocket audio — no LiveKit runtime dependency.
+
+# Test-only. Kept in the image so the call-flow suite can run before a
+# deploy without a network install — every bug so far was found by a human
+# placing a phone call, which is the thing these tests replace.
+pytest==8.3.4
