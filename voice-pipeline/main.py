@@ -2996,10 +2996,17 @@ async def freeswitch_ws(
                 "business_name": profile.get("business_name", ""),
             }, cfg)
         elif agent.intent == "appointment":
-            await _fire_automation_webhook("appointment-booked", {
+            # The event name is the n8n webhook path, and the workflow has
+            # always listened on "appointment-confirmed" — matching the
+            # approved Meta template of the same name. Firing
+            # "appointment-booked" hit a path no workflow served, so the
+            # confirmation WhatsApp could never have gone out. business_name
+            # is included because the template reads it into {{1}}.
+            await _fire_automation_webhook("appointment-confirmed", {
                 "caller_number": caller_number,
                 "tenant_id":     profile["tenant_id"],
                 "call_id":       agent.call_id,
+                "business_name": profile.get("business_name", ""),
             }, cfg)
 
         log.info(f"[FS] {fs_uuid}: cleanup complete, r2={r2_url or 'skipped'}")
