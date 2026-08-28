@@ -1,13 +1,13 @@
 #!/bin/bash
 # ============================================================
-# JOVIO — EC2 Setup Script for Ubuntu 24.04
+# HEYNIKKI — EC2 Setup Script for Ubuntu 24.04
 # ============================================================
 
 set -e
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║   JOVIO — EC2 Setup Ubuntu 24.04    ║"
+echo "║   HEYNIKKI — EC2 Setup Ubuntu 24.04    ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -22,18 +22,18 @@ sudo apt-get install -y \
     python3-dev libffi-dev libssl-dev gcc g++
 
 # ── 2. CLONE REPO ────────────────────────────────────────
-echo "📥 Cloning Jovio repo..."
+echo "📥 Cloning HeyNikki repo..."
 cd /home/ubuntu
-if [ -d "jovi" ]; then
-    cd jovi && git pull origin main
+if [ -d "heynikki" ]; then
+    cd heynikki && git pull origin main
     cd /home/ubuntu
 else
-    git clone https://github.com/jovioglobaltechnologies/jovi.git
+    git clone https://github.com/karthikeyadev2025-cloud/heynikki.git
 fi
 
 # ── 3. PYTHON VENV (uses python3 = 3.12 on Ubuntu 24) ───
 echo "🐍 Setting up Python environment..."
-cd /home/ubuntu/jovi/voice-pipeline
+cd /home/ubuntu/heynikki/voice-pipeline
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip wheel
@@ -50,40 +50,40 @@ npm --version
 
 # ── 5. API SERVER ────────────────────────────────────────
 echo "📦 Installing API server dependencies..."
-cd /home/ubuntu/jovi/api-server
+cd /home/ubuntu/heynikki/api-server
 npm install
 echo "✅ API server dependencies installed"
 
 # ── 6. SUPERVISOR CONFIG ─────────────────────────────────
 echo "⚙️ Configuring Supervisor..."
-sudo tee /etc/supervisor/conf.d/jovio-pipeline.conf << 'EOF'
-[program:jovio-pipeline]
-command=/home/ubuntu/jovi/voice-pipeline/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
-directory=/home/ubuntu/jovi/voice-pipeline
+sudo tee /etc/supervisor/conf.d/heynikki-pipeline.conf << 'EOF'
+[program:heynikki-pipeline]
+command=/home/ubuntu/heynikki/voice-pipeline/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+directory=/home/ubuntu/heynikki/voice-pipeline
 user=ubuntu
 autostart=true
 autorestart=true
 stopasgroup=true
 killasgroup=true
-stderr_logfile=/var/log/jovio-pipeline.err.log
-stdout_logfile=/var/log/jovio-pipeline.out.log
-environment=HOME="/home/ubuntu",USER="ubuntu",PATH="/home/ubuntu/jovi/voice-pipeline/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+stderr_logfile=/var/log/heynikki-pipeline.err.log
+stdout_logfile=/var/log/heynikki-pipeline.out.log
+environment=HOME="/home/ubuntu",USER="ubuntu",PATH="/home/ubuntu/heynikki/voice-pipeline/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 EOF
 
-sudo tee /etc/supervisor/conf.d/jovio-api.conf << 'EOF'
-[program:jovio-api]
-command=/usr/bin/node /home/ubuntu/jovi/api-server/src/index.ts
-directory=/home/ubuntu/jovi/api-server
+sudo tee /etc/supervisor/conf.d/heynikki-api.conf << 'EOF'
+[program:heynikki-api]
+command=/usr/bin/node /home/ubuntu/heynikki/api-server/src/index.ts
+directory=/home/ubuntu/heynikki/api-server
 user=ubuntu
 autostart=false
 autorestart=true
-stderr_logfile=/var/log/jovio-api.err.log
-stdout_logfile=/var/log/jovio-api.out.log
+stderr_logfile=/var/log/heynikki-api.err.log
+stdout_logfile=/var/log/heynikki-api.out.log
 EOF
 
 # ── 7. NGINX CONFIG ──────────────────────────────────────
 echo "🌐 Configuring Nginx..."
-sudo tee /etc/nginx/sites-available/jovio << 'EOF'
+sudo tee /etc/nginx/sites-available/heynikki << 'EOF'
 server {
     listen 80 default_server;
     server_name _;
@@ -113,7 +113,7 @@ server {
 }
 EOF
 
-sudo ln -sf /etc/nginx/sites-available/jovio /etc/nginx/sites-enabled/jovio
+sudo ln -sf /etc/nginx/sites-available/heynikki /etc/nginx/sites-enabled/heynikki
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl restart nginx
 
@@ -126,8 +126,8 @@ sudo ufw allow 4000
 sudo ufw --force enable
 
 # ── 9. CREATE .env PLACEHOLDER ───────────────────────────
-if [ ! -f /home/ubuntu/jovi/voice-pipeline/.env ]; then
-    cp /home/ubuntu/jovi/voice-pipeline/.env.ec2 /home/ubuntu/jovi/voice-pipeline/.env
+if [ ! -f /home/ubuntu/heynikki/voice-pipeline/.env ]; then
+    cp /home/ubuntu/heynikki/voice-pipeline/.env.ec2 /home/ubuntu/heynikki/voice-pipeline/.env
     echo "⚠️  .env file created from template — fill in your real keys!"
 fi
 
@@ -137,12 +137,12 @@ sudo supervisorctl update
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║  ✅ JOVIO EC2 SETUP COMPLETE!                   ║"
+echo "║  ✅ HEYNIKKI EC2 SETUP COMPLETE!                   ║"
 echo "╠══════════════════════════════════════════════════╣"
 echo "║  Next: Add your API keys to .env                ║"
-echo "║  Run:  nano /home/ubuntu/jovi/voice-pipeline/.env ║"
+echo "║  Run:  nano /home/ubuntu/heynikki/voice-pipeline/.env ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
 echo "After filling .env, run:"
-echo "  sudo supervisorctl start jovio-pipeline"
+echo "  sudo supervisorctl start heynikki-pipeline"
 echo "  curl http://localhost:8000/health"

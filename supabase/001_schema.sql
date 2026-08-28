@@ -1,6 +1,6 @@
 -- ============================================================
 -- NIKKI — Complete Database Schema
--- Powered by Nikki Tech Labs
+-- Powered by Nikki Technologies
 --
 -- Run in: Supabase SQL Editor → New Query → Run All
 -- Project: wnawozdmmxuziucavngw
@@ -659,6 +659,6 @@ create policy "docs_tenant_access" on storage.objects for all
 -- ══════════════════════════════════════════════════════════════
 -- DONE
 -- Nikki — Telugu AI Receptionist
--- Powered by Nikki Tech Labs
+-- Powered by Nikki Technologies
 -- © 2026 Hey Nikki
 -- ══════════════════════════════════════════════════════════════

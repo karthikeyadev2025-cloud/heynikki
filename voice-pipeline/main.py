@@ -29,7 +29,7 @@ if _SENTRY_DSN:
 
         sentry_sdk.init(
             dsn=_SENTRY_DSN,
-            environment=os.environ.get("JOVIO_ENV", "development"),
+            environment=os.environ.get("HEYNIKKI_ENV", "development"),
             release=os.environ.get("RELEASE_SHA"),
             traces_sample_rate=0.1,
             integrations=[
@@ -1142,8 +1142,8 @@ class NikkiAgent:
         Layout of stored object (binary):
             [ 12-byte nonce ][ ciphertext + GCM tag ]
 
-        Decryption key is per-tenant, sourced from env JOVIO_RECORDING_KEY_<TENANT>
-        or a single fallback JOVIO_RECORDING_KEY. Key must be 32 bytes base64-encoded.
+        Decryption key is per-tenant, sourced from env HEYNIKKI_RECORDING_KEY_<TENANT>
+        or a single fallback HEYNIKKI_RECORDING_KEY. Key must be 32 bytes base64-encoded.
 
         Returns the Supabase storage path or None on failure (never blocks call cleanup).
         """
@@ -1155,11 +1155,11 @@ class NikkiAgent:
 
         tenant_id = self.profile.get("tenant_id", "unknown")
         key_b64 = (
-            os.getenv(f"JOVIO_RECORDING_KEY_{tenant_id}")
-            or os.getenv("JOVIO_RECORDING_KEY")
+            os.getenv(f"HEYNIKKI_RECORDING_KEY_{tenant_id}")
+            or os.getenv("HEYNIKKI_RECORDING_KEY")
         )
         if not key_b64:
-            log.error("JOVIO_RECORDING_KEY env not set; skipping recording")
+            log.error("HEYNIKKI_RECORDING_KEY env not set; skipping recording")
             return None
 
         try:
@@ -2443,11 +2443,36 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             r = await c.post(f"{agent.db.url}/rest/v1/leads",
                              headers={**agent.db.headers, "Prefer": "return=minimal"},
                              json=row)
+            # leads carries a unique (tenant_id, phone). A returning caller
+            # therefore 409s here, and everything this call learned — updated
+            # intent, a business name they only gave the second time, a better
+            # score — used to be dropped on the floor with a warning. Update
+            # the existing lead instead.
+            if r.status_code == 409:
+                # first_call_id is deliberately excluded: it records the FIRST
+                # call and must not drift forward. Nones are dropped too, so a
+                # call that failed to capture a name does not blank the name
+                # captured last time.
+                patch = {k: v for k, v in row.items()
+                         if k not in ("tenant_id", "phone", "first_call_id")
+                         and v is not None}
+                if patch:
+                    r = await c.patch(
+                        f"{agent.db.url}/rest/v1/leads"
+                        f"?tenant_id=eq.{row['tenant_id']}&phone=eq.{digits}",
+                        headers={**agent.db.headers, "Prefer": "return=minimal"},
+                        json=patch)
+                    updated = True
+                else:
+                    updated = True
+            else:
+                updated = False
         if r.status_code >= 300:
-            log.warning(f"[FS] {fs_uuid}: lead insert {r.status_code} {r.text[:120]}")
+            log.warning(f"[FS] {fs_uuid}: lead {'update' if updated else 'insert'} "
+                        f"{r.status_code} {r.text[:120]}")
         else:
-            log.info(f"[FS] {fs_uuid}: lead scored {score}/100 stage={stage} "
-                     f"intent={row['intent']}")
+            log.info(f"[FS] {fs_uuid}: lead {'updated' if updated else 'scored'} "
+                     f"{score}/100 stage={stage} intent={row['intent']}")
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
 

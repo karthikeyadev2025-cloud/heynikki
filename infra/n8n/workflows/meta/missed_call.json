@@ -15,7 +15,8 @@
       "position": [
         240,
         300
-      ]
+      ],
+      "webhookId": "bef8ccb0-7f9b-54e8-9357-aae552e33e51"
     },
     {
       "parameters": {
@@ -58,22 +59,7 @@
       "parameters": {
         "method": "POST",
         "url": "=https://graph.facebook.com/v21.0/{{ $env.META_WA_PHONE_NUMBER_ID }}/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headers": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "Bearer {{ $env.WATI_API_KEY }}"
-            }
-          ]
-        },
-        "bodyParameters": {
-          "parameters": []
-        },
-        "body": {
-          "body": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"missed_call_followup\",\n    \"language\": {\n      \"code\": \"en\"\n    },\n    \"components\": [\n      {\n        \"type\": \"body\",\n        \"parameters\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"{{ $node['Extract Fields'].json.business_name }}\"\n          }\n        ]\n      }\n    ]\n  }\n}"
-        },
+        "authentication": "none",
         "options": {},
         "headerParameters": {
           "parameters": [
@@ -86,7 +72,11 @@
               "value": "application/json"
             }
           ]
-        }
+        },
+        "sendHeaders": true,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"type\": \"template\",\n  \"template\": {\n    \"name\": \"missed_call_followup\",\n    \"language\": {\n      \"code\": \"en\"\n    },\n    \"components\": [\n      {\n        \"type\": \"body\",\n        \"parameters\": [\n          {\n            \"type\": \"text\",\n            \"text\": \"{{ $node['Extract Fields'].json.business_name }}\"\n          }\n        ]\n      }\n    ]\n  }\n}"
       },
       "id": "send-wa",
       "name": "Send WhatsApp — Missed Call Template",
@@ -101,9 +91,10 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/wa_dispatch_log",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headers": {
+        "authentication": "none",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
               "name": "apikey",
@@ -111,7 +102,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -123,11 +114,9 @@
             }
           ]
         },
-        "body": {
-          "contentType": "json",
-          "body": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"missed_call\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
-        },
-        "options": {}
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"missed_call\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
       },
       "id": "log-supabase",
       "name": "Log to Supabase wa_dispatch_log",
@@ -150,7 +139,8 @@
       "position": [
         1120,
         300
-      ]
+      ],
+      "webhookId": "73074230-b3e0-5c20-bebb-4d47299f8e7b"
     }
   ],
   "connections": {
@@ -203,9 +193,5 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "tags": [
-    "heynikki",
-    "missed-call",
-    "whatsapp"
-  ]
+  "id": "heynikki-meta-missed-call"
 }

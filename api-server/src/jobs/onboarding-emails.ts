@@ -45,7 +45,7 @@ Three things to do in the next 5 minutes:
 If you get stuck, just reply to this email. I read every one.
 
 — Karthikeya
-Nikki Global Technologies`,
+Nikki Technologies`,
   },
   {
     id:        "day3_check_in",

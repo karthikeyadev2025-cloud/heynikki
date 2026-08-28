@@ -1,5 +1,5 @@
 From 6ec62d6cabe8280c1c2d3dde1644c4799bb7a5b9 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 13:18:10 +0000
 Subject: [PATCH] feat(flutter): FCM push wiring + /forgot-password +
  device_tokens schema
@@ -55,7 +55,7 @@ index 8f8b68c..766be2d 100644
  import 'theme.dart';
  import 'providers/auth_provider.dart';
 +import 'services/fcm_service.dart';
- import 'widgets/jovio_widgets.dart';
+ import 'widgets/heynikki_widgets.dart';
  import 'screens/onboarding/onboarding_screen.dart';
  import 'screens/auth/login_screen.dart';
  import 'screens/auth/signup_screen.dart';
@@ -65,7 +65,7 @@ index 8f8b68c..766be2d 100644
  import 'screens/analytics/analytics_screen.dart';
 @@ -23,22 +25,29 @@ const kSupabaseUrl  = String.fromEnvironment('SUPABASE_URL',  defaultValue: 'htt
  const kSupabaseAnon = String.fromEnvironment('SUPABASE_ANON', defaultValue: 'YOUR_ANON_KEY');
- const kApiUrl       = String.fromEnvironment('API_URL',       defaultValue: 'https://api.jovio.in');
+ const kApiUrl       = String.fromEnvironment('API_URL',       defaultValue: 'https://api.heynikki.in');
  
 +/// Navigator key — used by FcmService to route on push tap from any
 +/// context (incl. background isolate handoff to UI).
@@ -96,7 +96,7 @@ index 8f8b68c..766be2d 100644
 +      GoRoute(path: '/signup',          builder: (_, __) => const SignupScreen()),
 +      GoRoute(path: '/forgot-password', builder: (_, __) => const ForgotPasswordScreen()),
        ShellRoute(
-         builder: (ctx, state, child) => JovioShell(child: child, location: state.matchedLocation),
+         builder: (ctx, state, child) => HeyNikkiShell(child: child, location: state.matchedLocation),
          routes: [
 @@ -63,8 +72,11 @@ void main() async {
    await Supabase.initialize(url: kSupabaseUrl, anonKey: kSupabaseAnon);
@@ -109,7 +109,7 @@ index 8f8b68c..766be2d 100644
 +    // Firebase may not be configured in dev — keep app usable
 +    debugPrint('Firebase/FCM init skipped: $e');
 +  }
-   runApp(const ProviderScope(child: JovioApp()));
+   runApp(const ProviderScope(child: HeyNikkiApp()));
  }
  
 diff --git a/flutter-app/lib/providers/auth_provider.dart b/flutter-app/lib/providers/auth_provider.dart
@@ -206,7 +206,7 @@ index 0000000..b4f4a88
 +        email,
 +        // Deep-link back into the dashboard; mobile users typically don't
 +        // run a reset-password page in-app, the web flow is simpler.
-+        redirectTo: 'https://jovio.in/reset-password',
++        redirectTo: 'https://heynikki.in/reset-password',
 +      );
 +    } on AuthException catch (e) {
 +      // Only surface rate-limit errors. For everything else fall through
@@ -225,12 +225,12 @@ index 0000000..b4f4a88
 +  @override
 +  Widget build(BuildContext context) {
 +    return Scaffold(
-+      backgroundColor: JovioColors.bg,
++      backgroundColor: HeyNikkiColors.bg,
 +      appBar: AppBar(
 +        backgroundColor: Colors.transparent,
 +        elevation: 0,
 +        leading: IconButton(
-+          icon: const Icon(Icons.arrow_back_rounded, color: JovioColors.text),
++          icon: const Icon(Icons.arrow_back_rounded, color: HeyNikkiColors.text),
 +          onPressed: () => context.go('/login'),
 +        ),
 +      ),
@@ -243,14 +243,14 @@ index 0000000..b4f4a88
 +              const SizedBox(height: 16),
 +              const Text(
 +                'Reset your password',
-+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: JovioColors.text),
++                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: HeyNikkiColors.text),
 +              ),
 +              const SizedBox(height: 8),
 +              Text(
 +                _sent
 +                  ? "If an account exists for that email, we've sent a reset link. Check your inbox — including spam."
-+                  : "Enter the email on your Jovio account and we'll send you a reset link.",
-+                style: const TextStyle(fontSize: 14, color: JovioColors.mid, height: 1.5),
++                  : "Enter the email on your HeyNikki account and we'll send you a reset link.",
++                style: const TextStyle(fontSize: 14, color: HeyNikkiColors.mid, height: 1.5),
 +              ),
 +              const SizedBox(height: 28),
 +
@@ -260,15 +260,15 @@ index 0000000..b4f4a88
 +                  keyboardType: TextInputType.emailAddress,
 +                  autocorrect:  false,
 +                  enableSuggestions: false,
-+                  style: const TextStyle(color: JovioColors.text),
++                  style: const TextStyle(color: HeyNikkiColors.text),
 +                  decoration: InputDecoration(
 +                    labelText: 'Email',
-+                    labelStyle: const TextStyle(color: JovioColors.mid),
++                    labelStyle: const TextStyle(color: HeyNikkiColors.mid),
 +                    filled: true,
-+                    fillColor: JovioColors.high,
++                    fillColor: HeyNikkiColors.high,
 +                    border: OutlineInputBorder(
 +                      borderRadius: BorderRadius.circular(10),
-+                      borderSide: const BorderSide(color: JovioColors.border),
++                      borderSide: const BorderSide(color: HeyNikkiColors.border),
 +                    ),
 +                  ),
 +                ),
@@ -279,11 +279,11 @@ index 0000000..b4f4a88
 +                    padding: const EdgeInsets.all(12),
 +                    margin: const EdgeInsets.only(bottom: 12),
 +                    decoration: BoxDecoration(
-+                      color: JovioColors.red.withOpacity(0.15),
-+                      border: Border.all(color: JovioColors.red),
++                      color: HeyNikkiColors.red.withOpacity(0.15),
++                      border: Border.all(color: HeyNikkiColors.red),
 +                      borderRadius: BorderRadius.circular(8),
 +                    ),
-+                    child: Text(_error!, style: const TextStyle(color: JovioColors.red, fontSize: 13)),
++                    child: Text(_error!, style: const TextStyle(color: HeyNikkiColors.red, fontSize: 13)),
 +                  ),
 +
 +                SizedBox(
@@ -291,8 +291,8 @@ index 0000000..b4f4a88
 +                  child: ElevatedButton(
 +                    onPressed: _loading ? null : _submit,
 +                    style: ElevatedButton.styleFrom(
-+                      backgroundColor: JovioColors.teal,
-+                      foregroundColor: JovioColors.bg,
++                      backgroundColor: HeyNikkiColors.teal,
++                      foregroundColor: HeyNikkiColors.bg,
 +                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
 +                    ),
 +                    child: _loading
@@ -306,8 +306,8 @@ index 0000000..b4f4a88
 +                  child: OutlinedButton(
 +                    onPressed: () => context.go('/login'),
 +                    style: OutlinedButton.styleFrom(
-+                      side: const BorderSide(color: JovioColors.border),
-+                      foregroundColor: JovioColors.text,
++                      side: const BorderSide(color: HeyNikkiColors.border),
++                      foregroundColor: HeyNikkiColors.text,
 +                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
 +                    ),
 +                    child: const Text('← Back to login', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
@@ -325,9 +325,9 @@ index 63f9e23..b3ac192 100644
 --- a/flutter-app/lib/screens/auth/login_screen.dart
 +++ b/flutter-app/lib/screens/auth/login_screen.dart
 @@ -72,7 +72,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
-                 decoration: const InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock_outline, color: JovioColors.dim))),
+                 decoration: const InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock_outline, color: HeyNikkiColors.dim))),
                const SizedBox(height: 24),
-               JovioButton(label: 'Sign In', onTap: _login, loading: _loading),
+               HeyNikkiButton(label: 'Sign In', onTap: _login, loading: _loading),
 -              const SizedBox(height: 16),
 +              const SizedBox(height: 8),
 +              Center(
@@ -337,15 +337,15 @@ index 63f9e23..b3ac192 100644
 +                    padding: EdgeInsets.symmetric(vertical: 8),
 +                    child: Text(
 +                      'Forgot password?',
-+                      style: TextStyle(color: JovioColors.mid, fontSize: 12, decoration: TextDecoration.underline),
++                      style: TextStyle(color: HeyNikkiColors.mid, fontSize: 12, decoration: TextDecoration.underline),
 +                    ),
 +                  ),
 +                ),
 +              ),
 +              const SizedBox(height: 8),
                Row(children: const [
-                 Expanded(child: Divider(color: JovioColors.border)),
-                 Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('or', style: TextStyle(color: JovioColors.dim, fontSize: 12))),
+                 Expanded(child: Divider(color: HeyNikkiColors.border)),
+                 Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('or', style: TextStyle(color: HeyNikkiColors.dim, fontSize: 12))),
 diff --git a/flutter-app/lib/services/fcm_service.dart b/flutter-app/lib/services/fcm_service.dart
 new file mode 100644
 index 0000000..9f1f55e
@@ -395,7 +395,7 @@ index 0000000..9f1f55e
 +      if (ctx != null && msg.notification != null) {
 +        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
 +          content: Text(
-+            '${msg.notification!.title ?? 'Jovio'}: ${msg.notification!.body ?? ''}',
++            '${msg.notification!.title ?? 'HeyNikki'}: ${msg.notification!.body ?? ''}',
 +          ),
 +          duration: const Duration(seconds: 4),
 +          action: SnackBarAction(
@@ -529,7 +529,7 @@ index 0000000..64aa25e
 +++ b/supabase/002_device_tokens.sql
 @@ -0,0 +1,66 @@
 +-- ============================================================
-+-- JOVIO — device_tokens table (FCM push registration)
++-- HEYNIKKI — device_tokens table (FCM push registration)
 +-- ============================================================
 +-- Stores Firebase Cloud Messaging tokens per (user, platform) so the
 +-- api-server can push notifications to a specific user's active devices.

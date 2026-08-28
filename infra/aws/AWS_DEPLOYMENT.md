@@ -62,8 +62,8 @@ Then **EC2 Console → Instance → Actions → Security → Modify IAM role** �
 SSH in, then:
 
 ```bash
-git clone https://github.com/karthikeyadev2025-cloud/jovi.git
-cd jovi
+git clone https://github.com/karthikeyadev2025-cloud/heynikki.git
+cd heynikki
 bash voice-pipeline/setup_ec2_ubuntu24.sh    # existing script — installs deps
 ```
 
@@ -79,7 +79,7 @@ sudo chmod 0750 /etc/nikki
 
 sudo nano /etc/nikki/voice-pipeline.env
 # Paste — see voice-pipeline/.env.example for the full list.
-# Critical: JOVIO_RECORDING_KEY, SARVAM_API_KEY, GEMINI_API_KEY, LIVEKIT_*
+# Critical: HEYNIKKI_RECORDING_KEY, SARVAM_API_KEY, GEMINI_API_KEY, LIVEKIT_*
 
 sudo nano /etc/nikki/api-server.env
 # Paste — see api-server/.env.example for the full list.
@@ -189,7 +189,7 @@ sudo tail -f /var/log/nikki-api.out.log /var/log/nikki-pipeline.err.log
 ### Restart after deploying new code
 
 ```bash
-cd /home/ubuntu/jovi
+cd /home/ubuntu/heynikki
 git pull
 cd api-server     && npm install --omit=dev
 cd ../voice-pipeline && source venv/bin/activate && pip install -r requirements.txt && deactivate
@@ -199,7 +199,7 @@ sudo systemctl restart nikki-pipeline nikki-api
 ### Rolling back
 
 ```bash
-cd /home/ubuntu/jovi
+cd /home/ubuntu/heynikki
 git log --oneline -5
 git checkout <commit-sha>
 sudo systemctl restart nikki-pipeline nikki-api
@@ -261,7 +261,7 @@ Supabase (Pro tier): ₹2,100/mo separately if you outgrow Free.
 
 - [ ] SSH only from your IP (or set up AWS Session Manager and disable SSH)
 - [ ] All secrets in `/etc/nikki/*.env`, mode 0640, owner root:ubuntu — NEVER in repo
-- [ ] `JOVIO_RECORDING_KEY` backed up to encrypted password manager (losing it = unrecoverable recordings)
+- [ ] `HEYNIKKI_RECORDING_KEY` backed up to encrypted password manager (losing it = unrecoverable recordings)
 - [ ] `EXOTEL_WEBHOOK_TOKEN` configured in Exotel dashboard webhook URLs
 - [ ] CloudWatch alarms on: `/health` failures, CPU > 80%, disk > 80%, memory > 80%
 - [ ] AWS GuardDuty enabled (one click, free tier)

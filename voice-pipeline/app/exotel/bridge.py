@@ -6,7 +6,7 @@ Sarvam is only called mid-conversation for dynamic replies.
 Recording: the full call audio (caller turns + AI turns, in the order they
 actually happened — there's no barge-in yet so this is a faithful timeline)
 is buffered in memory as it streams, then on 'stop' it's wrapped as a WAV,
-AES-256-GCM encrypted with JOVIO_RECORDING_KEY, and uploaded to Supabase
+AES-256-GCM encrypted with HEYNIKKI_RECORDING_KEY, and uploaded to Supabase
 Storage. A `calls` row is created on 'start' and finalized on 'stop' so the
 recording has somewhere to attach (recording_path, duration_seconds).
 """
@@ -683,14 +683,14 @@ def _pcm8k_to_wav(pcm_8k: bytes) -> bytes:
 
 def _encrypt_recording(wav_bytes: bytes, tenant_id: str, call_key: str) -> Optional[bytes]:
     """AES-256-GCM. Stored layout: [12-byte nonce][ciphertext + GCM tag].
-    Key: JOVIO_RECORDING_KEY_<tenant_id> override if set, else the shared
-    JOVIO_RECORDING_KEY. Must be a 32-byte key, base64-encoded in env."""
+    Key: HEYNIKKI_RECORDING_KEY_<tenant_id> override if set, else the shared
+    HEYNIKKI_RECORDING_KEY. Must be a 32-byte key, base64-encoded in env."""
     if not _HAS_CRYPTO:
         log.error("cryptography not installed; skipping recording encryption")
         return None
-    key_b64 = os.getenv(f"JOVIO_RECORDING_KEY_{tenant_id}") or os.getenv("JOVIO_RECORDING_KEY")
+    key_b64 = os.getenv(f"HEYNIKKI_RECORDING_KEY_{tenant_id}") or os.getenv("HEYNIKKI_RECORDING_KEY")
     if not key_b64:
-        log.error("JOVIO_RECORDING_KEY not set; skipping recording")
+        log.error("HEYNIKKI_RECORDING_KEY not set; skipping recording")
         return None
     try:
         key = base64.b64decode(key_b64)

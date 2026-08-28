@@ -150,6 +150,18 @@ services:
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - WATI_API_KEY=${WATI_API_KEY}
       - WATI_API_URL=${WATI_API_URL}
+      # The Meta workflows build their whole request from $env.META_WA_*: the
+      # send URL takes the phone number id, the Authorization header takes the
+      # token. Without these the URL resolves to
+      # graph.facebook.com/v21.0//messages with an empty bearer, so every send
+      # fails — while the workflow still answers HTTP 200 from its Respond
+      # node, which is why this looked healthy from outside.
+      - META_WA_TOKEN=${META_WA_TOKEN}
+      - META_WA_PHONE_NUMBER_ID=${META_WA_PHONE_NUMBER_ID}
+      - META_WA_API_VERSION=${META_WA_API_VERSION}
+      - WHATSAPP_PROVIDER=${WHATSAPP_PROVIDER}
+      # Expressions can read $env only while this is explicitly off.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5678/healthz"]
       interval: 30s

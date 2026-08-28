@@ -1,5 +1,5 @@
 From c6b52b9f8dfd0e43b54d5be55244bfc6114cf74a Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 08:18:42 +0000
 Subject: [PATCH 1/4] feat(api): public REST API + tenant API keys (Scale plan)
 MIME-Version: 1.0
@@ -340,7 +340,7 @@ index 0000000..229b1a0
 +  grad: "linear-gradient(135deg, #F59E0B 0%, #00E676 100%)",
 +};
 +
-+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.jovio.in";
++const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 +
 +interface ApiKey {
 +  id:         string;
@@ -477,7 +477,7 @@ index 0000000..229b1a0
 +              API Keys
 +            </h1>
 +            <p style={{ color: J.textMid, fontSize: 14, marginTop: 4 }}>
-+              For integrating Jovio with your CRM, Zapier, or custom backend.
++              For integrating HeyNikki with your CRM, Zapier, or custom backend.
 +            </p>
 +          </div>
 +          {!showIssueForm && !newKey && (
@@ -666,7 +666,7 @@ index 0000000..229b1a0
 +        {/* Docs link */}
 +        <div style={{ marginTop: 32, padding: 16, background: J.vault, borderRadius: 10,
 +                      border: `1px solid ${J.border}`, fontSize: 13, color: J.textMid }}>
-+          📖 API documentation: <a href="https://docs.jovio.in/api" style={{ color: J.mercury }}>docs.jovio.in/api</a>
++          📖 API documentation: <a href="https://docs.heynikki.in/api" style={{ color: J.mercury }}>docs.heynikki.in/api</a>
 +          {" · "}Endpoints: <code style={{ color: J.chandra }}>GET /api/v1/calls</code>,
 +          {" "}<code style={{ color: J.chandra }}>GET /api/v1/calls/:id</code>,
 +          {" "}<code style={{ color: J.chandra }}>GET /api/v1/appointments</code>,
@@ -683,7 +683,7 @@ index 0000000..7b248c8
 +++ b/supabase/004_api_keys.sql
 @@ -0,0 +1,74 @@
 +-- ============================================================
-+-- JOVIO — tenant API keys
++-- HEYNIKKI — tenant API keys
 +-- ============================================================
 +-- Public REST API access is a Scale-plan feature. Each tenant can
 +-- issue multiple keys; we store ONLY the bcrypt hash + a short prefix
@@ -761,7 +761,7 @@ index 0000000..7b248c8
 
 
 From 2560fdbc020579a8991ab30d769837abf40208eb Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 08:23:16 +0000
 Subject: [PATCH 2/4] feat(dashboard): CSV export of calls
 MIME-Version: 1.0
@@ -828,7 +828,7 @@ index 84abc5d..17c2484 100644
 +
 +  const a = document.createElement("a");
 +  a.href     = url;
-+  a.download = `jovio-calls-${new Date().toISOString().slice(0, 10)}.csv`;
++  a.download = `heynikki-calls-${new Date().toISOString().slice(0, 10)}.csv`;
 +  document.body.appendChild(a);
 +  a.click();
 +  document.body.removeChild(a);
@@ -864,7 +864,7 @@ index 84abc5d..17c2484 100644
 
 
 From df367c78947f2bed4e4805077cf18ed14612f52e Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 08:23:16 +0000
 Subject: [PATCH 3/4] feat(emails): onboarding sequence (day 0 / 3 / 10 / 14)
 MIME-Version: 1.0
@@ -896,13 +896,13 @@ allows 10/sec). Job exits 0 on full success, 1 on any send errors
 so cron alerting can pick it up via the CW agent's log group.
 ---
  api-server/src/jobs/onboarding-emails.ts | 197 +++++++++++++++++++++++
- infra/systemd/jovio-onboarding.service   |  31 ++++
- infra/systemd/jovio-onboarding.timer     |  17 ++
+ infra/systemd/heynikki-onboarding.service   |  31 ++++
+ infra/systemd/heynikki-onboarding.timer     |  17 ++
  supabase/005_onboarding_emails.sql       |  29 ++++
  4 files changed, 274 insertions(+)
  create mode 100644 api-server/src/jobs/onboarding-emails.ts
- create mode 100644 infra/systemd/jovio-onboarding.service
- create mode 100644 infra/systemd/jovio-onboarding.timer
+ create mode 100644 infra/systemd/heynikki-onboarding.service
+ create mode 100644 infra/systemd/heynikki-onboarding.timer
  create mode 100644 supabase/005_onboarding_emails.sql
 
 diff --git a/api-server/src/jobs/onboarding-emails.ts b/api-server/src/jobs/onboarding-emails.ts
@@ -929,8 +929,8 @@ index 0000000..5d949f6
 +import { createClient } from "@supabase/supabase-js";
 +
 +const RESEND_API_KEY = process.env.RESEND_API_KEY!;
-+const FROM_EMAIL     = process.env.FROM_EMAIL     || "hello@jovio.in";
-+const SITE_URL       = process.env.SITE_URL       || "https://jovio.in";
++const FROM_EMAIL     = process.env.FROM_EMAIL     || "hello@heynikki.in";
++const SITE_URL       = process.env.SITE_URL       || "https://heynikki.in";
 +
 +interface OnboardingStep {
 +  id:          string;
@@ -943,22 +943,22 @@ index 0000000..5d949f6
 +  {
 +    id:        "welcome",
 +    daysAfter: 0,
-+    subject:   () => "Welcome to Jovio — let's get your AI receptionist live",
++    subject:   () => "Welcome to HeyNikki — let's get your AI receptionist live",
 +    body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 +
-+Welcome to Jovio. Your 14-day free trial just started — no card required.
++Welcome to HeyNikki. Your 14-day free trial just started — no card required.
 +
 +Three things to do in the next 5 minutes:
 +
 +  1. Pick a voice profile (Standard / Clinic / Real Estate / Premium)
 +       → ${dashboardUrl}/setup
-+  2. Forward your business number to the Jovio DID we set up
++  2. Forward your business number to the HeyNikki DID we set up
 +  3. Make a test call to see it in action
 +
 +If you get stuck, just reply to this email. I read every one.
 +
 +— Karthikeya
-+Jovio Global Technologies`,
++Nikki Technologies`,
 +  },
 +  {
 +    id:        "day3_check_in",
@@ -966,14 +966,14 @@ index 0000000..5d949f6
 +    subject:   () => "How's the AI receptionist going?",
 +    body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 +
-+Day 3 of your Jovio trial. Quick check-in — has the AI handled any
++Day 3 of your HeyNikki trial. Quick check-in — has the AI handled any
 +real calls yet?
 +
 +  • If yes: take a peek at the call recordings + transcripts at
 +    ${dashboardUrl}/calls — you'll see exactly what callers heard
 +    and what was booked.
 +  • If not: most likely the forwarding isn't active. Common fixes:
-+    https://docs.jovio.in/call-forwarding
++    https://docs.heynikki.in/call-forwarding
 +
 +Any questions, just reply.
 +
@@ -982,16 +982,16 @@ index 0000000..5d949f6
 +  {
 +    id:        "day10_trial_ending",
 +    daysAfter: 10,
-+    subject:   () => "Your Jovio trial ends in 4 days",
++    subject:   () => "Your HeyNikki trial ends in 4 days",
 +    body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 +
-+Heads up — your 14-day Jovio trial ends in 4 days.
++Heads up — your 14-day HeyNikki trial ends in 4 days.
 +
 +To keep your AI receptionist running without interruption, pick a plan:
 +  → ${dashboardUrl}/billing
 +
 +Plans start at ₹1,999/month (Starter — 200 mins). The first month is
-+fully refundable within 7 days if Jovio doesn't fit.
++fully refundable within 7 days if HeyNikki doesn't fit.
 +
 +If you'd rather not continue, no action needed — your account becomes
 +read-only and is deleted after 30 days. All your call data is exportable
@@ -1005,14 +1005,14 @@ index 0000000..5d949f6
 +    subject:   () => "Your trial ended — what now?",
 +    body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 +
-+Your 14-day Jovio trial ended today. Your AI receptionist has stopped
++Your 14-day HeyNikki trial ended today. Your AI receptionist has stopped
 +accepting calls, but your data is safe and exportable for 30 days at
 +${dashboardUrl}.
 +
 +To pick up where you left off:
 +  → ${dashboardUrl}/billing
 +
-+If Jovio wasn't a fit, I'd love to know why — just reply with a
++If HeyNikki wasn't a fit, I'd love to know why — just reply with a
 +sentence. It's the single most valuable feedback we get.
 +
 +— Karthikeya`,
@@ -1108,48 +1108,48 @@ index 0000000..5d949f6
 +    e => { console.error(e); process.exit(2); }
 +  );
 +}
-diff --git a/infra/systemd/jovio-onboarding.service b/infra/systemd/jovio-onboarding.service
+diff --git a/infra/systemd/heynikki-onboarding.service b/infra/systemd/heynikki-onboarding.service
 new file mode 100644
 index 0000000..a981ab4
 --- /dev/null
-+++ b/infra/systemd/jovio-onboarding.service
++++ b/infra/systemd/heynikki-onboarding.service
 @@ -0,0 +1,31 @@
-+# Jovio Onboarding Emails — runs once daily via the matching .timer
++# HeyNikki Onboarding Emails — runs once daily via the matching .timer
 +#
 +# Install:
-+#   sudo cp infra/systemd/jovio-onboarding.{service,timer} /etc/systemd/system/
++#   sudo cp infra/systemd/heynikki-onboarding.{service,timer} /etc/systemd/system/
 +#   sudo systemctl daemon-reload
-+#   sudo systemctl enable --now jovio-onboarding.timer
++#   sudo systemctl enable --now heynikki-onboarding.timer
 +#   # Verify:
-+#   sudo systemctl list-timers | grep jovio
++#   sudo systemctl list-timers | grep heynikki
 +#   # Manual run:
-+#   sudo systemctl start jovio-onboarding.service
++#   sudo systemctl start heynikki-onboarding.service
 +
 +[Unit]
-+Description=Jovio onboarding email sequence (day 0 / 3 / 10 / 14)
++Description=HeyNikki onboarding email sequence (day 0 / 3 / 10 / 14)
 +After=network.target
 +
 +[Service]
 +Type=oneshot
 +User=ubuntu
 +Group=ubuntu
-+WorkingDirectory=/home/ubuntu/jovi/api-server
-+EnvironmentFile=/etc/jovio/api-server.env
-+ExecStart=/home/ubuntu/jovi/api-server/node_modules/.bin/ts-node src/jobs/onboarding-emails.ts
++WorkingDirectory=/home/ubuntu/heynikki/api-server
++EnvironmentFile=/etc/heynikki/api-server.env
++ExecStart=/home/ubuntu/heynikki/api-server/node_modules/.bin/ts-node src/jobs/onboarding-emails.ts
 +
-+StandardOutput=append:/var/log/jovio-onboarding.log
-+StandardError=append:/var/log/jovio-onboarding.log
++StandardOutput=append:/var/log/heynikki-onboarding.log
++StandardError=append:/var/log/heynikki-onboarding.log
 +
 +# Failure email to root if it errors — CloudWatch will alert via the log group
 +OnFailure=
 +
 +[Install]
 +WantedBy=multi-user.target
-diff --git a/infra/systemd/jovio-onboarding.timer b/infra/systemd/jovio-onboarding.timer
+diff --git a/infra/systemd/heynikki-onboarding.timer b/infra/systemd/heynikki-onboarding.timer
 new file mode 100644
 index 0000000..f762d60
 --- /dev/null
-+++ b/infra/systemd/jovio-onboarding.timer
++++ b/infra/systemd/heynikki-onboarding.timer
 @@ -0,0 +1,17 @@
 +# Daily timer for the onboarding email job. Runs at 10:00 IST (04:30 UTC).
 +#
@@ -1158,7 +1158,7 @@ index 0000000..f762d60
 +# a full business day to act before the cutoff.
 +
 +[Unit]
-+Description=Daily trigger for Jovio onboarding emails
++Description=Daily trigger for HeyNikki onboarding emails
 +
 +[Timer]
 +# 04:30 UTC = 10:00 IST
@@ -1175,7 +1175,7 @@ index 0000000..e08a0d6
 +++ b/supabase/005_onboarding_emails.sql
 @@ -0,0 +1,29 @@
 +-- ============================================================
-+-- JOVIO — onboarding_emails_sent (idempotent tracking)
++-- HEYNIKKI — onboarding_emails_sent (idempotent tracking)
 +-- ============================================================
 +-- The onboarding sequence runs as a daily cron job (via pg_cron or
 +-- Railway/EC2 cron). To prevent double-sending, we record each email
@@ -1208,7 +1208,7 @@ index 0000000..e08a0d6
 
 
 From ecad6db1d6db7db977412916d438e16113963e81 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 08:23:16 +0000
 Subject: [PATCH 4/4] feat(outbound): TRAI-aware campaign MVP (Growth + Scale
  plans)
@@ -1264,7 +1264,7 @@ DISPATCHER — api-server/src/jobs/outbound-dispatcher.ts
     5. Retry up to 3 attempts with 24h backoff on dispatch failure
     6. Auto-complete campaign when no more pending/queued/in-progress
 
-  Runs as jovio-outbound-dispatcher.service — single instance for now
+  Runs as heynikki-outbound-dispatcher.service — single instance for now
   (multi-instance dispatching needs row locking via
   SELECT FOR UPDATE SKIP LOCKED — future enhancement).
 
@@ -1277,12 +1277,12 @@ WHAT'S DELIBERATELY MISSING and needs follow-up:
  api-server/src/index.ts                       |   3 +
  api-server/src/jobs/outbound-dispatcher.ts    | 183 ++++++++++++++++
  api-server/src/outbound.ts                    | 199 ++++++++++++++++++
- .../systemd/jovio-outbound-dispatcher.service |  29 +++
+ .../systemd/heynikki-outbound-dispatcher.service |  29 +++
  supabase/006_outbound_campaigns.sql           | 127 +++++++++++
  5 files changed, 541 insertions(+)
  create mode 100644 api-server/src/jobs/outbound-dispatcher.ts
  create mode 100644 api-server/src/outbound.ts
- create mode 100644 infra/systemd/jovio-outbound-dispatcher.service
+ create mode 100644 infra/systemd/heynikki-outbound-dispatcher.service
  create mode 100644 supabase/006_outbound_campaigns.sql
 
 diff --git a/api-server/src/index.ts b/api-server/src/index.ts
@@ -1316,7 +1316,7 @@ index 0000000..6e520e6
 + *   4. For 'queued': dispatches to the voice-pipeline /outbound endpoint
 + *   5. Marks completed when all recipients are settled
 + *
-+ * Run as a systemd service (jovio-outbound-dispatcher.service) — single
++ * Run as a systemd service (heynikki-outbound-dispatcher.service) — single
 + * long-lived process. Multi-instance dispatching is NOT safe yet because
 + * we don't lock recipient rows during pickup; that's a future enhancement
 + * via SELECT FOR UPDATE SKIP LOCKED.
@@ -1329,7 +1329,7 @@ index 0000000..6e520e6
 +
 +const SUPABASE_URL  = process.env.SUPABASE_URL!;
 +const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
-+const PIPELINE_URL  = process.env.PIPELINE_URL || "https://pipeline.jovio.in";
++const PIPELINE_URL  = process.env.PIPELINE_URL || "https://pipeline.heynikki.in";
 +const INTERNAL_SEC  = process.env.INTERNAL_SECRET!;
 +
 +const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -1693,33 +1693,33 @@ index 0000000..b6dcc30
 +    });
 +  });
 +}
-diff --git a/infra/systemd/jovio-outbound-dispatcher.service b/infra/systemd/jovio-outbound-dispatcher.service
+diff --git a/infra/systemd/heynikki-outbound-dispatcher.service b/infra/systemd/heynikki-outbound-dispatcher.service
 new file mode 100644
 index 0000000..92915cd
 --- /dev/null
-+++ b/infra/systemd/jovio-outbound-dispatcher.service
++++ b/infra/systemd/heynikki-outbound-dispatcher.service
 @@ -0,0 +1,29 @@
-+# Jovio Outbound Dispatcher — long-running worker that picks up
++# HeyNikki Outbound Dispatcher — long-running worker that picks up
 +# queued recipients and dispatches them to the voice-pipeline.
 +
 +[Unit]
-+Description=Jovio outbound campaign dispatcher
-+After=network.target jovio-api.service jovio-pipeline.service
++Description=HeyNikki outbound campaign dispatcher
++After=network.target heynikki-api.service heynikki-pipeline.service
 +Wants=network-online.target
 +
 +[Service]
 +Type=simple
 +User=ubuntu
 +Group=ubuntu
-+WorkingDirectory=/home/ubuntu/jovi/api-server
-+EnvironmentFile=/etc/jovio/api-server.env
-+ExecStart=/home/ubuntu/jovi/api-server/node_modules/.bin/ts-node src/jobs/outbound-dispatcher.ts
++WorkingDirectory=/home/ubuntu/heynikki/api-server
++EnvironmentFile=/etc/heynikki/api-server.env
++ExecStart=/home/ubuntu/heynikki/api-server/node_modules/.bin/ts-node src/jobs/outbound-dispatcher.ts
 +
 +Restart=always
 +RestartSec=10
 +
-+StandardOutput=append:/var/log/jovio-outbound.log
-+StandardError=append:/var/log/jovio-outbound.log
++StandardOutput=append:/var/log/heynikki-outbound.log
++StandardError=append:/var/log/heynikki-outbound.log
 +
 +NoNewPrivileges=true
 +PrivateTmp=true
@@ -1735,7 +1735,7 @@ index 0000000..f63449c
 +++ b/supabase/006_outbound_campaigns.sql
 @@ -0,0 +1,127 @@
 +-- ============================================================
-+-- JOVIO — Outbound calling campaigns (Growth + Scale plans)
++-- HEYNIKKI — Outbound calling campaigns (Growth + Scale plans)
 +-- ============================================================
 +-- TRAI COMPLIANCE NOTES — READ BEFORE BUILDING ON THIS:
 +--

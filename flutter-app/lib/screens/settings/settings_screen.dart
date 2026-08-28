@@ -94,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // About
           _section('About', [
             _tile('Hey Nikki Version', '1.0.0', Icons.info_outline_rounded),
-            _tile('Powered by', 'Hey Nikki Tech Labs', Icons.rocket_launch_outlined),
+            _tile('Powered by', 'Nikki Technologies', Icons.rocket_launch_outlined),
             _tile('Support', 'support@heynikki.in', Icons.support_agent_rounded),
           ]),
           const SizedBox(height: 20),
@@ -117,7 +117,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text('© 2026 Hey Nikki Global Technologies', style: TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
+          const Text('© 2026 Nikki Technologies', style: TextStyle(color: HeyNikkiColors.dim, fontSize: 11)),
           const SizedBox(height: 40),
         ]),
       ),

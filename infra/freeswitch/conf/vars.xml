@@ -15,14 +15,18 @@
   <X-PRE-PROCESS cmd="set" data="rtp_start_port=16384"/>
   <X-PRE-PROCESS cmd="set" data="rtp_end_port=32768"/>
 
-  <!-- NAT traversal: EC2's private interface IP differs from its public
-       IP, which Jio/Vi need in the SDP to send RTP back correctly.
-       Elastic IP, allocated 2026 (eipalloc-0adea37fe783d1b77) — static,
-       won't change on stop/start. Hardcoded below instead of STUN
-       auto-detection, which would add a boot-time dependency on an
-       external server for no reason now that the IP is fixed. -->
-  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=13.203.38.18"/>
-  <X-PRE-PROCESS cmd="set" data="external_sip_ip=13.203.38.18"/>
+  <!-- NO external_rtp_ip / external_sip_ip.
+       These used to hardcode the EC2 elastic IP (13.203.38.18) from when
+       that box was the public ingress and FreeSWITCH sat behind NAT.
+       The trunk now terminates on this host directly: sip_profiles/
+       heynikki.xml binds sip-ip/rtp-ip to $${JIO_LOCAL_IP}
+       (100.65.188.4) and deliberately sets no ext-sip-ip/ext-rtp-ip,
+       because there is no NAT between us and Jio's SBC — advertising
+       any other address puts an unreachable IP in the SDP and the call
+       connects with one-way or no audio. Nothing in conf/ referenced
+       these globals, so they were dead weight pointing at a host that
+       is being decommissioned. Do not reintroduce them unless a NAT is
+       actually inserted in front of the circuit. -->
 
   <!-- Pull secrets from the container's environment (docker-compose env_file .env)
        into FreeSWITCH global vars, referenceable elsewhere as $${name}.

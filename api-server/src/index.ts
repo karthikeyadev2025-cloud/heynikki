@@ -37,6 +37,8 @@ const SUPABASE_URL    = process.env.SUPABASE_URL!;
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY!;
 const RZP_KEY_ID      = process.env.RAZORPAY_KEY_ID!;
 const RZP_SECRET      = process.env.RAZORPAY_KEY_SECRET!;
+const META_WA_VERIFY_TOKEN = process.env.META_WA_VERIFY_TOKEN || "";
+const META_WA_APP_SECRET   = process.env.META_WA_APP_SECRET || "";
 const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
 const WATI_KEY        = process.env.WATI_API_KEY || "";
@@ -133,7 +135,12 @@ app.use("/api",      apiLimiter);
 // exotel, lead-capture and remaining freeswitch routes were equally
 // affected. Keep this exact-path, not a prefix.
 app.use((req, res, next) => {
-  if (req.path.replace(/\/+$/, "") === "/webhooks/razorpay") {
+  if (req.path.replace(/\/+$/, "") === "/webhooks/razorpay" ||
+      req.path.replace(/\/+$/, "") === "/webhooks/whatsapp") {
+    // Same reason as Razorpay: Meta signs the exact bytes it sent with
+    // X-Hub-Signature-256, so re-serialising through express.json() would
+    // change the payload and every signature check would fail. Listed as an
+    // exact path, never a prefix — see the note above.
     express.raw({ type: "application/json" })(req, res, next);
   } else if (req.path.startsWith("/webhooks/exotel/")) {
     // Exotel posts application/x-www-form-urlencoded (CallSid, Status,
@@ -2149,6 +2156,77 @@ app.post("/webhooks/freeswitch/transfer-to-human", verifyInternal, async (req, r
   }
 });
 
+// ── Meta WhatsApp Cloud API webhook ───────────────────────────
+// Callback URL to register in Meta: https://api.heynikki.in/webhooks/whatsapp
+//
+// Meta verifies a callback URL by GETting it once with hub.challenge and
+// expects the challenge echoed back as a bare body. If this route is missing
+// or the token does not match, "Verify and Save" in the App Dashboard fails
+// with no useful detail, so both failure paths are logged here.
+app.get("/webhooks/whatsapp", (req, res) => {
+  const mode      = req.query["hub.mode"];
+  const token     = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (!META_WA_VERIFY_TOKEN) {
+    console.error("[WhatsApp] META_WA_VERIFY_TOKEN is unset — cannot verify subscription");
+    return res.sendStatus(500);
+  }
+  if (mode === "subscribe" && token === META_WA_VERIFY_TOKEN) {
+    console.log("[WhatsApp] webhook verified by Meta");
+    return res.status(200).send(String(challenge ?? ""));
+  }
+  console.error("[WhatsApp] verification rejected — token mismatch");
+  return res.sendStatus(403);
+});
+
+app.post("/webhooks/whatsapp", (req, res) => {
+  const rawBody = req.body as Buffer;
+  const sig     = (req.headers["x-hub-signature-256"] as string) || "";
+
+  // Fail closed. Without the app secret there is no way to tell a real Meta
+  // delivery from anyone who has learned the URL, and this endpoint is public.
+  if (!META_WA_APP_SECRET) {
+    console.error("[WhatsApp] META_WA_APP_SECRET is unset — rejecting delivery");
+    return res.sendStatus(500);
+  }
+
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", META_WA_APP_SECRET)
+    .update(rawBody)
+    .digest("hex");
+
+  // timingSafeEqual throws on length mismatch, so compare lengths first.
+  const ok = sig.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!ok) {
+    console.error("[WhatsApp] invalid X-Hub-Signature-256");
+    return res.sendStatus(401);
+  }
+
+  // Meta retries any delivery it does not get a prompt 200 for, and a retry
+  // storm is worse than a dropped log line — acknowledge first, then process.
+  res.sendStatus(200);
+
+  try {
+    const body = JSON.parse(rawBody.toString());
+    for (const entry of body.entry || []) {
+      for (const ch of entry.changes || []) {
+        const v = ch.value || {};
+        for (const m of v.messages || []) {
+          const text = m.text?.body ?? `[${m.type}]`;
+          console.log(`[WhatsApp] in from ${m.from}: ${String(text).slice(0, 200)}`);
+        }
+        for (const st of v.statuses || []) {
+          console.log(`[WhatsApp] status ${st.id} -> ${st.status}`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[WhatsApp] payload parse failed:", err.message);
+  }
+});
+
 // ── FreeSWITCH hangup webhook ─────────────────────────────────
 app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
   try {
@@ -2160,16 +2238,35 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // error, a failed query is indistinguishable from "no such call" and the
     // completion update below is silently skipped.
     const { data: callRow, error: selErr } = await sb.from("calls")
-      .select("id, tenant_id, voice_profile_id")
+      .select("id, tenant_id, voice_profile_id, created_at")
       .eq("livekit_room_id", fs_uuid)
       .single();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
+
+    // billsec from the dialplan's api_reporting_hook has now arrived as 0 or
+    // absent three separate times (raw-body Buffer, api_hangup_hook firing
+    // before CDR, and whatever is doing it today), and every time the symptom
+    // was the same: real conversations stored as status=missed with
+    // duration_seconds=0, and the missed-call automation firing on answered
+    // calls. Stop trusting it as the only source. The calls row is inserted by
+    // the inbound webhook at call start, so wall-clock since created_at is a
+    // sound fallback — accurate to the second or two of setup time, and always
+    // better than 0. Only used when billsec is missing or non-positive.
+    let secs = parseInt(duration || "0");
+    if (!Number.isFinite(secs) || secs <= 0) {
+      if (callRow?.created_at) {
+        secs = Math.max(0, Math.round((Date.now() - new Date(callRow.created_at).getTime()) / 1000));
+        console.warn(`[FS Hangup] billsec missing for ${fs_uuid}; derived ${secs}s from created_at`);
+      } else {
+        secs = 0;
+      }
+    }
 
     if (callRow) {
       // Update call status
       const { error: updErr } = await sb.from("calls").update({
         status:           "completed",
-        duration_seconds: parseInt(duration || "0"),
+        duration_seconds: secs,
         updated_at:       new Date().toISOString(),
       }).eq("id", callRow.id);
       if (updErr) console.error("[FS Hangup] completion update failed:", updErr.message);
@@ -2182,14 +2279,39 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       }).catch(e => console.error("[Pipeline hangup]", e.message));
     }
 
-    // Check if missed call (duration < 5 seconds = unanswered)
-    if (parseInt(duration || "0") < 5 && hangup_cause !== "NORMAL_CLEARING") {
-      await fireAutomationWebhook("missed-call", {
-        caller_number,
-        did_number,
-        call_id:     callRow?.id,
-        tenant_id:   callRow?.tenant_id,
-      });
+    // Check if missed call (duration < 5 seconds = unanswered).
+    // Uses the derived seconds above, not the raw body field: when billsec
+    // arrives empty this test read parseInt(undefined || "0") < 5 as true and
+    // overwrote the "completed" status set moments earlier, which is how a
+    // two-minute conversation ended up stored as a missed call.
+    if (secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
+      // The n8n missed-call workflow reads business_name straight into the
+      // WhatsApp template's {{1}}, and picks the recipient from
+      // whatsapp_number falling back to caller_number. This call site sent
+      // neither, so the template variable arrived empty and Meta rejected the
+      // send — while /webhooks/freeswitch/missed-call, which fires far less
+      // often, had always sent both. Look the profile up the same way it does,
+      // including the fallback_wa_enabled opt-out.
+      let vp: { business_name?: string; whatsapp_number?: string;
+                fallback_wa_enabled?: boolean } | null = null;
+      if (callRow?.voice_profile_id) {
+        const { data, error: vpErr } = await sb.from("voice_profiles")
+          .select("business_name, whatsapp_number, fallback_wa_enabled")
+          .eq("id", callRow.voice_profile_id).single();
+        if (vpErr) console.error("[FS Hangup] voice profile lookup failed:", vpErr.message);
+        vp = data;
+      }
+
+      if (vp?.fallback_wa_enabled !== false) {
+        await fireAutomationWebhook("missed-call", {
+          caller_number,
+          did_number,
+          call_id:         callRow?.id,
+          tenant_id:       callRow?.tenant_id,
+          business_name:   vp?.business_name   || "our team",
+          whatsapp_number: vp?.whatsapp_number || caller_number,
+        });
+      }
 
       // Log missed call in Supabase
       if (callRow) {

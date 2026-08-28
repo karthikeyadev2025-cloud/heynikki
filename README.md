@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/heynikki-logo.jpg" width="120" alt="Hey Nikki" />
+  <img src="assets/heynikki-logo.png" width="180" alt="HeyNikki" />
 </p>
 
-<h1 align="center">Nikki — Telugu AI Receptionist</h1>
+<h1 align="center">HeyNikki — Telugu AI Receptionist</h1>
 <p align="center">
-  <strong>Powered by Nikki Tech Labs</strong><br/>
+  <strong>Powered by Nikki Technologies</strong><br/>
   Your business never misses a call.
 </p>
 
@@ -144,6 +144,6 @@ Caller → Jio / Vi SIP trunk → FreeSWITCH (Exotel = fallback)
 ---
 
 <p align="center">
-  <strong>© 2026 Hey Nikki</strong><br/>
-  <em>Powered by Nikki Tech Labs</em>
+  <strong>© 2026 HeyNikki</strong><br/>
+  <em>Powered by Nikki Technologies</em>
 </p>
