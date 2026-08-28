@@ -1,5 +1,7 @@
 "use client";
 
+import { useId } from "react";
+
 interface Props {
   size?: number;
   showText?: boolean;
@@ -8,100 +10,104 @@ interface Props {
 }
 
 /**
- * Hey Nikki logo (2026-07-02 redesign, replacing the earlier "N" monogram).
- * Wordmark-forward rather than a monogram -- "Hey Nikki" is a spoken product
- * name in the Siri/Alexa mold, not an abstract initial. The mark is a small
- * voice-pulse (audio equalizer bars), directly representing the product
- * category rather than an arbitrary letterform. Built from simple filled
- * rects at varying heights -- safe, predictable geometry since this
- * environment can't render/preview SVG output before shipping it.
+ * The HeyNikki logo — identical mark to web/components/NikkiLogo.tsx.
  *
- * Palette: warm terracotta + deep teal on a cream/espresso base -- moved
- * away from the earlier dark-navy + neon-green scheme, which read as a
- * generic "AI startup" template rather than a distinct brand.
+ * This file used to define a THIRD version of the brand: voice-pulse bars in
+ * terracotta + deep teal, with the wordmark set lowercase as "hey nikki".
+ * Between it, the web component and the favicons, an operator moving between
+ * the admin console and the customer dashboard saw two different marks, two
+ * colour schemes and two capitalisations of the product name.
+ *
+ * The mark is a speech bubble holding a voice waveform — the receptionist and
+ * the AI in one shape — in the emerald-to-orange gradient shared by the PWA
+ * icons, the README and the Flutter theme.
+ *
+ * Nothing imports this component today. It is kept in step anyway: an unused
+ * copy of the brand is exactly how the three-way drift above happened.
  */
-const TERRACOTTA = "#E5533D";
-const TEAL = "#12457A";
-const ESPRESSO = "#0F172A";
+
+const INK = "#0F172A";
 const CREAM = "#FFFFFF";
+const EMERALD = "#10B981";
+const TEAL = "#14B8A6";
+const ORANGE = "#F97316";
 
 export default function NikkiLogo({ size = 48, showText = true, variant = "horizontal", dark = false }: Props) {
-  const textColor = dark ? CREAM : ESPRESSO;
+  const uid = useId().replace(/:/g, "");
+  const tileGrad = `sa-tile-${uid}`;
+  const waveGrad = `sa-wave-${uid}`;
+  const textColor = dark ? CREAM : INK;
 
-  const PulseMark = (
+  const Mark = (
     <svg
       width={size} height={size}
-      viewBox="0 0 100 100"
+      viewBox="0 0 256 256"
       xmlns="http://www.w3.org/2000/svg"
       style={{ flexShrink: 0 }}
       role="img"
-      aria-label="Hey Nikki voice pulse mark"
+      aria-label="HeyNikki"
     >
-      <rect x="12" y="35" width="14" height="30" rx="7" fill={TEAL} />
-      <rect x="32" y="18" width="14" height="64" rx="7" fill={TERRACOTTA} />
-      <rect x="52" y="8"  width="14" height="84" rx="7" fill={TERRACOTTA} />
-      <rect x="72" y="28" width="14" height="44" rx="7" fill={TEAL} />
+      <defs>
+        <linearGradient id={tileGrad} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={EMERALD} />
+          <stop offset="55%" stopColor={TEAL} />
+          <stop offset="100%" stopColor={ORANGE} />
+        </linearGradient>
+        <linearGradient id={waveGrad} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#0F9D6E" />
+          <stop offset="100%" stopColor={ORANGE} />
+        </linearGradient>
+      </defs>
+      <rect width="256" height="256" rx="58" fill={`url(#${tileGrad})`} />
+      <path
+        fill={CREAM}
+        d="M82 62 h92 a26 26 0 0 1 26 26 v54 a26 26 0 0 1 -26 26 h-52
+           l-32 30 a5 5 0 0 1 -8.4 -4.4 l5.4 -25.6 h-5
+           a26 26 0 0 1 -26 -26 v-54 a26 26 0 0 1 26 -26 z"
+      />
+      <g fill={`url(#${waveGrad})`}>
+        <rect x="76" y="103" width="12" height="26" rx="6" />
+        <rect x="98" y="90" width="12" height="52" rx="6" />
+        <rect x="120" y="79" width="12" height="74" rx="6" />
+        <rect x="142" y="94" width="12" height="44" rx="6" />
+        <rect x="164" y="105" width="12" height="22" rx="6" />
+      </g>
     </svg>
   );
 
-  if (variant === "icon") return PulseMark;
+  if (variant === "icon") return Mark;
+
+  const Wordmark = (
+    <div style={{ lineHeight: 1.1 }}>
+      <div style={{ fontSize: size * 0.46, fontWeight: 800, color: textColor, letterSpacing: -size * 0.008 }}>
+        HeyNikki
+      </div>
+      <div style={{
+        fontSize: size * 0.13,
+        color: dark ? "rgba(255,255,255,0.6)" : "#64748B",
+        letterSpacing: size * 0.05,
+        fontWeight: 600,
+        marginTop: size * 0.05,
+        textTransform: "uppercase",
+      }}>
+        Nikki Technologies
+      </div>
+    </div>
+  );
 
   if (variant === "stacked") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-        {PulseMark}
-        {showText && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{
-              fontSize: size * 0.4,
-              fontWeight: 800,
-              color: textColor,
-              letterSpacing: -size * 0.01,
-              lineHeight: 1,
-            }}>
-              hey <span style={{ color: TERRACOTTA }}>nikki</span>
-            </div>
-            <div style={{
-              fontSize: size * 0.12,
-              color: TEAL,
-              letterSpacing: size * 0.04,
-              fontWeight: 600,
-              marginTop: size * 0.08,
-              textTransform: "uppercase",
-            }}>
-              Nikki Technologies
-            </div>
-          </div>
-        )}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center" }}>
+        {Mark}
+        {showText && Wordmark}
       </div>
     );
   }
 
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: size * 0.22 }}>
-      {PulseMark}
-      {showText && (
-        <div style={{ lineHeight: 1.1 }}>
-          <div style={{
-            fontSize: size * 0.5,
-            fontWeight: 800,
-            color: textColor,
-            letterSpacing: -size * 0.008,
-          }}>
-            hey <span style={{ color: TERRACOTTA }}>nikki</span>
-          </div>
-          <div style={{
-            fontSize: size * 0.13,
-            color: TEAL,
-            letterSpacing: size * 0.05,
-            fontWeight: 600,
-            marginTop: size * 0.05,
-            textTransform: "uppercase",
-          }}>
-            Nikki Technologies
-          </div>
-        </div>
-      )}
+      {Mark}
+      {showText && Wordmark}
     </div>
   );
 }

@@ -63,7 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(children: [
               Row(children: [
                 Container(width: 52, height: 52, decoration: BoxDecoration(gradient: HeyNikkiColors.gradient, borderRadius: BorderRadius.circular(14)),
-                  child: Center(child: Text(_bizName?.substring(0,1).toUpperCase() ?? 'J',
+                  child: Center(child: Text(_bizName?.substring(0,1).toUpperCase() ?? 'N',
                     style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)))),
                 const SizedBox(width: 14),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

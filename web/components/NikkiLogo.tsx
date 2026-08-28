@@ -1,33 +1,41 @@
 "use client";
 
+import { useId } from "react";
+
 /**
- * THE canonical Hey Nikki logo. Every surface uses this — nav, sidebar,
+ * THE canonical HeyNikki logo. Every surface uses this — nav, sidebar,
  * auth pages, legal pages, 404.
  *
- * WHY THIS FILE IS NOW THE ONLY LOGO
+ * WHY THIS FILE IS THE ONLY LOGO
  * The site was running four different marks at once:
- *   1. this component — voice-pulse bars in terracotta + teal, with a
- *      "Nikki Technologies" subtitle
+ *   1. this component — voice-pulse bars in terracotta + teal
  *   2. the landing nav — a lucide Phone glyph in a marigold-on-ink square
  *   3. the dashboard sidebar — a glowing green dot and the bare word "Nikki"
  *   4. the favicon — waveform bars in ink + marigold
  * A customer moving from the landing page to signup to the dashboard saw
  * three unrelated brands and two different company names.
  *
- * Unified on the voice-pulse mark: it's the one that means something (this
- * is a voice product, the bars are an audio level meter) and it already
- * matches the favicon and PWA icons, so the browser tab, the home-screen
- * icon and the header now agree.
+ * THE MARK
+ * A speech bubble holding a voice waveform: the receptionist and the AI in
+ * one shape. The bare bars it replaces read as an audio meter but said
+ * nothing about someone answering the phone, and they were also a JPEG of
+ * the previous company's identity in every other surface of the repo.
  *
- * The "Nikki Technologies" subtitle is gone. The brand is Hey Nikki
- * (heynikki.in) — the old subtitle was leftover from an earlier naming
- * pass and contradicted the wordmark directly above it.
+ * The gradient is the emerald-to-orange the product already used for its
+ * README badges and the Flutter theme, so the marketing site, the app and
+ * the repo finally agree. It is deliberately vivid enough to hold up on
+ * both the white auth pages and the ink sidebar without a second variant.
+ *
+ * Gradient ids are per-instance (useId): two logos on one page — sidebar
+ * plus a legal header, say — would otherwise share one <defs> id, and the
+ * second would silently render with the first one's fill.
  */
 
-const INK      = "#0B1F33";
-const MARIGOLD = "#E9A72C";
-const TEAL     = "#12457A";
-const CREAM    = "#FFFFFF";
+const INK   = "#0B1F33";
+const CREAM = "#FFFFFF";
+const EMERALD = "#10B981";
+const TEAL    = "#14B8A6";
+const ORANGE  = "#F97316";
 
 interface Props {
   size?: number;
@@ -43,38 +51,61 @@ export default function NikkiLogo({
   variant = "horizontal",
   dark = false,
 }: Props) {
+  const uid = useId().replace(/:/g, "");
+  const tileGrad = `hn-tile-${uid}`;
+  const waveGrad = `hn-wave-${uid}`;
   const textColor = dark ? CREAM : INK;
-  // On dark ground the ink bars would disappear, so the quiet bars go
-  // translucent white and the loud ones stay marigold either way.
-  const quietBar = dark ? "rgba(255,255,255,0.55)" : TEAL;
 
-  const PulseMark = (
+  const Mark = (
     <span
       aria-hidden
       style={{
         width: size, height: size, flexShrink: 0,
-        borderRadius: size * 0.24,
-        background: dark ? "rgba(255,255,255,0.08)" : INK,
         display: "grid", placeItems: "center",
       }}
     >
       <svg
-        width={size * 0.66} height={size * 0.66}
-        viewBox="0 0 100 100"
+        width={size} height={size}
+        viewBox="0 0 256 256"
         xmlns="http://www.w3.org/2000/svg"
         role="img"
-        aria-label="Hey Nikki"
+        aria-label="HeyNikki"
       >
-        {/* Same four bars, same proportions, as icon.svg and the PWA icons. */}
-        <rect x="6"  y="34" width="16" height="32" rx="8" fill={dark ? quietBar : CREAM} />
-        <rect x="29" y="16" width="16" height="68" rx="8" fill={MARIGOLD} />
-        <rect x="52" y="8"  width="16" height="84" rx="8" fill={MARIGOLD} />
-        <rect x="75" y="26" width="16" height="48" rx="8" fill={dark ? quietBar : CREAM} />
+        <defs>
+          <linearGradient id={tileGrad} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={EMERALD} />
+            <stop offset="55%" stopColor={TEAL} />
+            <stop offset="100%" stopColor={ORANGE} />
+          </linearGradient>
+          <linearGradient id={waveGrad} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#0F9D6E" />
+            <stop offset="100%" stopColor={ORANGE} />
+          </linearGradient>
+        </defs>
+
+        <rect width="256" height="256" rx="58" fill={`url(#${tileGrad})`} />
+
+        {/* speech bubble — the receptionist */}
+        <path
+          fill={CREAM}
+          d="M82 62 h92 a26 26 0 0 1 26 26 v54 a26 26 0 0 1 -26 26 h-52
+             l-32 30 a5 5 0 0 1 -8.4 -4.4 l5.4 -25.6 h-5
+             a26 26 0 0 1 -26 -26 v-54 a26 26 0 0 1 26 -26 z"
+        />
+
+        {/* waveform — the voice */}
+        <g fill={`url(#${waveGrad})`}>
+          <rect x="76" y="103" width="12" height="26" rx="6" />
+          <rect x="98" y="90" width="12" height="52" rx="6" />
+          <rect x="120" y="79" width="12" height="74" rx="6" />
+          <rect x="142" y="94" width="12" height="44" rx="6" />
+          <rect x="164" y="105" width="12" height="22" rx="6" />
+        </g>
       </svg>
     </span>
   );
 
-  if (variant === "icon") return PulseMark;
+  if (variant === "icon") return Mark;
 
   const Wordmark = (
     <span
@@ -88,14 +119,14 @@ export default function NikkiLogo({
         whiteSpace: "nowrap",
       }}
     >
-      Hey Nikki
+      HeyNikki
     </span>
   );
 
   if (variant === "stacked") {
     return (
       <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: size * 0.24 }}>
-        {PulseMark}
+        {Mark}
         {showText && Wordmark}
       </span>
     );
@@ -103,7 +134,7 @@ export default function NikkiLogo({
 
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: size * 0.26 }}>
-      {PulseMark}
+      {Mark}
       {showText && Wordmark}
     </span>
   );

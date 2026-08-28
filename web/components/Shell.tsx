@@ -74,7 +74,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
           word "Nikki", which shared nothing with the brand anywhere else
           on the site. */}
       <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid " + C.bord }}>
-        <a href="/dashboard" aria-label="Hey Nikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
+        <a href="/dashboard" aria-label="HeyNikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
           <NikkiLogo size={30} dark />
         </a>
         {tenant && (
