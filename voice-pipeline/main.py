@@ -15,7 +15,7 @@ import pathlib
 import base64
 import secrets
 import httpx
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 # ─── Sentry — optional, no-op if SENTRY_DSN env not set ───
@@ -943,6 +943,8 @@ class NikkiAgent:
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         self.call_id     : Optional[str] = None
+        # Set when a booking is written mid-call; enriched at call end.
+        self.appointment_id: Optional[str] = None
         self.intent      : str = "unknown"
         self.transcript  : list[dict] = []
         self.system_prompt = build_system_prompt(profile)
@@ -1334,13 +1336,20 @@ class NikkiAgent:
     async def _handle_appointment_booking(self, user_text: str, response: str):
         """Extract appointment details and save + send WhatsApp."""
         try:
+            # Written bare on purpose: the caller is mid-sentence and an LLM
+            # extraction here would sit on the critical path. The date, time,
+            # service and name are filled in at call end by
+            # _enrich_appointment, which has the whole transcript and costs
+            # the caller nothing.
             appt_id = await self.db.save_appointment({
                 "tenant_id":        self.profile["tenant_id"],
                 "voice_profile_id": self.profile["id"],
                 "call_id":          self.call_id,
                 "caller_number":    self.caller_num,
+                "caller_name":      self.slots.get("name"),
                 "status":           "confirmed",
             })
+            self.appointment_id = appt_id
 
             # Send WhatsApp confirmation
             if self.profile.get("whatsapp_number"):
@@ -2532,6 +2541,91 @@ async def _spool_janitor() -> None:
             log.warning(f"spool janitor: {e}")
 
 
+
+async def _enrich_appointment(agent, fs_uuid: str) -> None:
+    """Fill in an appointment's date, time and service after the call.
+
+    _handle_appointment_booking writes the row bare — the caller is
+    mid-sentence and an LLM call there would sit on the critical path. So
+    every appointment ever booked on the phone path holds a tenant, a number
+    and status 'confirmed', and nothing else: no date, no time, no service,
+    no name. All six in the database look like that.
+
+    That is not merely untidy. The 24h reminder job selects on
+    slot_date = tomorrow, so with slot_date null it can never match and no
+    reminder could ever be sent, however reliably the scheduler runs. The
+    confirmation WhatsApp likewise tells someone their appointment is
+    confirmed without saying when.
+
+    Runs at cleanup alongside lead scoring, where the whole transcript is
+    available and the caller has already hung up.
+    """
+    appt_id = getattr(agent, "appointment_id", None)
+    if not appt_id or not GEMINI_KEY:
+        return
+    turns = [t for t in (agent.transcript or []) if t.get("content")]
+    if len(turns) < 3:
+        return
+
+    dialogue = "\n".join(
+        f"{'AGENT' if t.get('role') == 'assistant' else 'CALLER'}: {str(t['content'])[:300]}"
+        for t in turns)[:8000]
+    # Relative dates are the norm on a call — "రేపు", "next Monday" — and
+    # resolving them needs the day the call happened, in IST.
+    today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+
+    prompt = (
+        "Extract the appointment from this phone call. Return ONLY minified JSON:\n"
+        '{"slot_date":"YYYY-MM-DD or null","slot_time":"HH:MM 24h or null",'
+        '"service":"string or null","caller_name":"string or null"}\n\n'
+        f"Today is {today} (IST). Resolve relative dates against it — రేపు and "
+        "tomorrow mean the next day.\n"
+        "Use null for anything not actually agreed. A caller who asked about "
+        "timings without settling on one has NO slot_date — inventing a time "
+        "puts a real person in a diary for an appointment they never made, "
+        "which is worse than an empty field.\n\n"
+        f"TRANSCRIPT:\n{dialogue}"
+    )
+    try:
+        model = os.getenv("GEMINI_MODEL") or "gemini-flash-lite-latest"
+        async with httpx.AsyncClient(timeout=20.0) as c:
+            r = await c.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}})
+        if r.status_code != 200:
+            log.warning(f"[FS] {fs_uuid}: appointment extract gemini {r.status_code}")
+            return
+        raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if not m:
+            return
+        d = json.loads(m.group(0))
+
+        patch = {}
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(d.get("slot_date") or "")):
+            patch["slot_date"] = d["slot_date"]
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(d.get("slot_time") or "")):
+            patch["slot_time"] = d["slot_time"]
+        if d.get("service"):
+            patch["service"] = str(d["service"])[:120]
+        name = d.get("caller_name") or agent.slots.get("name")
+        if name:
+            patch["caller_name"] = str(name)[:120]
+        if not patch:
+            return
+
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            await c.patch(f"{agent.db.url}/rest/v1/appointments",
+                          headers=agent.db.headers,
+                          params={"id": f"eq.{appt_id}"},
+                          json=patch)
+        log.info(f"[FS] {fs_uuid}: appointment enriched {patch}")
+    except Exception as e:  # noqa: BLE001 - never break cleanup
+        log.warning(f"[FS] {fs_uuid}: appointment enrich failed: {e}")
+
+
 async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
                               did_number: str, duration: int) -> None:
     """Rate the conversation and write a lead. Runs AFTER hangup.
@@ -3208,6 +3302,7 @@ async def freeswitch_ws(
         # the recording upload matters more than the score, and this must not
         # delay it.
         await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
+        await _enrich_appointment(agent, fs_uuid)
 
 
 # ── FreeSWITCH REST shim endpoints ───────────────────────────────────────────

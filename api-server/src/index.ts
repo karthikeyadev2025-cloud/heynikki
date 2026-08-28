@@ -1377,6 +1377,106 @@ async function verifySuperAdmin(req: express.Request, res: express.Response,
   next();
 }
 
+/**
+ * Platform operations — the automations, and whether they are actually running.
+ *
+ * Everything here is a check for a SILENT failure, because that is the shape
+ * every real fault in this system has taken. The knowledge base looked empty
+ * when it was structurally unable to embed. Appointments read "confirmed"
+ * while holding no date, so no reminder could ever fire. Campaigns could be
+ * built and never started. WhatsApp reported HTTP 200 while sending nothing.
+ * None of those raised an error anywhere — each one just quietly did nothing.
+ *
+ * So this does not report uptime. It reports work that should have happened
+ * and did not, per check, with the number of rows affected. A green board
+ * means the pipelines moved; it does not mean no process crashed, which is
+ * what API Health is for.
+ */
+app.get("/api/admin/operations", verifySuperAdmin, async (_req, res) => {
+  try {
+    const dayAgo  = new Date(Date.now() - 86400_000).toISOString();
+    const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+    const tomorrow = new Date(Date.now() + 5.5 * 3600_000 + 86400_000).toISOString().slice(0, 10);
+
+    const count = async (table: string, build: (q: any) => any) => {
+      const { count: n, error } = await build(
+        sb.from(table).select("id", { count: "exact", head: true }));
+      if (error) { console.error(`[ops] ${table}:`, error.message); return null; }
+      return n ?? 0;
+    };
+
+    const [
+      knowledgePending, callsWeek, scoredWeek,
+      apptsNoDate, apptsTomorrow, remindersPending,
+      campaignsRunning, recipientsStuck,
+      leadsUnassigned, waFailedDay, recordingsMissing, versionsWeek,
+    ] = await Promise.all([
+      // Embedding backlog. Non-zero and not falling means the scheduler is
+      // not running; every one of these is invisible to RAG until it does.
+      count("knowledge_base",  (q: any) => q.is("embedding", null)),
+      count("calls",           (q: any) => q.gte("created_at", weekAgo)),
+      count("call_quality",    (q: any) => q.gte("created_at", weekAgo)),
+      // "Confirmed" with no date. Cannot be reminded, cannot be put in a
+      // calendar, and nobody knows when the customer is coming.
+      count("appointments",    (q: any) => q.is("slot_date", null).eq("status", "confirmed")),
+      count("appointments",    (q: any) => q.eq("slot_date", tomorrow).eq("status", "confirmed")),
+      count("appointments",    (q: any) => q.eq("slot_date", tomorrow).eq("status", "confirmed").eq("wa_reminder_sent", false)),
+      count("outbound_campaigns", (q: any) => q.eq("status", "running")),
+      // Picked up and never resolved — a dispatcher that died mid-dial
+      // leaves recipients here forever.
+      count("outbound_recipients", (q: any) => q.eq("status", "in_progress").lt("last_attempt_at", dayAgo)),
+      count("leads",           (q: any) => q.is("assigned_to", null).gte("score", 60)),
+      // sent_at, not created_at — wa_dispatch_log has no created_at column
+      // and the query 400s, which this reports as "unknown" rather than ok.
+      count("wa_dispatch_log", (q: any) => q.eq("status", "failed").gte("sent_at", dayAgo)),
+      count("calls",           (q: any) => q.gte("created_at", weekAgo).is("r2_object_key", null).is("recording_url", null)),
+      count("voice_profile_versions", (q: any) => q.gte("created_at", weekAgo)),
+    ]);
+
+    // A check is only "ok" when it is genuinely zero. null means the query
+    // itself failed, which is reported as unknown rather than passed —
+    // treating a broken check as a green one is how this class of fault
+    // survives in the first place.
+    const check = (id: string, label: string, value: number | null,
+                   bad: (v: number) => boolean, hint: string) => ({
+      id, label, value,
+      state: value === null ? "unknown" : bad(value) ? "attention" : "ok",
+      hint,
+    });
+
+    res.json({
+      generated_at: new Date().toISOString(),
+      checks: [
+        check("knowledge_backlog", "Knowledge entries awaiting embedding", knowledgePending,
+              v => v > 0, "Scheduler embeds these every 15 min. Non-zero and static means it is not running."),
+        check("calls_unscored", "Calls this week not yet scored",
+              callsWeek === null || scoredWeek === null ? null : Math.max(0, callsWeek - scoredWeek),
+              v => v > 20, "Only calls with 4+ turns are scored; a large gap is normal if most calls are silent."),
+        check("appts_no_date", "Appointments confirmed with no date", apptsNoDate,
+              v => v > 0, "Cannot be reminded or calendared. Extraction runs at call end."),
+        check("reminders_pending", "Tomorrow's reminders not yet sent", remindersPending,
+              v => v > 0, "Fires in the evening IST window. Non-zero after that means the job is not running."),
+        check("recipients_stuck", "Campaign recipients stuck dialling >24h", recipientsStuck,
+              v => v > 0, "The dispatcher died mid-dial. Restart it or reset these to queued."),
+        check("wa_failed", "WhatsApp sends failed today", waFailedDay,
+              v => v > 0, "Check template approval and the access token."),
+        check("leads_unassigned", "Hot leads with no owner", leadsUnassigned,
+              v => v > 5, "Score 60+ and nobody is following them up."),
+        check("recordings_missing", "Calls this week with no recording", recordingsMissing,
+              v => v > 20, "R2 credentials, or calls too short to record."),
+      ],
+      counters: {
+        calls_week: callsWeek, scored_week: scoredWeek,
+        campaigns_running: campaignsRunning, appts_tomorrow: apptsTomorrow,
+        agent_changes_week: versionsWeek,
+      },
+    });
+  } catch (err: any) {
+    console.error("[admin operations]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 // Platform stats
 app.get("/api/admin/stats", verifySuperAdmin, async (req, res) => {
   const [tenants, activeCalls, todayCalls] = await Promise.all([
