@@ -1135,6 +1135,52 @@ app.get("/api/voice-profiles", verifyJWT, async (req, res) => {
   res.json(data || []);
 });
 
+// ── Agent history and rollback ────────────────────────────────
+// A trigger snapshots the previous row on every change (migration 022), so
+// this reads history rather than recording it — nothing here can be bypassed
+// by editing through some other path.
+app.get("/api/voice-profiles/:id/versions", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { data, error } = await sb.from("voice_profile_versions")
+    .select("id, snapshot, changed_by, created_at")
+    .eq("profile_id", req.params.id).eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false }).limit(50);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ versions: data || [] });
+});
+
+app.post("/api/voice-profiles/:id/restore/:versionId", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const { data: v } = await sb.from("voice_profile_versions")
+    .select("snapshot").eq("id", req.params.versionId)
+    .eq("profile_id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!v) return res.status(404).json({ error: "Version not found" });
+
+  // Restore only what a person authored. id, tenant_id and the timestamps
+  // identify the row rather than describe the agent, and did_number is the
+  // phone line it answers on — restoring an old prompt must not silently
+  // move the agent to a number it used to have.
+  const snap = v.snapshot as Record<string, any>;
+  const IMMUTABLE = new Set(["id", "tenant_id", "created_at", "updated_at", "did_number", "status"]);
+  const patch: Record<string, any> = {};
+  for (const [k, val] of Object.entries(snap)) if (!IMMUTABLE.has(k)) patch[k] = val;
+
+  // The update fires the trigger, so the version being replaced is itself
+  // snapshotted — an undo is undoable.
+  const { data, error } = await sb.from("voice_profiles")
+    .update(patch).eq("id", req.params.id).eq("tenant_id", tenantId).select().single();
+  if (error) return res.status(400).json({ error: error.message });
+
+  await audit("voice_profile_restore", {
+    tenantId, actorId: req.user.id,
+    metadata: { profile_id: req.params.id, version_id: req.params.versionId },
+  });
+  res.json({ ok: true, profile: data });
+});
+
 // ── Agent builder: describe it, get a draft ───────────────────
 // Setting an agent up today means filling in a form: business name, the
 // services list, hours, appointment types, the fallback message — in Telugu.
