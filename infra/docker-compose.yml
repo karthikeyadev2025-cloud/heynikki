@@ -121,6 +121,72 @@ services:
           memory: 1G
           cpus: '0.5'
 
+  # ── Scheduled jobs ────────────────────────────────────────────
+  # src/jobs/scheduler.ts was written to run as a cron ("*/15 * * * *") on the
+  # EC2 box. That box is gone and nothing replaced it, so these three jobs
+  # have never run in this deployment:
+  #
+  #   embed knowledge      — the "Teach Nikki" page writes rows with
+  #                          embedding = NULL because embedding needs the
+  #                          Gemini key server-side. Until this job runs, RAG
+  #                          can never match them, so the knowledge base is
+  #                          not merely empty — it cannot work.
+  #   appointment reminders — the 24h reminder endpoint exists and was called
+  #                          by nothing.
+  #   daily summary        — the owner's end-of-day WhatsApp.
+  #
+  # Same image as api-server, so it ships whatever the API ships. The sleep
+  # loop is deliberate over a cron daemon: one process, restart: always, and
+  # the interval is visible here rather than in a crontab inside a container.
+  # Every job is idempotent (embedding IS NULL, wa_reminder_sent = false,
+  # summary keyed by date), so an extra pass is harmless.
+  scheduler:
+    image: infra-api-server:latest
+    container_name: heynikki-scheduler
+    restart: always
+    network_mode: host          # reaches api-server on 127.0.0.1:4000
+    env_file: .env
+    environment:
+      - API_URL=http://127.0.0.1:4000
+    depends_on:
+      - api-server
+    command: >
+      sh -c "while true; do node dist/jobs/scheduler.js || echo '[scheduler] run failed'; sleep 900; done"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # ── Outbound campaign dispatcher ──────────────────────────────
+  # DELIBERATELY OPT-IN: start with `--profile outbound`.
+  #
+  # scrubDnd() in jobs/outbound-dispatcher.ts is still a STUB — it approves
+  # every number. Running this against a purchased list would dial numbers on
+  # India's DND registry, which is a TRAI violation, not a bug report. Leave
+  # it off until a real DND provider is wired in, or until the list is
+  # explicitly consented opt-in.
+  #
+  # It is also single-instance only: recipient rows are not locked during
+  # pickup, so two dispatchers would dial the same person twice.
+  outbound-dispatcher:
+    image: infra-api-server:latest
+    container_name: heynikki-outbound
+    restart: always
+    profiles: ["outbound"]
+    network_mode: host
+    env_file: .env
+    environment:
+      - PIPELINE_URL=http://127.0.0.1:8000
+    depends_on:
+      - api-server
+    command: ["node", "dist/jobs/outbound-dispatcher.js"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
   # ── n8n Workflow Automation ───────────────────────────────────
   n8n:
     image: n8nio/n8n:latest
