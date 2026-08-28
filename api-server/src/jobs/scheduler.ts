@@ -185,7 +185,11 @@ export async function runDailySummaries(): Promise<number> {
     // Skip if today's summary already went out (idempotent across runs).
     const { data: already } = await sb.from("wa_dispatch_log")
       .select("id").eq("tenant_id", t.id).eq("message_type", "daily_summary")
-      .gte("created_at", today + "T00:00:00").limit(1).maybeSingle();
+      // sent_at: wa_dispatch_log has no created_at. The query 400d, so
+      // `already` came back null and this idempotency guard FAILED OPEN —
+      // once the evening window opened the daily summary would resend on
+      // every 15-minute tick, roughly eight WhatsApps a night to the owner.
+      .gte("sent_at", today + "T00:00:00").limit(1).maybeSingle();
     if (already) continue;
 
     const [calls, appts, leads] = await Promise.all([
