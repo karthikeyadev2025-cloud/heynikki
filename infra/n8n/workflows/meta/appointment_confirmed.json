@@ -15,7 +15,8 @@
       "position": [
         240,
         300
-      ]
+      ],
+      "webhookId": "bb5f7588-2f29-53ae-bcad-aa71f16e9fac"
     },
     {
       "parameters": {
@@ -166,7 +167,8 @@
       "position": [
         1120,
         300
-      ]
+      ],
+      "webhookId": "670a8c32-334b-57d3-829e-48a3ea5634ed"
     }
   ],
   "connections": {
@@ -185,18 +187,7 @@
       "main": [
         [
           {
-            "node": "Send WhatsApp — Missed Call Template",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send WhatsApp — Missed Call Template": {
-      "main": [
-        [
-          {
-            "node": "Log to Supabase wa_dispatch_log",
+            "node": "Send WhatsApp — Appointment Confirmation & 24h Reminder",
             "type": "main",
             "index": 0
           }
@@ -213,15 +204,22 @@
           }
         ]
       ]
+    },
+    "Send WhatsApp — Appointment Confirmation & 24h Reminder": {
+      "main": [
+        [
+          {
+            "node": "Log to Supabase wa_dispatch_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "tags": [
-    "heynikki",
-    "missed-call",
-    "whatsapp"
-  ]
+  "id": "heynikki-meta-appointment-confirmed"
 }

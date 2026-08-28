@@ -15,7 +15,8 @@
       "position": [
         240,
         300
-      ]
+      ],
+      "webhookId": "ec2af3af-be3e-543c-936d-c0c75f5efae6"
     },
     {
       "parameters": {
@@ -158,7 +159,8 @@
       "position": [
         1120,
         300
-      ]
+      ],
+      "webhookId": "142d4871-6e6d-507c-ad24-e7c643284525"
     }
   ],
   "connections": {
@@ -177,18 +179,7 @@
       "main": [
         [
           {
-            "node": "Send WhatsApp — Missed Call Template",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send WhatsApp — Missed Call Template": {
-      "main": [
-        [
-          {
-            "node": "Log to Supabase wa_dispatch_log",
+            "node": "Send WhatsApp — Interested Lead WhatsApp Brochure",
             "type": "main",
             "index": 0
           }
@@ -205,15 +196,22 @@
           }
         ]
       ]
+    },
+    "Send WhatsApp — Interested Lead WhatsApp Brochure": {
+      "main": [
+        [
+          {
+            "node": "Log to Supabase wa_dispatch_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "tags": [
-    "heynikki",
-    "missed-call",
-    "whatsapp"
-  ]
+  "id": "heynikki-meta-interested-lead"
 }
