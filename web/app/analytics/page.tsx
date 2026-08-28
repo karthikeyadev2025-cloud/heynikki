@@ -5,7 +5,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
 } from "recharts";
 import { BarChart3, Trophy } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
@@ -84,6 +84,7 @@ export default function AnalyticsPage() {
   const [leads, setLeads]   = useState<any[]>([]);
   const [ctcLogs, setCtcLogs] = useState<any[]>([]);
   const [waLogs, setWaLogs]   = useState<any[]>([]);
+  const [quality, setQuality] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [range, setRange]     = useState<"7" | "30" | "90">("30");
 
@@ -96,7 +97,7 @@ export default function AnalyticsPage() {
       if (!tu) return;
 
       const since = new Date(Date.now() - parseInt(range) * 86400000).toISOString();
-      const [c, l, ctc, wa] = await Promise.all([
+      const [c, l, ctc, wa, q] = await Promise.all([
         sb.from("calls").select("*").eq("tenant_id", tu.tenant_id)
           .gte("created_at", since).order("created_at", { ascending: true }),
         sb.from("leads").select("*").eq("tenant_id", tu.tenant_id)
@@ -105,11 +106,19 @@ export default function AnalyticsPage() {
           .gte("created_at", since),
         sb.from("wa_dispatch_log").select("*").eq("tenant_id", tu.tenant_id)
           .gte("created_at", since),
+        // Scored conversations. Joined to calls for the timestamp, because
+        // analysed_at is when the JOB ran — batching a backlog would stack
+        // every one of them on a single day and invent a cliff in the trend.
+        sb.from("call_quality")
+          .select("overall_score, resolution_score, next_step_captured, sentiment, calls!inner(created_at)")
+          .eq("tenant_id", tu.tenant_id)
+          .gte("calls.created_at", since),
       ]);
       setCalls(c.data || []);
       setLeads(l.data || []);
       setCtcLogs(ctc.data || []);
       setWaLogs(wa.data || []);
+      setQuality(q.data || []);
       setLoading(false);
     });
   }, [range]);
@@ -227,6 +236,81 @@ export default function AnalyticsPage() {
               </div>
             ))}
           </div>
+
+          {/* ── Conversation quality over time ─────────────────────
+              The ROI strip above answers "what did this save us". This
+              answers "is it getting better", which is the question that
+              decides whether a prompt change worked. Both are needed: cost
+              avoided keeps rising simply because calls keep arriving, even
+              while the calls themselves get worse. */}
+          {quality.length > 0 && (() => {
+            // Bucket by the DAY THE CALL HAPPENED, not when it was scored.
+            const byDay = new Map<string, { n: number; sum: number; next: number }>();
+            quality.forEach((q: any) => {
+              const d = (q.calls?.created_at || "").slice(0, 10);
+              if (!d) return;
+              const e = byDay.get(d) || { n: 0, sum: 0, next: 0 };
+              e.n += 1; e.sum += q.overall_score || 0;
+              if (q.next_step_captured) e.next += 1;
+              byDay.set(d, e);
+            });
+            const series = [...byDay.entries()].sort().map(([d, e]) => ({
+              day: d.slice(5),
+              score: Math.round(e.sum / e.n),
+              next: Math.round((e.next / e.n) * 100),
+            }));
+            const n = quality.length;
+            const avg = Math.round(quality.reduce((s: number, q: any) => s + (q.overall_score || 0), 0) / n);
+            const nextRate = Math.round(quality.filter((q: any) => q.next_step_captured).length / n * 100);
+            const negative = quality.filter((q: any) => q.sentiment === "negative").length;
+
+            return (
+              <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10,
+                            padding: 20, marginBottom: 20 }}>
+                <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, marginBottom: 4 }}>
+                  Conversation quality
+                </div>
+                <div style={{ color: C.mid, fontSize: 12, marginBottom: 14 }}>
+                  {n} scored conversation{n === 1 ? "" : "s"} · calls with fewer than four turns are not scored
+                </div>
+
+                <div style={{ display: "flex", gap: 26, flexWrap: "wrap", marginBottom: 16 }}>
+                  {[
+                    { l: "Avg score",     v: `${avg}`,        c: avg >= 70 ? C.grn : avg >= 45 ? C.gold : C.red },
+                    // The commercial number: a call that ends politely with
+                    // nothing agreed is one the business paid for and got
+                    // nothing from.
+                    { l: "Ended with a next step", v: `${nextRate}%`, c: nextRate >= 40 ? C.grn : C.red },
+                    { l: "Negative callers", v: `${negative}/${n}`, c: negative ? C.red : C.grn },
+                  ].map(s => (
+                    <div key={s.l}>
+                      <div style={{ color: s.c, fontSize: 22, fontWeight: 900 }}>{s.v}</div>
+                      <div style={{ color: C.mid, fontSize: 10, marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {series.length > 1 && (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <LineChart data={series}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.bord} />
+                      <XAxis dataKey="day" stroke={C.dim} fontSize={11} />
+                      <YAxis domain={[0, 100]} stroke={C.dim} fontSize={11} />
+                      <Tooltip contentStyle={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 8 }} />
+                      <Legend />
+                      <Line type="monotone" dataKey="score" name="Quality" stroke={C.gbr} strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="next"  name="Next step %" stroke={C.grn} strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+                {series.length <= 1 && (
+                  <div style={{ color: C.dim, fontSize: 12 }}>
+                    A trend needs calls on more than one day.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── KPI Row ────────────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
