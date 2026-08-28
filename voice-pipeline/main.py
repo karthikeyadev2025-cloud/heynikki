@@ -582,6 +582,10 @@ class GeminiLLM:
     """Gemini 2.5 Flash with prompt caching + 4-turn rolling window."""
 
     def __init__(self):
+        # Consecutive turns that fell through to a fallback. A caller hears
+        # the SAME stall line every failed turn otherwise, so the second one
+        # has to say something different from the first — see _stall_reply.
+        self._consecutive_failures = 0
         self.api_key = GEMINI_KEY
         self.base_url = (
             # GEMINI_MODEL holds a MODEL NAME, not a URL — compose the URL
@@ -670,6 +674,7 @@ class GeminiLLM:
                         # Vendor name filter — strip before TTS
                         for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI"]:
                             text = text.replace(vendor, "our system")
+                        self._consecutive_failures = 0
                         return text
         except httpx.HTTPError as e:
             log.error(f"Gemini error: {e} — trying GPT-4o-mini fallback")
@@ -677,14 +682,40 @@ class GeminiLLM:
         except Exception as e:
             log.error(f"Gemini unexpected: {e}")
 
-        return "ఒక్క నిమిషం — మళ్ళీ చెప్పగలరా?"
+        return self._stall_reply()
+
+
+    def _stall_reply(self) -> str:
+        """What to say when the model gave us nothing.
+
+        The old answer was "ఒక్క నిమిషం." — one minute — on every failed
+        turn. That is a STALL: it promises something is coming. Nothing was,
+        so the caller waited, repeated themselves, and got "one minute"
+        again. Scored calls show the whole conversation as nothing but that
+        line, flagged "call deadlocked in hold loop" and "dead air", and it
+        is the single biggest drag on call quality.
+
+        A failure should ask for a retry, not promise an answer. And it must
+        not repeat itself: by the second consecutive failure the honest move
+        is to stop pretending and offer a callback, which at least ends with
+        a number in the CRM rather than a hang-up.
+        """
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= 3:
+            return ("క్షమించండి, ఈ కాల్‌లో సమస్య ఉంది. "
+                    "మీ ఫోన్ నంబర్ చెప్తే మా టీమ్ మీకు తిరిగి కాల్ చేస్తుంది.")
+        if self._consecutive_failures == 2:
+            return "క్షమించండి, ఇంకా వినిపించలేదు. కొంచెం నెమ్మదిగా చెప్తారా?"
+        return "క్షమించండి, నాకు సరిగ్గా వినిపించలేదు. మళ్ళీ చెప్తారా?"
 
     async def _openai_fallback(self, system_prompt: str, history: list) -> str:
         """GPT-4o-mini fallback if Gemini fails."""
         try:
             openai_key = os.environ.get("OPENAI_API_KEY", "")
             if not openai_key:
-                return "ఒక్క నిమిషం."
+                # No fallback model is configured, so this IS the answer the
+                # caller gets. It has to be a usable one.
+                return self._stall_reply()
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -702,7 +733,7 @@ class GeminiLLM:
                     return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
             log.error(f"GPT-4o-mini fallback failed: {e}")
-        return "ఒక్క నిమిషం."
+        return self._stall_reply()
 
 
 # ── SUPABASE CLIENT ──────────────────────────────────────
@@ -988,13 +1019,60 @@ class NikkiAgent:
 
     _PHONE_RE = re.compile(r"[6-9]\d{9}")
 
+    # "నా పేరు కార్తికేయ", "పేరు రవి", "my name is Ravi", "I am Ravi",
+    # "myself Ravi", "this is Ravi". Captures 1-3 words — Indian names are
+    # commonly two, occasionally three.
+    _NAME_RE = re.compile(
+        r"(?:నా\s*పేరు|పేరు|my\s+name\s+is|myself|i\s+am|this\s+is)\s+"
+        r"([\u0C00-\u0C7FA-Za-z]+(?:\s+[\u0C00-\u0C7FA-Za-z]+){0,2})",
+        re.I,
+    )
+    # Trailing politeness that is not part of the name.
+    _NAME_TAIL = re.compile(r"\s*(?:గారు|అండి|అండీ|garu|andi)\s*$", re.I)
+
     def _harvest_slots(self, text: str) -> None:
-        """Pull durable facts out of a turn so they outlive the history window."""
+        """Pull durable facts out of a turn so they outlive the history window.
+
+        This extracted ONLY the phone number, while claiming to preserve
+        durable facts. The name — the single thing a caller most objects to
+        repeating — was never kept, so once it scrolled out of the rolling
+        window it was gone and Nikki asked again. Scored calls show exactly
+        that, with the caller finally saying
+        "ఎన్ని సార్లు చెప్పాలి నా పేరు ఫోన్ నెంబరు?" — how many times must I
+        say my name and number.
+
+        [FACTS ALREADY COLLECTED — never ask for these again] was already
+        being injected every turn. It simply had nothing but a phone number
+        to put in it.
+        """
         if not self.slots.get("phone"):
             m = self._PHONE_RE.search(re.sub(r"\D", "", text or ""))
             if m:
                 self.slots["phone"] = m.group(0)
                 log.info(f"slot: phone={m.group(0)}")
+
+        if not self.slots.get("name"):
+            name = None
+            m = self._NAME_RE.search(text or "")
+            if m:
+                name = m.group(1)
+            else:
+                # Bare answer to a direct question: "మీ పేరు?" -> "కార్తికేయ".
+                # Only trusted when the PREVIOUS assistant turn actually asked
+                # for a name, otherwise any two words become someone's name.
+                last_bot = next(
+                    (t["content"] for t in reversed(self.transcript)
+                     if t.get("role") == "assistant"), "")
+                asked_name = bool(re.search(r"పేరు|name", last_bot or "", re.I))
+                words = (text or "").strip().split()
+                if asked_name and 1 <= len(words) <= 3 and not any(c.isdigit() for c in text):
+                    name = " ".join(words)
+            if name:
+                name = self._NAME_TAIL.sub("", name).strip(" .,!?")
+                # Guard against capturing a refusal or a question back.
+                if 2 <= len(name) <= 60 and not re.search(r"\?|చెప్పను|తెలియదు", name):
+                    self.slots["name"] = name
+                    log.info(f"slot: name={name}")
 
     def _known_facts_block(self) -> str:
         """Re-state confirmed facts every turn, and forbid inventing a booking.
