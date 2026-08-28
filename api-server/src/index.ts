@@ -808,8 +808,12 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
   }
 
   try {
-    // ── 1. Transcribe (real Telugu STT) ──────────────────────────
+    // ── 1. Transcribe (auto-detecting STT) ───────────────────────
     let transcript = (text || "").trim();
+    // Set from Saarika's detection for spoken turns. For a typed turn we
+    // cannot know, so the reply is spoken in Telugu — the default the
+    // product is sold on — unless the text is plainly Latin script.
+    let detectedLang = "";
 
     if (!transcript && audio_base64) {
       // ~1.4MB of base64 ≈ 1MB of webm ≈ well over the 20s a single
@@ -825,7 +829,14 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       const ext  = mime.split("/")[1]?.split(";")[0] || "webm";
       sttForm.append("file", new Blob([audioBuffer], { type: mime }), `turn.${ext}`);
       sttForm.append("model", "saaras:v3");
-      sttForm.append("language_code", "te-IN");
+      // "unknown" = auto-detect, the same thing the phone path does.
+      //
+      // This was pinned to te-IN, so a visitor speaking English was
+      // transcribed AS Telugu — Saarika returns its best Telugu reading of
+      // English phonemes, which is nonsense, and the model then answered the
+      // nonsense. The landing demo was behaving worse than the product it
+      // exists to sell, and it is the first thing a customer tries.
+      sttForm.append("language_code", "unknown");
 
       const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
         method: "POST",
@@ -835,6 +846,16 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (!sttResp.ok) throw new Error(`Sarvam STT ${sttResp.status}`);
       const sttData = await sttResp.json() as any;
       transcript = (sttData.transcript || "").trim();
+      // Saarika reports what it detected. Speak the answer back in the same
+      // language rather than replying in Telugu to an English question.
+      if (sttData.language_code) {
+        detectedLang = String(sttData.language_code);
+        // Not used to pick the voice — the reply's own script decides that,
+        // below. Logged because it is the only signal of what visitors
+        // actually speak on the landing page, which is worth knowing before
+        // deciding what the demo should answer in.
+        console.log(`[voice-turn] detected ${detectedLang} for session ${sessionId}`);
+      }
     }
 
     if (!transcript) {
@@ -893,6 +914,21 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     // and stitched client-side would be worse, so we bound the text
     // instead — the system prompt already asks for <25 word answers.
     let audioBase64: string | null = null;
+    // Sarvam speaks a fixed set of Indian languages; anything it detected
+    // outside that list still has to be spoken by SOMETHING, and Telugu is
+    // the product's default. A Latin-script typed turn is treated as English
+    // so the demo answers a typed English question in English.
+    // Choose the voice language from the SCRIPT OF THE REPLY, not from what
+    // the visitor said. Those differ constantly — a typed English question
+    // often gets a Telugu answer, this being a Telugu-first product — and
+    // handing Telugu text to an en-IN voice makes Sarvam read Telugu
+    // characters with English phonetics, which is the accented mumble that
+    // sounds like a broken voice engine. Matching the text is the only rule
+    // that is always right.
+    const hasTelugu     = /[ఀ-౿]/.test(reply);
+    const hasDevanagari = /[ऀ-ॿ]/.test(reply);
+    const ttsLang = hasTelugu ? "te-IN" : hasDevanagari ? "hi-IN" : "en-IN";
+
     try {
       const speakText = reply.length > 480 ? reply.slice(0, 480) : reply;
       const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
@@ -903,7 +939,18 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         },
         body: JSON.stringify({
           inputs: [speakText],
-          target_language_code: "te-IN",
+          // Speak back in the language the visitor actually used. Pinned to
+          // te-IN, an English reply was rendered with Telugu phonetics and
+          // came out as an accented mumble — which reads as "the voice is
+          // broken" to someone evaluating the product in English.
+          target_language_code: ttsLang,
+          // Same voice the phone product uses (main.py synthesize default),
+          // so what a visitor hears on the site is what their callers will
+          // actually get. Do not change it to a livelier-sounding name
+          // without checking compatibility first: bulbul:v3 accepts only a
+          // subset of Sarvam's speakers and rejects the rest with a 400,
+          // which this try/catch turns into audio_base64: null — a silently
+          // voiceless demo.
           speaker: "priya",
           model: "bulbul:v3",
           // Slightly quicker than default. A receptionist answering a

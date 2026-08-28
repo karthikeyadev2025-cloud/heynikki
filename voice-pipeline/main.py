@@ -342,7 +342,14 @@ async def _refresh_pricing() -> None:
             return
         d = r.json()
         rup = lambda p: f"{int(p) // 100:,}"
-        lines = ["\n\n[CURRENT PRICING — quote only these figures]"]
+        # The model recited this header verbatim into a reply — a caller was
+        # read the literal words "[CURRENT PRICING — quote only these
+        # figures]" followed by the whole tariff. This is reference data, not
+        # a script, and on a voice call nobody wants the full price list read
+        # at them: say the one plan that fits and stop.
+        lines = ["\n\n[REFERENCE — internal price list. NEVER read this heading or the "
+                 "whole list aloud. Quote at most ONE plan, only the figure asked for, "
+                 "and never invent a plan or a price that is not listed here.]"]
         for t in d.get("tiers", []):
             lines.append(
                 f"\n- {t.get('name')}: Rs {rup(t.get('monthly_paise', 0))}/month, "
@@ -1472,6 +1479,18 @@ async def browser_chat(req: BrowserChatRequest):
     are contextually aware. Supports both demo mode (no tenant) and
     authenticated widget (tenant_id provided).
     """
+    # Load the live price list before building the prompt.
+    #
+    # This was called only from the FreeSWITCH path, so the landing-page
+    # assistant ran with an EMPTY [CURRENT PRICING] block and answered
+    # "what does it cost" by inventing figures — it quoted Starter Rs 999,
+    # Growth Rs 2,999 and a "Pro" plan that does not exist, against a real
+    # catalogue of Rs 1,999 / Rs 4,999 / Rs 9,999 Starter/Growth/Scale.
+    # Prospects were being quoted prices we do not sell, on the page that
+    # is meant to sell them. Cached for 10 minutes, so this is a no-op on
+    # all but the first turn.
+    await _refresh_pricing()
+
     # Pick voice profile: real tenant profile or fallback demo
     profile = _PRODUCT_PROFILE if (req.persona or "") == "product" else _DEMO_PROFILE
     if req.tenant_id and req.tenant_id != "demo":
