@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity,
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck,
 } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
@@ -93,6 +93,7 @@ const TABS = [
   { label: "CRM",             icon: Users },
   { label: "Revenue",         icon: IndianRupee },
   { label: "Operations",      icon: Activity },
+  { label: "KYC Review",      icon: ShieldCheck },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
   { label: "Platform Config", icon: Settings },
@@ -130,6 +131,7 @@ export default function SuperAdminPage() {
     <CrmPanel          key="crm"  token={token} />,
     <RevenuePanel      key="rev"  token={token} />,
     <OperationsPanel   key="ops"  token={token} />,
+    <KycPanel          key="kyc"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
     <PlatformConfigPanel key="cfg"   token={token} />,
@@ -1098,6 +1100,149 @@ function OperationsPanel({ token }: { token: string }) {
       {data?.generated_at && (
         <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: SPACE.md }}>
           Checked {new Date(data.generated_at).toLocaleString("en-IN")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * KYC review queue.
+ *
+ * Businesses upload identity documents to get a phone number, and
+ * /api/admin/kyc plus /api/admin/kyc/:id/review have existed with no screen
+ * behind them — the only way to approve anyone was to hand-craft an HTTP
+ * request. A customer who cannot be approved cannot go live, so this was an
+ * onboarding dead end.
+ *
+ * Document links are short-lived signed URLs generated per request; the
+ * bucket is private and stays that way. They are opened in a new tab rather
+ * than embedded, so an identity document is never rendered into a page that
+ * might be screenshotted or cached.
+ */
+function KycPanel({ token }: { token: string }) {
+  const [docs, setDocs]       = useState<any[]>([]);
+  const [status, setStatus]   = useState<"pending" | "approved" | "rejected">("pending");
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing]   = useState<string | null>(null);
+  const [note, setNote]       = useState<Record<string, string>>({});
+  const [error, setError]     = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/kyc?status=${status}`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      const j = await r.json();
+      if (!r.ok) setError(j.error || `Failed (${r.status})`);
+      else setDocs(Array.isArray(j) ? j : (j.documents || []));
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  }, [token, status]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const review = async (id: string, decision: "approved" | "rejected") => {
+    // Rejecting without saying why leaves the business with nothing to fix.
+    if (decision === "rejected" && !(note[id] || "").trim()) {
+      setError("Add a note explaining the rejection — the business sees it.");
+      return;
+    }
+    setActing(id + decision); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/kyc/${id}/review`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, note: note[id] || null }),
+      });
+      if (!r.ok) { const j = await r.json(); setError(j.error || "Review failed"); }
+      else await load();
+    } catch (e: any) { setError(e.message); }
+    setActing(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: SPACE.md, alignItems: "center" }}>
+        {(["pending", "approved", "rejected"] as const).map(f => (
+          <button key={f} onClick={() => setStatus(f)} style={{
+            background: status === f ? C.glow + "22" : "none",
+            border: "1px solid " + (status === f ? C.glow : C.bord),
+            color: status === f ? C.gbr : C.dim, borderRadius: 7,
+            padding: "5px 12px", fontSize: TYPE.xs, fontWeight: 700,
+            textTransform: "capitalize", cursor: "pointer",
+          }}>{f}</button>
+        ))}
+        <button onClick={load} style={{ marginLeft: "auto", background: "none",
+          border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
+          padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Refresh</button>
+      </div>
+
+      {error && (
+        <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
+          <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div>
+        </Card>
+      )}
+
+      {loading ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>
+      : docs.length === 0 ? (
+        <Card><div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center", padding: SPACE.md }}>
+          Nothing {status}.
+        </div></Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+          {docs.map(d => (
+            <Card key={d.id} hover>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+                  <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                    {d.tenant_name || d.tenant_id?.slice(0, 8)} · {d.doc_type}
+                  </div>
+                  <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                    {d.file_name} · {d.size_bytes ? Math.round(d.size_bytes / 1024) + " KB" : "—"} ·
+                    {" "}{new Date(d.created_at).toLocaleDateString("en-IN")}
+                  </div>
+                  {d.url && (
+                    <a href={d.url} target="_blank" rel="noopener noreferrer"
+                       style={{ color: C.gbr, fontSize: TYPE.xs, textDecoration: "underline" }}>
+                      Open document ↗
+                    </a>
+                  )}
+                </div>
+
+                {status === "pending" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+                    <input
+                      value={note[d.id] || ""}
+                      onChange={e => setNote(n => ({ ...n, [d.id]: e.target.value }))}
+                      placeholder="Note (required to reject)"
+                      style={{ background: C.bg, border: "1px solid " + C.bord, borderRadius: 6,
+                               padding: "6px 9px", color: C.txt, fontSize: TYPE.xs }} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => review(d.id, "approved")}
+                        disabled={acting === d.id + "approved"}
+                        style={{ flex: 1, background: C.grn + "22", color: C.grn,
+                                 border: "1px solid " + C.grn + "55", borderRadius: 6,
+                                 padding: "6px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                        Approve
+                      </button>
+                      <button onClick={() => review(d.id, "rejected")}
+                        disabled={acting === d.id + "rejected"}
+                        style={{ flex: 1, background: C.red + "18", color: C.red,
+                                 border: "1px solid " + C.red + "44", borderRadius: 6,
+                                 padding: "6px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {status !== "pending" && (
+                  <Pill label={d.status} color={d.status === "approved" ? C.grn : C.red} />
+                )}
+              </div>
+            </Card>
+          ))}
         </div>
       )}
     </div>
