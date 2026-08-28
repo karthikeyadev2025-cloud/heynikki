@@ -1019,13 +1019,60 @@ class NikkiAgent:
 
     _PHONE_RE = re.compile(r"[6-9]\d{9}")
 
+    # "నా పేరు కార్తికేయ", "పేరు రవి", "my name is Ravi", "I am Ravi",
+    # "myself Ravi", "this is Ravi". Captures 1-3 words — Indian names are
+    # commonly two, occasionally three.
+    _NAME_RE = re.compile(
+        r"(?:నా\s*పేరు|పేరు|my\s+name\s+is|myself|i\s+am|this\s+is)\s+"
+        r"([\u0C00-\u0C7FA-Za-z]+(?:\s+[\u0C00-\u0C7FA-Za-z]+){0,2})",
+        re.I,
+    )
+    # Trailing politeness that is not part of the name.
+    _NAME_TAIL = re.compile(r"\s*(?:గారు|అండి|అండీ|garu|andi)\s*$", re.I)
+
     def _harvest_slots(self, text: str) -> None:
-        """Pull durable facts out of a turn so they outlive the history window."""
+        """Pull durable facts out of a turn so they outlive the history window.
+
+        This extracted ONLY the phone number, while claiming to preserve
+        durable facts. The name — the single thing a caller most objects to
+        repeating — was never kept, so once it scrolled out of the rolling
+        window it was gone and Nikki asked again. Scored calls show exactly
+        that, with the caller finally saying
+        "ఎన్ని సార్లు చెప్పాలి నా పేరు ఫోన్ నెంబరు?" — how many times must I
+        say my name and number.
+
+        [FACTS ALREADY COLLECTED — never ask for these again] was already
+        being injected every turn. It simply had nothing but a phone number
+        to put in it.
+        """
         if not self.slots.get("phone"):
             m = self._PHONE_RE.search(re.sub(r"\D", "", text or ""))
             if m:
                 self.slots["phone"] = m.group(0)
                 log.info(f"slot: phone={m.group(0)}")
+
+        if not self.slots.get("name"):
+            name = None
+            m = self._NAME_RE.search(text or "")
+            if m:
+                name = m.group(1)
+            else:
+                # Bare answer to a direct question: "మీ పేరు?" -> "కార్తికేయ".
+                # Only trusted when the PREVIOUS assistant turn actually asked
+                # for a name, otherwise any two words become someone's name.
+                last_bot = next(
+                    (t["content"] for t in reversed(self.transcript)
+                     if t.get("role") == "assistant"), "")
+                asked_name = bool(re.search(r"పేరు|name", last_bot or "", re.I))
+                words = (text or "").strip().split()
+                if asked_name and 1 <= len(words) <= 3 and not any(c.isdigit() for c in text):
+                    name = " ".join(words)
+            if name:
+                name = self._NAME_TAIL.sub("", name).strip(" .,!?")
+                # Guard against capturing a refusal or a question back.
+                if 2 <= len(name) <= 60 and not re.search(r"\?|చెప్పను|తెలియదు", name):
+                    self.slots["name"] = name
+                    log.info(f"slot: name={name}")
 
     def _known_facts_block(self) -> str:
         """Re-state confirmed facts every turn, and forbid inventing a booking.
