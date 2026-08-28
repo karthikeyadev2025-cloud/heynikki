@@ -65,6 +65,10 @@ export default function WakeWordNikki() {
   const sessionRef  = useRef<string>("");
   const phaseRef    = useRef<Phase>("idle");
   const stoppingRef = useRef(false);
+  // Pending wake-listener restart. Held so teardown can cancel it —
+  // otherwise a queued restart fires after the mic tracks are stopped and
+  // Chrome re-prompts for the microphone on a page the user just left.
+  const restartTimerRef = useRef<number | null>(null);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
@@ -114,6 +118,7 @@ export default function WakeWordNikki() {
   // ── Teardown ──────────────────────────────────────────────────────────
   const teardown = useCallback(() => {
     stoppingRef.current = true;
+    if (restartTimerRef.current) { clearTimeout(restartTimerRef.current); restartTimerRef.current = null; }
     try { recogRef.current?.stop(); } catch {}
     try { recorderRef.current?.state === "recording" && recorderRef.current.stop(); } catch {}
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -229,12 +234,39 @@ export default function WakeWordNikki() {
         }
       }
     };
-    // Chrome ends recognition on its own periodically; restart unless stopping.
-    rec.onend = () => { if (!stoppingRef.current && phaseRef.current !== "idle") { try { rec.start(); } catch {} } };
-    rec.onerror = (e: any) => {
-      if (e.error === "not-allowed") { setError("Microphone blocked in your browser settings."); teardown(); }
+    // Chrome ends recognition every few seconds and after every result, so
+    // the listener only survives if it is restarted. Restarting SYNCHRONOUSLY
+    // is what broke it: the previous session is still tearing down, start()
+    // throws InvalidStateError, the empty catch swallowed it, and wake-word
+    // detection was dead from then on with the UI still showing "listening".
+    // A tick of delay lets the old session finish, and the guard stops two
+    // timers from racing a double start() — which throws the same way.
+    const restart = () => {
+      if (stoppingRef.current || phaseRef.current === "idle") return;
+      if (restartTimerRef.current) return;
+      restartTimerRef.current = window.setTimeout(() => {
+        restartTimerRef.current = null;
+        if (stoppingRef.current || phaseRef.current === "idle") return;
+        try { rec.start(); } catch { /* already running — nothing to do */ }
+      }, 300);
     };
-    try { rec.start(); } catch {}
+
+    rec.onend = restart;
+    rec.onerror = (e: any) => {
+      // not-allowed / service-not-allowed are terminal: the user or the
+      // browser refused the mic, and retrying just loops.
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        setError("Microphone blocked in your browser settings.");
+        teardown();
+        return;
+      }
+      // Everything else is routine. "no-speech" fires whenever someone is
+      // simply quiet, and "aborted"/"network" on a flaky connection — none
+      // of them mean stop listening, but none of them fire onend reliably
+      // either, so the restart has to be driven from here too.
+      restart();
+    };
+    try { rec.start(); } catch { restart(); }
   }, [runTurn, teardown]);
 
   // ── Enable (the one required user gesture) ────────────────────────────

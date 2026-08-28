@@ -808,8 +808,12 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
   }
 
   try {
-    // ── 1. Transcribe (real Telugu STT) ──────────────────────────
+    // ── 1. Transcribe (auto-detecting STT) ───────────────────────
     let transcript = (text || "").trim();
+    // Set from Saarika's detection for spoken turns. For a typed turn we
+    // cannot know, so the reply is spoken in Telugu — the default the
+    // product is sold on — unless the text is plainly Latin script.
+    let detectedLang = "";
 
     if (!transcript && audio_base64) {
       // ~1.4MB of base64 ≈ 1MB of webm ≈ well over the 20s a single
@@ -825,7 +829,14 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       const ext  = mime.split("/")[1]?.split(";")[0] || "webm";
       sttForm.append("file", new Blob([audioBuffer], { type: mime }), `turn.${ext}`);
       sttForm.append("model", "saaras:v3");
-      sttForm.append("language_code", "te-IN");
+      // "unknown" = auto-detect, the same thing the phone path does.
+      //
+      // This was pinned to te-IN, so a visitor speaking English was
+      // transcribed AS Telugu — Saarika returns its best Telugu reading of
+      // English phonemes, which is nonsense, and the model then answered the
+      // nonsense. The landing demo was behaving worse than the product it
+      // exists to sell, and it is the first thing a customer tries.
+      sttForm.append("language_code", "unknown");
 
       const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
         method: "POST",
@@ -835,6 +846,16 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (!sttResp.ok) throw new Error(`Sarvam STT ${sttResp.status}`);
       const sttData = await sttResp.json() as any;
       transcript = (sttData.transcript || "").trim();
+      // Saarika reports what it detected. Speak the answer back in the same
+      // language rather than replying in Telugu to an English question.
+      if (sttData.language_code) {
+        detectedLang = String(sttData.language_code);
+        // Not used to pick the voice — the reply's own script decides that,
+        // below. Logged because it is the only signal of what visitors
+        // actually speak on the landing page, which is worth knowing before
+        // deciding what the demo should answer in.
+        console.log(`[voice-turn] detected ${detectedLang} for session ${sessionId}`);
+      }
     }
 
     if (!transcript) {
@@ -893,6 +914,21 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     // and stitched client-side would be worse, so we bound the text
     // instead — the system prompt already asks for <25 word answers.
     let audioBase64: string | null = null;
+    // Sarvam speaks a fixed set of Indian languages; anything it detected
+    // outside that list still has to be spoken by SOMETHING, and Telugu is
+    // the product's default. A Latin-script typed turn is treated as English
+    // so the demo answers a typed English question in English.
+    // Choose the voice language from the SCRIPT OF THE REPLY, not from what
+    // the visitor said. Those differ constantly — a typed English question
+    // often gets a Telugu answer, this being a Telugu-first product — and
+    // handing Telugu text to an en-IN voice makes Sarvam read Telugu
+    // characters with English phonetics, which is the accented mumble that
+    // sounds like a broken voice engine. Matching the text is the only rule
+    // that is always right.
+    const hasTelugu     = /[ఀ-౿]/.test(reply);
+    const hasDevanagari = /[ऀ-ॿ]/.test(reply);
+    const ttsLang = hasTelugu ? "te-IN" : hasDevanagari ? "hi-IN" : "en-IN";
+
     try {
       const speakText = reply.length > 480 ? reply.slice(0, 480) : reply;
       const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
@@ -903,7 +939,18 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         },
         body: JSON.stringify({
           inputs: [speakText],
-          target_language_code: "te-IN",
+          // Speak back in the language the visitor actually used. Pinned to
+          // te-IN, an English reply was rendered with Telugu phonetics and
+          // came out as an accented mumble — which reads as "the voice is
+          // broken" to someone evaluating the product in English.
+          target_language_code: ttsLang,
+          // Same voice the phone product uses (main.py synthesize default),
+          // so what a visitor hears on the site is what their callers will
+          // actually get. Do not change it to a livelier-sounding name
+          // without checking compatibility first: bulbul:v3 accepts only a
+          // subset of Sarvam's speakers and rejects the rest with a 400,
+          // which this try/catch turns into audio_base64: null — a silently
+          // voiceless demo.
           speaker: "priya",
           model: "bulbul:v3",
           // Slightly quicker than default. A receptionist answering a
@@ -2137,10 +2184,21 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // Resolve the ring group for human/hybrid routing.
     let ringGroup = "";
     if (did.routing_mode === "human" || did.routing_mode === "hybrid") {
-      const { data: agents } = await sb.from("tenant_users")
+      // tenant_users.phone did not exist until migration 020, so this query
+      // returned 42703, agents came back null, and the ring group was an
+      // empty string — a DID on 'human' or 'hybrid' rang nobody, silently.
+      // The error is checked now rather than discarded, because an empty ring
+      // group and a failed query look identical from here and only one of
+      // them is worth waking someone up about.
+      const { data: agents, error: agentErr } = await sb.from("tenant_users")
         .select("phone")
         .eq("tenant_id", did.tenant_id)
         .not("phone", "is", null);
+      if (agentErr) {
+        console.error("[routing] ring group lookup failed:", agentErr.message);
+      } else if (!agents?.length) {
+        console.warn(`[routing] tenant ${did.tenant_id} is on '${did.routing_mode}' but no seat has a phone number — nobody will ring`);
+      }
       // Simultaneous ring across every agent with a phone on file.
       ringGroup = (agents || [])
         .map((a: any) => `sofia/gateway/jio_primary/${String(a.phone).replace(/[^0-9+]/g, "")}`)
@@ -2190,6 +2248,48 @@ app.post("/webhooks/freeswitch/transfer-to-human", verifyInternal, async (req, r
   } catch (err: any) {
     console.error("[FS transfer-to-human]", err.message);
     res.status(500).json({ error: "Transfer failed" });
+  }
+});
+
+// ── Call recording playback ───────────────────────────────────
+// The bucket is private, so a recording has no permanent URL. This checks
+// the caller owns the call and then asks the pipeline — which has boto3 —
+// for a link that expires in fifteen minutes.
+//
+// A public bucket would have been less code and is what the upload path
+// originally assumed. It also means every customer's recorded phone call
+// sits at an unauthenticated URL that never expires, written into the
+// database and rendered into dashboards. Not a trade worth making.
+app.get("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res) => {
+  try {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+    const { data: call } = await sb.from("calls")
+      .select("id, tenant_id, r2_object_key, recording_url")
+      .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+    // Same 404 whether the call does not exist or belongs to someone else —
+    // distinguishing them tells a stranger which call ids are real.
+    if (!call) return res.status(404).json({ error: "Call not found" });
+
+    // Older rows, and deployments with a public bucket, carry a plain URL.
+    if (call.recording_url) return res.json({ url: call.recording_url, expires_in: 0 });
+    if (!call.r2_object_key) return res.status(404).json({ error: "No recording for this call" });
+
+    const r = await fetch(`${PIPELINE_URL}/api/v1/recording/presign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
+      body: JSON.stringify({ object_key: call.r2_object_key, expires_in: 900 }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) {
+      console.error("[recording] presign failed:", r.status, await r.text().catch(() => ""));
+      return res.status(502).json({ error: "Could not prepare the recording" });
+    }
+    res.json(await r.json());
+  } catch (err: any) {
+    console.error("[recording]", err.message);
+    res.status(500).json({ error: "Internal error" });
   }
 });
 

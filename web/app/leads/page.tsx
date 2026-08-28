@@ -23,6 +23,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList } from "lucide-react";
+import LeadDetail from "../../components/LeadDetail";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -44,6 +45,11 @@ type Lead = {
   call_count: number;
   last_contacted_at: string;
   created_at: string;
+  // Added by migration 017 and unused by any screen until now.
+  tenant_id: string;
+  assigned_to: string | null;
+  deal_value_paise: number | null;
+  tags: string[] | null;
 };
 
 const STAGES = [
@@ -90,6 +96,7 @@ function timeAgo(iso: string): string {
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openLead, setOpenLead] = useState<Lead | null>(null);
   const [error, setError] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -316,9 +323,14 @@ export default function LeadsPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {shown.map(l => (
-              <div key={l.id} style={{
+              <div key={l.id}
+                onClick={() => setOpenLead(l)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenLead(l); } }}
+                style={{
                 background: C.surf, border: `1px solid ${C.bord}`,
-                borderRadius: 12, padding: 16,
+                borderRadius: 12, padding: 16, cursor: "pointer",
               }}>
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
                   {/* score */}
@@ -452,6 +464,18 @@ export default function LeadsPage() {
               </div>
             ))}
           </div>
+        )}
+
+        {openLead && (
+          <LeadDetail
+            lead={openLead}
+            onClose={() => setOpenLead(null)}
+            // Reload so the row reflects the new stage/owner immediately —
+            // the drawer writes straight to Postgres, not through this page's
+            // state, so without this the list would show stale values until
+            // the next manual refresh.
+            onSaved={() => { setOpenLead(null); load(); }}
+          />
         )}
       </div>
     </Shell>
