@@ -2160,16 +2160,35 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // error, a failed query is indistinguishable from "no such call" and the
     // completion update below is silently skipped.
     const { data: callRow, error: selErr } = await sb.from("calls")
-      .select("id, tenant_id, voice_profile_id")
+      .select("id, tenant_id, voice_profile_id, created_at")
       .eq("livekit_room_id", fs_uuid)
       .single();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
+
+    // billsec from the dialplan's api_reporting_hook has now arrived as 0 or
+    // absent three separate times (raw-body Buffer, api_hangup_hook firing
+    // before CDR, and whatever is doing it today), and every time the symptom
+    // was the same: real conversations stored as status=missed with
+    // duration_seconds=0, and the missed-call automation firing on answered
+    // calls. Stop trusting it as the only source. The calls row is inserted by
+    // the inbound webhook at call start, so wall-clock since created_at is a
+    // sound fallback — accurate to the second or two of setup time, and always
+    // better than 0. Only used when billsec is missing or non-positive.
+    let secs = parseInt(duration || "0");
+    if (!Number.isFinite(secs) || secs <= 0) {
+      if (callRow?.created_at) {
+        secs = Math.max(0, Math.round((Date.now() - new Date(callRow.created_at).getTime()) / 1000));
+        console.warn(`[FS Hangup] billsec missing for ${fs_uuid}; derived ${secs}s from created_at`);
+      } else {
+        secs = 0;
+      }
+    }
 
     if (callRow) {
       // Update call status
       const { error: updErr } = await sb.from("calls").update({
         status:           "completed",
-        duration_seconds: parseInt(duration || "0"),
+        duration_seconds: secs,
         updated_at:       new Date().toISOString(),
       }).eq("id", callRow.id);
       if (updErr) console.error("[FS Hangup] completion update failed:", updErr.message);
@@ -2182,8 +2201,12 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       }).catch(e => console.error("[Pipeline hangup]", e.message));
     }
 
-    // Check if missed call (duration < 5 seconds = unanswered)
-    if (parseInt(duration || "0") < 5 && hangup_cause !== "NORMAL_CLEARING") {
+    // Check if missed call (duration < 5 seconds = unanswered).
+    // Uses the derived seconds above, not the raw body field: when billsec
+    // arrives empty this test read parseInt(undefined || "0") < 5 as true and
+    // overwrote the "completed" status set moments earlier, which is how a
+    // two-minute conversation ended up stored as a missed call.
+    if (secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
       await fireAutomationWebhook("missed-call", {
         caller_number,
         did_number,

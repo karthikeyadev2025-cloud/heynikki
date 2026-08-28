@@ -2443,11 +2443,36 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             r = await c.post(f"{agent.db.url}/rest/v1/leads",
                              headers={**agent.db.headers, "Prefer": "return=minimal"},
                              json=row)
+            # leads carries a unique (tenant_id, phone). A returning caller
+            # therefore 409s here, and everything this call learned — updated
+            # intent, a business name they only gave the second time, a better
+            # score — used to be dropped on the floor with a warning. Update
+            # the existing lead instead.
+            if r.status_code == 409:
+                # first_call_id is deliberately excluded: it records the FIRST
+                # call and must not drift forward. Nones are dropped too, so a
+                # call that failed to capture a name does not blank the name
+                # captured last time.
+                patch = {k: v for k, v in row.items()
+                         if k not in ("tenant_id", "phone", "first_call_id")
+                         and v is not None}
+                if patch:
+                    r = await c.patch(
+                        f"{agent.db.url}/rest/v1/leads"
+                        f"?tenant_id=eq.{row['tenant_id']}&phone=eq.{digits}",
+                        headers={**agent.db.headers, "Prefer": "return=minimal"},
+                        json=patch)
+                    updated = True
+                else:
+                    updated = True
+            else:
+                updated = False
         if r.status_code >= 300:
-            log.warning(f"[FS] {fs_uuid}: lead insert {r.status_code} {r.text[:120]}")
+            log.warning(f"[FS] {fs_uuid}: lead {'update' if updated else 'insert'} "
+                        f"{r.status_code} {r.text[:120]}")
         else:
-            log.info(f"[FS] {fs_uuid}: lead scored {score}/100 stage={stage} "
-                     f"intent={row['intent']}")
+            log.info(f"[FS] {fs_uuid}: lead {'updated' if updated else 'scored'} "
+                     f"{score}/100 stage={stage} intent={row['intent']}")
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
 
