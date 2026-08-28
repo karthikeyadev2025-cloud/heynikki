@@ -35,6 +35,13 @@ const labelStyle: React.CSSProperties = {
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Phone sign-in. Two steps in one component rather than a second page:
+  // the OTP is only meaningful for the number just entered, and a separate
+  // route invites a refresh that loses it.
+  const [mode, setMode]       = useState<"email" | "phone">("email");
+  const [phone, setPhone]     = useState("");
+  const [otp, setOtp]         = useState("");
+  const [otpSent, setOtpSent] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -58,6 +65,46 @@ export default function LoginPage() {
     setError("");
     const sb = createClient();
     const { error: err } = await sb.auth.signInWithPassword({ email, password });
+    if (err) { setError(err.message); setLoading(false); return; }
+    window.location.href = "/dashboard";
+  };
+
+  /** India E.164. Supabase wants the country code; people type ten digits. */
+  const toE164 = (raw: string) => {
+    const d = raw.replace(/\D/g, "");
+    if (d.length === 10) return `+91${d}`;
+    if (d.length === 12 && d.startsWith("91")) return `+${d}`;
+    if (d.length === 11 && d.startsWith("0")) return `+91${d.slice(1)}`;
+    return null;
+  };
+
+  const sendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const p = toE164(phone);
+    if (!p) { setError("Enter a 10-digit mobile number."); return; }
+    setLoading(true); setError("");
+    const sb = createClient();
+    const { error: err } = await sb.auth.signInWithOtp({ phone: p });
+    setLoading(false);
+    if (err) {
+      // The commonest failure here is not the user's: phone auth is a
+      // provider toggle in Supabase, and until it is on every attempt fails
+      // with an opaque message. Say which it is.
+      setError(/not enabled|unsupported|provider/i.test(err.message)
+        ? "Phone sign-in is not enabled on this project yet."
+        : err.message);
+      return;
+    }
+    setOtpSent(true);
+  };
+
+  const verifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const p = toE164(phone);
+    if (!p) return;
+    setLoading(true); setError("");
+    const sb = createClient();
+    const { error: err } = await sb.auth.verifyOtp({ phone: p, token: otp.trim(), type: "sms" });
     if (err) { setError(err.message); setLoading(false); return; }
     window.location.href = "/dashboard";
   };
@@ -95,7 +142,28 @@ export default function LoginPage() {
         </div>
 
         <div style={{ background: C.vault, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32 }}>
-          <form onSubmit={handleLogin}>
+          {/* Email or phone. A toggle rather than two pages: the OTP only
+              means anything for the number just typed, and a second route
+              invites a refresh that throws it away. */}
+          <div role="tablist" aria-label="Sign-in method"
+               style={{ display: "flex", gap: 6, marginBottom: 20,
+                        background: C.surface, border: `1px solid ${C.border}`,
+                        borderRadius: 10, padding: 4 }}>
+            {(["email", "phone"] as const).map(m => (
+              <button key={m} type="button" role="tab" aria-selected={mode === m}
+                onClick={() => { setMode(m); setError(""); setOtpSent(false); }}
+                style={{
+                  flex: 1, padding: "8px 10px", borderRadius: 7, border: "none",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  background: mode === m ? C.ink : "transparent",
+                  color: mode === m ? "#fff" : C.textMid,
+                }}>
+                {m === "email" ? "Email" : "Mobile"}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={mode === "phone" ? (otpSent ? verifyOtp : sendOtp) : handleLogin}>
             {error && (
               <div
                 role="alert"
@@ -111,6 +179,59 @@ export default function LoginPage() {
               </div>
             )}
 
+            {mode === "phone" ? (
+              <>
+                <label htmlFor="phone" style={labelStyle}>MOBILE NUMBER</label>
+                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                  <span style={{ ...inputBase, width: 62, display: "flex", alignItems: "center",
+                                 justifyContent: "center", color: C.textMid, background: C.vault }}>+91</span>
+                  <input
+                    id="phone" name="phone" type="tel" inputMode="numeric"
+                    value={phone} onChange={e => setPhone(e.target.value)}
+                    required autoComplete="tel" autoFocus
+                    placeholder="98765 43210"
+                    disabled={busy || otpSent}
+                    onFocus={onFocus} onBlur={onBlur}
+                    style={{ ...inputBase, flex: 1 }}
+                  />
+                </div>
+
+                {otpSent && (
+                  <>
+                    <label htmlFor="otp" style={labelStyle}>6-DIGIT CODE</label>
+                    <input
+                      id="otp" name="otp" inputMode="numeric" maxLength={6}
+                      value={otp} onChange={e => setOtp(e.target.value)}
+                      required autoComplete="one-time-code" autoFocus
+                      placeholder="123456"
+                      disabled={busy}
+                      onFocus={onFocus} onBlur={onBlur}
+                      style={{ ...inputBase, marginBottom: 8, letterSpacing: 6, textAlign: "center" }}
+                    />
+                    <div style={{ textAlign: "right", marginBottom: 16 }}>
+                      <button type="button" onClick={() => { setOtpSent(false); setOtp(""); }}
+                        style={{ background: "none", border: "none", color: C.textMid,
+                                 fontSize: 12, cursor: "pointer", padding: 0 }}>
+                        Wrong number?
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                <button type="submit" disabled={busy} style={{
+                  width: "100%", padding: "13px", fontSize: 15, fontWeight: 700,
+                  background: busy ? C.borderHi : C.grad, color: "#fff",
+                  border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  marginBottom: 16,
+                }}>
+                  {loading
+                    ? <><Loader2 size={16} className="hn-spin" /> {otpSent ? "Verifying…" : "Sending…"}</>
+                    : otpSent ? "Verify and sign in" : "Send code"}
+                </button>
+              </>
+            ) : (
+            <>
             <label htmlFor="email" style={labelStyle}>EMAIL</label>
             <input
               id="email" name="email" type="email"
@@ -166,6 +287,9 @@ export default function LoginPage() {
                 ? <><Loader2 size={16} className="hn-spin" /> Signing in…</>
                 : <>Sign In →</>}
             </button>
+
+            </>
+            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.textDim, fontSize: 11, margin: "16px 0" }}>
               <div style={{ flex: 1, height: 1, background: C.border }} />
