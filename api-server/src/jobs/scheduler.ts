@@ -272,8 +272,14 @@ export async function runCallQuality(): Promise<number> {
   const done = new Set((scored || []).map((r: any) => r.call_id));
 
   const { data: calls, error } = await sb.from("calls")
+    // Deliberately NOT filtered on status = 'completed'. Half the calls
+    // holding a real conversation are still stored as 'missed' — historical
+    // rows from the billsec fault that recorded every answered call as
+    // missed with zero duration. A twenty-turn conversation is not a missed
+    // call whatever the column says, and those rows are worth scoring most:
+    // they are the ones nobody has ever looked at. The turn count below is
+    // the honest test of whether there is anything to judge.
     .select("id, tenant_id, transcript, duration_seconds, intent")
-    .eq("status", "completed")
     .not("transcript", "is", null)
     .order("created_at", { ascending: false })
     .limit(200);
