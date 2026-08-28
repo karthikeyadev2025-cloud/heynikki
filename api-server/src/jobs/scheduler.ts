@@ -1,7 +1,7 @@
 /**
  * Scheduler — the automation loop.
  *
- * Four jobs that all needed a periodic runner, so they share one rather
+ * Five jobs that all needed a periodic runner, so they share one rather
  * than three separate crons:
  *
  *  1. EMBED KNOWLEDGE — rows added via the "Teach Nikki" page are saved with
@@ -412,6 +412,47 @@ export async function runCallQuality(): Promise<number> {
   return n;
 }
 
+
+/* ── 5. Close abandoned calls ───────────────────────────────── */
+/**
+ * A call row is created with status 'active' when the caller connects and
+ * moved to completed/missed by the hangup webhook. If that webhook never
+ * arrives — the channel died abnormally, the container restarted mid-call,
+ * the pipeline crashed — the row stays 'active' forever.
+ *
+ * Four such rows have been sitting there for eighty hours, and the
+ * super-admin dashboard counts exactly that column: it reported LIVE CALLS
+ * NOW 4 while FreeSWITCH held zero channels. A dashboard that is confidently
+ * wrong is worse than one that is empty, because nobody thinks to check it.
+ *
+ * Two hours is far longer than any real call — the dialplan caps a leg at
+ * 120 seconds — so anything still 'active' past that was abandoned, not
+ * ongoing.
+ */
+const ABANDON_AFTER_MS = 2 * 3600 * 1000;
+
+export async function runCloseAbandonedCalls(): Promise<number> {
+  const cutoff = new Date(Date.now() - ABANDON_AFTER_MS).toISOString();
+  const { data, error } = await sb.from("calls")
+    .select("id")
+    .eq("status", "active")
+    .lt("created_at", cutoff)
+    .limit(500);
+  if (error) { log("abandoned-call sweep failed:", error.message); return 0; }
+  if (!data?.length) return 0;
+
+  // 'missed' rather than 'completed': nothing is known about how the call
+  // ended, and recording it as completed would inflate the answered figures
+  // the business is billed and judged on.
+  const { error: upErr } = await sb.from("calls")
+    .update({ status: "missed", updated_at: new Date().toISOString() })
+    .in("id", data.map((c: any) => c.id));
+  if (upErr) { log("abandoned-call update failed:", upErr.message); return 0; }
+
+  log(`closed ${data.length} abandoned call${data.length === 1 ? "" : "s"}`);
+  return data.length;
+}
+
 export async function runScheduler() {
   log("run start");
   // Sequential on purpose: these are small jobs and running them one at a
@@ -420,6 +461,7 @@ export async function runScheduler() {
   await runAppointmentReminders();
   await runDailySummaries();
   await runCallQuality();
+  await runCloseAbandonedCalls();
   log("run complete");
 }
 
