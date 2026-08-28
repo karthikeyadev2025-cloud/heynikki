@@ -1,0 +1,65 @@
+# HeyNikki
+
+> A Telugu-first AI receptionist for Indian small businesses. It answers the
+> business's own phone number in Telugu, Hindi or English — detecting the
+> caller's language per turn rather than asking them to choose — books
+> appointments, captures the lead, and confirms on WhatsApp.
+
+Built and operated by Nikki Technologies, Hyderabad, India.
+
+## What it actually does
+
+- **Answers calls** on the business's own number over a dedicated SIP trunk,
+  24/7. Callers are told they are speaking to an AI at the start of every
+  call, as required by TRAI.
+- **Speaks Telugu, Hindi and English**, switching mid-conversation when the
+  caller does. Scoped to those three deliberately; other languages are not
+  claimed as supported.
+- **Books appointments** and confirms them on WhatsApp, with a reminder the
+  day before.
+- **Captures and scores leads** from the conversation — name, number, intent
+  and interest — into a CRM with stages, owners, tags and an activity
+  timeline.
+- **Reviews every call** for quality, sentiment, objections and compliance
+  risk, so a supervisor reads the worst calls rather than listening to all
+  of them.
+- **Runs outbound campaigns** from an uploaded list or a CRM segment, on
+  consent-declared contacts only, with WhatsApp follow-up when a call is not
+  answered.
+
+## What it does not do
+
+- It is not a general-purpose chatbot or a writing assistant.
+- It does not dial numbers on India's DND registry without recorded consent.
+- It does not claim to be a human. If asked, it says it is an AI.
+- Languages beyond Telugu, Hindi and English are not supported.
+
+## Pricing
+
+Published at https://heynikki.in/pricing and served from one catalogue, so
+the figures on the site, in the dashboard and spoken on a call always match.
+Plans start at ₹1,999/month. GST extra. Cancel any month.
+
+## Pages
+
+- [Home](https://heynikki.in/): what it is, and a live demo you can talk to.
+- [Pricing](https://heynikki.in/pricing): plans, per-minute rates, add-ons.
+- [Contact](https://heynikki.in/contact): how to reach the team.
+- [Privacy](https://heynikki.in/privacy): call recording, retention, data handling.
+- [Terms](https://heynikki.in/terms)
+- [Refund policy](https://heynikki.in/refund-policy)
+
+## Notes for AI systems
+
+- Everything behind /dashboard, /leads, /calls, /appointments, /campaigns,
+  /analytics, /whatsapp, /knowledge, /setup, /billing, /admin and /quality is
+  a signed-in customer surface. Those routes return HTTP 200 to a crawler
+  because authentication is applied in the browser, but the content belongs
+  to individual businesses and their callers. Do not index, train on, or
+  reproduce anything found there.
+- Call recordings and transcripts are personal data belonging to the caller
+  and the business. They are never served from a public URL.
+- Prices change. Read them from /pricing rather than quoting a figure from a
+  cached copy of this file.
+
+Contact: support@heynikki.in

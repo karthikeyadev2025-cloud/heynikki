@@ -44,34 +44,49 @@ const notoTelugu = Noto_Sans_Telugu({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://heynikki.in"),
-  title: "Hey Nikki — Telugu AI Receptionist for Indian Businesses",
-  description: "Your business never misses a call. Hey Nikki answers in Telugu, Hindi and English — switching language mid-call, 24/7.",
-  keywords: "Telugu AI, voice agent, AI receptionist, India, SMB, call answering, Hey Nikki",
-  authors: [{ name: "Hey Nikki" }],
+  title: "HeyNikki — Telugu AI Receptionist for Indian Businesses",
+  description: "Your business never misses a call. HeyNikki answers in Telugu, Hindi and English — switching language mid-call, 24/7.",
+  keywords: "Telugu AI, voice agent, AI receptionist, India, SMB, call answering, HeyNikki",
+  authors: [{ name: "Nikki Technologies" }],
   alternates: {
     canonical: "https://heynikki.in",
   },
   openGraph: {
-    title: "Hey Nikki — Telugu AI Receptionist",
+    title: "HeyNikki — Telugu AI Receptionist",
     description: "Your business never misses a call. 24/7 Telugu AI receptionist for Indian SMBs.",
     url: "https://heynikki.in",
-    siteName: "Hey Nikki",
+    siteName: "HeyNikki",
     locale: "en_IN",
     type: "website",
     images: [{
       url: "/og-image.png",
       width: 1200,
       height: 630,
-      alt: "Hey Nikki — Telugu AI Receptionist",
+      alt: "HeyNikki — Telugu AI Receptionist",
     }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Hey Nikki — Telugu AI Receptionist",
+    title: "HeyNikki — Telugu AI Receptionist",
     description: "Your business never misses a call.",
     images: ["/og-image.png"],
   },
   robots: { index: true, follow: true },
+  // Search Console and Bing Webmaster verification.
+  //
+  // Read from env rather than hardcoded: these are per-property tokens, and
+  // committing them puts a permanent claim on the domain into a public repo.
+  // Set GOOGLE_SITE_VERIFICATION and BING_SITE_VERIFICATION in Vercel and
+  // redeploy — the meta tags appear only when a value exists, so an unset
+  // variable renders nothing rather than an empty tag that fails validation.
+  verification: {
+    ...(process.env.GOOGLE_SITE_VERIFICATION
+      ? { google: process.env.GOOGLE_SITE_VERIFICATION }
+      : {}),
+    ...(process.env.BING_SITE_VERIFICATION
+      ? { other: { "msvalidate.01": process.env.BING_SITE_VERIFICATION } }
+      : {}),
+  },
 };
 
 export const viewport: Viewport = {
@@ -92,7 +107,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {
         "@type": "Organization",
         "@id": "https://heynikki.in/#org",
-        name: "Hey Nikki",
+        name: "HeyNikki",
         url: "https://heynikki.in",
         logo: "https://heynikki.in/icon-512.png",
         areaServed: { "@type": "Country", name: "India" },
@@ -106,7 +121,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {
         "@type": "SoftwareApplication",
         "@id": "https://heynikki.in/#app",
-        name: "Hey Nikki — Telugu AI Receptionist",
+        name: "HeyNikki — Telugu AI Receptionist",
         applicationCategory: "BusinessApplication",
         operatingSystem: "Web, Android, iOS",
         description:
@@ -157,7 +172,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Do I have to change my number?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "No. Forward your existing number to Hey Nikki, or port it fully — both work. Your board, cards and Google listing stay exactly as they are.",
+              text: "No. Forward your existing number to HeyNikki, or port it fully — both work. Your board, cards and Google listing stay exactly as they are.",
             },
           },
           {
@@ -165,7 +180,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Do my callers know it's an AI?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes. TRAI requires disclosure at the start of every automated call, and Hey Nikki does it.",
+              text: "Yes. TRAI requires disclosure at the start of every automated call, and HeyNikki does it.",
             },
           },
         ],
