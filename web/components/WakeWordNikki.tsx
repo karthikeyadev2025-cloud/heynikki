@@ -220,6 +220,16 @@ export default function WakeWordNikki() {
     rec.lang = "en-IN";
     recogRef.current = rec;
 
+    const restart = () => {
+      if (stoppingRef.current || phaseRef.current === "idle") return;
+      if (restartTimerRef.current) return;
+      restartTimerRef.current = window.setTimeout(() => {
+        restartTimerRef.current = null;
+        if (stoppingRef.current || phaseRef.current === "idle") return;
+        try { rec.start(); } catch { /* already running — nothing to do */ }
+      }, 300);
+    };
+
     rec.onresult = (e: any) => {
       if (phaseRef.current !== "listening") return;
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -227,8 +237,12 @@ export default function WakeWordNikki() {
         if (WAKE_PATTERNS.some(w => said.includes(w))) {
           try { rec.stop(); } catch {}
           runTurn().finally(() => {
-            // Resume listening only if the user has not switched us off.
-            if (!stoppingRef.current) { try { rec.start(); } catch {} }
+            // Goes through the same deferred restart as everything else.
+            // Calling rec.start() directly here raced the stop() above —
+            // the session had not finished ending, start() threw
+            // InvalidStateError, and the catch swallowed it, so the listener
+            // died silently after the very first wake.
+            restart();
           });
           return;
         }
@@ -241,16 +255,6 @@ export default function WakeWordNikki() {
     // detection was dead from then on with the UI still showing "listening".
     // A tick of delay lets the old session finish, and the guard stops two
     // timers from racing a double start() — which throws the same way.
-    const restart = () => {
-      if (stoppingRef.current || phaseRef.current === "idle") return;
-      if (restartTimerRef.current) return;
-      restartTimerRef.current = window.setTimeout(() => {
-        restartTimerRef.current = null;
-        if (stoppingRef.current || phaseRef.current === "idle") return;
-        try { rec.start(); } catch { /* already running — nothing to do */ }
-      }, 300);
-    };
-
     rec.onend = restart;
     rec.onerror = (e: any) => {
       // not-allowed / service-not-allowed are terminal: the user or the

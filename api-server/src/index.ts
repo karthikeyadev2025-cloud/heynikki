@@ -149,7 +149,12 @@ app.use((req, res, next) => {
     // "" — indistinguishable from a real empty value. Needs urlencoded.
     express.urlencoded({ extended: false })(req, res, next);
   } else {
-    express.json()(req, res, next);
+    // 2mb, not the 100kb default. /api/public/voice-turn carries a whole
+    // spoken turn as base64 audio and rejects anything over ~1.4M chars with
+    // a friendly "keep replies under ~20 seconds". That guard was
+    // unreachable: express refused the body at 100kb first, so a longer turn
+    // died as PayloadTooLargeError → 500 "Internal server error" instead.
+    express.json({ limit: "2mb" })(req, res, next);
   }
 });
 
@@ -825,8 +830,17 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
 
       const audioBuffer = Buffer.from(audio_base64, "base64");
       const sttForm = new FormData();
-      const mime = mime_type || "audio/webm";
-      const ext  = mime.split("/")[1]?.split(";")[0] || "webm";
+      // Strip the codecs parameter before it reaches Sarvam.
+      //
+      // MediaRecorder always reports "audio/webm;codecs=opus", and that exact
+      // string was forwarded as the upload's content type. Sarvam matches the
+      // type EXACTLY against its allow-list and answers
+      //   400 Invalid file type: audio/webm;codecs=opus
+      // while the same bytes as bare "audio/webm" transcribe fine. So every
+      // spoken turn on the landing page failed and only typed turns worked —
+      // the widget has never once heard anyone.
+      const mime = (mime_type || "audio/webm").split(";")[0].trim();
+      const ext  = mime.split("/")[1] || "webm";
       sttForm.append("file", new Blob([audioBuffer], { type: mime }), `turn.${ext}`);
       sttForm.append("model", "saaras:v3");
       // "unknown" = auto-detect, the same thing the phone path does.
