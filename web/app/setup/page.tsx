@@ -5,6 +5,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { VoiceProfile } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import AgentDraftBox from "../../components/AgentDraftBox";
 import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -80,6 +81,11 @@ export default function SetupPage() {
   const [form, setForm] = useState({
     profile_sku:        "standard",
     business_name:      "",
+    // The agent's own name and its Telugu out-of-hours line. Neither was
+    // editable here, so the two fields an owner is least able to write
+    // themselves were the two the form could not save.
+    display_name:       "",
+    fallback_message:   "",
     open_time:          "09:00",
     close_time:         "21:00",
     open_days:          ["Mon","Tue","Wed","Thu","Fri","Sat"],
@@ -109,6 +115,8 @@ export default function SetupPage() {
         setForm({
           profile_sku:       vp.profile_sku,
           business_name:     vp.business_name,
+          display_name:      vp.display_name || "",
+          fallback_message:  vp.fallback_message || "",
           open_time:         vp.open_time,
           close_time:        vp.close_time,
           open_days:         vp.open_days,
@@ -145,6 +153,8 @@ export default function SetupPage() {
       tenant_id:         tenantId,
       profile_sku:       form.profile_sku,
       business_name:     form.business_name,
+      display_name:      form.display_name || null,
+      fallback_message:  form.fallback_message || null,
       open_time:         form.open_time,
       close_time:        form.close_time,
       open_days:         form.open_days,
@@ -190,6 +200,34 @@ export default function SetupPage() {
             {error}
           </div>
         )}
+
+        {/* Fills the form below from a plain description. Sits above the SKU
+            picker because choosing a profile type is the first thing it
+            answers for you. */}
+        <AgentDraftBox onDraft={d => {
+          // Writes to `form`, which is what the inputs are bound to. `profile`
+          // is the row as loaded from the database and setting it changes
+          // nothing on screen.
+          //
+          // services and appointment_types are comma-joined strings here and
+          // split again on save, so the arrays from the draft have to be
+          // joined to match — handing the array straight over renders
+          // "cleaning,root canal" with no spaces and then re-splits fine, but
+          // reads like a bug to whoever opens the page.
+          setForm(f => ({
+            ...f,
+            profile_sku:       d.profile_sku,
+            business_name:     d.business_name,
+            open_time:         d.open_time,
+            close_time:        d.close_time,
+            open_days:         d.open_days,
+            services:          d.services.join(", "),
+            appointment_types: d.appointment_types.join(", "),
+            display_name:      d.display_name,
+            fallback_message:  d.fallback_message,
+          }));
+          setSaved(false);
+        }} />
 
         {/* Voice Profile SKU selector */}
         <Card style={{ marginBottom: 16 }}>
@@ -255,6 +293,23 @@ export default function SetupPage() {
             <Label>Business Name *</Label>
             <input value={form.business_name} onChange={e => setForm(f => ({ ...f, business_name: e.target.value }))}
               placeholder="Ravi Clinic, Banjara Hills" required />
+          </FieldGroup>
+
+          {/* Both are saved by the form already; neither had an input, so the
+              two fields an owner is least able to write for themselves were
+              also the two they could never change. */}
+          <FieldGroup>
+            <Label>What Nikki calls herself</Label>
+            <input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
+              placeholder="నిక్కి" />
+          </FieldGroup>
+
+          <FieldGroup>
+            <Label>Out-of-hours message (Telugu)</Label>
+            <textarea value={form.fallback_message} rows={2}
+              onChange={e => setForm(f => ({ ...f, fallback_message: e.target.value }))}
+              placeholder="ధన్యవాదాలు. మా team ఇప్పుడు busy గా ఉన్నారు."
+              style={{ resize: "vertical" }} />
           </FieldGroup>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
