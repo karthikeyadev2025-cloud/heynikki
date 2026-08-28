@@ -582,6 +582,10 @@ class GeminiLLM:
     """Gemini 2.5 Flash with prompt caching + 4-turn rolling window."""
 
     def __init__(self):
+        # Consecutive turns that fell through to a fallback. A caller hears
+        # the SAME stall line every failed turn otherwise, so the second one
+        # has to say something different from the first — see _stall_reply.
+        self._consecutive_failures = 0
         self.api_key = GEMINI_KEY
         self.base_url = (
             # GEMINI_MODEL holds a MODEL NAME, not a URL — compose the URL
@@ -670,6 +674,7 @@ class GeminiLLM:
                         # Vendor name filter — strip before TTS
                         for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI"]:
                             text = text.replace(vendor, "our system")
+                        self._consecutive_failures = 0
                         return text
         except httpx.HTTPError as e:
             log.error(f"Gemini error: {e} — trying GPT-4o-mini fallback")
@@ -677,14 +682,40 @@ class GeminiLLM:
         except Exception as e:
             log.error(f"Gemini unexpected: {e}")
 
-        return "ఒక్క నిమిషం — మళ్ళీ చెప్పగలరా?"
+        return self._stall_reply()
+
+
+    def _stall_reply(self) -> str:
+        """What to say when the model gave us nothing.
+
+        The old answer was "ఒక్క నిమిషం." — one minute — on every failed
+        turn. That is a STALL: it promises something is coming. Nothing was,
+        so the caller waited, repeated themselves, and got "one minute"
+        again. Scored calls show the whole conversation as nothing but that
+        line, flagged "call deadlocked in hold loop" and "dead air", and it
+        is the single biggest drag on call quality.
+
+        A failure should ask for a retry, not promise an answer. And it must
+        not repeat itself: by the second consecutive failure the honest move
+        is to stop pretending and offer a callback, which at least ends with
+        a number in the CRM rather than a hang-up.
+        """
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= 3:
+            return ("క్షమించండి, ఈ కాల్‌లో సమస్య ఉంది. "
+                    "మీ ఫోన్ నంబర్ చెప్తే మా టీమ్ మీకు తిరిగి కాల్ చేస్తుంది.")
+        if self._consecutive_failures == 2:
+            return "క్షమించండి, ఇంకా వినిపించలేదు. కొంచెం నెమ్మదిగా చెప్తారా?"
+        return "క్షమించండి, నాకు సరిగ్గా వినిపించలేదు. మళ్ళీ చెప్తారా?"
 
     async def _openai_fallback(self, system_prompt: str, history: list) -> str:
         """GPT-4o-mini fallback if Gemini fails."""
         try:
             openai_key = os.environ.get("OPENAI_API_KEY", "")
             if not openai_key:
-                return "ఒక్క నిమిషం."
+                # No fallback model is configured, so this IS the answer the
+                # caller gets. It has to be a usable one.
+                return self._stall_reply()
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -702,7 +733,7 @@ class GeminiLLM:
                     return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
             log.error(f"GPT-4o-mini fallback failed: {e}")
-        return "ఒక్క నిమిషం."
+        return self._stall_reply()
 
 
 # ── SUPABASE CLIENT ──────────────────────────────────────
