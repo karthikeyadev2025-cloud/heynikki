@@ -1,7 +1,7 @@
 /**
  * Scheduler — the automation loop.
  *
- * Three jobs that all needed a periodic runner, so they share one rather
+ * Four jobs that all needed a periodic runner, so they share one rather
  * than three separate crons:
  *
  *  1. EMBED KNOWLEDGE — rows added via the "Teach Nikki" page are saved with
@@ -18,6 +18,12 @@
  *  3. DAILY SUMMARY — the business owner had no way to learn what happened
  *     unless they opened the dashboard. This sends an end-of-day WhatsApp:
  *     calls answered, appointments booked, leads worth calling back.
+ *
+ *  4. CALL QUALITY — scores completed calls from the transcript already
+ *     stored on them. Nothing has ever read those transcripts back except a
+ *     person opening one call at a time; this reviews all of them so a
+ *     supervisor can look at the worst ten instead of listening to two
+ *     hundred.
  *
  * Idempotency: every job checks a persisted flag before acting
  * (embedding IS NULL, wa_reminder_sent = false, summary keyed by date), so
@@ -233,6 +239,164 @@ export async function runDailySummaries(): Promise<number> {
 
 /* ── entry point ────────────────────────────────────────────── */
 
+
+/* ── 4. Conversation intelligence ───────────────────────────── */
+/**
+ * Score completed calls on the transcript that is already stored.
+ *
+ * Every call keeps a {ts, role, content} array and until now nothing read
+ * them back except a person opening one call at a time. This reviews all of
+ * them and writes call_quality, so a supervisor can look at the worst ten
+ * calls of the week instead of listening to two hundred.
+ *
+ * Only calls with a real conversation are scored. Most rows are a few
+ * seconds long with an empty transcript — nobody spoke, so there is nothing
+ * to judge, and scoring them would drag every average toward a number that
+ * means nothing.
+ *
+ * Idempotent: a call already in call_quality is skipped, so this can run
+ * every 15 minutes alongside the other jobs and only picks up new work.
+ */
+const QUALITY_BATCH   = 15;    // per run — keeps one tick well short of a minute
+const MIN_TURNS       = 4;     // below this there is no conversation to score
+const CHAT_MODEL      = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+
+type Turn = { role?: string; content?: string };
+
+export async function runCallQuality(): Promise<number> {
+  if (!GEMINI_KEY) { log("quality: GEMINI_API_KEY not set — skipping"); return 0; }
+
+  // Left join in two steps: PostgREST cannot express "not exists" cheaply,
+  // and the scored set stays small enough to filter in memory.
+  const { data: scored } = await sb.from("call_quality").select("call_id").limit(5000);
+  const done = new Set((scored || []).map((r: any) => r.call_id));
+
+  const { data: calls, error } = await sb.from("calls")
+    .select("id, tenant_id, transcript, duration_seconds, intent")
+    .eq("status", "completed")
+    .not("transcript", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) { log("quality: call fetch failed:", error.message); return 0; }
+
+  const todo = (calls || [])
+    .filter((c: any) => !done.has(c.id))
+    .filter((c: any) => Array.isArray(c.transcript) && c.transcript.length >= MIN_TURNS)
+    .slice(0, QUALITY_BATCH);
+  if (!todo.length) return 0;
+
+  let n = 0;
+  for (const call of todo) {
+    const dialogue = (call.transcript as Turn[])
+      .map(t => `${t.role === "assistant" ? "AGENT" : "CALLER"}: ${String(t.content || "").slice(0, 400)}`)
+      .join("\n")
+      .slice(0, 12000);   // a very long call must not blow the context window
+
+    const prompt = [
+      "You are a contact-centre quality analyst. Score this call.",
+      "The AGENT is an AI receptionist for an Indian small business. Calls are",
+      "in Telugu, Hindi or English, often mixed. Judge what was said, not the",
+      "language it was said in.",
+      "",
+      "Return ONLY minified JSON with exactly these keys:",
+      '{"overall_score":0-100,"resolution_score":0-100,"courtesy_score":0-100,',
+      '"compliance_score":0-100,"sentiment":"positive|neutral|negative|mixed",',
+      '"next_step_captured":true|false,"objections":[],"topics":[],',
+      '"risk_flags":[],"summary":"","coaching":""}',
+      "",
+      "resolution: did the caller get what they rang for?",
+      "courtesy: tone and patience.",
+      "compliance: the agent must disclose it is an AI, must not promise",
+      "  prices or outcomes it cannot, must not pressure the caller.",
+      "next_step_captured: did the call end with a booking, a callback, or",
+      "  contact details taken? Not merely a polite goodbye.",
+      "objections: sales objections the caller raised, short phrases.",
+      "topics: what the caller actually wanted, for aggregation across calls.",
+      "sentiment: EXACTLY one of positive, neutral, negative, mixed. Not any",
+      "  other word — describe a frustrated caller as negative.",
+      "risk_flags: anything a supervisor must see. Empty array if none.",
+      "summary: two sentences maximum, in English.",
+      "coaching: one specific thing the agent should do differently. Empty",
+      "  string if the call was genuinely fine — do not invent faults.",
+      "",
+      `Call intent recorded at the time: ${call.intent || "unknown"}`,
+      `Duration: ${call.duration_seconds || 0}s`,
+      "",
+      "TRANSCRIPT:",
+      dialogue,
+    ].join("\n");
+
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${GEMINI_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+      if (!r.ok) { log(`quality: gemini ${r.status} for ${call.id}`); continue; }
+      const j: any = await r.json();
+      const raw = j.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      // responseMimeType asks for JSON, but a refusal or a truncation still
+      // arrives as prose. Pull the object out rather than trusting the shape.
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) { log(`quality: no JSON back for ${call.id}`); continue; }
+      const d = JSON.parse(m[0]);
+
+      const clamp = (v: any) => Math.max(0, Math.min(100, parseInt(v) || 0));
+      const arr   = (v: any) => Array.isArray(v) ? v.map(String).slice(0, 12) : [];
+
+      /**
+       * The model describes feeling in its own words however firmly the enum
+       * is stated — a real call came back "frustrated", which is not one of
+       * the four allowed values. Mapping the unknown case to "neutral" would
+       * have labelled the ANGRIEST calls as unremarkable, hiding exactly the
+       * ones a supervisor needs, so synonyms are folded to the nearest
+       * allowed value and only a genuinely unrecognised word falls back.
+       * The column has a CHECK constraint, so an unmapped word would also
+       * fail the insert outright.
+       */
+      const sentimentOf = (v: any): string => {
+        const s = String(v || "").toLowerCase().trim();
+        if (["positive", "neutral", "negative", "mixed"].includes(s)) return s;
+        if (/frustrat|angry|upset|annoy|irritat|dissatisf|unhappy|rude|abusive/.test(s)) return "negative";
+        if (/happy|pleased|satisfied|delight|grateful|warm/.test(s)) return "positive";
+        if (/mixed|ambival|both/.test(s)) return "mixed";
+        if (s) log(`quality: unmapped sentiment "${s}" — recorded as neutral`);
+        return "neutral";
+      };
+
+      const { error: upErr } = await sb.from("call_quality").upsert({
+        call_id:            call.id,
+        tenant_id:          call.tenant_id,
+        overall_score:      clamp(d.overall_score),
+        resolution_score:   clamp(d.resolution_score),
+        courtesy_score:     clamp(d.courtesy_score),
+        compliance_score:   clamp(d.compliance_score),
+        sentiment:          sentimentOf(d.sentiment),
+        next_step_captured: !!d.next_step_captured,
+        objections:         arr(d.objections),
+        topics:             arr(d.topics),
+        risk_flags:         arr(d.risk_flags),
+        summary:            String(d.summary || "").slice(0, 600),
+        coaching:           String(d.coaching || "").slice(0, 600),
+        model:              CHAT_MODEL,
+        analysed_at:        new Date().toISOString(),
+      }, { onConflict: "call_id" });
+      if (upErr) { log("quality: write failed:", upErr.message); continue; }
+      n++;
+    } catch (e: any) {
+      log(`quality: ${call.id} failed:`, e.message);
+    }
+  }
+  if (n) log(`scored ${n} call${n === 1 ? "" : "s"}`);
+  return n;
+}
+
 export async function runScheduler() {
   log("run start");
   // Sequential on purpose: these are small jobs and running them one at a
@@ -240,6 +404,7 @@ export async function runScheduler() {
   await runEmbedKnowledge();
   await runAppointmentReminders();
   await runDailySummaries();
+  await runCallQuality();
   log("run complete");
 }
 
