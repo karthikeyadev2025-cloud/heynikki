@@ -75,24 +75,20 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.WATI_API_URL }}/api/v1/sendTemplateMessage?whatsappNumber={{ $node['Extract Fields'].json.wa_number }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headers": {
+        "authentication": "none",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.WATI_API_KEY }}"
+              "value": "=Bearer {{ $env.WATI_API_KEY }}"
             }
           ]
         },
-        "bodyParameters": {
-          "parameters": []
-        },
-        "body": {
-          "contentType": "json",
-          "body": "={\n  \"template_name\": \"appointment_confirmed\",\n  \"broadcast_name\": \"appt_{{ $node['Extract Fields'].json.call_id }}\",\n  \"parameters\": [\n    {\n      \"name\": \"business_name\",\n      \"value\": \"{{ $node['Extract Fields'].json.business_name }}\"\n    },\n    {\n      \"name\": \"service\",\n      \"value\": \"{{ $node['Extract Fields'].json.service }}\"\n    },\n    {\n      \"name\": \"slot_date\",\n      \"value\": \"{{ $node['Extract Fields'].json.slot_date }}\"\n    },\n    {\n      \"name\": \"slot_time\",\n      \"value\": \"{{ $node['Extract Fields'].json.slot_time }}\"\n    },\n    {\n      \"name\": \"appointment_id\",\n      \"value\": \"{{ $node['Extract Fields'].json.appointment_id }}\"\n    }\n  ]\n}"
-        },
-        "options": {}
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"template_name\": \"appointment_confirmed\",\n  \"broadcast_name\": \"appt_{{ $node['Extract Fields'].json.call_id }}\",\n  \"parameters\": [\n    {\n      \"name\": \"business_name\",\n      \"value\": \"{{ $node['Extract Fields'].json.business_name }}\"\n    },\n    {\n      \"name\": \"service\",\n      \"value\": \"{{ $node['Extract Fields'].json.service }}\"\n    },\n    {\n      \"name\": \"slot_date\",\n      \"value\": \"{{ $node['Extract Fields'].json.slot_date }}\"\n    },\n    {\n      \"name\": \"slot_time\",\n      \"value\": \"{{ $node['Extract Fields'].json.slot_time }}\"\n    },\n    {\n      \"name\": \"appointment_id\",\n      \"value\": \"{{ $node['Extract Fields'].json.appointment_id }}\"\n    }\n  ]\n}"
       },
       "id": "send-wa",
       "name": "Send WhatsApp — Appointment Confirmation & 24h Reminder",
@@ -107,9 +103,10 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/wa_dispatch_log",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "headers": {
+        "authentication": "none",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
               "name": "apikey",
@@ -117,7 +114,7 @@
             },
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
             },
             {
               "name": "Content-Type",
@@ -129,11 +126,9 @@
             }
           ]
         },
-        "body": {
-          "contentType": "json",
-          "body": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"appointment_confirm\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
-        },
-        "options": {}
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"appointment_confirm\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
       },
       "id": "log-supabase",
       "name": "Log to Supabase wa_dispatch_log",

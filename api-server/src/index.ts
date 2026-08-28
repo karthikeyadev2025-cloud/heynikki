@@ -2285,12 +2285,33 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // overwrote the "completed" status set moments earlier, which is how a
     // two-minute conversation ended up stored as a missed call.
     if (secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
-      await fireAutomationWebhook("missed-call", {
-        caller_number,
-        did_number,
-        call_id:     callRow?.id,
-        tenant_id:   callRow?.tenant_id,
-      });
+      // The n8n missed-call workflow reads business_name straight into the
+      // WhatsApp template's {{1}}, and picks the recipient from
+      // whatsapp_number falling back to caller_number. This call site sent
+      // neither, so the template variable arrived empty and Meta rejected the
+      // send — while /webhooks/freeswitch/missed-call, which fires far less
+      // often, had always sent both. Look the profile up the same way it does,
+      // including the fallback_wa_enabled opt-out.
+      let vp: { business_name?: string; whatsapp_number?: string;
+                fallback_wa_enabled?: boolean } | null = null;
+      if (callRow?.voice_profile_id) {
+        const { data, error: vpErr } = await sb.from("voice_profiles")
+          .select("business_name, whatsapp_number, fallback_wa_enabled")
+          .eq("id", callRow.voice_profile_id).single();
+        if (vpErr) console.error("[FS Hangup] voice profile lookup failed:", vpErr.message);
+        vp = data;
+      }
+
+      if (vp?.fallback_wa_enabled !== false) {
+        await fireAutomationWebhook("missed-call", {
+          caller_number,
+          did_number,
+          call_id:         callRow?.id,
+          tenant_id:       callRow?.tenant_id,
+          business_name:   vp?.business_name   || "our team",
+          whatsapp_number: vp?.whatsapp_number || caller_number,
+        });
+      }
 
       // Log missed call in Supabase
       if (callRow) {
