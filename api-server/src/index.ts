@@ -2513,6 +2513,106 @@ app.post("/webhooks/freeswitch/transfer-to-human", verifyInternal, async (req, r
   }
 });
 
+// ── Calendar invite (.ics) ────────────────────────────────────
+/**
+ * A calendar file the caller can open from WhatsApp.
+ *
+ * Google Calendar sync needs an OAuth app, a consent screen and a token per
+ * business. An .ics needs none of that and lands in Google Calendar, Apple
+ * Calendar and Outlook alike, which covers the customer side of "put it in
+ * my calendar" completely. Two-way sync into the BUSINESS's calendar still
+ * wants OAuth; this is the half that works today.
+ *
+ * The link is opened from a WhatsApp message, so it cannot require a login.
+ * It is signed instead: an HMAC of the appointment id, truncated to 16 hex
+ * characters. Without it the id alone would let anyone walk the table and
+ * read customers' names, numbers and appointment times.
+ */
+function inviteToken(appointmentId: string): string {
+  return crypto.createHmac("sha256", INTERNAL_SECRET)
+    .update(`ics:${appointmentId}`).digest("hex").slice(0, 16);
+}
+
+/** RFC 5545 escaping: backslash first, or it double-escapes what follows. */
+const icsEscape = (v: string) =>
+  String(v ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;")
+                 .replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+
+app.get("/api/appointments/:id/invite.ics", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const token = String(req.query.t || "");
+    // timingSafeEqual throws on a length mismatch, so compare lengths first.
+    const expected = inviteToken(id);
+    const ok = token.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+    if (!ok) return res.status(404).json({ error: "Not found" });
+
+    const { data: a } = await sb.from("appointments")
+      .select("id, slot_date, slot_time, service, caller_name, tenant_id, status")
+      .eq("id", id).maybeSingle();
+    if (!a) return res.status(404).json({ error: "Not found" });
+    // An appointment with no date is the one thing that cannot become a
+    // calendar entry. Extraction fills these in at call end; before that ran,
+    // every row looked like this.
+    if (!a.slot_date) return res.status(409).json({ error: "This appointment has no date yet" });
+
+    const { data: t } = await sb.from("tenants")
+      .select("business_name").eq("id", a.tenant_id).maybeSingle();
+    const business = t?.business_name || "Your appointment";
+
+    // Slots are stored as local IST wall-clock. Emitting them as UTC would
+    // shift every appointment 5.5 hours; TZID keeps 3pm meaning 3pm.
+    const time = (a.slot_time || "10:00").slice(0, 5).replace(":", "");
+    const date = String(a.slot_date).replace(/-/g, "");
+    const start = `${date}T${time}00`;
+    const endH = String(Math.min(23, parseInt(time.slice(0, 2), 10) + 1)).padStart(2, "0");
+    const end = `${date}T${endH}${time.slice(2)}00`;
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//HeyNikki//Appointment//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "BEGIN:VEVENT",
+      `UID:${a.id}@heynikki.in`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART;TZID=Asia/Kolkata:${start}`,
+      `DTEND;TZID=Asia/Kolkata:${end}`,
+      `SUMMARY:${icsEscape(a.service ? `${a.service} — ${business}` : business)}`,
+      `DESCRIPTION:${icsEscape(`Booked with ${business}${a.caller_name ? ` for ${a.caller_name}` : ""}.`)}`,
+      "STATUS:CONFIRMED",
+      "BEGIN:VALARM",
+      "TRIGGER:-PT2H",
+      "ACTION:DISPLAY",
+      "DESCRIPTION:Reminder",
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n") + "\r\n";   // RFC 5545 requires CRLF throughout
+
+    res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="appointment.ics"`);
+    res.send(ics);
+  } catch (err: any) {
+    console.error("[ics]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+/** The signed link to hand to a caller. Used by the confirmation message. */
+app.get("/api/appointments/:id/invite-link", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { data: a } = await sb.from("appointments")
+    .select("id").eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!a) return res.status(404).json({ error: "Not found" });
+  const base = process.env.PUBLIC_API_URL || "https://api.heynikki.in";
+  res.json({ url: `${base}/api/appointments/${a.id}/invite.ics?t=${inviteToken(a.id)}` });
+});
+
 // ── Call recording playback ───────────────────────────────────
 // The bucket is private, so a recording has no permanent URL. This checks
 // the caller owns the call and then asks the pipeline — which has boto3 —
