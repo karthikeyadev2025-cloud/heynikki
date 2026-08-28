@@ -272,8 +272,14 @@ export async function runCallQuality(): Promise<number> {
   const done = new Set((scored || []).map((r: any) => r.call_id));
 
   const { data: calls, error } = await sb.from("calls")
+    // Deliberately NOT filtered on status = 'completed'. Half the calls
+    // holding a real conversation are still stored as 'missed' — historical
+    // rows from the billsec fault that recorded every answered call as
+    // missed with zero duration. A twenty-turn conversation is not a missed
+    // call whatever the column says, and those rows are worth scoring most:
+    // they are the ones nobody has ever looked at. The turn count below is
+    // the honest test of whether there is anything to judge.
     .select("id, tenant_id, transcript, duration_seconds, intent")
-    .eq("status", "completed")
     .not("transcript", "is", null)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -306,8 +312,13 @@ export async function runCallQuality(): Promise<number> {
       "",
       "resolution: did the caller get what they rang for?",
       "courtesy: tone and patience.",
-      "compliance: the agent must disclose it is an AI, must not promise",
-      "  prices or outcomes it cannot, must not pressure the caller.",
+      "compliance: A FIXED TRAI AI-DISCLOSURE IS PLAYED AS PRE-RECORDED AUDIO",
+      "  BEFORE THIS TRANSCRIPT BEGINS and is never transcribed, so the",
+      "  transcript always opens with the caller. Do NOT mark the disclosure",
+      "  missing merely because you cannot see it — it was made. Judge",
+      "  compliance on what the agent SAYS: claiming to be a human, denying",
+      "  being an AI, promising prices or outcomes it cannot, or pressuring",
+      "  the caller.",
       "next_step_captured: did the call end with a booking, a callback, or",
       "  contact details taken? Not merely a polite goodbye.",
       "objections: sales objections the caller raised, short phrases.",

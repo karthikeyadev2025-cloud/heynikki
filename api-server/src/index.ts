@@ -1135,6 +1135,108 @@ app.get("/api/voice-profiles", verifyJWT, async (req, res) => {
   res.json(data || []);
 });
 
+// ── Agent builder: describe it, get a draft ───────────────────
+// Setting an agent up today means filling in a form: business name, the
+// services list, hours, appointment types, the fallback message — in Telugu.
+// Most owners abandon that. This turns a sentence into a filled-in profile.
+//
+// It DRAFTS ONLY. Nothing is written; the caller reviews and then posts to
+// /api/voice-profiles as normal. An agent goes live on a real phone number
+// that real customers ring, so a model must never be the last thing between
+// a prompt and production.
+app.post("/api/agents/draft", verifyJWT, apiLimiter, async (req: any, res) => {
+  try {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+    const description = String(req.body?.description || "").trim();
+    if (description.length < 10) {
+      return res.status(400).json({ error: "Describe the business in a sentence or two" });
+    }
+    if (description.length > 2000) {
+      return res.status(400).json({ error: "Keep the description under 2000 characters" });
+    }
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_KEY) return res.status(503).json({ error: "Agent builder is not configured" });
+
+    const prompt = [
+      "Turn this description of an Indian small business into a receptionist",
+      "agent profile. Return ONLY minified JSON with exactly these keys:",
+      '{"business_name":"","display_name":"","profile_sku":"standard|clinic|real_estate|premium",',
+      '"services":[],"appointment_types":[],"open_time":"HH:MM","close_time":"HH:MM",',
+      '"open_days":["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],"fallback_message":""}',
+      "",
+      "display_name: what the agent calls itself, in TELUGU SCRIPT. Default నిక్కి.",
+      "profile_sku: clinic for doctors/dentists/hospitals, real_estate for",
+      "  property, premium for high-value services, otherwise standard.",
+      "services: 3-6 short items the business actually offers.",
+      "appointment_types: 2-4 things a caller can book.",
+      "open_time/close_time: 24-hour. If unstated use 09:00 and 21:00.",
+      "open_days: only the days stated; if unstated, Mon-Sat.",
+      "fallback_message: one sentence in TELUGU, said when no one can take",
+      "  the call. Warm, not apologetic.",
+      "",
+      "Invent nothing the description does not support beyond the stated",
+      "defaults — a wrong service list is worse than a short one.",
+      "",
+      "DESCRIPTION:",
+      description,
+    ].join("\n");
+
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || "gemini-flash-lite-latest"}:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
+        }),
+        signal: AbortSignal.timeout(25_000),
+      });
+    if (!r.ok) {
+      console.error("[agent draft] gemini", r.status);
+      return res.status(502).json({ error: "Could not draft the agent — try again" });
+    }
+    const j: any = await r.json();
+    const raw = j.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return res.status(502).json({ error: "Could not draft the agent — try again" });
+    const d = JSON.parse(m[0]);
+
+    // Constrain before returning. voice_profiles has CHECK constraints and
+    // this output is destined for it — an unvalidated draft would be
+    // rejected at INSERT, after the user had already approved it, which
+    // reads as the save being broken rather than the draft.
+    const SKUS = ["standard", "clinic", "real_estate", "premium"];
+    const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const hhmm = (v: any, fb: string) =>
+      /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v)) ? String(v) : fb;
+    const strArr = (v: any, max: number) =>
+      Array.isArray(v) ? v.map((x: any) => String(x).slice(0, 60)).filter(Boolean).slice(0, max) : [];
+
+    res.json({
+      draft: {
+        business_name:     String(d.business_name || "").slice(0, 120) || "My Business",
+        display_name:      String(d.display_name || "నిక్కి").slice(0, 60),
+        profile_sku:       SKUS.includes(d.profile_sku) ? d.profile_sku : "standard",
+        services:          strArr(d.services, 6),
+        appointment_types: strArr(d.appointment_types, 4),
+        open_time:         hhmm(d.open_time, "09:00"),
+        close_time:        hhmm(d.close_time, "21:00"),
+        open_days:         (Array.isArray(d.open_days) ? d.open_days.filter((x: any) => DAYS.includes(x)) : [])
+                             .slice(0, 7).length
+                           ? d.open_days.filter((x: any) => DAYS.includes(x)).slice(0, 7)
+                           : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+        fallback_message:  String(d.fallback_message || "").slice(0, 400),
+      },
+    });
+  } catch (err: any) {
+    console.error("[agent draft]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 app.post("/api/voice-profiles", verifyJWT, async (req, res) => {
   const tenantId = await getTenantId((req as any).user.id);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
