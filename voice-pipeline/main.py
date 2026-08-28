@@ -2473,6 +2473,29 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         else:
             log.info(f"[FS] {fs_uuid}: lead {'updated' if updated else 'scored'} "
                      f"{score}/100 stage={stage} intent={row['intent']}")
+
+        # Brochure on WhatsApp, but only for a lead that actually qualified.
+        #
+        # Until now NOTHING fired interested-lead from a phone call: the only
+        # caller was the click-to-call disposition endpoint, which an agent
+        # triggers by hand. So a caller could hold a full conversation, ask
+        # for details and be scored 75/100, and never receive anything.
+        #
+        # Gated on stage rather than sent to everyone who picks up, because
+        # interested_lead_brochure is a MARKETING template at Meta: sending it
+        # to uninterested people earns blocks, and enough blocks drop the
+        # number's quality rating to Low, which throttles every template
+        # including the transactional ones.
+        if stage in ("qualified", "won"):
+            cfg = await _read_platform_config()
+            await _fire_automation_webhook("interested-lead", {
+                "caller_number":   digits,
+                "tenant_id":       prof.get("tenant_id"),
+                "call_id":         agent.call_id,
+                "business_name":   prof.get("business_name", "our team"),
+                "whatsapp_number": prof.get("whatsapp_number") or digits,
+            }, cfg)
+            log.info(f"[FS] {fs_uuid}: brochure fired — stage={stage} score={score}")
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
 
