@@ -22,7 +22,11 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
-const PIPELINE_URL  = process.env.PIPELINE_URL || "https://pipeline.heynikki.in";
+const PIPELINE_URL  = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
+// Loopback, not the public hostname: this runs on the same host as n8n, so
+// routing internal events out to Cloudflare and back only adds a round trip
+// and a dependency on the tunnel being up.
+const N8N_BASE      = process.env.N8N_WEBHOOK_BASE || "http://127.0.0.1:5678/webhook";
 const INTERNAL_SEC  = process.env.INTERNAL_SECRET!;
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -70,7 +74,24 @@ async function scrubDnd(
 // `campaign` is null for instant (is_instant=true) recipients — there is
 // no campaign row to pull voice_profile_id or a script from, so those
 // come from the recipient row itself for that case.
-async function dispatchCall(recipient: any, campaign: any | null): Promise<string | null> {
+/**
+ * The CLI to dial out as. MUST be a DID this tenant actually owns — a spoofed
+ * caller ID on an Indian trunk gets the trunk suspended, not just the call
+ * rejected. Cached per tenant for the life of the process; DIDs change about
+ * as often as the tenant signs a new contract.
+ */
+const cliCache = new Map<string, string | null>();
+async function tenantCli(tenantId: string): Promise<string | null> {
+  if (cliCache.has(tenantId)) return cliCache.get(tenantId)!;
+  const { data } = await sb.from("dids")
+    .select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle();
+  const cli = data?.number ?? null;
+  cliCache.set(tenantId, cli);
+  if (!cli) console.error(`[dispatcher] tenant ${tenantId} has no assigned DID — cannot dial out`);
+  return cli;
+}
+
+async function dispatchCallLegacyExotel(recipient: any, campaign: any | null): Promise<string | null> {
   const rawScript = campaign
     ? campaign.script
     // Default callback script for a self-submitted enquiry — short,
@@ -109,6 +130,70 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
   }
 }
 
+/**
+ * Dial one recipient on our own Jio trunk.
+ *
+ * dispatchCallLegacyExotel above POSTs the pipeline's /outbound, which is
+ * Exotel-backed and returns 503 here: Exotel was never enabled for outbound
+ * on the account and is now disabled entirely. This originates through
+ * FreeSWITCH instead, the same trunk every inbound call already uses.
+ *
+ * Returns the FreeSWITCH channel UUID on answer. A rejected or unanswered
+ * call THROWS — NO_ANSWER, USER_BUSY and CALL_REJECTED are ordinary campaign
+ * outcomes rather than faults, and the caller decides the follow-up.
+ */
+async function dispatchCall(recipient: any, campaign: any | null): Promise<string> {
+  const tenantId = recipient.tenant_id || campaign?.tenant_id;
+  if (!tenantId) throw new Error("recipient has no tenant");
+
+  const cli = await tenantCli(tenantId);
+  if (!cli) throw new Error("no assigned DID to dial out as");
+
+  // Imported lazily: this module is also loaded by tooling that has no ESL
+  // socket, and the import opens one on construction.
+  const { fsl } = await import("../esl");
+  return fsl.originateOutbound(recipient.phone, cli, campaign?.id);
+}
+
+/**
+ * One WhatsApp per person, on the FIRST no-answer — not once per attempt.
+ * A recipient is retried twice after that, so without the wa_followup_sent
+ * guard somebody who was simply away from their phone gets three identical
+ * messages.
+ */
+async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promise<void> {
+  if (recipient.wa_followup_sent) return;
+  const tenantId = recipient.tenant_id || campaign?.tenant_id;
+  if (!tenantId) return;
+
+  const { data: vp } = await sb.from("voice_profiles")
+    .select("business_name, whatsapp_number, fallback_wa_enabled")
+    .eq("id", campaign?.voice_profile_id || recipient.voice_profile_id)
+    .maybeSingle();
+  if (vp?.fallback_wa_enabled === false) return;
+
+  try {
+    // Same event the inbound missed-call path fires, so both share one n8n
+    // workflow and one approved template.
+    await fetch(`${N8N_BASE.replace(/\/$/, "")}/missed-call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        caller_number:   recipient.phone,
+        tenant_id:       tenantId,
+        call_id:         recipient.call_id ?? null,
+        business_name:   vp?.business_name || "our team",
+        whatsapp_number: vp?.whatsapp_number || recipient.phone,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    await sb.from("outbound_recipients")
+      .update({ wa_followup_sent: true }).eq("id", recipient.id);
+  } catch (e: any) {
+    console.error("[dispatcher] no-answer follow-up failed:", e.message);
+  }
+}
+
 // ─── Hours check (recipient timezone assumed IST for now) ───
 function withinWindow(start: string, end: string): boolean {
   const now = new Date();
@@ -141,9 +226,11 @@ async function tick(): Promise<void> {
 
     for (const r of (pending || [])) {
       await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
-      // Campaign (bulk list) recipients are never treated as consented —
-      // that carve-out is only for is_instant rows, handled in tickInstant.
-      const { blocked, reason } = await scrubDnd(r.phone, false);
+      // A campaign whose uploader declared consent for every number on the
+      // list dials without a third-party scrub; anything else still needs a
+      // real DND feed and stays blocked. scrubDnd fails safe either way — the
+      // declaration is recorded on the campaign with who made it and when.
+      const { blocked, reason } = await scrubDnd(r.phone, !!c.consent_declared);
       await sb.from("outbound_recipients").update({
         status:       blocked ? "blocked_dnd" : "queued",
         scrubbed_at:  new Date().toISOString(),
@@ -152,27 +239,49 @@ async function tick(): Promise<void> {
       }).eq("id", r.id);
     }
 
-    // Dispatch queued recipients
+    // Dispatch queued recipients whose backoff has expired. The
+    // next_attempt_at filter is not optional: without it a recipient parked
+    // for 24 hours after a no-answer is picked up again on the very next
+    // tick, 30 seconds later, and the "retry tomorrow" below means nothing.
     const { data: queued } = await sb.from("outbound_recipients")
-      .select("*").eq("campaign_id", c.id).eq("status", "queued").limit(slots);
+      .select("*").eq("campaign_id", c.id).eq("status", "queued")
+      .or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`)
+      .limit(slots);
 
     for (const r of (queued || [])) {
+      const attempt = (r.attempts || 0) + 1;
       await sb.from("outbound_recipients").update({
-        status:       "in_progress",
-        attempts:     r.attempts + 1,
+        status:          "in_progress",
+        attempts:        attempt,
         last_attempt_at: new Date().toISOString(),
       }).eq("id", r.id);
 
-      const callId = await dispatchCall(r, c);
-      if (callId) {
+      try {
+        const callId = await dispatchCall(r, c);
+        // Answered. The pipeline drives the conversation from here and
+        // scores the lead on hangup; the brochure, if the lead qualifies,
+        // is fired from there rather than guessed at here.
         await sb.from("outbound_recipients").update({
           call_id: callId,
+          status:  "in_progress",
+          outcome: "answered",
         }).eq("id", r.id);
-      } else {
-        // Failed to even start the call — back off, retry tomorrow
+      } catch (e: any) {
+        const reason = String(e?.message || e).slice(0, 120);
+
+        // The WhatsApp goes out on the FIRST no-answer, while the intent is
+        // still warm, and the phone retries continue behind it.
+        await sendNoAnswerFollowUp(r, c);
+
+        // 3 attempts total — the original try plus two retries — spaced a
+        // day apart so a campaign never reads as harassment.
+        const exhausted = attempt >= 3;
         await sb.from("outbound_recipients").update({
-          status: r.attempts >= 3 ? "failed" : "queued",
-          next_attempt_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+          status:          exhausted ? "failed" : "queued",
+          outcome:         reason,
+          next_attempt_at: exhausted
+            ? null
+            : new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
         }).eq("id", r.id);
       }
     }

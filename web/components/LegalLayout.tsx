@@ -64,7 +64,7 @@ export default function LegalLayout({
         color: J.textMid, fontSize: 13,
       }}>
         <div style={{ marginBottom: 12 }}>
-          © {new Date().getFullYear()} Hey Nikki. Made in India 🇮🇳
+          © {new Date().getFullYear()} HeyNikki. Made in India 🇮🇳
         </div>
         <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap" }}>
           <Link href="/privacy"        style={{ color: J.textMid, textDecoration: "none" }}>Privacy</Link>

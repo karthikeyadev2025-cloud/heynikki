@@ -6,16 +6,19 @@ import type { MetadataRoute } from "next";
 // from a phone, and a browser tab is not where they will keep it.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Hey Nikki — Telugu AI Receptionist",
-    short_name: "Hey Nikki",
+    name: "HeyNikki — Telugu AI Receptionist",
+    short_name: "HeyNikki",
     description:
-      "Your business never misses a call. Hey Nikki answers in Telugu, books appointments and confirms on WhatsApp.",
+      "Your business never misses a call. HeyNikki answers in Telugu, books appointments and confirms on WhatsApp.",
     start_url: "/dashboard",
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: "#F7F5F0",
-    theme_color: "#0B1F33",
+    // Splash matches the pages themselves (white), and the status bar takes
+    // the deep ground the logo sits on. The old cream/#0B1F33 pair predated
+    // the current mark and flashed a colour no screen actually uses.
+    background_color: "#FFFFFF",
+    theme_color: "#0B1220",
     lang: "te-IN",
     dir: "ltr",
     categories: ["business", "productivity", "utilities"],

@@ -466,6 +466,34 @@ app.post("/webhooks/razorpay", async (req, res) => {
             p_seconds:   minutes * 60,
           });
         }
+        // The invoices table has existed since the first schema and NOTHING
+        // has ever written to it, so /billing renders an empty list for a
+        // tenant who has genuinely paid. Razorpay's payment id is the natural
+        // idempotency key: this webhook is retried, and onConflict stops a
+        // retry from billing the customer twice on screen.
+        // Guarded insert rather than upsert-onConflict: the unique index this
+        // relies on ships in migration 018, and until that is applied
+        // PostgREST rejects ON CONFLICT outright ("no unique or exclusion
+        // constraint matching"), which would leave invoices silently empty
+        // again. This works before and after the migration; the index remains
+        // worth applying as the real guarantee against a concurrent retry.
+        const { data: seen } = await sb.from("invoices")
+          .select("id").eq("razorpay_payment_id", pmt.id).maybeSingle();
+        if (!seen) {
+          const { error: invErr } = await sb.from("invoices").insert({
+            tenant_id:           tenantId,
+            razorpay_payment_id: pmt.id,
+            razorpay_order_id:   pmt.order_id ?? null,
+            amount_paise:        pmt.amount,
+            plan_id:             notes.plan_id ?? null,
+            description:         notes.type === "addon_minutes"
+              ? `Add-on: ${notes.minutes} minutes`
+              : "Subscription payment",
+            status:              "paid",
+          });
+          if (invErr) console.error("[Razorpay] invoice insert failed:", invErr.message);
+        }
+
         await sendEmail(tenantId, "payment_success", { amount: pmt.amount / 100 });
         break;
       }
@@ -1635,6 +1663,15 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 // ═══════════════════════════════════════════════════════════
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
+import { mountCampaignImport } from "./campaign-import";
+
+// MUST be mounted BEFORE outbound.ts. Express matches routes in registration
+// order, and outbound.ts also defines /api/campaigns/:id/start and /pause —
+// behind verifyInternal, which a browser can never satisfy because that
+// secret must not ship to one. Registering these first means the dashboard
+// reaches the JWT, tenant-scoped versions; the internal copies stay
+// available to anything server-side that still calls them.
+mountCampaignImport(app, sb, verifyJWT, getTenantId, audit);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 

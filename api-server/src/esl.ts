@@ -212,6 +212,12 @@ export class FreeSwitchESL {
       `originate_timeout=${timeoutSec}`,
       campaignId ? `campaign_id=${campaignId}` : `campaign_id=`,
       `outbound_call=true`,
+      // The answered leg is streamed to the SAME pipeline handler inbound
+      // calls use, and that handler resolves the tenant's voice profile from
+      // the DID in the URL. Carrying our own CLI through as a channel
+      // variable is what lets the dialplan build that URL — without it the
+      // outbound extension has no DID to look the profile up by.
+      `outbound_did=${cli}`,
     ].join(",");
 
     const cmd =

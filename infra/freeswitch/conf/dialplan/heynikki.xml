@@ -255,7 +255,26 @@
         <action application="answer"/>
         <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
         <!-- Same API-not-application fix as inbound_sip_ai above. -->
-        <action application="set" data="stream_result=${uuid_audio_stream(${uuid} start ws://127.0.0.1:8000/ws/freeswitch/outbound/$1/${uuid}?campaign_id=${campaign_id} mono 8000)}"/>
+        <!-- Streams to the SAME handler inbound calls use, not a separate
+             /ws/freeswitch/outbound/... path. That path was never served by
+             the pipeline — the only websocket routes are /ws/freeswitch/
+             {did}/{caller}/{uuid} and the legacy provider ones — so an
+             answered campaign call streamed into a 404 and the customer sat
+             in silence until they hung up.
+
+             Reusing the inbound handler also means outbound inherits
+             everything the inbound path already does correctly: the voice
+             profile lookup by DID, the mandatory TRAI AI disclosure (played
+             by the pipeline, not from here), language auto-detection, lead
+             scoring and the recording upload.
+
+             did  = ${outbound_did}, our own CLI, set by esl.ts
+                    originateOutbound — a profile lookup needs a DID we own,
+                    not the number we dialled.
+             caller = $1, the customer.
+             direction/campaign_id ride along as query params; the handler
+             ignores what it does not read. -->
+        <action application="set" data="stream_result=${uuid_audio_stream(${uuid} start ws://127.0.0.1:8000/ws/freeswitch/${outbound_did}/$1/${uuid}?campaign_id=${campaign_id}&amp;direction=outbound mono 8000)}"/>
         <action application="park"/>
       </condition>
     </extension>
