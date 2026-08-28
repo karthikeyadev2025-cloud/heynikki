@@ -604,6 +604,15 @@ class GeminiLLM:
                 "parts": [{"text": turn["content"]}]
             })
 
+        # Backstop for the shape rule above: a trailing model turn is a 400,
+        # and a 400 mid-call costs the caller a whole turn — the fallback is
+        # keyless, so they just hear "ఒక్క నిమిషం." and nothing follows.
+        # Every caller should hand us a history ending on the user turn being
+        # answered; trim instead of letting a slip here kill the turn.
+        while parts_history and parts_history[-1]["role"] == "model":
+            log.warning("Gemini: history ended on a model turn — trimming")
+            parts_history.pop()
+
         payload = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": parts_history,
@@ -1086,14 +1095,36 @@ class NikkiAgent:
                 sim = difflib.SequenceMatcher(None, prev.strip(), response.strip()).ratio()
                 if sim > 0.72:
                     log.info(f"anti-loop: reply {sim:.0%} similar to previous — regenerating")
-                    response = await self.llm.generate(
+                    # self.history[:-1], NOT self.history. The reply we are about
+                    # to discard was appended above, so self.history ends on an
+                    # assistant turn, and Gemini answers that with a hard 400:
+                    # "Requests ending with a model turn are not supported."
+                    # (reproduced against the live API; a LEADING model turn,
+                    # which the 24-turn window slice can produce, is accepted —
+                    # only a trailing one is fatal.) This regenerate is a second
+                    # attempt at the SAME user turn, so the discarded reply has
+                    # to come off the end before we re-ask.
+                    retry = await self.llm.generate(
                         self.system_prompt + self._known_facts_block() +
                         "\n\nYou JUST said: \"" + prev + "\"\n"
                         "Do not say that again, and do not ask for the same thing "
                         "again. Respond to what the caller actually just said, in "
                         "one short sentence.",
-                        self.history)
-                    log.info(f"LLM (retry): {response}")
+                        self.history[:-1])
+                    if retry and retry.strip():
+                        response = retry
+                        log.info(f"LLM (retry): {response}")
+                        # Overwrite the discarded reply that was recorded above.
+                        # Leaving it desyncs context from what the caller actually
+                        # heard, and the next anti-loop check would then compare
+                        # against a sentence that was never spoken — which is the
+                        # loop this whole block exists to break.
+                        self.history[-1]["content"] = response
+                        self.transcript[-1]["content"] = response
+                        self._harvest_slots(response)
+                    else:
+                        log.warning("anti-loop: regenerate returned nothing — "
+                                    "keeping the original reply")
 
             if want_text:
                 return response
