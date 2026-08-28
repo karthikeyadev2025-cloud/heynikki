@@ -1659,6 +1659,63 @@ async def browser_save_booking(req: BookingSaveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RecordingPresignRequest(BaseModel):
+    object_key: str
+    expires_in: int = 900          # 15 minutes
+
+
+@app.post("/api/v1/recording/presign")
+async def presign_recording(req: RecordingPresignRequest,
+                            x_internal_secret: str = Header(None)):
+    """Short-lived download URL for a call recording.
+
+    Lives here rather than in api-server because boto3 is already installed
+    and proven on this side; api-server has no S3 client, and adding one to
+    presign a URL would be a dependency bought for six lines of signing.
+
+    api-server owns the AUTHORISATION — it checks the caller's JWT and that
+    the call belongs to their tenant — and calls this with the internal
+    secret. Nothing here is reachable from a browser.
+
+    The URL expires. That is the point: a recording of someone's phone call
+    should not sit behind a link that works forever, which is what a public
+    bucket gives you.
+    """
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    cf_account_id = os.environ.get("CF_ACCOUNT_ID", "")
+    r2_access_key = os.environ.get("R2_ACCESS_KEY_ID", "")
+    r2_secret     = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+    r2_bucket     = os.environ.get("R2_BUCKET", "heynikki-recordings")
+    if not all([cf_account_id, r2_access_key, r2_secret]):
+        raise HTTPException(status_code=503, detail="R2 not configured")
+
+    # Clamp: a caller asking for a 30-day link defeats the expiry.
+    expires = max(60, min(int(req.expires_in or 900), 3600))
+
+    try:
+        import boto3
+        from botocore.config import Config as _BotoCfg
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{cf_account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=r2_access_key,
+            aws_secret_access_key=r2_secret,
+            config=_BotoCfg(signature_version="s3v4"),
+            region_name="auto",
+        )
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": r2_bucket, "Key": req.object_key},
+            ExpiresIn=expires,
+        )
+        return {"url": url, "expires_in": expires}
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[recording] presign failed for {req.object_key}: {e}")
+        raise HTTPException(status_code=500, detail="Could not sign recording URL")
+
+
 @app.post("/api/v1/call/inbound")
 async def handle_inbound(req: InboundCallRequest, x_internal_secret: str = Header(None)):
     if x_internal_secret != INTERNAL_SECRET:
@@ -2661,10 +2718,14 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
     r2_bucket     = os.environ.get("R2_BUCKET", "heynikki-recordings")
     r2_public_url = os.environ.get("R2_PUBLIC_URL", "")
 
-    # r2_public_url included deliberately: without it the upload succeeds but
-    # recording_url is stored as "/tenant/call.wav" — a relative path no
-    # dashboard can play, and nothing errors to tell you.
-    if not all([cf_account_id, r2_access_key, r2_secret, r2_public_url]):
+    # r2_public_url is NO LONGER required. The bucket stays private and the
+    # dashboard fetches a short-lived presigned URL when someone presses play
+    # (GET /api/calls/:id/recording). A public bucket would put every
+    # customer's recorded phone call at an unauthenticated URL that never
+    # expires, saved in the database and rendered into pages — for recordings
+    # of real people's calls that is not a trade worth making for the
+    # convenience of a static link.
+    if not all([cf_account_id, r2_access_key, r2_secret]):
         log.warning("[FS] R2 credentials not set — skipping recording upload")
         return ""
 
@@ -2688,9 +2749,11 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
             Body=local_wav_bytes,
             ContentType="audio/wav",
         )
-        public_url = f"{r2_public_url.rstrip('/')}/{object_key}"
         log.info(f"[FS] Recording uploaded to R2: {object_key} ({len(local_wav_bytes):,}B)")
-        return public_url
+        # Returns the OBJECT KEY, not a URL. Callers store it in
+        # calls.r2_object_key and presign at play time. If a public base is
+        # configured anyway, it is still honoured for whoever wants it.
+        return f"{r2_public_url.rstrip('/')}/{object_key}" if r2_public_url else object_key
     except ImportError:
         log.error("[FS] boto3 not installed — run: pip install boto3")
         return ""
@@ -3020,7 +3083,17 @@ async def freeswitch_ws(
             "intent":           agent.intent,
         }
         if r2_url:
-            updates["recording_url"] = r2_url
+            # With a private bucket _upload_to_r2 returns the object key, so
+            # it goes in r2_object_key and the dashboard presigns it on play.
+            # recording_url stays for a public base, which some deployments
+            # still configure — the column that is set tells you which mode
+            # produced the row.
+            if r2_url.startswith("http"):
+                updates["recording_url"] = r2_url
+            else:
+                updates["r2_object_key"]   = r2_url
+                updates["storage_provider"] = "r2"
+                updates["recording_size_bytes"] = len(wav_bytes)
         if agent.call_id:
             await db.update_call(agent.call_id, updates)
 
