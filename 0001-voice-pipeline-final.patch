@@ -1,5 +1,5 @@
 From e5645b6dcc4d91e2b95dcca1014d2553b676f59a Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 12:10:21 +0000
 Subject: [PATCH] feat(voice): pre-rec TRAI disclosure + AES-256-GCM call
  recordings
@@ -7,14 +7,14 @@ Subject: [PATCH] feat(voice): pre-rec TRAI disclosure + AES-256-GCM call
 - main.py on_call_start now loads pre-recorded disclosure WAV from
   assets/ (falls back to runtime TTS if missing). Saves ~500ms latency
   + Sarvam credits per inbound call.
-- New JovioAgent.save_recording: encrypts call audio with AES-256-GCM
+- New HeyNikkiAgent.save_recording: encrypts call audio with AES-256-GCM
   (12-byte nonce + ciphertext+tag) and uploads to Supabase storage at
   recordings/<tenant_id>/<call_id>.wav.enc.
 - New SupabaseClient.upload_recording helper.
-- Per-tenant keys supported via JOVIO_RECORDING_KEY_<uuid>; global
-  JOVIO_RECORDING_KEY fallback.
+- Per-tenant keys supported via HEYNIKKI_RECORDING_KEY_<uuid>; global
+  HEYNIKKI_RECORDING_KEY fallback.
 - cryptography>=42.0.0 added to requirements.
-- env example: JOVIO_RECORDING_KEY + SUPABASE_RECORDINGS_BUCKET.
+- env example: HEYNIKKI_RECORDING_KEY + SUPABASE_RECORDINGS_BUCKET.
 - New: scripts/generate_trai_disclosure.py (pre-records WAVs for 3 voices).
 - New: voice-pipeline/assets/README.md.
 ---
@@ -40,8 +40,8 @@ index ce91e23..f539f08 100644
 +# AES-256-GCM key, base64-encoded (must decode to exactly 32 bytes).
 +# Generate one with:
 +#   python3 -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
-+# For per-tenant keys (stronger), set JOVIO_RECORDING_KEY_<tenant_uuid>=...
-+JOVIO_RECORDING_KEY=
++# For per-tenant keys (stronger), set HEYNIKKI_RECORDING_KEY_<tenant_uuid>=...
++HEYNIKKI_RECORDING_KEY=
 +
 +# Supabase storage bucket for encrypted recordings (must be private)
 +SUPABASE_RECORDINGS_BUCKET=recordings
@@ -132,7 +132,7 @@ index 8352a7e..b5e2461 100644
  
  # ── WHATSAPP ─────────────────────────────────────────────
  async def send_whatsapp(to: str, message: str, wa_number: str, tenant_id: str):
-@@ -474,7 +510,13 @@ class JovioAgent:
+@@ -474,7 +510,13 @@ class HeyNikkiAgent:
          self.voice = sku_voices.get(profile.get("profile_sku","standard"), "meera")
  
      async def on_call_start(self) -> bytes:
@@ -147,7 +147,7 @@ index 8352a7e..b5e2461 100644
          self.call_id = await self.db.save_call({
              "tenant_id":        self.profile["tenant_id"],
              "voice_profile_id": self.profile["id"],
-@@ -483,9 +525,19 @@ class JovioAgent:
+@@ -483,9 +525,19 @@ class HeyNikkiAgent:
              "status":           "active",
          })
          log.info(f"Call started: {self.call_id} from {self.caller_num}")
@@ -170,7 +170,7 @@ index 8352a7e..b5e2461 100644
  
      async def on_speech(self, audio_bytes: bytes) -> bytes:
          """Process one turn: STT → detect intent → LLM → TTS."""
-@@ -523,15 +575,72 @@ class JovioAgent:
+@@ -523,15 +575,72 @@ class HeyNikkiAgent:
              log.error(f"on_speech error: {e}")
              return await self.tts.synthesize("క్షమించండి, technical issue. మళ్ళీ try చేయండి.", self.voice)
  
@@ -182,8 +182,8 @@ index 8352a7e..b5e2461 100644
 +        Layout of stored object (binary):
 +            [ 12-byte nonce ][ ciphertext + GCM tag ]
 +
-+        Decryption key is per-tenant, sourced from env JOVIO_RECORDING_KEY_<TENANT>
-+        or a single fallback JOVIO_RECORDING_KEY. Key must be 32 bytes base64-encoded.
++        Decryption key is per-tenant, sourced from env HEYNIKKI_RECORDING_KEY_<TENANT>
++        or a single fallback HEYNIKKI_RECORDING_KEY. Key must be 32 bytes base64-encoded.
 +
 +        Returns the Supabase storage path or None on failure (never blocks call cleanup).
 +        """
@@ -195,11 +195,11 @@ index 8352a7e..b5e2461 100644
 +
 +        tenant_id = self.profile.get("tenant_id", "unknown")
 +        key_b64 = (
-+            os.getenv(f"JOVIO_RECORDING_KEY_{tenant_id}")
-+            or os.getenv("JOVIO_RECORDING_KEY")
++            os.getenv(f"HEYNIKKI_RECORDING_KEY_{tenant_id}")
++            or os.getenv("HEYNIKKI_RECORDING_KEY")
 +        )
 +        if not key_b64:
-+            log.error("JOVIO_RECORDING_KEY env not set; skipping recording")
++            log.error("HEYNIKKI_RECORDING_KEY env not set; skipping recording")
 +            return None
 +
          try:

@@ -13,7 +13,7 @@ Output: assets/voice_samples/bulbul-v2_<speaker>.wav (and v3_<speaker>.wav)
 Usage:
   python3 scripts/compare_voices.py
   # then download the whole directory:
-  # scp -i key.pem -r ubuntu@98.130.119.138:~/jovi/voice-pipeline/assets/voice_samples/ .
+  # scp -i key.pem -r ubuntu@98.130.119.138:~/heynikki/voice-pipeline/assets/voice_samples/ .
 
 **Cost note:** each generation costs 1 Sarvam credit-equivalent. This
 script generates roughly 45 clips total (7 v2 + 38 v3). If you're on the
@@ -120,7 +120,7 @@ def main():
     print("Next step: download and listen locally. From your Windows machine:")
     print()
     print(f'  scp -i "C:\\Users\\karthikeya\\Downloads\\nikki-key.pem" -r \\')
-    print(f'    ubuntu@98.130.119.138:~/jovi/voice-pipeline/assets/voice_samples/ \\')
+    print(f'    ubuntu@98.130.119.138:~/heynikki/voice-pipeline/assets/voice_samples/ \\')
     print(f'    C:\\Users\\karthikeya\\Downloads\\')
     print()
     print("Play them all, pick the ONE speaker+model that sounds most like")

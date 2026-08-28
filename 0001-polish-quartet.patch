@@ -3,7 +3,7 @@ From: Karthikeyadev <karthikeyadev2025@gmail.com>
 Date: Sun, 28 Jun 2026 14:49:53 +0530
 Subject: [PATCH 1/6] Add script to create Razorpay subscription plans
 
-This script creates three Razorpay subscription plans for Jovio, checking for existing plans and only creating missing ones. It outputs the plan IDs to be added to the environment configuration.
+This script creates three Razorpay subscription plans for HeyNikki, checking for existing plans and only creating missing ones. It outputs the plan IDs to be added to the environment configuration.
 ---
  api-server/scripts/setup_razorpay_plans.ts | 116 +++++++++++++++++++++
  1 file changed, 116 insertions(+)
@@ -16,7 +16,7 @@ index 0000000..acb7569
 +++ b/api-server/scripts/setup_razorpay_plans.ts
 @@ -0,0 +1,116 @@
 +/**
-+ * One-shot script to create Jovio's 3 Razorpay subscription plans.
++ * One-shot script to create HeyNikki's 3 Razorpay subscription plans.
 + *
 + * Run AFTER you've created the Razorpay account and added keys to .env:
 + *   cd api-server
@@ -48,21 +48,21 @@ index 0000000..acb7569
 +  {
 +    code: "starter",
 +    period: "monthly", interval: 1,
-+    item: { name: "Jovio Starter",
++    item: { name: "HeyNikki Starter",
 +            description: "200 mins/mo · 1 voice profile · Telugu AI receptionist",
 +            amount: 199900, currency: "INR" },
 +  },
 +  {
 +    code: "growth",
 +    period: "monthly", interval: 1,
-+    item: { name: "Jovio Growth",
++    item: { name: "HeyNikki Growth",
 +            description: "600 mins/mo · 3 voice profiles · custom greetings · appointment booking",
 +            amount: 499900, currency: "INR" },
 +  },
 +  {
 +    code: "scale",
 +    period: "monthly", interval: 1,
-+    item: { name: "Jovio Scale",
++    item: { name: "HeyNikki Scale",
 +            description: "1,500 mins/mo · 10 voice profiles · multi-branch · dedicated manager",
 +            amount: 999900, currency: "INR" },
 +  },
@@ -136,7 +136,7 @@ index 0000000..acb7569
 
 
 From db76a5bfd58d95f99f11163da23eaa04a78f5e69 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 13:24:26 +0000
 Subject: [PATCH 2/6] feat(web): demo audio player section on landing page
 MIME-Version: 1.0
@@ -147,7 +147,7 @@ New #demo section between hero and 'how it works'. Custom branded
 audio player (orange/green gradient play button, progress bar) that
 loads sample-call.mp3 from NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL — same
 env used by the dashboard voice preview. If the env isn't set, shows
-a 'Coming soon — email sales@jovio.in for a live demo' fallback
+a 'Coming soon — email sales@heynikki.in for a live demo' fallback
 rather than breaking the page.
 
 Player handles: play/pause toggle, time/duration display in mm:ss,
@@ -175,10 +175,10 @@ index 0211391..8344176 100644
 -import { useState, useEffect } from "react";
 +import { useState, useEffect, useRef } from "react";
  import Image from "next/image";
- import JovioLogo from "../components/JovioLogo";
+ import HeyNikkiLogo from "../components/HeyNikkiLogo";
  
 @@ -21,6 +21,114 @@ function Logo({ size = 40, showText = true }: { size?: number; showText?: boolea
-   return <JovioLogo size={size} showText={showText} variant="horizontal" />;
+   return <HeyNikkiLogo size={size} showText={showText} variant="horizontal" />;
  }
  
 +/**
@@ -238,7 +238,7 @@ index 0211391..8344176 100644
 +        background: J.vault, border: `1px solid ${J.border}`, borderRadius: 16,
 +        padding: "32px 24px", color: J.textMid, fontSize: 14,
 +      }}>
-+        🎧 Demo audio coming soon. Email <a href="mailto:sales@jovio.in" style={{ color: J.mercury }}>sales@jovio.in</a> for a live demo call.
++        🎧 Demo audio coming soon. Email <a href="mailto:sales@heynikki.in" style={{ color: J.mercury }}>sales@heynikki.in</a> for a live demo call.
 +      </div>
 +    );
 +  }
@@ -309,7 +309,7 @@ index 0211391..8344176 100644
 +        <h2 style={{
 +          fontSize: 36, fontWeight: 900, color: J.chandra, marginBottom: 12, lineHeight: 1.2,
 +        }}>
-+          Hear Jovio handle a real call
++          Hear HeyNikki handle a real call
 +        </h2>
 +        <p style={{ fontSize: 16, color: J.textMid, marginBottom: 40, lineHeight: 1.6 }}>
 +          A 60-second sample of an inbound call to a clinic — appointment booked,
@@ -327,7 +327,7 @@ index 0211391..8344176 100644
 
 
 From fab0abc0b3c7a4707eb27a5cf69e69c2922d65fa Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 13:24:26 +0000
 Subject: [PATCH 3/6] feat(dashboard): welcoming empty state for first-run
  tenants
@@ -367,7 +367,7 @@ index 2cd25ce..52139e4 100644
 +                           borderColor: C.glow + "44" }}>
 +              <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
 +              <div style={{ color: C.txt, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-+                Welcome to Jovio
++                Welcome to HeyNikki
 +              </div>
 +              <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.6, maxWidth: 480, margin: "0 auto 20px" }}>
 +                Your AI receptionist isn't taking calls yet. Two quick steps to go live:
@@ -389,11 +389,11 @@ index 2cd25ce..52139e4 100644
 +                }}>
 +                  <div style={{ color: C.grn, fontSize: 11, fontWeight: 800, marginBottom: 4 }}>STEP 2</div>
 +                  <div style={{ fontSize: 14, fontWeight: 700 }}>Forward your number</div>
-+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the Jovio DID to your business line →</div>
++                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the HeyNikki DID to your business line →</div>
 +                </a>
 +              </div>
 +              <div style={{ color: C.dim, fontSize: 11, marginTop: 20 }}>
-+                Stuck? Email <a href="mailto:support@jovio.in" style={{ color: C.grn }}>support@jovio.in</a>
++                Stuck? Email <a href="mailto:support@heynikki.in" style={{ color: C.grn }}>support@heynikki.in</a>
 +              </div>
 +            </Card>
 +          )}
@@ -406,7 +406,7 @@ index 2cd25ce..52139e4 100644
 
 
 From 43fb2cf1fa2ff94a59bc50c7a1715ab0aa668084 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 13:24:26 +0000
 Subject: [PATCH 4/6] docs(flutter): release signing guide + secure
  key.properties gitignore
@@ -448,7 +448,7 @@ index 0000000..df91cae
 --- /dev/null
 +++ b/flutter-app/SIGNING.md
 @@ -0,0 +1,185 @@
-+# Jovio Mobile — Release Signing
++# HeyNikki Mobile — Release Signing
 +
 +Both stores require apps to be signed with a non-debug certificate before
 +upload. This doc covers Android (Play Store) and iOS (App Store / TestFlight).
@@ -458,9 +458,9 @@ index 0000000..df91cae
 +### 1. Generate the upload keystore (once)
 +
 +```bash
-+keytool -genkey -v -keystore ~/jovio-upload.jks \
++keytool -genkey -v -keystore ~/heynikki-upload.jks \
 +  -keyalg RSA -keysize 2048 -validity 10000 \
-+  -alias jovio-upload
++  -alias heynikki-upload
 +```
 +
 +You'll be prompted for a password — store it in a password manager. Losing
@@ -472,8 +472,8 @@ index 0000000..df91cae
 +```
 +storePassword=YOUR_STORE_PASSWORD
 +keyPassword=YOUR_KEY_PASSWORD
-+keyAlias=jovio-upload
-+storeFile=/absolute/path/to/jovio-upload.jks
++keyAlias=heynikki-upload
++storeFile=/absolute/path/to/heynikki-upload.jks
 +```
 +
 +This file is **never committed** — confirm it's in `.gitignore`:
@@ -534,8 +534,8 @@ index 0000000..df91cae
 +Base64-encode the keystore and store as a secret:
 +
 +```bash
-+base64 < ~/jovio-upload.jks | pbcopy   # macOS
-+# or: base64 -w0 ~/jovio-upload.jks    # Linux
++base64 < ~/heynikki-upload.jks | pbcopy   # macOS
++# or: base64 -w0 ~/heynikki-upload.jks    # Linux
 +```
 +
 +Set GitHub Actions secrets:
@@ -560,7 +560,7 @@ index 0000000..df91cae
 +### 1. Apple Developer account setup (one time)
 +
 +You need a paid Apple Developer account (₹8,300/yr). Create:
-+- **App ID:** `in.jovio.app` (bundle identifier)
++- **App ID:** `in.heynikki.app` (bundle identifier)
 +- **Distribution certificate** (one per team)
 +- **Provisioning profile** for App Store distribution
 +
@@ -571,7 +571,7 @@ index 0000000..df91cae
 +
 +Open `ios/Runner.xcworkspace` in Xcode. In **Runner target → Signing & Capabilities**:
 +- Team: select your team
-+- Bundle Identifier: `in.jovio.app`
++- Bundle Identifier: `in.heynikki.app`
 +- Toggle ON: "Automatically manage signing"
 +
 +Xcode pulls the right provisioning profile automatically.
@@ -582,7 +582,7 @@ index 0000000..df91cae
 +flutter build ipa --release
 +```
 +
-+Output: `build/ios/ipa/jovio.ipa` — upload via Transporter app or `xcrun altool`.
++Output: `build/ios/ipa/heynikki.ipa` — upload via Transporter app or `xcrun altool`.
 +
 +### CI signing (GitHub Actions, optional)
 +
@@ -604,12 +604,12 @@ index 0000000..df91cae
 +Before submitting either store:
 +
 +- [ ] App icon — 1024×1024 PNG (no transparency, no rounded corners)
-+- [ ] iOS launch screen — uses `assets/jovio-icon.svg` rendered
++- [ ] iOS launch screen — uses `assets/heynikki-icon.svg` rendered
 +- [ ] Android adaptive icon — foreground + background separately
 +- [ ] Screenshots — 6.7" iPhone (1290×2796), 5.5" iPhone (1242×2208), tablet optional. Show: login, dashboard, calls list, setup, billing.
 +- [ ] Promotional graphic (Play Store) — 1024×500
 +- [ ] App description (en, te) — ≤ 4000 chars
-+- [ ] Privacy policy URL — `https://jovio.in/privacy` (already live)
++- [ ] Privacy policy URL — `https://heynikki.in/privacy` (already live)
 +- [ ] Data safety form (Play Console) — declare: account data, phone numbers (callers), audio recordings, all encrypted in transit, AES-256 at rest
 +- [ ] Export compliance (App Store) — declare uses of encryption (AES-256-GCM for recordings)
 +
@@ -638,7 +638,7 @@ index 0000000..df91cae
 
 
 From e1fd8e7df774ef54aeb54da927dc5b51c8d1d333 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 13:25:21 +0000
 Subject: [PATCH 5/6] refactor: update test_keys.py internal path references
 
@@ -660,7 +660,7 @@ index 2cb668f..31ad13f 100644
 +++ b/voice-pipeline/scripts/test_keys.py
 @@ -1,6 +1,6 @@
  """
- Jovio — API Key Tester
+ HeyNikki — API Key Tester
 -Run: python test_keys.py
 +Run: python voice-pipeline/scripts/test_keys.py
  Tests all your API keys and tells you exactly what works
@@ -680,7 +680,7 @@ index 2cb668f..31ad13f 100644
 
 
 From ba63fe69f83cab73fa00ccb433cbe5c3eae0118e Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Sun, 28 Jun 2026 18:27:42 +0000
 Subject: [PATCH 6/6] fix(web): mobile responsive layout
 MIME-Version: 1.0
@@ -759,9 +759,9 @@ index 8344176..a45b9da 100644
 +              </a>
 +            </>
 +          )}
-           <Button href="https://jovi-smoky.vercel.app/login">Sign In</Button>
--          <Button primary href="https://jovi-smoky.vercel.app/signup">Get Started</Button>
-+          {!mobile && <Button primary href="https://jovi-smoky.vercel.app/signup">Get Started</Button>}
+           <Button href="https://heynikki-smoky.vercel.app/login">Sign In</Button>
+-          <Button primary href="https://heynikki-smoky.vercel.app/signup">Get Started</Button>
++          {!mobile && <Button primary href="https://heynikki-smoky.vercel.app/signup">Get Started</Button>}
          </div>
        </nav>
  
@@ -790,7 +790,7 @@ index 8344176..a45b9da 100644
 +          fontSize: mobile ? 16 : 20, color: J.textMid, maxWidth: 700,
 +          margin: "0 auto 36px", lineHeight: 1.6,
          }}>
-           Jovio is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7,
+           HeyNikki is a Telugu-first AI receptionist for Indian SMBs. Answers calls 24/7,
            books appointments, and sends WhatsApp confirmations — automatically.
 @@ -232,7 +247,7 @@ export default function Home() {
  

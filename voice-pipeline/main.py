@@ -29,7 +29,7 @@ if _SENTRY_DSN:
 
         sentry_sdk.init(
             dsn=_SENTRY_DSN,
-            environment=os.environ.get("JOVIO_ENV", "development"),
+            environment=os.environ.get("HEYNIKKI_ENV", "development"),
             release=os.environ.get("RELEASE_SHA"),
             traces_sample_rate=0.1,
             integrations=[
@@ -1142,8 +1142,8 @@ class NikkiAgent:
         Layout of stored object (binary):
             [ 12-byte nonce ][ ciphertext + GCM tag ]
 
-        Decryption key is per-tenant, sourced from env JOVIO_RECORDING_KEY_<TENANT>
-        or a single fallback JOVIO_RECORDING_KEY. Key must be 32 bytes base64-encoded.
+        Decryption key is per-tenant, sourced from env HEYNIKKI_RECORDING_KEY_<TENANT>
+        or a single fallback HEYNIKKI_RECORDING_KEY. Key must be 32 bytes base64-encoded.
 
         Returns the Supabase storage path or None on failure (never blocks call cleanup).
         """
@@ -1155,11 +1155,11 @@ class NikkiAgent:
 
         tenant_id = self.profile.get("tenant_id", "unknown")
         key_b64 = (
-            os.getenv(f"JOVIO_RECORDING_KEY_{tenant_id}")
-            or os.getenv("JOVIO_RECORDING_KEY")
+            os.getenv(f"HEYNIKKI_RECORDING_KEY_{tenant_id}")
+            or os.getenv("HEYNIKKI_RECORDING_KEY")
         )
         if not key_b64:
-            log.error("JOVIO_RECORDING_KEY env not set; skipping recording")
+            log.error("HEYNIKKI_RECORDING_KEY env not set; skipping recording")
             return None
 
         try:

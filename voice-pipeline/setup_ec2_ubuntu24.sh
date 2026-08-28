@@ -1,13 +1,13 @@
 #!/bin/bash
 # ============================================================
-# JOVIO — EC2 Setup Script for Ubuntu 24.04
+# HEYNIKKI — EC2 Setup Script for Ubuntu 24.04
 # ============================================================
 
 set -e
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║   JOVIO — EC2 Setup Ubuntu 24.04    ║"
+echo "║   HEYNIKKI — EC2 Setup Ubuntu 24.04    ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -137,7 +137,7 @@ sudo supervisorctl update
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║  ✅ JOVIO EC2 SETUP COMPLETE!                   ║"
+echo "║  ✅ HEYNIKKI EC2 SETUP COMPLETE!                   ║"
 echo "╠══════════════════════════════════════════════════╣"
 echo "║  Next: Add your API keys to .env                ║"
 echo "║  Run:  nano /home/ubuntu/heynikki/voice-pipeline/.env ║"

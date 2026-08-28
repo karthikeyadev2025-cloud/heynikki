@@ -1,5 +1,5 @@
 From f84b60808c71219d542354bfc4ccf86fe695f6b1 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 02:18:03 +0000
 Subject: [PATCH 1/4] =?UTF-8?q?feat(web):=20legal=20pages=20=E2=80=94=20pr?=
  =?UTF-8?q?ivacy,=20terms,=20refund,=20contact,=20pricing?=
@@ -12,7 +12,7 @@ public domain. Adding five pages all wired to a shared <LegalLayout/>:
 
 - /privacy        DPDP Act 2023 compliant. Lists data collected,
                   purpose, retention, user rights, grievance officer
-                  (Karthikeya, privacy@jovio.in). Calls out India-only
+                  (Karthikeya, privacy@heynikki.in). Calls out India-only
                   data residency (Mumbai), AES-256 encryption at rest,
                   72-hour breach notification commitment.
 - /terms          Acceptable use (no TRAI violations, no scraping),
@@ -58,7 +58,7 @@ index 0000000..395d6d3
 @@ -0,0 +1,48 @@
 +import LegalLayout from "../../components/LegalLayout";
 +
-+export const metadata = { title: "Contact — Jovio" };
++export const metadata = { title: "Contact — HeyNikki" };
 +
 +export default function Contact() {
 +  return (
@@ -70,17 +70,17 @@ index 0000000..395d6d3
 +
 +      <h2>Reach us by topic</h2>
 +      <ul>
-+        <li><strong>Sales & general:</strong> <a href="mailto:hello@jovio.in">hello@jovio.in</a></li>
-+        <li><strong>Support:</strong> <a href="mailto:support@jovio.in">support@jovio.in</a></li>
-+        <li><strong>Billing & refunds:</strong> <a href="mailto:billing@jovio.in">billing@jovio.in</a></li>
-+        <li><strong>Privacy & DPDP grievance:</strong> <a href="mailto:privacy@jovio.in">privacy@jovio.in</a></li>
-+        <li><strong>Legal:</strong> <a href="mailto:legal@jovio.in">legal@jovio.in</a></li>
-+        <li><strong>Security disclosure:</strong> <a href="mailto:security@jovio.in">security@jovio.in</a></li>
++        <li><strong>Sales & general:</strong> <a href="mailto:hello@heynikki.in">hello@heynikki.in</a></li>
++        <li><strong>Support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a></li>
++        <li><strong>Billing & refunds:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a></li>
++        <li><strong>Privacy & DPDP grievance:</strong> <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a></li>
++        <li><strong>Legal:</strong> <a href="mailto:legal@heynikki.in">legal@heynikki.in</a></li>
++        <li><strong>Security disclosure:</strong> <a href="mailto:security@heynikki.in">security@heynikki.in</a></li>
 +      </ul>
 +
 +      <h2>Registered office</h2>
 +      <p>
-+        <strong>Jovio Global Technologies</strong><br />
++        <strong>Nikki Technologies</strong><br />
 +        Hyderabad, Telangana, India
 +      </p>
 +      <p style={{ fontSize: 13, color: "#9CA3AF" }}>
@@ -91,14 +91,14 @@ index 0000000..395d6d3
 +      <h2>Business hours</h2>
 +      <p>
 +        Monday – Friday, 10:00 – 19:00 IST.<br />
-+        The Jovio AI receptionist itself operates 24/7 — these hours are for human
++        The HeyNikki AI receptionist itself operates 24/7 — these hours are for human
 +        support and sales conversations.
 +      </p>
 +
 +      <h2>Press & partnerships</h2>
 +      <p>
 +        Journalist? Investor? Distribution partner? Email
-+        <a href="mailto:hello@jovio.in"> hello@jovio.in</a> with "Press" or "Partnership"
++        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with "Press" or "Partnership"
 +        in the subject line and we'll route it to the right person.
 +      </p>
 +    </LegalLayout>
@@ -112,13 +112,13 @@ index 0000000..1f8af51
 @@ -0,0 +1,73 @@
 +import LegalLayout from "../../components/LegalLayout";
 +
-+export const metadata = { title: "Pricing — Jovio" };
++export const metadata = { title: "Pricing — HeyNikki" };
 +
 +export default function Pricing() {
 +  return (
 +    <LegalLayout title="Pricing" lastUpdated="29 June 2026">
 +      <p>
-+        Simple INR pricing. All plans include the core Jovio Telugu AI receptionist, the
++        Simple INR pricing. All plans include the core HeyNikki Telugu AI receptionist, the
 +        dashboard, mobile app, and TRAI-compliant call disclosure. GST (18%) is added at
 +        checkout.
 +      </p>
@@ -177,7 +177,7 @@ index 0000000..1f8af51
 +      <h2>Need a custom plan?</h2>
 +      <p>
 +        Volume discounts available for 10+ branches or 5,000+ minutes/month. Email
-+        <a href="mailto:hello@jovio.in"> hello@jovio.in</a> with your call volume and
++        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume and
 +        we'll send a quote.
 +      </p>
 +    </LegalLayout>
@@ -191,13 +191,13 @@ index 0000000..6d81e6c
 @@ -0,0 +1,134 @@
 +import LegalLayout from "../../components/LegalLayout";
 +
-+export const metadata = { title: "Privacy Policy — Jovio" };
++export const metadata = { title: "Privacy Policy — HeyNikki" };
 +
 +export default function Privacy() {
 +  return (
 +    <LegalLayout title="Privacy Policy" lastUpdated="29 June 2026">
 +      <p>
-+        Jovio Global Technologies ("<strong>Jovio</strong>", "we", "us", "our") respects
++        Nikki Technologies ("<strong>HeyNikki</strong>", "we", "us", "our") respects
 +        your privacy and is committed to protecting your personal data. This Privacy Policy
 +        explains what data we collect, why, how we use it, and the rights you have over it
 +        under the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong> of
@@ -208,7 +208,7 @@ index 0000000..6d81e6c
 +      <h3>Account data</h3>
 +      <ul>
 +        <li><strong>From you:</strong> name, business name, email address, phone number, GSTIN (if provided).</li>
-+        <li><strong>From your use of Jovio:</strong> business hours, voice profile selection, billing plan.</li>
++        <li><strong>From your use of HeyNikki:</strong> business hours, voice profile selection, billing plan.</li>
 +      </ul>
 +
 +      <h3>Call data (from callers to your business)</h3>
@@ -264,13 +264,13 @@ index 0000000..6d81e6c
 +        <li><strong>Grievance redressal</strong> — file a complaint with our Grievance Officer (below).</li>
 +      </ul>
 +      <p>
-+        Email <a href="mailto:privacy@jovio.in">privacy@jovio.in</a> to exercise any of these
++        Email <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a> to exercise any of these
 +        rights. We respond within 30 days.
 +      </p>
 +
 +      <h2>6. TRAI compliance for callers</h2>
 +      <p>
-+        Every inbound call answered by Jovio begins with a mandatory non-skippable
++        Every inbound call answered by HeyNikki begins with a mandatory non-skippable
 +        disclosure stating that the caller is speaking to an automated AI system. Callers
 +        can request transfer to a human at any time by saying "human" or "operator", which
 +        will end the AI session and forward to the configured fallback number.
@@ -285,7 +285,7 @@ index 0000000..6d81e6c
 +
 +      <h2>8. Children</h2>
 +      <p>
-+        Jovio is a B2B service intended for businesses. We do not knowingly collect data
++        HeyNikki is a B2B service intended for businesses. We do not knowingly collect data
 +        from children under 18. If you believe a minor has signed up, email us and we'll
 +        delete the account.
 +      </p>
@@ -304,7 +304,7 @@ index 0000000..6d81e6c
 +
 +      <h2>10. Changes to this policy</h2>
 +      <p>
-+        We'll email you 30 days before any material change. Continued use of Jovio after a
++        We'll email you 30 days before any material change. Continued use of HeyNikki after a
 +        change means you accept the updated policy.
 +      </p>
 +
@@ -313,9 +313,9 @@ index 0000000..6d81e6c
 +      <h2>Grievance Officer</h2>
 +      <p>
 +        <strong>Karthikeya</strong><br />
-+        Jovio Global Technologies<br />
++        Nikki Technologies<br />
 +        Hyderabad, Telangana, India<br />
-+        Email: <a href="mailto:privacy@jovio.in">privacy@jovio.in</a>
++        Email: <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a>
 +      </p>
 +      <p style={{ fontSize: 13, color: "#9CA3AF" }}>
 +        Designated as Grievance Officer per Section 13 of the DPDP Act, 2023.
@@ -331,13 +331,13 @@ index 0000000..c038c71
 @@ -0,0 +1,83 @@
 +import LegalLayout from "../../components/LegalLayout";
 +
-+export const metadata = { title: "Refund Policy — Jovio" };
++export const metadata = { title: "Refund Policy — HeyNikki" };
 +
 +export default function Refund() {
 +  return (
 +    <LegalLayout title="Refund & Cancellation Policy" lastUpdated="29 June 2026">
 +      <p>
-+        This Refund Policy describes when and how Jovio Global Technologies issues refunds
++        This Refund Policy describes when and how Nikki Technologies issues refunds
 +        for subscription fees and related charges.
 +      </p>
 +
@@ -355,13 +355,13 @@ index 0000000..c038c71
 +      <ul>
 +        <li>
 +          <strong>Within 7 days of first paid subscription:</strong> if you signed up for a
-+          paid plan and find Jovio doesn't fit your needs, email
-+          <a href="mailto:support@jovio.in"> support@jovio.in</a> within 7 days of the first
++          paid plan and find HeyNikki doesn't fit your needs, email
++          <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 7 days of the first
 +          charge for a full refund. This applies only to the very first monthly charge
 +          and is available once per customer.
 +        </li>
 +        <li>
-+          <strong>Service outage:</strong> if Jovio is unavailable for more than 8 hours in
++          <strong>Service outage:</strong> if HeyNikki is unavailable for more than 8 hours in
 +          a single billing month, you can claim a 10% credit toward the next month's bill
 +          by emailing us within 30 days.
 +        </li>
@@ -384,7 +384,7 @@ index 0000000..c038c71
 +      <h2>5. Cancellation</h2>
 +      <p>
 +        You can cancel anytime from <strong>Dashboard → Billing → Cancel</strong> or by
-+        emailing <a href="mailto:support@jovio.in">support@jovio.in</a>. Cancellation takes
++        emailing <a href="mailto:support@heynikki.in">support@heynikki.in</a>. Cancellation takes
 +        effect at the end of the current billing cycle — you keep service until then.
 +      </p>
 +
@@ -398,7 +398,7 @@ index 0000000..c038c71
 +      <h2>7. Disputes</h2>
 +      <p>
 +        If you believe you've been charged in error, email
-+        <a href="mailto:billing@jovio.in"> billing@jovio.in</a> within 30 days of the
++        <a href="mailto:billing@heynikki.in"> billing@heynikki.in</a> within 30 days of the
 +        charge with your invoice number. We respond within 3 business days. If we can't
 +        resolve it, you may approach Razorpay's grievance process or the appropriate
 +        consumer forum.
@@ -406,8 +406,8 @@ index 0000000..c038c71
 +
 +      <h2>8. Contact</h2>
 +      <p>
-+        <strong>Refunds & billing:</strong> <a href="mailto:billing@jovio.in">billing@jovio.in</a><br />
-+        <strong>General support:</strong> <a href="mailto:support@jovio.in">support@jovio.in</a>
++        <strong>Refunds & billing:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a><br />
++        <strong>General support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a>
 +      </p>
 +    </LegalLayout>
 +  );
@@ -420,20 +420,20 @@ index 0000000..fe987b1
 @@ -0,0 +1,140 @@
 +import LegalLayout from "../../components/LegalLayout";
 +
-+export const metadata = { title: "Terms of Service — Jovio" };
++export const metadata = { title: "Terms of Service — HeyNikki" };
 +
 +export default function Terms() {
 +  return (
 +    <LegalLayout title="Terms of Service" lastUpdated="29 June 2026">
 +      <p>
-+        These Terms govern your use of Jovio (the "<strong>Service</strong>"), provided by
-+        Jovio Global Technologies ("<strong>Jovio</strong>", "we", "us"). By creating an
++        These Terms govern your use of HeyNikki (the "<strong>Service</strong>"), provided by
++        Nikki Technologies ("<strong>HeyNikki</strong>", "we", "us"). By creating an
 +        account, you agree to these Terms. If you don't agree, don't use the Service.
 +      </p>
 +
 +      <h2>1. The Service</h2>
 +      <p>
-+        Jovio is a Telugu-first AI receptionist that answers inbound calls on behalf of
++        HeyNikki is a Telugu-first AI receptionist that answers inbound calls on behalf of
 +        your business, books appointments, and sends WhatsApp confirmations. The Service
 +        includes a web dashboard, mobile app, and the underlying voice pipeline.
 +      </p>
@@ -442,14 +442,14 @@ index 0000000..fe987b1
 +      <ul>
 +        <li>You must be 18 or older and authorised to bind your business to these Terms.</li>
 +        <li>You're responsible for keeping your password secure and for all activity under your account.</li>
-+        <li>Tell us immediately at <a href="mailto:support@jovio.in">support@jovio.in</a> if you suspect unauthorised access.</li>
++        <li>Tell us immediately at <a href="mailto:support@heynikki.in">support@heynikki.in</a> if you suspect unauthorised access.</li>
 +        <li>One account per business entity. Resellers must contact us for partner terms.</li>
 +      </ul>
 +
 +      <h2>3. Acceptable use</h2>
 +      <p>You will <strong>not</strong>:</p>
 +      <ul>
-+        <li>Use Jovio for spam, robocalls, telemarketing without proper consent, or any activity violating TRAI regulations.</li>
++        <li>Use HeyNikki for spam, robocalls, telemarketing without proper consent, or any activity violating TRAI regulations.</li>
 +        <li>Attempt to bypass usage limits, reverse-engineer the Service, or scrape our infrastructure.</li>
 +        <li>Use the Service to harass, defame, or harm any person.</li>
 +        <li>Use the Service for any unlawful purpose under Indian law.</li>
@@ -469,12 +469,12 @@ index 0000000..fe987b1
 +      <h2>5. Your data and ours</h2>
 +      <p>
 +        You retain ownership of all data you upload and all caller data generated through
-+        your account ("<strong>Your Data</strong>"). You grant Jovio a limited licence to
++        your account ("<strong>Your Data</strong>"). You grant HeyNikki a limited licence to
 +        process Your Data solely to provide the Service. See our
 +        <a href="/privacy"> Privacy Policy</a> for details.
 +      </p>
 +      <p>
-+        Jovio retains ownership of the underlying software, AI models, and brand. You may
++        HeyNikki retains ownership of the underlying software, AI models, and brand. You may
 +        not copy, modify, or distribute these.
 +      </p>
 +
@@ -484,11 +484,11 @@ index 0000000..fe987b1
 +        Scheduled maintenance is announced at least 48 hours in advance. If we fall below
 +        99.5% in any calendar month, Scale-plan customers are eligible for a 10% credit
 +        toward the next month's bill, claimable by emailing
-+        <a href="mailto:support@jovio.in"> support@jovio.in</a> within 30 days.
++        <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 30 days.
 +      </p>
 +
 +      <h2>7. Third-party services</h2>
-+      <p>Jovio relies on third-party services to function:</p>
++      <p>HeyNikki relies on third-party services to function:</p>
 +      <ul>
 +        <li>Sarvam AI (speech)</li>
 +        <li>Google Gemini (language understanding)</li>
@@ -512,7 +512,7 @@ index 0000000..fe987b1
 +
 +      <h2>9. Disclaimers</h2>
 +      <p>
-+        Jovio is provided "as is". The AI receptionist makes its best effort but is not a
++        HeyNikki is provided "as is". The AI receptionist makes its best effort but is not a
 +        substitute for a human in life-threatening, medical-emergency, or other
 +        critical-decision contexts. You are responsible for configuring appropriate
 +        fallback numbers for situations requiring human handling.
@@ -520,7 +520,7 @@ index 0000000..fe987b1
 +
 +      <h2>10. Limitation of liability</h2>
 +      <p>
-+        To the maximum extent permitted by law, Jovio's total aggregate liability for any
++        To the maximum extent permitted by law, HeyNikki's total aggregate liability for any
 +        claim arising out of or related to the Service is limited to the amount you paid
 +        us in the 12 months preceding the claim. We are not liable for indirect,
 +        incidental, consequential, or punitive damages.
@@ -532,7 +532,7 @@ index 0000000..fe987b1
 +
 +      <h2>11. Indemnity</h2>
 +      <p>
-+        You will defend, indemnify, and hold harmless Jovio from third-party claims
++        You will defend, indemnify, and hold harmless HeyNikki from third-party claims
 +        arising from (a) your breach of these Terms, (b) your violation of law, or (c) your
 +        Data infringing a third party's rights.
 +      </p>
@@ -552,7 +552,7 @@ index 0000000..fe987b1
 +
 +      <h2>14. Contact</h2>
 +      <p>
-+        Email <a href="mailto:legal@jovio.in">legal@jovio.in</a> for legal notices.
++        Email <a href="mailto:legal@heynikki.in">legal@heynikki.in</a> for legal notices.
 +        See our <a href="/contact">Contact page</a> for general support.
 +      </p>
 +    </LegalLayout>
@@ -566,7 +566,7 @@ index 0000000..b1abc6f
 @@ -0,0 +1,79 @@
 +"use client";
 +import Link from "next/link";
-+import JovioLogo from "./JovioLogo";
++import HeyNikkiLogo from "./HeyNikkiLogo";
 +
 +const J = {
 +  bg: "#070B19", vault: "#111827", border: "#1F2937",
@@ -587,7 +587,7 @@ index 0000000..b1abc6f
 +        justifyContent: "space-between", alignItems: "center",
 +      }}>
 +        <Link href="/" style={{ textDecoration: "none" }}>
-+          <JovioLogo size={36} variant="horizontal" />
++          <HeyNikkiLogo size={36} variant="horizontal" />
 +        </Link>
 +        <Link href="/" style={{
 +          color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none",
@@ -630,7 +630,7 @@ index 0000000..b1abc6f
 +        color: J.textMid, fontSize: 13,
 +      }}>
 +        <div style={{ marginBottom: 12 }}>
-+          © {new Date().getFullYear()} Jovio Global Technologies. Made in India 🇮🇳
++          © {new Date().getFullYear()} Nikki Technologies. Made in India 🇮🇳
 +        </div>
 +        <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap" }}>
 +          <Link href="/privacy"        style={{ color: J.textMid, textDecoration: "none" }}>Privacy</Link>
@@ -648,16 +648,16 @@ index 0000000..b1abc6f
 
 
 From 0c4d8d54e02652bea310262ce3d08a0cddbf1a15 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 02:18:03 +0000
 Subject: [PATCH 2/4] feat(web): DPDP cookie consent banner
 
-DPDP Act 2023 requires disclosure of cookie usage. Jovio only uses
+DPDP Act 2023 requires disclosure of cookie usage. HeyNikki only uses
 essential cookies (Supabase session + CSRF token) so this is a
 notice + acknowledge rather than a per-category toggle UI.
 
 Banner appears bottom-of-screen on first visit. 'Got it' button
-writes jovio-cookie-ack=1 to localStorage so it doesn't reappear.
+writes heynikki-cookie-ack=1 to localStorage so it doesn't reappear.
 Handles localStorage-blocked browsers gracefully (shows again on
 next visit, no crash).
 
@@ -679,7 +679,7 @@ index 749d697..c75868b 100644
 +import CookieBanner from "../components/CookieBanner";
  
  export const metadata: Metadata = {
-   metadataBase: new URL("https://jovio.in"),
+   metadataBase: new URL("https://heynikki.in"),
 @@ -42,7 +43,10 @@ export const viewport: Viewport = {
  export default function RootLayout({ children }: { children: React.ReactNode }) {
    return (
@@ -717,7 +717,7 @@ index 0000000..4a8c174
 +
 +  useEffect(() => {
 +    try {
-+      setAck(localStorage.getItem("jovio-cookie-ack") === "1");
++      setAck(localStorage.getItem("heynikki-cookie-ack") === "1");
 +    } catch {
 +      // localStorage blocked (private mode / disabled cookies). Show banner
 +      // but accept clicks won't persist — that's fine, just shows again next visit.
@@ -726,7 +726,7 @@ index 0000000..4a8c174
 +  }, []);
 +
 +  const accept = () => {
-+    try { localStorage.setItem("jovio-cookie-ack", "1"); } catch {}
++    try { localStorage.setItem("heynikki-cookie-ack", "1"); } catch {}
 +    setAck(true);
 +  };
 +
@@ -777,7 +777,7 @@ index 0000000..4a8c174
 
 
 From c1cecfc2fdfb6bbfabda07da4086141ececb403e Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 02:18:03 +0000
 Subject: [PATCH 3/4] security(api): rate limiting + trust proxy for accurate
  client IPs
@@ -808,7 +808,7 @@ index 99b9b57..9333496 100644
 --- a/api-server/package.json
 +++ b/api-server/package.json
 @@ -2,20 +2,21 @@
-   "name": "jovio-api-server",
+   "name": "heynikki-api-server",
    "version": "1.0.0",
    "scripts": {
 -    "dev":   "ts-node-dev --respawn src/index.ts",
@@ -884,7 +884,7 @@ index 538f263..1cc8ec3 100644
 
 
 From 7574e221d899e00472aaeadc2c6362ae038db324 Mon Sep 17 00:00:00 2001
-From: Karthikeya <karthi@jovio.in>
+From: Karthikeya <karthi@heynikki.in>
 Date: Mon, 29 Jun 2026 02:23:15 +0000
 Subject: [PATCH 4/4] feat(infra): AWS production deployment package
 MIME-Version: 1.0
@@ -901,7 +901,7 @@ Files:
   infra/aws/cloudwatch-agent.json
     CloudWatch Agent config covering:
     - CPU / mem / disk / swap / netstat metrics (1-min interval,
-      Jovio/EC2 namespace, InstanceId + InstanceType dimensions)
+      HeyNikki/EC2 namespace, InstanceId + InstanceType dimensions)
     - Log group ingestion for both apps + Nginx access/error logs
       with 14-30 day retention
 
@@ -911,17 +911,17 @@ Files:
     the CloudWatchAgentServerPolicy managed policy attached via
     an IAM role.
 
-  infra/systemd/jovio-pipeline.service
-  infra/systemd/jovio-api.service
+  infra/systemd/heynikki-pipeline.service
+  infra/systemd/heynikki-api.service
     Drop-in replacement for the existing Supervisor setup. Loads
-    secrets from /etc/jovio/*.env (mode 0640, root:ubuntu) so they
+    secrets from /etc/heynikki/*.env (mode 0640, root:ubuntu) so they
     never live in the repo. Hardening: NoNewPrivileges, PrivateTmp,
     ProtectSystem=full, memory caps. Restart policy: always, 10s
     delay, 5 restarts in 60s before backing off.
 
-  infra/nginx/jovio.conf
-    Reverse proxy: api.jovio.in -> 127.0.0.1:4000,
-                   pipeline.jovio.in -> 127.0.0.1:8000.
+  infra/nginx/heynikki.conf
+    Reverse proxy: api.heynikki.in -> 127.0.0.1:4000,
+                   pipeline.heynikki.in -> 127.0.0.1:8000.
     /health + /ready bypassed from access logs to keep them clean
     under Route 53 health-check pressure. WebSocket upgrade headers
     on pipeline. for LiveKit signalling. 10-min read/send timeouts
@@ -941,17 +941,17 @@ Files:
  infra/aws/AWS_DEPLOYMENT.md          | 268 +++++++++++++++++++++++++++
  infra/aws/cloudwatch-agent.json      |  73 ++++++++
  infra/aws/setup-cloudwatch.sh        |  44 +++++
- infra/nginx/jovio.conf               |  55 ++++++
- infra/systemd/jovio-api.service      |  52 ++++++
- infra/systemd/jovio-pipeline.service |  57 ++++++
+ infra/nginx/heynikki.conf               |  55 ++++++
+ infra/systemd/heynikki-api.service      |  52 ++++++
+ infra/systemd/heynikki-pipeline.service |  57 ++++++
  voice-pipeline/setup_ec2_ubuntu24.sh |  23 +++
  7 files changed, 572 insertions(+)
  create mode 100644 infra/aws/AWS_DEPLOYMENT.md
  create mode 100644 infra/aws/cloudwatch-agent.json
  create mode 100755 infra/aws/setup-cloudwatch.sh
- create mode 100644 infra/nginx/jovio.conf
- create mode 100644 infra/systemd/jovio-api.service
- create mode 100644 infra/systemd/jovio-pipeline.service
+ create mode 100644 infra/nginx/heynikki.conf
+ create mode 100644 infra/systemd/heynikki-api.service
+ create mode 100644 infra/systemd/heynikki-pipeline.service
 
 diff --git a/infra/aws/AWS_DEPLOYMENT.md b/infra/aws/AWS_DEPLOYMENT.md
 new file mode 100644
@@ -959,7 +959,7 @@ index 0000000..3afd4fe
 --- /dev/null
 +++ b/infra/aws/AWS_DEPLOYMENT.md
 @@ -0,0 +1,268 @@
-+# Jovio — AWS Production Deployment Guide
++# HeyNikki — AWS Production Deployment Guide
 +
 +**Target:** Ubuntu 24.04 EC2 (`t3.small` or larger) in `ap-south-1` (Mumbai), with
 +Nginx fronting the API + voice pipeline, CloudWatch for logs/metrics, certbot for TLS.
@@ -972,7 +972,7 @@ index 0000000..3afd4fe
 +                  Internet (Exotel, browsers, mobile apps)
 +                              │
 +                              ▼
-+                  Route 53  (jovio.in, api.jovio.in, pipeline.jovio.in)
++                  Route 53  (heynikki.in, api.heynikki.in, pipeline.heynikki.in)
 +                              │
 +                              ▼
 +                ┌─────────────────────────┐
@@ -1014,17 +1014,17 @@ index 0000000..3afd4fe
 +
 +- Trusted entity: AWS service → EC2
 +- Permissions: attach AWS-managed policy **CloudWatchAgentServerPolicy**
-+- Role name: `jovio-ec2-cloudwatch`
++- Role name: `heynikki-ec2-cloudwatch`
 +
-+Then **EC2 Console → Instance → Actions → Security → Modify IAM role** → select `jovio-ec2-cloudwatch`.
++Then **EC2 Console → Instance → Actions → Security → Modify IAM role** → select `heynikki-ec2-cloudwatch`.
 +
 +### 3. Bootstrap the instance
 +
 +SSH in, then:
 +
 +```bash
-+git clone https://github.com/karthikeyadev2025-cloud/jovi.git
-+cd jovi
++git clone https://github.com/karthikeyadev2025-cloud/heynikki.git
++cd heynikki
 +bash voice-pipeline/setup_ec2_ubuntu24.sh    # existing script — installs deps
 +```
 +
@@ -1034,21 +1034,21 @@ index 0000000..3afd4fe
 +committed accidentally.
 +
 +```bash
-+sudo mkdir -p /etc/jovio
-+sudo chown root:ubuntu /etc/jovio
-+sudo chmod 0750 /etc/jovio
++sudo mkdir -p /etc/heynikki
++sudo chown root:ubuntu /etc/heynikki
++sudo chmod 0750 /etc/heynikki
 +
-+sudo nano /etc/jovio/voice-pipeline.env
++sudo nano /etc/heynikki/voice-pipeline.env
 +# Paste — see voice-pipeline/.env.example for the full list.
-+# Critical: JOVIO_RECORDING_KEY, SARVAM_API_KEY, GEMINI_API_KEY, LIVEKIT_*
++# Critical: HEYNIKKI_RECORDING_KEY, SARVAM_API_KEY, GEMINI_API_KEY, LIVEKIT_*
 +
-+sudo nano /etc/jovio/api-server.env
++sudo nano /etc/heynikki/api-server.env
 +# Paste — see api-server/.env.example for the full list.
 +# Critical: RAZORPAY_*, EXOTEL_WEBHOOK_TOKEN, SUPABASE_SERVICE_KEY,
 +# WATI_*, INTERNAL_SECRET
 +
-+sudo chmod 0640 /etc/jovio/*.env
-+sudo chown root:ubuntu /etc/jovio/*.env
++sudo chmod 0640 /etc/heynikki/*.env
++sudo chown root:ubuntu /etc/heynikki/*.env
 +```
 +
 +**Generate the secrets:**
@@ -1069,21 +1069,21 @@ index 0000000..3afd4fe
 +Stop Supervisor's old configs first (if you ran the original setup script):
 +
 +```bash
-+sudo supervisorctl stop jovio-pipeline jovio-api 2>/dev/null || true
-+sudo rm -f /etc/supervisor/conf.d/jovio-pipeline.conf /etc/supervisor/conf.d/jovio-api.conf
++sudo supervisorctl stop heynikki-pipeline heynikki-api 2>/dev/null || true
++sudo rm -f /etc/supervisor/conf.d/heynikki-pipeline.conf /etc/supervisor/conf.d/heynikki-api.conf
 +sudo supervisorctl reread && sudo supervisorctl update
 +```
 +
 +Install systemd units:
 +
 +```bash
-+sudo cp infra/systemd/jovio-pipeline.service /etc/systemd/system/
-+sudo cp infra/systemd/jovio-api.service      /etc/systemd/system/
++sudo cp infra/systemd/heynikki-pipeline.service /etc/systemd/system/
++sudo cp infra/systemd/heynikki-api.service      /etc/systemd/system/
 +sudo systemctl daemon-reload
-+sudo systemctl enable --now jovio-pipeline jovio-api
++sudo systemctl enable --now heynikki-pipeline heynikki-api
 +
 +# Verify
-+sudo systemctl status jovio-pipeline jovio-api
++sudo systemctl status heynikki-pipeline heynikki-api
 +curl -fsS http://127.0.0.1:4000/health
 +curl -fsS http://127.0.0.1:8000/health  # if pipeline exposes one
 +```
@@ -1091,8 +1091,8 @@ index 0000000..3afd4fe
 +### 6. Nginx
 +
 +```bash
-+sudo cp infra/nginx/jovio.conf /etc/nginx/sites-available/jovio
-+sudo ln -sf /etc/nginx/sites-available/jovio /etc/nginx/sites-enabled/jovio
++sudo cp infra/nginx/heynikki.conf /etc/nginx/sites-available/heynikki
++sudo ln -sf /etc/nginx/sites-available/heynikki /etc/nginx/sites-enabled/heynikki
 +sudo rm -f /etc/nginx/sites-enabled/default
 +sudo nginx -t && sudo systemctl reload nginx
 +```
@@ -1100,7 +1100,7 @@ index 0000000..3afd4fe
 +### 7. TLS (certbot)
 +
 +```bash
-+sudo certbot --nginx -d api.jovio.in -d pipeline.jovio.in
++sudo certbot --nginx -d api.heynikki.in -d pipeline.heynikki.in
 +# Choose redirect-to-HTTPS
 +# Auto-renewal is enabled by the certbot deb package; verify:
 +sudo systemctl list-timers | grep certbot
@@ -1114,22 +1114,22 @@ index 0000000..3afd4fe
 +sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status
 +```
 +
-+Logs appear in CloudWatch under log groups starting with `/jovio/`. Metrics
-+under the `Jovio/EC2` namespace.
++Logs appear in CloudWatch under log groups starting with `/heynikki/`. Metrics
++under the `HeyNikki/EC2` namespace.
 +
 +### 9. Route 53 health checks
 +
 +In **Route 53 → Health checks → Create**:
 +
-+- Name: `jovio-api-health`
++- Name: `heynikki-api-health`
 +- What to monitor: Endpoint by domain name
-+- Domain: `api.jovio.in`
++- Domain: `api.heynikki.in`
 +- Path: `/health`
 +- Port: 443, HTTPS
 +- Request interval: 30 seconds
 +- Failure threshold: 3
 +
-+Repeat for `pipeline.jovio.in`. Optionally wire an SNS topic to notify your
++Repeat for `pipeline.heynikki.in`. Optionally wire an SNS topic to notify your
 +phone/email when these fail.
 +
 +---
@@ -1140,30 +1140,30 @@ index 0000000..3afd4fe
 +
 +```bash
 +# Live tail on the box
-+sudo journalctl -u jovio-pipeline -f
-+sudo journalctl -u jovio-api -f
++sudo journalctl -u heynikki-pipeline -f
++sudo journalctl -u heynikki-api -f
 +
 +# Or the file form (what CloudWatch ingests)
-+sudo tail -f /var/log/jovio-api.out.log /var/log/jovio-pipeline.err.log
++sudo tail -f /var/log/heynikki-api.out.log /var/log/heynikki-pipeline.err.log
 +```
 +
 +### Restart after deploying new code
 +
 +```bash
-+cd /home/ubuntu/jovi
++cd /home/ubuntu/heynikki
 +git pull
 +cd api-server     && npm install --omit=dev
 +cd ../voice-pipeline && source venv/bin/activate && pip install -r requirements.txt && deactivate
-+sudo systemctl restart jovio-pipeline jovio-api
++sudo systemctl restart heynikki-pipeline heynikki-api
 +```
 +
 +### Rolling back
 +
 +```bash
-+cd /home/ubuntu/jovi
++cd /home/ubuntu/heynikki
 +git log --oneline -5
 +git checkout <commit-sha>
-+sudo systemctl restart jovio-pipeline jovio-api
++sudo systemctl restart heynikki-pipeline heynikki-api
 +```
 +
 +---
@@ -1195,7 +1195,7 @@ index 0000000..3afd4fe
 +
 +1. Spin up 2nd EC2 from an AMI of the current one
 +2. Create ALB in front, target group on port 80 (Nginx), health check `/health`
-+3. Point `api.jovio.in` and `pipeline.jovio.in` at the ALB
++3. Point `api.heynikki.in` and `pipeline.heynikki.in` at the ALB
 +4. Each EC2's Nginx still terminates SSL — or move SSL to ALB and Nginx talks plain HTTP
 +
 +NO code change required for the move.
@@ -1221,8 +1221,8 @@ index 0000000..3afd4fe
 +## Security checklist
 +
 +- [ ] SSH only from your IP (or set up AWS Session Manager and disable SSH)
-+- [ ] All secrets in `/etc/jovio/*.env`, mode 0640, owner root:ubuntu — NEVER in repo
-+- [ ] `JOVIO_RECORDING_KEY` backed up to encrypted password manager (losing it = unrecoverable recordings)
++- [ ] All secrets in `/etc/heynikki/*.env`, mode 0640, owner root:ubuntu — NEVER in repo
++- [ ] `HEYNIKKI_RECORDING_KEY` backed up to encrypted password manager (losing it = unrecoverable recordings)
 +- [ ] `EXOTEL_WEBHOOK_TOKEN` configured in Exotel dashboard webhook URLs
 +- [ ] CloudWatch alarms on: `/health` failures, CPU > 80%, disk > 80%, memory > 80%
 +- [ ] AWS GuardDuty enabled (one click, free tier)
@@ -1241,7 +1241,7 @@ index 0000000..903548b
 +  },
 +
 +  "metrics": {
-+    "namespace": "Jovio/EC2",
++    "namespace": "HeyNikki/EC2",
 +    "metrics_collected": {
 +      "cpu":   { "measurement": ["usage_active", "usage_iowait"], "metrics_collection_interval": 60, "totalcpu": true },
 +      "mem":   { "measurement": ["mem_used_percent"],             "metrics_collection_interval": 60 },
@@ -1260,43 +1260,43 @@ index 0000000..903548b
 +      "files": {
 +        "collect_list": [
 +          {
-+            "file_path":      "/var/log/jovio-pipeline.out.log",
-+            "log_group_name": "/jovio/voice-pipeline/stdout",
++            "file_path":      "/var/log/heynikki-pipeline.out.log",
++            "log_group_name": "/heynikki/voice-pipeline/stdout",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 30
 +          },
 +          {
-+            "file_path":      "/var/log/jovio-pipeline.err.log",
-+            "log_group_name": "/jovio/voice-pipeline/stderr",
++            "file_path":      "/var/log/heynikki-pipeline.err.log",
++            "log_group_name": "/heynikki/voice-pipeline/stderr",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 30
 +          },
 +          {
-+            "file_path":      "/var/log/jovio-api.out.log",
-+            "log_group_name": "/jovio/api-server/stdout",
++            "file_path":      "/var/log/heynikki-api.out.log",
++            "log_group_name": "/heynikki/api-server/stdout",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 30
 +          },
 +          {
-+            "file_path":      "/var/log/jovio-api.err.log",
-+            "log_group_name": "/jovio/api-server/stderr",
++            "file_path":      "/var/log/heynikki-api.err.log",
++            "log_group_name": "/heynikki/api-server/stderr",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 30
 +          },
 +          {
 +            "file_path":      "/var/log/nginx/access.log",
-+            "log_group_name": "/jovio/nginx/access",
++            "log_group_name": "/heynikki/nginx/access",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 14
 +          },
 +          {
 +            "file_path":      "/var/log/nginx/error.log",
-+            "log_group_name": "/jovio/nginx/error",
++            "log_group_name": "/heynikki/nginx/error",
 +            "log_stream_name": "{instance_id}",
 +            "timezone":       "Local",
 +            "retention_in_days": 30
@@ -1334,7 +1334,7 @@ index 0000000..e48b3c8
 +sudo dpkg -i -E amazon-cloudwatch-agent.deb
 +rm -f amazon-cloudwatch-agent.deb
 +
-+echo "▶ Installing Jovio CloudWatch config…"
++echo "▶ Installing HeyNikki CloudWatch config…"
 +sudo cp "$REPO_ROOT/infra/aws/cloudwatch-agent.json" \
 +        /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 +
@@ -1354,27 +1354,27 @@ index 0000000..e48b3c8
 +echo "Verify status:"
 +echo "   sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status"
 +echo ""
-+echo "Logs will appear in CloudWatch under log groups starting with /jovio/"
-+echo "Metrics will appear in CloudWatch → Metrics → Jovio/EC2"
-diff --git a/infra/nginx/jovio.conf b/infra/nginx/jovio.conf
++echo "Logs will appear in CloudWatch under log groups starting with /heynikki/"
++echo "Metrics will appear in CloudWatch → Metrics → HeyNikki/EC2"
+diff --git a/infra/nginx/heynikki.conf b/infra/nginx/heynikki.conf
 new file mode 100644
 index 0000000..de11e66
 --- /dev/null
-+++ b/infra/nginx/jovio.conf
++++ b/infra/nginx/heynikki.conf
 @@ -0,0 +1,55 @@
-+# /etc/nginx/sites-available/jovio
++# /etc/nginx/sites-available/heynikki
 +#
 +# After copying:
-+#   sudo ln -sf /etc/nginx/sites-available/jovio /etc/nginx/sites-enabled/jovio
++#   sudo ln -sf /etc/nginx/sites-available/heynikki /etc/nginx/sites-enabled/heynikki
 +#   sudo nginx -t && sudo systemctl reload nginx
 +#
 +# TLS: get certs with certbot first:
-+#   sudo certbot --nginx -d api.jovio.in -d pipeline.jovio.in
++#   sudo certbot --nginx -d api.heynikki.in -d pipeline.heynikki.in
 +# Certbot auto-edits this file to add the listen 443 ssl blocks.
 +
-+# ─── API SERVER (api.jovio.in:443 → 127.0.0.1:4000) ───
++# ─── API SERVER (api.heynikki.in:443 → 127.0.0.1:4000) ───
 +server {
-+  server_name api.jovio.in;
++  server_name api.heynikki.in;
 +  listen 80;
 +
 +  client_max_body_size 5m;
@@ -1395,9 +1395,9 @@ index 0000000..de11e66
 +  }
 +}
 +
-+# ─── VOICE PIPELINE (pipeline.jovio.in:443 → 127.0.0.1:8000) ───
++# ─── VOICE PIPELINE (pipeline.heynikki.in:443 → 127.0.0.1:8000) ───
 +server {
-+  server_name pipeline.jovio.in;
++  server_name pipeline.heynikki.in;
 +  listen 80;
 +
 +  # Voice pipeline needs WebSocket support for LiveKit signalling
@@ -1417,18 +1417,18 @@ index 0000000..de11e66
 +    proxy_connect_timeout 60s;
 +  }
 +}
-diff --git a/infra/systemd/jovio-api.service b/infra/systemd/jovio-api.service
+diff --git a/infra/systemd/heynikki-api.service b/infra/systemd/heynikki-api.service
 new file mode 100644
 index 0000000..f39173a
 --- /dev/null
-+++ b/infra/systemd/jovio-api.service
++++ b/infra/systemd/heynikki-api.service
 @@ -0,0 +1,52 @@
-+# Jovio API Server (Node + Express + TypeScript)
++# HeyNikki API Server (Node + Express + TypeScript)
 +#
 +# Install:
-+#   sudo cp infra/systemd/jovio-api.service /etc/systemd/system/
++#   sudo cp infra/systemd/heynikki-api.service /etc/systemd/system/
 +#   sudo systemctl daemon-reload
-+#   sudo systemctl enable --now jovio-api
++#   sudo systemctl enable --now heynikki-api
 +#
 +# NOTE: previous Supervisor config ran `node src/index.ts` which DOES NOT WORK
 +# because Node can't run TS directly. The correct ExecStart compiles + runs via
@@ -1436,38 +1436,38 @@ index 0000000..f39173a
 +# as `npm run dev`. For prod, run `npm run build` first then point at dist/.
 +
 +[Unit]
-+Description=Jovio API Server (Express + Razorpay + Wati)
-+After=network.target jovio-pipeline.service
++Description=HeyNikki API Server (Express + Razorpay + Wati)
++After=network.target heynikki-pipeline.service
 +Wants=network-online.target
 +
 +[Service]
 +Type=simple
 +User=ubuntu
 +Group=ubuntu
-+WorkingDirectory=/home/ubuntu/jovi/api-server
++WorkingDirectory=/home/ubuntu/heynikki/api-server
 +
-+# Secrets from: /etc/jovio/api-server.env (mode 0640, owner root:ubuntu)
++# Secrets from: /etc/heynikki/api-server.env (mode 0640, owner root:ubuntu)
 +# Contains: SUPABASE_*, RAZORPAY_*, WATI_*, INTERNAL_SECRET, PIPELINE_URL,
 +# RESEND_*, EXOTEL_WEBHOOK_TOKEN, RAZORPAY_PLAN_*
-+EnvironmentFile=/etc/jovio/api-server.env
++EnvironmentFile=/etc/heynikki/api-server.env
 +
 +# Run via ts-node for simplicity. For lower memory: precompile with
-+# `npm run build` then change ExecStart to: /usr/bin/node /home/ubuntu/jovi/api-server/dist/index.js
-+ExecStart=/home/ubuntu/jovi/api-server/node_modules/.bin/ts-node src/index.ts
++# `npm run build` then change ExecStart to: /usr/bin/node /home/ubuntu/heynikki/api-server/dist/index.js
++ExecStart=/home/ubuntu/heynikki/api-server/node_modules/.bin/ts-node src/index.ts
 +
 +Restart=always
 +RestartSec=10
 +StartLimitBurst=5
 +StartLimitIntervalSec=60
 +
-+StandardOutput=append:/var/log/jovio-api.out.log
-+StandardError=append:/var/log/jovio-api.err.log
++StandardOutput=append:/var/log/heynikki-api.out.log
++StandardError=append:/var/log/heynikki-api.err.log
 +
 +NoNewPrivileges=true
 +PrivateTmp=true
 +ProtectSystem=full
 +ProtectHome=read-only
-+ReadWritePaths=/home/ubuntu/jovi/api-server /var/log
++ReadWritePaths=/home/ubuntu/heynikki/api-server /var/log
 +
 +LimitNOFILE=65535
 +MemoryHigh=400M
@@ -1475,27 +1475,27 @@ index 0000000..f39173a
 +
 +[Install]
 +WantedBy=multi-user.target
-diff --git a/infra/systemd/jovio-pipeline.service b/infra/systemd/jovio-pipeline.service
+diff --git a/infra/systemd/heynikki-pipeline.service b/infra/systemd/heynikki-pipeline.service
 new file mode 100644
 index 0000000..0cb3801
 --- /dev/null
-+++ b/infra/systemd/jovio-pipeline.service
++++ b/infra/systemd/heynikki-pipeline.service
 @@ -0,0 +1,57 @@
-+# Jovio Voice Pipeline (Python FastAPI)
++# HeyNikki Voice Pipeline (Python FastAPI)
 +#
 +# Install:
-+#   sudo cp infra/systemd/jovio-pipeline.service /etc/systemd/system/
++#   sudo cp infra/systemd/heynikki-pipeline.service /etc/systemd/system/
 +#   sudo systemctl daemon-reload
-+#   sudo systemctl enable --now jovio-pipeline
++#   sudo systemctl enable --now heynikki-pipeline
 +#
 +# Replaces the previous Supervisor config at
-+# /etc/supervisor/conf.d/jovio-pipeline.conf — if migrating, first run:
-+#   sudo supervisorctl stop jovio-pipeline
-+#   sudo rm /etc/supervisor/conf.d/jovio-pipeline.conf
++# /etc/supervisor/conf.d/heynikki-pipeline.conf — if migrating, first run:
++#   sudo supervisorctl stop heynikki-pipeline
++#   sudo rm /etc/supervisor/conf.d/heynikki-pipeline.conf
 +#   sudo supervisorctl reread && sudo supervisorctl update
 +
 +[Unit]
-+Description=Jovio Voice Pipeline (FastAPI + LiveKit + Sarvam + Gemini)
++Description=HeyNikki Voice Pipeline (FastAPI + LiveKit + Sarvam + Gemini)
 +After=network.target
 +Wants=network-online.target
 +
@@ -1503,14 +1503,14 @@ index 0000000..0cb3801
 +Type=simple
 +User=ubuntu
 +Group=ubuntu
-+WorkingDirectory=/home/ubuntu/jovi/voice-pipeline
++WorkingDirectory=/home/ubuntu/heynikki/voice-pipeline
 +
 +# Load secrets from a file outside the repo. Owner: root:ubuntu, mode 0640.
 +# Contains: SUPABASE_URL, SUPABASE_KEY, SARVAM_API_KEY, GEMINI_API_KEY,
-+# LIVEKIT_URL/KEY/SECRET, JOVIO_RECORDING_KEY, SUPABASE_RECORDINGS_BUCKET
-+EnvironmentFile=/etc/jovio/voice-pipeline.env
++# LIVEKIT_URL/KEY/SECRET, HEYNIKKI_RECORDING_KEY, SUPABASE_RECORDINGS_BUCKET
++EnvironmentFile=/etc/heynikki/voice-pipeline.env
 +
-+ExecStart=/home/ubuntu/jovi/voice-pipeline/venv/bin/uvicorn main:app \
++ExecStart=/home/ubuntu/heynikki/voice-pipeline/venv/bin/uvicorn main:app \
 +          --host 0.0.0.0 --port 8000 --workers 2
 +
 +# Restart policy
@@ -1521,15 +1521,15 @@ index 0000000..0cb3801
 +
 +# Logging — journald is captured by the CloudWatch agent via syslog OR
 +# we can write to files that the agent tails. Files are simpler.
-+StandardOutput=append:/var/log/jovio-pipeline.out.log
-+StandardError=append:/var/log/jovio-pipeline.err.log
++StandardOutput=append:/var/log/heynikki-pipeline.out.log
++StandardError=append:/var/log/heynikki-pipeline.err.log
 +
 +# Security hardening
 +NoNewPrivileges=true
 +PrivateTmp=true
 +ProtectSystem=full
 +ProtectHome=read-only
-+ReadWritePaths=/home/ubuntu/jovi/voice-pipeline /var/log
++ReadWritePaths=/home/ubuntu/heynikki/voice-pipeline /var/log
 +
 +# Resource limits
 +LimitNOFILE=65535
@@ -1544,7 +1544,7 @@ index 08e185a..2869a80 100644
 +++ b/voice-pipeline/setup_ec2_ubuntu24.sh
 @@ -146,3 +146,26 @@ echo ""
  echo "After filling .env, run:"
- echo "  sudo supervisorctl start jovio-pipeline"
+ echo "  sudo supervisorctl start heynikki-pipeline"
  echo "  curl http://localhost:8000/health"
 +
 +# ── 7. NEXT STEPS ────────────────────────────────────────
@@ -1552,16 +1552,16 @@ index 08e185a..2869a80 100644
 +echo "════════════════════════════════════════════════════"
 +echo "  Setup complete. For production, also run:"
 +echo ""
-+echo "  1. Create /etc/jovio/voice-pipeline.env and"
-+echo "     /etc/jovio/api-server.env (see .env.example)"
++echo "  1. Create /etc/heynikki/voice-pipeline.env and"
++echo "     /etc/heynikki/api-server.env (see .env.example)"
 +echo ""
 +echo "  2. Switch from Supervisor to systemd:"
 +echo "       bash infra/aws/AWS_DEPLOYMENT.md  # see step 5"
 +echo ""
 +echo "  3. Install Nginx config:"
-+echo "       sudo cp infra/nginx/jovio.conf /etc/nginx/sites-available/"
-+echo "       sudo ln -sf /etc/nginx/sites-available/jovio.conf \\"
-+echo "                   /etc/nginx/sites-enabled/jovio.conf"
++echo "       sudo cp infra/nginx/heynikki.conf /etc/nginx/sites-available/"
++echo "       sudo ln -sf /etc/nginx/sites-available/heynikki.conf \\"
++echo "                   /etc/nginx/sites-enabled/heynikki.conf"
 +echo "       sudo nginx -t && sudo systemctl reload nginx"
 +echo ""
 +echo "  4. Install CloudWatch agent (needs IAM role on instance):"

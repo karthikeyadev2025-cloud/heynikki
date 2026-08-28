@@ -12,16 +12,16 @@ class HeyNikkiLogo extends StatelessWidget {
       Container(
         width: size, height: size,
         decoration: BoxDecoration(gradient: HeyNikkiColors.gradient, borderRadius: BorderRadius.circular(size * 0.25)),
-        child: Center(child: Text('J', style: TextStyle(color: Colors.white, fontSize: size * 0.55, fontWeight: FontWeight.w900))),
+        child: Center(child: Text('N', style: TextStyle(color: Colors.white, fontSize: size * 0.55, fontWeight: FontWeight.w900))),
       ),
       if (showText) ...[
         const SizedBox(width: 10),
         Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
           ShaderMask(
             shaderCallback: (b) => HeyNikkiColors.gradient.createShader(b),
-            child: Text('Hey Nikki', style: TextStyle(fontSize: size * 0.45, fontWeight: FontWeight.w900, color: Colors.white)),
+            child: Text('HeyNikki', style: TextStyle(fontSize: size * 0.45, fontWeight: FontWeight.w900, color: Colors.white)),
           ),
-          Text('Tech Labs', style: TextStyle(fontSize: size * 0.18, color: HeyNikkiColors.dim, letterSpacing: 1)),
+          Text('Nikki Technologies', style: TextStyle(fontSize: size * 0.18, color: HeyNikkiColors.dim, letterSpacing: 1)),
         ]),
       ],
     ],

@@ -1,5 +1,5 @@
 """
-Exotel <-> Jovio voice bridge — Phase 2 with pre-cached greeting.
+Exotel <-> HeyNikki voice bridge — Phase 2 with pre-cached greeting.
 Greeting is pre-baked to mu-law and streamed within ~50ms of 'start'.
 Sarvam is only called mid-conversation for dynamic replies.
 """
@@ -30,7 +30,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(
 CACHED_DIR = os.path.join(ASSETS_DIR, "cached_pcm")
 DEFAULT_VOICE = "anushka"
 
-SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు Jovio.
+SYSTEM_PROMPT = """మీరు ఒక Telugu AI receptionist. మీ పేరు HeyNikki.
 Business: {business_name} ({business_type}).
 Rules:
 - Respond in Telugu only (code-switch English for names/numbers/dates).
@@ -105,7 +105,7 @@ async def lookup_tenant(caller: str) -> dict:
                 return r.json()[0]
         except Exception as e:
             log.warning("tenant lookup failed: %s", e)
-    return {"name":"Jovio Demo", "business_type":"general", "voice_profile":DEFAULT_VOICE}
+    return {"name":"HeyNikki Demo", "business_type":"general", "voice_profile":DEFAULT_VOICE}
 
 
 class Session:
