@@ -2184,10 +2184,21 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // Resolve the ring group for human/hybrid routing.
     let ringGroup = "";
     if (did.routing_mode === "human" || did.routing_mode === "hybrid") {
-      const { data: agents } = await sb.from("tenant_users")
+      // tenant_users.phone did not exist until migration 020, so this query
+      // returned 42703, agents came back null, and the ring group was an
+      // empty string — a DID on 'human' or 'hybrid' rang nobody, silently.
+      // The error is checked now rather than discarded, because an empty ring
+      // group and a failed query look identical from here and only one of
+      // them is worth waking someone up about.
+      const { data: agents, error: agentErr } = await sb.from("tenant_users")
         .select("phone")
         .eq("tenant_id", did.tenant_id)
         .not("phone", "is", null);
+      if (agentErr) {
+        console.error("[routing] ring group lookup failed:", agentErr.message);
+      } else if (!agents?.length) {
+        console.warn(`[routing] tenant ${did.tenant_id} is on '${did.routing_mode}' but no seat has a phone number — nobody will ring`);
+      }
       // Simultaneous ring across every agent with a phone on file.
       ringGroup = (agents || [])
         .map((a: any) => `sofia/gateway/jio_primary/${String(a.phone).replace(/[^0-9+]/g, "")}`)
