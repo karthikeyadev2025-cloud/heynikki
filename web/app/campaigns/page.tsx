@@ -23,12 +23,19 @@
  * here to match api-server/src/outbound.ts exactly (E.164 +91). If that
  * server-side logic changes, this must change with it.
  *
- * IMPORTANT -- campaigns created here cannot place calls yet. Three
- * pieces are still missing downstream: the /dispatch endpoint in the
- * voice pipeline, the outbound-dispatcher worker (written but never
- * deployed), and outbound calling enabled on the Exotel account. The
- * banner at the top of this page states that plainly rather than letting
- * someone upload 5,000 numbers and wonder why nothing dials.
+ * DIALLING now works, on our own Jio trunk rather than Exotel. The three
+ * pieces this comment used to list as missing are done: the pipeline
+ * serves the answered leg, the dispatcher runs as a compose service, and
+ * FreeSWITCH originates the call. What gates a campaign now is
+ * operational rather than absent code — the dispatcher container is
+ * started explicitly (--profile outbound) and a campaign will not start
+ * without a consent declaration recorded against it.
+ *
+ * Recipient import moved to components/RecipientImport: it parses .xlsx
+ * and .csv in the browser and posts clean rows to
+ * /api/campaigns/:id/import. The paste-a-list textarea it replaced could
+ * not tell anyone WHICH line was malformed, so a 500-number paste with
+ * eight bad rows failed as one opaque error.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -36,6 +43,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { AlertTriangle, Megaphone } from "lucide-react";
+import RecipientImport from "../../components/RecipientImport";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -267,17 +275,19 @@ export default function CampaignsPage() {
           Upload a list of numbers and Hey Nikki calls them with your script.
         </p>
 
-        {/* Honest status banner -- dispatch genuinely isn't wired yet. */}
+        {/* Dialling now runs on our own trunk. What is left is operational,
+            not missing code, so the banner says which switch is off rather
+            than repeating the old "three things outstanding" list. */}
         <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 20 }}>
           <div style={{ display:"flex", gap: 10, alignItems:"flex-start" }}>
             <AlertTriangle size={16} />
             <div style={{ fontSize: 13, color: C.txt, lineHeight: 1.6 }}>
-              <strong>Calls don&apos;t dial yet.</strong> You can build campaigns and
-              upload numbers now — they&apos;re stored safely and opt-outs are
-              respected — but three things are still outstanding before anything
-              actually rings: the dispatch endpoint, the dispatcher worker, and
-              outbound calling being enabled on your account (it&apos;s off by
-              default and we switch it on for you).
+              <strong>Only consented lists.</strong> Campaigns dial on your own
+              number, and unanswered calls get a WhatsApp follow-up
+              automatically. Upload only numbers that gave you permission to
+              call them — existing customers, enquiries or opt-ins. Calling
+              India&apos;s DND registry without consent risks your number being
+              suspended, and you confirm the list at import.
             </div>
           </div>
         </Card>
@@ -417,22 +427,16 @@ export default function CampaignsPage() {
 
               {uploadFor === c.id && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}` }}>
-                  <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
-                    Paste numbers — one per line. Optionally add a name after a comma.
-                  </label>
-                  <textarea style={{ ...inputStyle, minHeight: 130, resize:"vertical", fontFamily:"monospace", fontSize:13 }}
-                    value={uploadText}
-                    onChange={e => setUploadText(e.target.value)}
-                    placeholder={"9876543210, Ramesh\n8885490495, Lakshmi\n+919123456789"} />
-                  <div style={{ display:"flex", gap:10, alignItems:"center", marginTop: 12, flexWrap:"wrap" }}>
-                    <button onClick={() => uploadRecipients(c.id)} disabled={uploading} style={{
-                      background: uploading ? C.dim : C.glow, color:"#fff", border:"none",
-                      borderRadius: 8, padding:"9px 18px", fontSize:13, fontWeight:700,
-                      cursor: uploading ? "not-allowed" : "pointer",
-                    }}>{uploading ? "Uploading…" : "Upload"}</button>
-                    <span style={{ fontSize:12, color:C.dim }}>
-                      Indian mobiles only. Opted-out numbers are removed automatically.
-                    </span>
+                  {/* Replaces a paste-a-list textarea. That box had no way to
+                      show which line was wrong, so a 500-number paste with
+                      eight bad rows failed as one opaque error. This parses
+                      the file in the browser, names the bad rows by their
+                      Excel row number, and takes the consent declaration the
+                      dispatcher requires before it will dial anything. */}
+                  <RecipientImport campaignId={c.id} onDone={() => load()} />
+                  <div style={{ fontSize:12, color:C.dim, marginTop: 10 }}>
+                    Indian mobiles only. Opted-out numbers are removed automatically,
+                    and re-importing a corrected sheet skips anyone already added.
                   </div>
                 </div>
               )}
