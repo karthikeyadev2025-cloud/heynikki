@@ -37,6 +37,8 @@ const SUPABASE_URL    = process.env.SUPABASE_URL!;
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY!;
 const RZP_KEY_ID      = process.env.RAZORPAY_KEY_ID!;
 const RZP_SECRET      = process.env.RAZORPAY_KEY_SECRET!;
+const META_WA_VERIFY_TOKEN = process.env.META_WA_VERIFY_TOKEN || "";
+const META_WA_APP_SECRET   = process.env.META_WA_APP_SECRET || "";
 const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
 const WATI_KEY        = process.env.WATI_API_KEY || "";
@@ -133,7 +135,12 @@ app.use("/api",      apiLimiter);
 // exotel, lead-capture and remaining freeswitch routes were equally
 // affected. Keep this exact-path, not a prefix.
 app.use((req, res, next) => {
-  if (req.path.replace(/\/+$/, "") === "/webhooks/razorpay") {
+  if (req.path.replace(/\/+$/, "") === "/webhooks/razorpay" ||
+      req.path.replace(/\/+$/, "") === "/webhooks/whatsapp") {
+    // Same reason as Razorpay: Meta signs the exact bytes it sent with
+    // X-Hub-Signature-256, so re-serialising through express.json() would
+    // change the payload and every signature check would fail. Listed as an
+    // exact path, never a prefix — see the note above.
     express.raw({ type: "application/json" })(req, res, next);
   } else if (req.path.startsWith("/webhooks/exotel/")) {
     // Exotel posts application/x-www-form-urlencoded (CallSid, Status,
@@ -2146,6 +2153,77 @@ app.post("/webhooks/freeswitch/transfer-to-human", verifyInternal, async (req, r
   } catch (err: any) {
     console.error("[FS transfer-to-human]", err.message);
     res.status(500).json({ error: "Transfer failed" });
+  }
+});
+
+// ── Meta WhatsApp Cloud API webhook ───────────────────────────
+// Callback URL to register in Meta: https://api.heynikki.in/webhooks/whatsapp
+//
+// Meta verifies a callback URL by GETting it once with hub.challenge and
+// expects the challenge echoed back as a bare body. If this route is missing
+// or the token does not match, "Verify and Save" in the App Dashboard fails
+// with no useful detail, so both failure paths are logged here.
+app.get("/webhooks/whatsapp", (req, res) => {
+  const mode      = req.query["hub.mode"];
+  const token     = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (!META_WA_VERIFY_TOKEN) {
+    console.error("[WhatsApp] META_WA_VERIFY_TOKEN is unset — cannot verify subscription");
+    return res.sendStatus(500);
+  }
+  if (mode === "subscribe" && token === META_WA_VERIFY_TOKEN) {
+    console.log("[WhatsApp] webhook verified by Meta");
+    return res.status(200).send(String(challenge ?? ""));
+  }
+  console.error("[WhatsApp] verification rejected — token mismatch");
+  return res.sendStatus(403);
+});
+
+app.post("/webhooks/whatsapp", (req, res) => {
+  const rawBody = req.body as Buffer;
+  const sig     = (req.headers["x-hub-signature-256"] as string) || "";
+
+  // Fail closed. Without the app secret there is no way to tell a real Meta
+  // delivery from anyone who has learned the URL, and this endpoint is public.
+  if (!META_WA_APP_SECRET) {
+    console.error("[WhatsApp] META_WA_APP_SECRET is unset — rejecting delivery");
+    return res.sendStatus(500);
+  }
+
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", META_WA_APP_SECRET)
+    .update(rawBody)
+    .digest("hex");
+
+  // timingSafeEqual throws on length mismatch, so compare lengths first.
+  const ok = sig.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!ok) {
+    console.error("[WhatsApp] invalid X-Hub-Signature-256");
+    return res.sendStatus(401);
+  }
+
+  // Meta retries any delivery it does not get a prompt 200 for, and a retry
+  // storm is worse than a dropped log line — acknowledge first, then process.
+  res.sendStatus(200);
+
+  try {
+    const body = JSON.parse(rawBody.toString());
+    for (const entry of body.entry || []) {
+      for (const ch of entry.changes || []) {
+        const v = ch.value || {};
+        for (const m of v.messages || []) {
+          const text = m.text?.body ?? `[${m.type}]`;
+          console.log(`[WhatsApp] in from ${m.from}: ${String(text).slice(0, 200)}`);
+        }
+        for (const st of v.statuses || []) {
+          console.log(`[WhatsApp] status ${st.id} -> ${st.status}`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[WhatsApp] payload parse failed:", err.message);
   }
 });
 
