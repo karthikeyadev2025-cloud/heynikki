@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare,
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity,
 } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
@@ -92,6 +92,7 @@ const TABS = [
   { label: "Live Calls",      icon: Phone },
   { label: "CRM",             icon: Users },
   { label: "Revenue",         icon: IndianRupee },
+  { label: "Operations",      icon: Activity },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
   { label: "Platform Config", icon: Settings },
@@ -128,6 +129,7 @@ export default function SuperAdminPage() {
     <LiveCallsPanel    key="live" token={token} />,
     <CrmPanel          key="crm"  token={token} />,
     <RevenuePanel      key="rev"  token={token} />,
+    <OperationsPanel   key="ops"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
     <PlatformConfigPanel key="cfg"   token={token} />,
@@ -992,6 +994,116 @@ function RevenuePanel({ token }: { token: string }) {
 }
 
 // ── API HEALTH PANEL ──────────────────────────────────────
+
+/**
+ * Operations — did the automations actually run?
+ *
+ * API Health answers "is the process up". This answers the different and
+ * harder question of whether the work happened, because every real fault in
+ * this platform has been a silent one: the knowledge base unable to embed,
+ * appointments confirmed with no date so no reminder could fire, campaigns
+ * built and never started, WhatsApp returning 200 while sending nothing.
+ * A process can be perfectly healthy and doing none of its job.
+ *
+ * A check that cannot be evaluated shows UNKNOWN, never OK — reading a
+ * broken check as green is how this class of fault survives.
+ */
+function OperationsPanel({ token }: { token: string }) {
+  const [data, setData]       = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+  const load = async () => {
+    setLoading(true); setError("");
+    try {
+      const res = await fetch(`${API_URL}/api/admin/operations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await res.json();
+      if (!res.ok) { setError(j.error || `Failed (${res.status})`); }
+      else setData(j);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const tone = (state: string) =>
+    state === "ok" ? C.grn : state === "attention" ? C.gold : C.dim;
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Checking…</div>;
+
+  const checks    = data?.checks || [];
+  const counters  = data?.counters || {};
+  const attention = checks.filter((c: any) => c.state === "attention").length;
+  const unknown   = checks.filter((c: any) => c.state === "unknown").length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: SPACE.md }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Automation health</div>
+        {attention > 0
+          ? <Pill label={`${attention} need attention`} color={C.gold} />
+          : <Pill label="all clear" color={C.grn} />}
+        {unknown > 0 && <Pill label={`${unknown} unknown`} color={C.dim} />}
+        <button onClick={load} style={{ marginLeft: "auto", background: "none",
+          border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
+          padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Re-check</button>
+      </div>
+
+      {error && (
+        <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.md }}>
+          <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div>
+        </Card>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
+                    gap: SPACE.sm, marginBottom: SPACE.md }}>
+        {[
+          { l: "Calls this week",   v: counters.calls_week },
+          { l: "Scored",            v: counters.scored_week },
+          { l: "Campaigns running", v: counters.campaigns_running },
+          { l: "Appts tomorrow",    v: counters.appts_tomorrow },
+          { l: "Agent changes",     v: counters.agent_changes_week },
+        ].map(k => (
+          <Card key={k.l}>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase",
+                          letterSpacing: "0.08em" }}>{k.l}</div>
+            <div style={{ color: C.txt, fontSize: 22, fontWeight: 900, marginTop: 4 }}>
+              {k.v ?? "—"}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+        {checks.map((c: any) => (
+          <Card key={c.id} hover>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                             background: tone(c.state), marginTop: 6, flexShrink: 0,
+                             boxShadow: c.state === "attention" ? "0 0 8px " + C.gold : "none" }} />
+              <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+                <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{c.label}</div>
+                <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3, lineHeight: 1.5 }}>{c.hint}</div>
+              </div>
+              <div style={{ color: tone(c.state), fontSize: 20, fontWeight: 900 }}>
+                {c.value === null ? "?" : c.value}
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {data?.generated_at && (
+        <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: SPACE.md }}>
+          Checked {new Date(data.generated_at).toLocaleString("en-IN")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function APIHealthPanel({ token }: { token: string }) {
   const [providers, setProviders] = useState<any[]>([]);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
