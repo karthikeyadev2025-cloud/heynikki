@@ -1663,6 +1663,15 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 // ═══════════════════════════════════════════════════════════
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
+import { mountCampaignImport } from "./campaign-import";
+
+// MUST be mounted BEFORE outbound.ts. Express matches routes in registration
+// order, and outbound.ts also defines /api/campaigns/:id/start and /pause —
+// behind verifyInternal, which a browser can never satisfy because that
+// secret must not ship to one. Registering these first means the dashboard
+// reaches the JWT, tenant-scoped versions; the internal copies stay
+// available to anything server-side that still calls them.
+mountCampaignImport(app, sb, verifyJWT, getTenantId, audit);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 
