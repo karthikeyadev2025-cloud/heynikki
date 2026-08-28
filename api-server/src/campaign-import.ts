@@ -259,6 +259,110 @@ export function mountCampaignImport(
     }
   });
 
+  // ── Build a campaign from the CRM instead of a spreadsheet ──
+  // The people most worth calling are already in leads, with a stage, a
+  // score and tags on them. Exporting them to a sheet and importing the
+  // sheet back is a round trip that loses the link to the lead.
+  //
+  // Preview first: the same filter runs with head:true to return a count and
+  // a sample, so nobody discovers they queued four thousand people by
+  // watching the dialler start.
+  app.post("/api/campaigns/:id/segment", verifyJWT, async (req: any, res) => {
+    try {
+      const c = await ownCampaign(req, res);
+      if (!c) return;
+
+      const { stages, min_score, max_score, tags, not_contacted_days,
+              preview, consent_declared } = req.body || {};
+
+      let q = sb.from("leads").select("id, phone, name, stage, score, tags", { count: "exact" })
+        .eq("tenant_id", c.tenant_id);
+
+      if (Array.isArray(stages) && stages.length) q = q.in("stage", stages.map(String));
+      if (Number.isFinite(min_score)) q = q.gte("score", Number(min_score));
+      if (Number.isFinite(max_score)) q = q.lte("score", Number(max_score));
+      // contains, not overlaps: "tagged both hot AND hyderabad", which is
+      // what someone picking two tags means.
+      if (Array.isArray(tags) && tags.length) q = q.contains("tags", tags.map(String));
+      if (Number.isFinite(not_contacted_days)) {
+        const cutoff = new Date(Date.now() - Number(not_contacted_days) * 86400_000).toISOString();
+        q = q.lt("last_contacted_at", cutoff);
+      }
+
+      const { data: leads, count, error } = await q.limit(10000);
+      if (error) return res.status(400).json({ error: error.message });
+
+      const phones = (leads || [])
+        .map((l: any) => normalizePhone(l.phone))
+        .filter(Boolean) as string[];
+
+      // Opt-outs and anyone already on this campaign are excluded before the
+      // count is shown, so the preview number is the number that will dial.
+      const excluded = new Set<string>();
+      for (const [table, col] of [["outbound_opt_outs", "phone"], ["outbound_recipients", "phone"]] as const) {
+        for (let i = 0; i < phones.length; i += 500) {
+          const slice = phones.slice(i, i + 500);
+          const qq = table === "outbound_opt_outs"
+            ? sb.from(table).select(col).eq("tenant_id", c.tenant_id).in(col, slice)
+            : sb.from(table).select(col).eq("campaign_id", c.id).in(col, slice);
+          const { data } = await qq;
+          (data || []).forEach((r: any) => excluded.add(r.phone));
+        }
+      }
+
+      const chosen = (leads || []).filter((l: any) => {
+        const p = normalizePhone(l.phone);
+        return p && !excluded.has(p);
+      });
+
+      if (preview) {
+        return res.json({
+          ok: true, matched: count ?? chosen.length, will_add: chosen.length,
+          excluded: excluded.size,
+          sample: chosen.slice(0, 10).map((l: any) => ({ name: l.name, phone: l.phone, stage: l.stage, score: l.score })),
+        });
+      }
+
+      if (!consent_declared) {
+        return res.status(400).json({
+          error: "consent_declared required — confirm these contacts agreed to be called",
+        });
+      }
+      if (!chosen.length) return res.status(400).json({ error: "No leads match that segment" });
+
+      let inserted = 0;
+      for (let i = 0; i < chosen.length; i += 500) {
+        const chunk = chosen.slice(i, i + 500).map((l: any) => ({
+          campaign_id: c.id,
+          tenant_id:   c.tenant_id,
+          phone:       normalizePhone(l.phone),
+          first_name:  l.name || null,
+          status:      "pending",
+        }));
+        const { error: insErr } = await sb.from("outbound_recipients").insert(chunk);
+        if (insErr) return res.status(500).json({ error: insErr.message, inserted });
+        inserted += chunk.length;
+      }
+
+      if (!c.consent_declared) {
+        await sb.from("outbound_campaigns").update({
+          consent_declared: true, consent_by: req.user.id,
+          consent_at: new Date().toISOString(),
+        }).eq("id", c.id);
+      }
+
+      await audit("campaign_segment", {
+        tenantId: c.tenant_id, actorId: req.user.id,
+        metadata: { campaign_id: c.id, inserted, excluded: excluded.size,
+                    filters: { stages, min_score, max_score, tags, not_contacted_days } },
+      });
+      res.json({ ok: true, inserted, excluded: excluded.size });
+    } catch (err: any) {
+      console.error("[campaign segment]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Start / pause, reachable from the dashboard ─────────────
   app.post("/api/campaigns/:id/start", verifyJWT, async (req: any, res) => {
     const c = await ownCampaign(req, res);
