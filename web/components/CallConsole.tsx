@@ -256,7 +256,14 @@ export default function CallConsole() {
       const r = await fetch(`${API}/api/public/voice-turn`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, session_id: sessionRef.current }),
+        // persona:"product" — without it the pipeline falls back to
+        // _DEMO_PROFILE, a pretend clinic whose services are "Doctor
+        // Consultation" and "Dental Check-up". So the console on OUR landing
+        // page answered "which service do you want an appointment for?" and
+        // tried to book a hospital visit for a visitor who came to find out
+        // what HeyNikki is. Same Nikki as the wake-word widget now: she talks
+        // about this product, and books a demo or a callback.
+        body: JSON.stringify({ ...payload, session_id: sessionRef.current, persona: "product" }),
         // A turn does STT + Gemini + TTS server-side and normally lands
         // in under 4s. Without a ceiling, a stalled mobile connection
         // leaves the caller watching the thinking dots forever with no

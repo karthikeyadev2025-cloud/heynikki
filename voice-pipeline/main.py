@@ -1599,7 +1599,15 @@ async def browser_chat(req: BrowserChatRequest):
     await _refresh_pricing()
 
     # Pick voice profile: real tenant profile or fallback demo
-    profile = _PRODUCT_PROFILE if (req.persona or "") == "product" else _DEMO_PROFILE
+    # Product is the DEFAULT now, and the pretend clinic has to be asked for
+    # by name. It was the other way round, so any caller that forgot to send a
+    # persona — which included the call console on our own landing page — got
+    # a receptionist offering "Doctor Consultation" and "Dental Check-up" to a
+    # visitor who came to find out what HeyNikki is.
+    #
+    # The safer default is the one that is true: this is Hey Nikki's own site,
+    # and the voice on it should talk about Hey Nikki.
+    profile = _DEMO_PROFILE if (req.persona or "") == "clinic_demo" else _PRODUCT_PROFILE
     if req.tenant_id and req.tenant_id != "demo":
         db = SupabaseClient()
         try:

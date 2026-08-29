@@ -141,7 +141,7 @@ export default function Home() {
 
             <div className="v2-actions">
               <a className="v2-btn v2-btn-solid" href="/signup">Put Nikki on my number</a>
-              <a className="v2-btn v2-btn-ghost" href="#demo">Hear a real call</a>
+              <a className="v2-btn v2-btn-ghost" href="#demo">Talk to Nikki</a>
             </div>
 
             {/* The widget keeps its own markup and logic untouched —
@@ -166,8 +166,8 @@ export default function Home() {
         <div className="v2-demo-inner">
           <div className="v2-demo-head">
             <Eyebrow tone="#8FA6BD">Hear it before you believe it</Eyebrow>
-            <h2>Take the call.</h2>
-            <p>No signup. The same agent that answers your customers.</p>
+            <h2>Ask her anything.</h2>
+            <p>No signup. The same voice that will answer your customers — in Telugu, if you like.</p>
           </div>
           <CallConsole />
         </div>
