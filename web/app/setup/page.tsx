@@ -49,6 +49,8 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 }
 
 export default function SetupPage() {
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const [phoneMsg, setPhoneMsg]     = useState("");
   const [tenantId, setTenantId]       = useState<string | null>(null);
   const [profile, setProfile]         = useState<VoiceProfile | null>(null);
   const [saving, setSaving]           = useState(false);
@@ -112,6 +114,9 @@ export default function SetupPage() {
         .select("tenant_id").eq("user_id", data.user.id).single();
       if (!tu) return;
       setTenantId(tu.tenant_id);
+      const { data: me } = await sb.from("tenant_users")
+        .select("phone").eq("user_id", data.user.id).maybeSingle();
+      if (me?.phone) setOwnerPhone(me.phone);
 
       // Ordered, because an unordered limit(1) on a tenant that has two
       // profiles hands the owner whichever row Postgres felt like — they
@@ -213,6 +218,24 @@ export default function SetupPage() {
   // and contacted nothing. A customer who pressed it waited for a call that
   // was never placed and concluded the product does not work. Until the
   // outbound test path is wired end to end, say what is actually true.
+  // Your own mobile — the number the onboarding messages, the missed-call
+  // ring group and the test call all use. It is captured at signup and
+  // stored NULL if it fails validation, and until now there was no screen
+  // anywhere in the product to supply it afterwards.
+  const saveOwnerPhone = async () => {
+    const digits = ownerPhone.replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(digits)) {
+      setPhoneMsg("Enter a 10-digit Indian mobile number.");
+      return;
+    }
+    const sb = createClient();
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from("tenant_users")
+      .update({ phone: digits }).eq("user_id", user?.id);
+    setPhoneMsg(error ? error.message : "Saved.");
+    setTimeout(() => setPhoneMsg(""), 3000);
+  };
+
   const handleTestCall = async () => {
     setTestCalling(true);
     try {
@@ -537,13 +560,36 @@ export default function SetupPage() {
             Phone &amp; WhatsApp
           </div>
 
+          {/* This field used to be labelled "Your Business Phone Number" and
+              wrote voice_profiles.did_number — the column meaning "the
+              HeyNikki number assigned to this business". A customer typing
+              their own mobile here got told, by WhatsApp, that it was now
+              their live HeyNikki number. It is their own mobile, it saves to
+              their membership row, and the assigned number is shown
+              read-only beside it. */}
           <FieldGroup>
-            <Label>Your Business Phone Number</Label>
-            <input value={form.did_number}
-              onChange={e => setForm(f => ({ ...f, did_number: e.target.value }))}
-              placeholder="+91 98765 43210" />
+            <Label>Your Mobile Number</Label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input value={ownerPhone}
+                onChange={e => setOwnerPhone(e.target.value)}
+                placeholder="98765 43210" style={{ flex: 1 }} />
+              <button type="button" onClick={saveOwnerPhone}
+                style={{ padding: "0 16px", borderRadius: 8, border: `1px solid ${C.bord}`,
+                  background: "transparent", color: C.txt, fontWeight: 700, cursor: "pointer" }}>
+                Save
+              </button>
+            </div>
+            <div style={{ color: phoneMsg === "Saved." ? C.grn : C.dim, fontSize: 11, marginTop: 4 }}>
+              {phoneMsg || "Where we send your setup updates, and the number your test call rings."}
+            </div>
+          </FieldGroup>
+
+          <FieldGroup>
+            <Label>Your HeyNikki Number</Label>
+            <input value={form.did_number || ""} readOnly disabled
+              placeholder="Assigned after KYC approval" />
             <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
-              We'll assign a forwarding AI number that routes calls to your Telugu receptionist
+              We assign this once your KYC is approved — you'll get a WhatsApp the moment it's live.
             </div>
           </FieldGroup>
 

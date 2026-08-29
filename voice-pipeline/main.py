@@ -383,7 +383,7 @@ async def _refresh_pricing() -> None:
         log.debug(f"pricing refresh skipped: {e}")
 
 
-def build_system_prompt(profile: dict) -> str:
+def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> str:
     """Inject business context into the frozen prompt template."""
     sku = profile.get("profile_sku", "standard")
     # Hey Nikki's own demo line sells the product rather than acting as a
@@ -417,8 +417,38 @@ Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
 Today: {now} ({weekday})
-
+{_knowledge_block(knowledge)}
 """ + TELUGU_PHONE_PERSONA + _PRICING_CACHE.get("text", "")
+
+
+def _knowledge_block(knowledge: list[str] | None) -> str:
+    """Facts the business taught Nikki — brochures, Teach Nikki, uploads.
+
+    This existed end to end EXCEPT for being read: knowledge_base was
+    written by the brochure extractor and the Teach Nikki page, embeddings
+    were generated, match_knowledge() was defined — and the phone path never
+    called any of it. Businesses uploaded documents and Nikki could not
+    quote a word of them.
+
+    Retrieval is deliberately not used. A small business has tens of facts,
+    not thousands; embedding the caller's question would add an API round
+    trip to every single turn of a live conversation to choose between forty
+    short lines that all fit in the prompt anyway. Give her the facts and
+    let the model pick.
+    """
+    facts = [f.strip() for f in (knowledge or []) if f and f.strip()]
+    if not facts:
+        return ""
+    kept = facts[:40]
+    if len(facts) > len(kept):
+        log.info(f"[knowledge] {len(facts)} facts, using first {len(kept)}")
+    lines = "\n".join(f"- {f[:300]}" for f in kept)
+    return (
+        "\n[WHAT THIS BUSINESS HAS TAUGHT YOU]\n"
+        "These are the business's own words. Use them when they answer the\n"
+        "caller's question. Never invent a fact that is not here.\n"
+        f"{lines}\n"
+    )
 
 # ── SHARED HTTP POOL for the caller's critical path ─────────────────
 # STT, Gemini and TTS each opened a fresh AsyncClient per request, paying a
@@ -1250,6 +1280,27 @@ class SupabaseClient:
         except Exception as e:
             log.error(f"Supabase wa_log: {e}")
 
+    async def get_knowledge(self, voice_profile_id: str) -> list[str]:
+        """Everything this business has taught Nikki, newest first."""
+        if not voice_profile_id:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r = await client.get(
+                    f"{self.url}/rest/v1/knowledge_base",
+                    headers=self.headers,
+                    params={"select": "content", "voice_profile_id": f"eq.{voice_profile_id}",
+                            "order": "created_at.desc", "limit": "60"},
+                )
+                if r.status_code != 200:
+                    log.warning(f"[knowledge] fetch {r.status_code}: {r.text[:120]}")
+                    return []
+                return [row["content"] for row in r.json() if row.get("content")]
+        except Exception as e:  # noqa: BLE001
+            # Knowledge is an enhancement; a call must never fail for it.
+            log.warning(f"[knowledge] fetch failed: {e}")
+            return []
+
     async def upload_recording(self, path: str, blob: bytes):
         """Upload encrypted recording bytes to Supabase storage bucket.
 
@@ -1308,7 +1359,8 @@ class NikkiAgent:
 
     TRAI_DISCLOSURE = "నమస్కారం. ఈ call automated assistant ద్వారా handle అవుతోంది."
 
-    def __init__(self, profile: dict, caller_number: str):
+    def __init__(self, profile: dict, caller_number: str,
+                 knowledge: list[str] | None = None):
         self.profile     = profile
         self.caller_num  = caller_number
         self.stt         = SarvamSTT()
@@ -1336,7 +1388,8 @@ class NikkiAgent:
         self.turn_timings: list = []      # per-turn stage ms, saved at hangup
         self.expect_dictation: bool = False
         self.transcript  : list[dict] = []
-        self.system_prompt = build_system_prompt(profile)
+        self.knowledge   : list[str] = list(knowledge or [])
+        self.system_prompt = build_system_prompt(profile, self.knowledge)
 
         # Voice speaker based on profile SKU
         # NOTE: must be real bulbul:v2 speaker IDs — see SKU_VOICE in
@@ -4076,7 +4129,14 @@ async def freeswitch_ws(
             return
         log.info(f"[FS] demo call {used + 1}/{limit} for {profile.get('business_name')}")
 
-    agent = NikkiAgent(profile, caller_number)
+    # Facts the business taught her — brochure extractions, Teach Nikki
+    # entries, uploaded documents. Fetched once per call rather than per
+    # turn: they do not change mid-conversation and the caller should not
+    # pay a round trip for them.
+    knowledge = await db.get_knowledge(profile.get("id"))
+    if knowledge:
+        log.info(f"[knowledge] {len(knowledge)} fact(s) loaded for {profile.get('business_name')}")
+    agent = NikkiAgent(profile, caller_number, knowledge)
 
     # ── Onboarding interview ────────────────────────────────────────────
     # Same agent, different job. She is not answering this business's phone;

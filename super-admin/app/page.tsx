@@ -2788,7 +2788,11 @@ function FreeSwitchPanel({ token }: { token: string }) {
       fetch(`${API_URL}/api/admin/freeswitch/status`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.json()).catch(() => null),
       sb.from("dids").select("*, tenants(name)").order("created_at", { ascending: false }),
-      sb.from("tenants").select("id, name").eq("status", "active"),
+      // NOT .eq("status","active") — a tenant that just signed up is
+      // 'trial', which is precisely who needs a number assigned. The filter
+      // hid every new customer from the only dropdown that can give them one.
+      sb.from("tenants").select("id, name, status")
+        .in("status", ["trial", "active"]).order("name"),
     ]);
     setFsData(fs);
     setDids(d.data || []);
@@ -2934,7 +2938,29 @@ function FreeSwitchPanel({ token }: { token: string }) {
                   <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{did.number}</td>
                   <td style={{ padding: "10px" }}><Pill label={did.provider} color={C.cyn} /></td>
                   <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{did.tenants?.name || "—"}</td>
-                  <td style={{ padding: "10px" }}><Pill label={did.routing_mode || "ai"} color={C.gbr} /></td>
+                  {/* Was a read-only pill, which meant NOTHING anywhere could
+                      set routing_mode to 'ivr' — so the call menu a tenant
+                      configures on /setup was collected, stored, and never
+                      once consulted on a call. */}
+                  <td style={{ padding: "10px" }}>
+                    <select
+                      value={did.routing_mode || "ai"}
+                      onChange={async e => {
+                        const mode = e.target.value;
+                        const r = await fetch(`${API_URL}/api/admin/dids/${did.number}/routing`, {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                          body: JSON.stringify({ routing_mode: mode }),
+                        });
+                        if (!r.ok) alert((await r.json()).error || "Failed");
+                        loadFS();
+                      }}
+                      style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+                        borderRadius: 6, padding: "4px 7px", fontSize: TYPE.xs, fontWeight: 700 }}>
+                      {["ai", "ivr", "human", "hybrid"].map(m =>
+                        <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </td>
                   <td style={{ padding: "10px" }}>
                     <Pill label={did.status} color={did.status === "assigned" ? C.grn : did.status === "available" ? C.gold : C.dim} />
                   </td>

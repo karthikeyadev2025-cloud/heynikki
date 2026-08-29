@@ -112,6 +112,19 @@ export default function ScriptAndMenu({ tenantId, profileId }:
     </>
   );
 
+  // Everything here writes against a voice profile. With none, the card was
+  // fully editable and then refused to save with no explanation — the
+  // customer types a greeting, presses Save, and nothing says why nothing
+  // happened.
+  if (!profileId) {
+    return (
+      <div style={{ color: C.mid, fontSize: 13.5, lineHeight: 1.6 }}>
+        Save your business details above first — the greeting and call menu
+        attach to that profile.
+      </div>
+    );
+  }
+
   return (
     <div>
       <Card>

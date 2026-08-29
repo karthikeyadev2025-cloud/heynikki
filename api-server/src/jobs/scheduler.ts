@@ -34,6 +34,7 @@
  * On Railway: add as a Cron service with schedule "*\/15 * * * *".
  */
 import { createClient } from "@supabase/supabase-js";
+import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
@@ -129,9 +130,17 @@ export async function runAppointmentReminders(): Promise<number> {
   let sent = 0;
   for (const a of data) {
     if (!a.caller_number) continue;
-    // Business name comes from the tenant, not the appointment row.
-    const { data: t } = await sb.from("tenants")
-      .select("business_name").eq("id", a.tenant_id).maybeSingle();
+    // tenants has no business_name column — this select failed on every
+    // reminder and the error was discarded, so every customer was told
+    // about "your appointment" with no idea whose. The name a caller
+    // actually knows the business by is on the voice profile; tenants.name
+    // is the fallback.
+    const [{ data: vp }, { data: t }] = await Promise.all([
+      sb.from("voice_profiles").select("business_name")
+        .eq("tenant_id", a.tenant_id).limit(1).maybeSingle(),
+      sb.from("tenants").select("name").eq("id", a.tenant_id).maybeSingle(),
+    ]);
+    const businessName = vp?.business_name || t?.name || "";
     try {
       const r = await fetch(`${API_URL}/api/whatsapp/reminder`, {
         method: "POST",
@@ -141,7 +150,7 @@ export async function runAppointmentReminders(): Promise<number> {
         },
         body: JSON.stringify({
           caller_number:    a.caller_number,
-          business_name:    t?.business_name || "your appointment",
+          business_name:    businessName || "your appointment",
           slot_time:        a.slot_time,
           service:          a.service,
           tenant_id:        a.tenant_id,
@@ -480,6 +489,18 @@ export async function runScheduler() {
   // Demo expiry: a stamped demo_expires_at becomes a suspension. Demos are
   // disposable by construction now — the alternative was the two "Hey
   // Nikki" demo rows that sat as ordinary tenants for two months.
+  // The onboarding EMAIL sequence was written, made idempotent via
+  // onboarding_emails_sent, and then never called by anything — no signup
+  // has ever received one. It is idempotent, so a per-cycle call is safe;
+  // it no-ops without a Resend key rather than throwing every fifteen
+  // minutes for a service that may never be configured.
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const r = await runOnboardingEmails();
+      if (r.sent) console.log(`[scheduler] onboarding emails sent=${r.sent} errors=${r.errors}`);
+    } catch (e: any) { console.error("[scheduler] onboarding emails:", e.message); }
+  }
+
   try { await runExpireDemos(); }
   catch (e: any) { console.error("[scheduler] demo expiry failed:", e.message); }
   log("run complete");

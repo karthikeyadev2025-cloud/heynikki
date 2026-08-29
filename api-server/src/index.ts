@@ -3786,7 +3786,12 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // On an outbound leg the DID is our own CLI, not a number anybody dialled,
     // so a tenant on 'human' would have had the customer we just called
     // transferred to their own reception the moment the call connected.
-    if (!isOutbound && (did.routing_mode === "human" || did.routing_mode === "hybrid")) {
+    // Computed for EVERY inbound leg, not just human/hybrid. It is only
+    // auto-dialled at call start when routing_mode is 'human' — but a caller
+    // on a plain 'ai' number who says "put me through to someone" needs it
+    // too, and for them it was always empty, so Nikki could only ever answer
+    // that nobody is available. A number is not a routing decision.
+    if (!isOutbound) {
       // tenant_users.phone did not exist until migration 020, so this query
       // returned 42703, agents came back null, and the ring group was an
       // empty string — a DID on 'human' or 'hybrid' rang nobody, silently.

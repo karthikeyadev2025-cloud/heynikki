@@ -77,6 +77,7 @@ export default function DashboardPage() {
   const [missedCalls, setMissedCalls]       = useState<CallRecord[]>([]);
   const [appointments, setAppointments]     = useState<Appointment[]>([]);
   const [stats, setStats]                   = useState({ total: 0, appointments: 0, missed: 0, afterHours: 0 });
+  const [credits, setCredits] = useState<number | null>(null);
   const [usage, setUsage]                   = useState<{ used: number; limit: number } | null>(null);
   const [hotLeads, setHotLeads]             = useState<any[]>([]);
   const [monthValue, setMonthValue]         = useState({ afterHours: 0, booked: 0 });
@@ -90,7 +91,7 @@ export default function DashboardPage() {
     const monthKey = today.slice(0, 7);           // 'YYYY-MM' for call_minutes
 
     const [active, recent, missed, appts, todayStats,
-           profile, minutes, leadsRes, monthCalls] = await Promise.all([
+           profile, minutes, tenantRow, leadsRes, monthCalls] = await Promise.all([
       sb.from("calls").select("*").eq("tenant_id", tid).eq("status", "active")
         .order("created_at", { ascending: false }),
       sb.from("calls").select("*").eq("tenant_id", tid).neq("status", "active")
@@ -104,9 +105,15 @@ export default function DashboardPage() {
       // business hours — needed to work out which calls came in while closed
       sb.from("voice_profiles").select("open_time, close_time")
         .eq("tenant_id", tid).limit(1).maybeSingle(),
-      // plan usage for the month
-      sb.from("call_minutes").select("used_seconds, plan_limit_seconds")
-        .eq("tenant_id", tid).eq("month", monthKey).maybeSingle(),
+      // Usage is DERIVED from the calls themselves. call_minutes.used_seconds
+      // is a counter no code path has ever incremented — this meter read
+      // "0 minutes used" for every customer forever, including one with
+      // 2,703 seconds of completed calls sitting in the same database.
+      sb.from("calls").select("duration_seconds")
+        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00"),
+      // The balance that actually gates a trial tenant's calls, and which
+      // the customer app never showed them anywhere.
+      sb.from("tenants").select("credit_minutes, plan").eq("id", tid).maybeSingle(),
       // warm leads still sitting untouched — the follow-up worklist
       sb.from("leads").select("id, name, phone, interest, score, intent")
         .eq("tenant_id", tid).eq("stage", "new").gte("score", 50)
@@ -122,12 +129,19 @@ export default function DashboardPage() {
     setAppointments(appts.data || []);
     setHotLeads(leadsRes.data || []);
 
-    if (minutes.data) {
-      setUsage({
-        used:  minutes.data.used_seconds ?? 0,
-        limit: minutes.data.plan_limit_seconds ?? 12000,
-      });
-    }
+    const usedSeconds = (minutes.data || [])
+      .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
+    const PLAN_MINUTES: Record<string, number> = { starter: 200, growth: 600, scale: 1500 };
+    const planName = String(tenantRow.data?.plan || "trial").toLowerCase();
+    const credits  = Math.round(tenantRow.data?.credit_minutes ?? 0);
+    // A trial tenant's allowance is their credit balance, not a plan tier —
+    // showing "0 / 200 min" to someone whose real allowance is 100 free
+    // credits was wrong in both numbers.
+    setUsage({
+      used:  usedSeconds,
+      limit: (PLAN_MINUTES[planName] ?? 0) * 60,
+    });
+    setCredits(planName in PLAN_MINUTES ? null : credits);
 
     // ── After-hours value ──
     // The number an owner actually feels: calls that arrived when the shop
@@ -265,6 +279,31 @@ export default function DashboardPage() {
               stop and the customer blames the product. A visible bar (amber at
               80%, red at 95%) prevents that surprise and prompts an upgrade
               before service degrades. */}
+          {/* Trial tenants are gated by credits, not a plan tier — and this
+              balance was never shown anywhere in the customer app, so the
+              only number that decides whether their calls connect was
+              invisible to them. */}
+          {credits !== null && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between",
+                fontSize: 12.5, color: C.mid, marginBottom: 5 }}>
+                <span>Free minutes remaining</span>
+                <span style={{ color: credits <= 20 ? C.gold : C.txt, fontWeight: 800 }}>
+                  {credits} min
+                </span>
+              </div>
+              <div style={{ height: 7, borderRadius: 4, background: C.hi, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, (credits / 100) * 100)}%`,
+                  background: credits <= 20 ? C.gold : C.grn }} />
+              </div>
+              {credits <= 20 && (
+                <div style={{ color: C.dim, fontSize: 11.5, marginTop: 5 }}>
+                  Calls stop when this reaches zero — add a plan to keep Nikki answering.
+                </div>
+              )}
+            </div>
+          )}
+
           {usage && usage.limit > 0 && (() => {
             const pct = Math.min(100, Math.round((usage.used / usage.limit) * 100));
             const barColor = pct >= 95 ? C.red : pct >= 80 ? C.gold : C.grn;

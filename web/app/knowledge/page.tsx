@@ -163,6 +163,15 @@ export default function KnowledgePage() {
           <label style={{ display: "block", fontSize: 12, color: C.mid, marginBottom: 6 }}>
             What should Nikki know?
           </label>
+          {/* Say it before the click, not after: the composer used to look
+              entirely usable and only explained itself once saving failed. */}
+          {!profileId && (
+            <div style={{ color: C.mid, fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
+              Finish <a href="/setup" style={{ color: C.grn }}>your setup</a> first — Nikki
+              needs a voice profile before she can learn about your business.
+            </div>
+          )}
+
           <textarea
             style={{ ...inputStyle, minHeight: 100, resize: "vertical", marginBottom: 12 }}
             value={draft}

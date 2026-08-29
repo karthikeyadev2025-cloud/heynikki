@@ -119,13 +119,24 @@ export default function BillingPage() {
       const { data: tu } = await sb.from("tenant_users")
         .select("tenant_id").eq("user_id", data.user.id).single();
       if (!tu) return;
-      const [{ data: t }, { data: u }] = await Promise.all([
+      const [{ data: t }, { data: monthCalls }, { data: u }] = await Promise.all([
         sb.from("tenants").select("*").eq("id", tu.tenant_id).single(),
+        // call_minutes.used_seconds is a counter nothing increments — this
+        // ring read empty for every customer forever. The month's calls are
+        // the source of truth; the row is still read for plan_limit_seconds.
+        sb.from("calls").select("duration_seconds").eq("tenant_id", tu.tenant_id)
+          .gte("created_at", new Date().toISOString().slice(0, 7) + "-01T00:00:00"),
         sb.from("call_minutes").select("*").eq("tenant_id", tu.tenant_id)
           .eq("month", new Date().toISOString().slice(0, 7)).single(),
       ]);
       setTenant(t);
-      setUsage(u);
+      setUsage({
+        ...(u || {}),
+        used_seconds: (monthCalls || [])
+          .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0),
+        plan_limit_seconds: u?.plan_limit_seconds
+          ?? ({ starter: 200, growth: 600, scale: 1500 }[String(t?.plan || "").toLowerCase()] ?? 0) * 60,
+      });
       setLoading(false);
     });
   }, []);
