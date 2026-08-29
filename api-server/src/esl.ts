@@ -103,6 +103,25 @@ async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
 }
 
 // ── FreeSWITCH ESL Client ─────────────────────────────────────
+/**
+ * The form the trunk will accept as a caller ID.
+ *
+ * The SBC classifies outbound calls on the CLI and refuses a bare ten-digit
+ * number with 500 "Classification Failure", which reaches us as
+ * NORMAL_TEMPORARY_FAILURE and is indistinguishable from a dead trunk. With
+ * the country code, the identical INVITE is accepted. FreeSWITCH itself
+ * rejects a leading "+" as INVALID_NUMBER_FORMAT, so 91-prefixed bare digits
+ * is the single form that works.
+ *
+ * Every originate path needed this and each was written to remember it
+ * separately, so none of them did.
+ */
+export function wireCli(n: string): string {
+  const d = String(n || "").replace(/[^\d]/g, "").replace(/^0+/, "");
+  if (d.length === 10) return `91${d}`;
+  return d;
+}
+
 export class FreeSwitchESL {
 
   /**
@@ -147,7 +166,7 @@ export class FreeSwitchESL {
     // cannot parse, so every click-to-call failed at runtime while
     // still typechecking cleanly.
     const vars = [
-      `origination_caller_id_number=${masked}`,
+      `origination_caller_id_number=${wireCli(masked)}`,
       `origination_caller_id_name=HeyNikki`,
       `hangup_after_bridge=true`,
       `ignore_early_media=true`,
@@ -157,7 +176,7 @@ export class FreeSwitchESL {
     // Leg 1 = agent, bridged to Leg 2 = customer.
     const cmd =
       `api originate {${vars}}sofia/gateway/jio_primary/${agent} ` +
-      `&bridge({origination_caller_id_number=${masked}}sofia/gateway/jio_primary/${customer})`;
+      `&bridge({origination_caller_id_number=${wireCli(masked)}}sofia/gateway/jio_primary/${customer})`;
 
     const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
 
@@ -203,8 +222,22 @@ export class FreeSwitchESL {
     const digits = customer.replace(/\D/g, "").slice(-10);
     if (digits.length !== 10) throw new Error(`Bad customer number: ${customerNumber}`);
 
+    // The trunk classifies OUTBOUND calls on the caller ID, and refuses a
+    // bare ten-digit CLI with 500 "Classification Failure" — which surfaces
+    // here as NORMAL_TEMPORARY_FAILURE and looks exactly like a dead trunk.
+    // With the country code the same INVITE is accepted and the phone rings.
+    // Proven by dialling from fs_cli: 8633502032 fails, 918633502032 reaches
+    // NO_ANSWER, +91 is rejected as INVALID_NUMBER_FORMAT by FreeSWITCH
+    // itself, so 91-prefixed digits is the one form that works.
+    //
+    // Only what goes ON THE WIRE changes. outbound_did stays ten digits
+    // below, because the pipeline resolves the tenant's voice profile from
+    // it and a 91-prefixed lookup would find no profile — the call would
+    // connect and then have nobody to be.
+    const sipCli = wireCli(cli);
+
     const vars = [
-      `origination_caller_id_number=${cli}`,
+      `origination_caller_id_number=${sipCli}`,
       `origination_caller_id_name=HeyNikki`,
       // Do NOT treat ringback as answer — otherwise the AI starts talking to
       // a ringing phone and the first seconds of the pitch are lost.
@@ -225,7 +258,8 @@ export class FreeSwitchESL {
       // the originate itself, which is why this never showed up as a failed
       // call; it would have shown up the first time an outbound leg was
       // bridged onward.
-      `outbound_cli=${cli}`,
+      // The wire form again: this is what a bridged leg presents.
+      `outbound_cli=${sipCli}`,
     ].join(",");
 
     const cmd =
@@ -269,11 +303,11 @@ export class FreeSwitchESL {
     if (!tenantId) throw new Error("Onboarding needs a tenant");
 
     const vars = [
-      `origination_caller_id_number=${cli}`,
+      `origination_caller_id_number=${wireCli(cli)}`,
       `origination_caller_id_name=HeyNikki`,
       `ignore_early_media=true`,
       `originate_timeout=${timeoutSec}`,
-      `outbound_cli=${cli}`,
+      `outbound_cli=${wireCli(cli)}`,
       `onboard_did=${cli}`,
       `onboard_tenant=${tenantId}`,
     ].join(",");
