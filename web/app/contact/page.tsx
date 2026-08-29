@@ -12,6 +12,12 @@ export default function Contact() {
 
       <h2>Reach us by topic</h2>
       <ul>
+        <li>
+          <strong>Phone:</strong>{" "}
+          <a href="tel:+918633502031">+91 86335 02031</a>{" "}
+          — answered by Nikki herself, in Telugu, Hindi or English. She is the
+          same agent we sell; ring her and ask what she can do.
+        </li>
         <li><strong>Sales & general:</strong> <a href="mailto:hello@heynikki.in">hello@heynikki.in</a></li>
         <li><strong>Support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a></li>
         <li><strong>Billing & refunds:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a></li>

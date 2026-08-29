@@ -3100,6 +3100,10 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
 
     // A "human" DID with nobody to ring would drop the caller into
     // silence, so fall back to the AI rather than to nothing.
+    // An outbound leg is always the AI: routing_mode describes how calls TO
+    // this number are answered. Otherwise a 'human' DID with nobody to ring
+    // falls back to AI rather than to silence, and 'ivr' passes through — it
+    // degrades to AI further down if no menu is configured.
     const effectiveMode = isOutbound
       ? "ai"
       : (did.routing_mode === "human" && !ringGroup ? "ai" : (did.routing_mode || "ai"));
@@ -3108,8 +3112,26 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       console.warn(`[FS Inbound] DID ${did_number} is human-routed but no agent has a phone — falling back to AI`);
     }
 
+    // A spoken menu, when the tenant has configured one. Fetched here rather
+    // than in the pipeline so the pipeline keeps one source for everything it
+    // needs about a call — it already gets routing_mode and ring_group from
+    // this response.
+    let ivr: any = null;
+    if (effectiveMode === "ivr") {
+      const { data: menu } = await sb.from("ivr_menus")
+        .select("greeting, options, enabled")
+        .eq("tenant_id", did.tenant_id).eq("enabled", true)
+        .or(`did_number.eq.${didDigits},did_number.is.null`)
+        // A menu for this specific number beats the tenant-wide one.
+        .order("did_number", { ascending: false, nullsFirst: false })
+        .limit(1).maybeSingle();
+      if (menu?.options?.length) ivr = menu;
+      else console.warn(`[routing] DID ${didDigits} is on 'ivr' with no menu configured — using AI`);
+    }
+
     res.json({
       ok: true,
+      ivr,
       call_id:            callRow?.id,
       tenant_id:          did.tenant_id,
       voice_profile_id:   did.voice_profile_id,

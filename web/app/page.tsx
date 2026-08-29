@@ -144,6 +144,14 @@ export default function Home() {
               <a className="v2-btn v2-btn-ghost" href="#demo">Talk to Nikki</a>
             </div>
 
+            {/* Our own number, answered by our own agent. A prospect who rings
+                it has tested the product before they have read a word of the
+                pitch — which is the only demo that cannot be staged. */}
+            <a href="tel:+918633502031" className="v2-callnum">
+              <span className="v2-callnum-dot" aria-hidden="true" />
+              Or just call her: <strong>+91 86335 02031</strong>
+            </a>
+
             {/* The widget keeps its own markup and logic untouched —
                 every class it renders is restyled below for dark.
                 Porting the design was never going to mean rewriting
@@ -774,6 +782,18 @@ export default function Home() {
         }
         .v2-actions { display:flex; flex-wrap:wrap; gap:11px; margin:30px 0 0; }
 
+        .v2-callnum {
+          display:inline-flex; align-items:center; gap:9px; margin:18px 0 0;
+          padding:9px 15px; border:1px solid var(--border); border-radius:999px;
+          color:#d8d8d8; font-size:14px; text-decoration:none;
+          transition:border-color .18s ease, color .18s ease;
+        }
+        .v2-callnum:hover { border-color:rgba(255,255,255,.42); color:#fff; }
+        .v2-callnum strong { color:#fff; font-weight:700; letter-spacing:.01em; }
+        .v2-callnum-dot {
+          width:7px; height:7px; border-radius:50%; background:#22C55E;
+          box-shadow:0 0 0 3px rgba(34,197,94,.18); flex:none;
+        }
         .v2-stats {
           display:flex; flex-wrap:wrap; gap:14px 28px;
           padding:var(--pad-y) var(--pad-x) calc(var(--pad-y) + 6px);

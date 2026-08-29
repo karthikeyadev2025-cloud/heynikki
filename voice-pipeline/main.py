@@ -3202,6 +3202,34 @@ async def freeswitch_ws(
     # routing_mode=human and was never reachable when a caller ASKED.
     agent.fs_uuid      = fs_uuid
     agent.ring_group   = routing.get("ring_group") or ""
+
+    # ── Spoken menu ─────────────────────────────────────────────────────
+    # routing_mode 'ivr' has been a permitted value since migration 015 and
+    # nothing implemented it, so a tenant who chose it got the plain agent.
+    #
+    # Spoken, not keypad: mod_audio_stream carries audio, not DTMF, so digits
+    # would need a second channel — and a voice product asking people to press
+    # buttons is arguing against itself. The caller says what they want.
+    _ivr = routing.get("ivr") or None
+    if _ivr and _ivr.get("options"):
+        _opts = [o for o in _ivr["options"] if o.get("say")]
+        _lines = "\n".join(
+            f"- If they want {o.get('label') or o['say']} (they may say "
+            f"\"{o['say']}\"): " +
+            ("transfer them to a person." if o.get("action") == "transfer"
+             else "handle it yourself as usual.")
+            for o in _opts
+        )
+        agent.system_prompt += (
+            "\n\n[CALL MENU]\n"
+            f"Open with: {_ivr.get('greeting') or 'How can I help you today?'}\n"
+            "Then listen. Do not read the options as a list unless they ask.\n"
+            f"{_lines}\n"
+            "If what they want is not on this list, help them normally. "
+            "Never make someone repeat themselves twice — if the second answer "
+            "is still unclear, just help them yourself."
+        )
+        log.info(f"[FS] IVR menu active: {len(_opts)} options")
     agent.guard_seconds = routing.get("missed_call_seconds", 20)
 
     # Hand the call to human agents when the DID says so. The API server
