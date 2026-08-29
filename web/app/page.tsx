@@ -114,6 +114,7 @@ export default function Home() {
             <a href="#how">How it works</a>
             <a href="#features">Features</a>
             <a href="#roi">ROI</a>
+            <a href="#security">Security</a>
             <a href="#pricing">Pricing</a>
           </nav>
 
@@ -406,6 +407,28 @@ export default function Home() {
           Pick what you actually need.
         </h2>
 
+        {/* The trial is minutes on a real number, not a sandbox. Stated in
+            the customer's terms — what they get — rather than ours. */}
+        <div style={{
+          border: `1px solid ${C.line}`, background: C.card, borderRadius: 16,
+          padding: "18px 22px", marginBottom: 26,
+          display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap",
+        }}>
+          <div style={{
+            fontFamily: M, fontSize: 26, fontWeight: 600, color: C.teal,
+            letterSpacing: "-0.02em",
+          }}>100 min</div>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ fontSize: 15, fontWeight: 650, color: C.ink }}>
+              Free on every new account
+            </div>
+            <div style={{ fontSize: 13.5, color: C.textMid, marginTop: 3, lineHeight: 1.5 }}>
+              Real calls on a real number — inbound and outbound. No card, no sandbox,
+              and nothing switches off at the end of a trial week.
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(268px, 1fr))", gap: 18 }}>
           {[
             // These MUST match /api/platform/pricing, which reads
@@ -418,18 +441,26 @@ export default function Home() {
             // a plan that does not exist in billing, for a service that is
             // metered by minutes. A prospect was quoted it on the phone and
             // would then have seen metered tiers at signup.
+            // Starter and Scale used to be a bullet inside a third card, so
+            // the page advertised one tier and mentioned two. These are the
+            // three that exist in platform_config as plan_tier_1/2/3, with
+            // their real caps.
             {
-              name: "Pay as you go", price: "3.50", note: "per minute",
-              points: ["No monthly commitment", "Telugu, Hindi and English", "Inbound reception on one number", "Recordings and transcripts"],
+              name: "Starter", price: "1,999", note: "per month",
+              points: ["200 minutes included", "1 number", "2 calls at once",
+                       "Appointments, leads and recordings"],
             },
             {
               name: "Growth", price: "4,999", note: "per month",
               highlight: true, badge: "Most businesses start here",
-              points: ["600 minutes included", "3 numbers, 1 CRM seat", "5 calls at once", "Appointments to your dashboard", "WhatsApp confirmation on every booking"],
+              points: ["600 minutes included", "3 numbers · 1 CRM seat", "5 calls at once",
+                       "Outbound campaigns and WhatsApp follow-up",
+                       "Call quality scoring on every call"],
             },
             {
-              name: "Add what you need", price: "1,999", note: "per seat or number / month",
-              points: ["Human CRM seat — click-to-call, caller history, dispositions", "Extra business number, new or ported", "Starter Rs 1,999 · Scale Rs 9,999", "Extra minutes Rs 15 each"],
+              name: "Scale", price: "9,999", note: "per month",
+              points: ["1,500 minutes included", "10 numbers · 5 CRM seats", "10 calls at once",
+                       "Everything in Growth", "Priority support"],
             },
           ].map((p) => (
             <div key={p.name} style={{
@@ -485,7 +516,63 @@ export default function Home() {
         </div>
 
         <p style={{ marginTop: 22, fontSize: 13.5, color: C.textDim, fontFamily: M }}>
-          GST extra · Cancel any month · Your call recordings stay yours
+          GST extra · Cancel any month · Extra minutes ₹15 · Add a number or CRM seat for ₹1,999
+        </p>
+      </Section>
+
+      {/* ══ DATA SECURITY ═══════════════════════════════════
+          Every claim here is one I verified against the running system
+          before writing it. Nothing aspirational, no certifications we do
+          not hold, and no residency claim — the Supabase region was not
+          something I could confirm, so it is not on the page. A security
+          section that overstates is worse than none: it is the first thing
+          a customer will test you on. ══════════════════════════════ */}
+      <Section id="security" bg={C.card}>
+        <Eyebrow>Your data</Eyebrow>
+        <h2 style={{
+          fontFamily: D, fontSize: "clamp(28px, 3.6vw, 42px)", lineHeight: 1.12,
+          letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 14px", color: C.ink,
+        }}>
+          Your customers&apos; calls are your customers&apos; calls.
+        </h2>
+        <p style={{ fontSize: 16.5, lineHeight: 1.65, color: C.textMid, maxWidth: 640, margin: "0 0 40px" }}>
+          You are handing us your business number and every conversation that arrives on it.
+          Here is exactly what happens to it — the specifics, not a badge.
+        </p>
+
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
+        }}>
+          {[
+            ["One business, one wall",
+             "Every table is protected at the database level, not by our application code remembering to filter. A signed-in account can read its own calls, leads and recordings and nothing else — we test this by signing in as a fresh business and asking for everyone's data. It comes back empty."],
+            ["Recordings encrypted at rest",
+             "Call audio is encrypted with AES-256-GCM before it is stored. The storage bucket is private: there is no public link to a recording, and there never was one. Playing a call in your dashboard mints a link that expires in minutes."],
+            ["Callers are told it is an AI",
+             "Every call opens by disclosing that it is handled by an automated assistant, as TRAI requires. Nikki never claims to be a person, and says so if asked."],
+            ["Outbound needs consent",
+             "A campaign dials only numbers whose consent was declared, recorded with who declared it and when. If the DND check cannot run, the call is blocked rather than placed — the safe failure, not the convenient one."],
+            ["Your dashboard is not on the internet",
+             "Every signed-in page is excluded from search engines, and our llms.txt tells AI crawlers not to index or train on anything behind a login. Recordings and transcripts are never served from a public URL."],
+            ["You can take it with you",
+             "Recordings, transcripts, leads and appointments are yours. Export them or ask us to delete them, and keep your number — port it in and port it out."],
+          ].map(([title, body]) => (
+            <div key={title} style={{
+              background: C.paper, border: `1px solid ${C.line}`,
+              borderRadius: 16, padding: "22px 20px",
+            }}>
+              <div style={{
+                fontSize: 15.5, fontWeight: 700, color: C.ink, marginBottom: 8,
+                letterSpacing: "-0.01em",
+              }}>{title}</div>
+              <div style={{ fontSize: 14, lineHeight: 1.6, color: C.textMid }}>{body}</div>
+            </div>
+          ))}
+        </div>
+
+        <p style={{ marginTop: 26, fontSize: 13.5, color: C.textDim, fontFamily: M, lineHeight: 1.6 }}>
+          Questions we get asked and answer plainly:{" "}
+          <a href="/privacy" style={{ color: C.teal }}>what we store and for how long</a>.
         </p>
       </Section>
 
