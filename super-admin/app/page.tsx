@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck,
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge,
 } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
@@ -95,6 +95,9 @@ const TABS = [
   { label: "Operations",      icon: Activity },
   { label: "KYC Review",      icon: ShieldCheck },
   { label: "Numbers",         icon: Phone },
+  { label: "Call Quality",    icon: Gauge },
+  { label: "Campaigns",       icon: Megaphone },
+  { label: "Agent Versions",  icon: Bot },
   { label: "Audit Log",       icon: Lock },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
@@ -135,6 +138,9 @@ export default function SuperAdminPage() {
     <OperationsPanel   key="ops"  token={token} />,
     <KycPanel          key="kyc"  token={token} />,
     <DidPanel          key="did"  token={token} />,
+    <QualityPanel      key="qua"  token={token} />,
+    <CampaignsPanel    key="cmp"  token={token} />,
+    <AgentVersionsPanel key="ver" token={token} />,
     <AuditPanel        key="aud"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
@@ -258,6 +264,17 @@ function PlatformDashboard({ token }: { token: string }) {
   const [stats, setStats]   = useState<any>(null);
   const [calls, setCalls]   = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Anything needing action, above the counters. Four tiles tell you the
+  // platform has three tenants; they do not tell you a pipeline stopped
+  // running two days ago, which is the thing worth opening the console for.
+  const [attention, setAttention] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/operations`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(j => setAttention((j.checks || []).filter((c: any) => c.state !== "ok")))
+      .catch(() => setAttention([]));
+  }, [token]);
 
   const fetch7DayVolume = useCallback(async () => {
     const { data } = await sb.from("calls").select("created_at")
@@ -292,6 +309,28 @@ function PlatformDashboard({ token }: { token: string }) {
 
   return (
     <div>
+      {attention.length > 0 && (
+        <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <AlertTriangle size={15} color={C.gold} />
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>
+              {attention.length} thing{attention.length === 1 ? "" : "s"} need attention
+            </span>
+          </div>
+          {attention.map((c: any) => (
+            <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "baseline",
+                                     padding: "5px 0", flexWrap: "wrap" as const }}>
+              <span style={{ color: c.state === "unknown" ? C.dim : C.gold,
+                             fontSize: TYPE.sm, fontWeight: 900, minWidth: 30 }}>
+                {c.value === null ? "?" : c.value}
+              </span>
+              <span style={{ color: C.txt, fontSize: TYPE.xs }}>{c.label}</span>
+              <span style={{ color: C.dim, fontSize: TYPE.xs, flex: 1, minWidth: 180 }}>{c.hint}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 20 }}>
         <KPI value={stats?.tenants || 0}       label="Total Tenants"   color={C.gbr}  icon={Building2} />
         <KPI value={stats?.paid || 0}           label="Paid Customers"  color={C.grn}  icon={IndianRupee} />
@@ -1452,6 +1491,165 @@ function AuditPanel({ token }: { token: string }) {
         </Card>
       )}
     </div>
+  );
+}
+
+
+/**
+ * Call quality across every tenant.
+ *
+ * A tenant sees its own scores; nobody could see the platform's. A business
+ * whose agent quietly got worse looked exactly like one that never called.
+ * Worst tenant first, because that is the order they need help in.
+ */
+function QualityPanel({ token }: { token: string }) {
+  const [d, setD] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch(`${API}/api/admin/quality`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(setD).catch(() => setD(null)).finally(() => setLoading(false));
+  }, [token]);
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
+  const p = d?.platform, rows = d?.tenants || [];
+  const tone = (n: number) => n >= 70 ? C.grn : n >= 45 ? C.gold : C.red;
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
+                    gap: SPACE.sm, marginBottom: SPACE.md }}>
+        {[
+          { l: "Scored calls", v: String(p?.scored ?? 0), c: C.txt },
+          { l: "Avg score",    v: String(p?.avg_score ?? 0), c: tone(p?.avg_score ?? 0) },
+          { l: "Ended with next step", v: (p?.next_step_pct ?? 0) + "%",
+            c: (p?.next_step_pct ?? 0) >= 40 ? C.grn : C.red },
+          { l: "Negative callers", v: String(p?.negative ?? 0), c: p?.negative ? C.red : C.grn },
+        ].map(k => (
+          <Card key={k.l}>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase" as const,
+                          letterSpacing: "0.08em" }}>{k.l}</div>
+            <div style={{ color: k.c, fontSize: 22, fontWeight: 900, marginTop: 4 }}>{k.v}</div>
+          </Card>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <Card><div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center" as const, padding: SPACE.md }}>
+          No calls scored yet. Scoring runs every 15 minutes over calls with four or more turns.
+        </div></Card>
+      ) : (
+        <Card>
+          {rows.map((t: any, i: number) => (
+            <div key={t.tenant_id} style={{ display: "flex", gap: 12, alignItems: "center",
+              padding: "10px 0", borderBottom: i < rows.length - 1 ? "1px solid " + C.bord + "55" : "none" }}>
+              <span style={{ color: tone(t.avg_score), fontSize: 18, fontWeight: 900, minWidth: 38 }}>
+                {t.avg_score}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                  {t.tenant_name || t.tenant_id.slice(0, 8)}
+                </div>
+                <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
+                  {t.scored} scored · {t.next_step_pct}% next step · {t.negative} negative
+                  {t.risk_flags ? ` · ${t.risk_flags} risk flags` : ""}
+                </div>
+              </div>
+              {t.risk_flags > 0 && <Pill label={`${t.risk_flags} risks`} color={C.red} />}
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** Campaigns across tenants — and which are running with nothing left to dial. */
+function CampaignsPanel({ token }: { token: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch(`${API}/api/admin/campaigns`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(j => setRows(j.campaigns || []))
+      .catch(() => setRows([])).finally(() => setLoading(false));
+  }, [token]);
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
+  if (!rows.length) return (
+    <Card><div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center" as const, padding: SPACE.md }}>
+      No campaigns yet.
+    </div></Card>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, gap: SPACE.sm }}>
+      {rows.map(c => (
+        <Card key={c.id} hover>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" as const, alignItems: "center" }}>
+            <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+              <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                {c.name || "Untitled"} <span style={{ color: C.dim, fontWeight: 400 }}>
+                  · {c.tenant_name || c.tenant_id?.slice(0, 8)}</span>
+              </div>
+              <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                {c.total} recipients · {c.window_start}–{c.window_end} IST · up to {c.max_concurrent} at once
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 6 }}>
+                {Object.entries(c.counts || {}).map(([k, v]) => (
+                  <span key={k} style={{ color: C.mid, fontSize: TYPE.xs }}>{k}: <b>{String(v)}</b></span>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
+              {/* Consent is what permits dialling at all — a campaign without
+                  it should be visible at a glance, not found by clicking in. */}
+              {!c.consent_declared && <Pill label="no consent" color={C.red} />}
+              {c.idle && <Pill label="running, nothing queued" color={C.gold} />}
+              <Pill label={c.status} color={c.status === "running" ? C.grn : C.dim} />
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+/** Agent edits across tenants — what the profile looked like before each change. */
+function AgentVersionsPanel({ token }: { token: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch(`${API}/api/admin/agent-versions`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(j => setRows(j.versions || []))
+      .catch(() => setRows([])).finally(() => setLoading(false));
+  }, [token]);
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
+  if (!rows.length) return (
+    <Card><div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center" as const, padding: SPACE.md }}>
+      No agent changes recorded yet. History starts from when migration 022 was applied.
+    </div></Card>
+  );
+
+  return (
+    <Card>
+      {rows.map((v, i) => (
+        <div key={v.id} style={{ padding: "10px 0",
+          borderBottom: i < rows.length - 1 ? "1px solid " + C.bord + "55" : "none" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" as const }}>
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+              {v.tenant_name || v.tenant_id?.slice(0, 8)}
+            </span>
+            <span style={{ color: C.dim, fontSize: TYPE.xs, marginLeft: "auto" }}>
+              {new Date(v.created_at).toLocaleString("en-IN")}
+            </span>
+          </div>
+          <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 4, wordBreak: "break-word" as const }}>
+            was: {Object.entries(v.previous || {}).map(([k, val]) =>
+              `${k}=${Array.isArray(val) ? val.join("/") : String(val)}`).join(" · ") || "—"}
+          </div>
+        </div>
+      ))}
+    </Card>
   );
 }
 

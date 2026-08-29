@@ -1477,6 +1477,144 @@ app.get("/api/admin/operations", verifySuperAdmin, async (_req, res) => {
   }
 });
 
+/**
+ * Call quality across every tenant.
+ *
+ * A tenant sees its own scores on /quality. Nobody could see the platform's,
+ * so a business whose agent quietly got worse looked identical to one that
+ * never called. Aggregated per tenant and sorted worst-first, because that
+ * is the order in which they need help.
+ */
+app.get("/api/admin/quality", verifySuperAdmin, async (_req, res) => {
+  try {
+    const { data: rows, error } = await sb.from("call_quality")
+      .select("tenant_id, overall_score, resolution_score, sentiment, next_step_captured, risk_flags, created_at")
+      .order("created_at", { ascending: false })
+      .limit(2000);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const ids = [...new Set((rows || []).map(r => r.tenant_id))];
+    const { data: tenants } = ids.length
+      ? await sb.from("tenants").select("id, name").in("id", ids)
+      : { data: [] as any[] };
+    const nameOf = new Map((tenants || []).map(t => [t.id, t.name]));
+
+    const acc = new Map<string, any>();
+    for (const r of rows || []) {
+      const e = acc.get(r.tenant_id) || {
+        tenant_id: r.tenant_id, tenant_name: nameOf.get(r.tenant_id) || null,
+        scored: 0, sum: 0, next: 0, negative: 0, risks: 0,
+      };
+      e.scored += 1;
+      e.sum += r.overall_score || 0;
+      if (r.next_step_captured) e.next += 1;
+      if (r.sentiment === "negative") e.negative += 1;
+      e.risks += (r.risk_flags || []).length;
+      acc.set(r.tenant_id, e);
+    }
+
+    const tenantsOut = [...acc.values()].map(e => ({
+      tenant_id: e.tenant_id, tenant_name: e.tenant_name, scored: e.scored,
+      avg_score: Math.round(e.sum / e.scored),
+      next_step_pct: Math.round((e.next / e.scored) * 100),
+      negative: e.negative, risk_flags: e.risks,
+    })).sort((a, b) => a.avg_score - b.avg_score);
+
+    const total = (rows || []).length || 1;
+    res.json({
+      tenants: tenantsOut,
+      platform: {
+        scored: rows?.length || 0,
+        avg_score: Math.round((rows || []).reduce((s, r) => s + (r.overall_score || 0), 0) / total),
+        next_step_pct: Math.round((rows || []).filter(r => r.next_step_captured).length / total * 100),
+        negative: (rows || []).filter(r => r.sentiment === "negative").length,
+      },
+    });
+  } catch (err: any) {
+    console.error("[admin quality]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+/** Campaigns across tenants, with the recipient breakdown that says whether one is stuck. */
+app.get("/api/admin/campaigns", verifySuperAdmin, async (_req, res) => {
+  try {
+    const { data: camps, error } = await sb.from("outbound_campaigns")
+      .select("id, tenant_id, name, status, consent_declared, window_start, window_end, max_concurrent, created_at")
+      .order("created_at", { ascending: false }).limit(200);
+    if (error) return res.status(500).json({ error: error.message });
+    if (!camps?.length) return res.json({ campaigns: [] });
+
+    const { data: recips } = await sb.from("outbound_recipients")
+      .select("campaign_id, status").in("campaign_id", camps.map(c => c.id));
+    const { data: tenants } = await sb.from("tenants")
+      .select("id, name").in("id", [...new Set(camps.map(c => c.tenant_id))]);
+    const nameOf = new Map((tenants || []).map(t => [t.id, t.name]));
+
+    const byCampaign = new Map<string, Record<string, number>>();
+    for (const r of recips || []) {
+      const m = byCampaign.get(r.campaign_id) || {};
+      m[r.status] = (m[r.status] || 0) + 1;
+      byCampaign.set(r.campaign_id, m);
+    }
+
+    res.json({
+      campaigns: camps.map(c => {
+        const counts = byCampaign.get(c.id) || {};
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        return {
+          ...c, tenant_name: nameOf.get(c.tenant_id) || null,
+          total, counts,
+          // Running with nothing left to dial usually means it finished but
+          // was never marked completed.
+          idle: c.status === "running" &&
+                !((counts.pending || 0) + (counts.queued || 0) + (counts.in_progress || 0)),
+        };
+      }),
+    });
+  } catch (err: any) {
+    console.error("[admin campaigns]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+/** Recent agent edits across tenants — what changed, when, and by whom. */
+app.get("/api/admin/agent-versions", verifySuperAdmin, async (_req, res) => {
+  try {
+    const { data, error } = await sb.from("voice_profile_versions")
+      .select("id, profile_id, tenant_id, snapshot, changed_by, created_at")
+      .order("created_at", { ascending: false }).limit(100);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const ids = [...new Set((data || []).map(v => v.tenant_id).filter(Boolean))];
+    const { data: tenants } = ids.length
+      ? await sb.from("tenants").select("id, name").in("id", ids)
+      : { data: [] as any[] };
+    const nameOf = new Map((tenants || []).map(t => [t.id, t.name]));
+
+    // Only the fields that describe how the agent behaves. The snapshot holds
+    // the whole row, and shipping all of it to a browser would include
+    // columns an operator has no reason to read.
+    const KEEP = ["business_name", "display_name", "profile_sku", "services",
+                  "appointment_types", "open_time", "close_time", "routing_mode"];
+    res.json({
+      versions: (data || []).map(v => {
+        const snap = (v.snapshot || {}) as Record<string, any>;
+        const summary: Record<string, any> = {};
+        for (const k of KEEP) if (k in snap) summary[k] = snap[k];
+        return {
+          id: v.id, profile_id: v.profile_id, tenant_id: v.tenant_id,
+          tenant_name: nameOf.get(v.tenant_id) || null,
+          changed_by: v.changed_by, created_at: v.created_at, previous: summary,
+        };
+      }),
+    });
+  } catch (err: any) {
+    console.error("[admin agent-versions]", err.message);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 // Platform stats
 app.get("/api/admin/stats", verifySuperAdmin, async (req, res) => {
   const [tenants, activeCalls, todayCalls] = await Promise.all([
