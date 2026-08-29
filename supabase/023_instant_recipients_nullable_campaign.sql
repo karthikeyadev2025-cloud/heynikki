@@ -1,32 +1,36 @@
 -- ══════════════════════════════════════════════════════════════
--- 023 — INSTANT RECIPIENTS NEED A NULLABLE CAMPAIGN
+-- 023 — INSTANT LEAD CALLBACKS
 --
--- outbound_recipients.campaign_id is NOT NULL, but two parts of the
--- system deliberately create recipients with no campaign:
+-- When a tenant has auto_call_new_leads on, a lead who fills in the
+-- website form should be rung back immediately. There is no campaign for
+-- that — there is one lead. Two parts of the system are written for it:
 --
---   * api-server/src/index.ts lead-capture, when a tenant has
---     auto_call_new_leads on — a lead fills the website form and should
---     be rung back immediately. There is no campaign; there is one lead.
---   * jobs/outbound-dispatcher.ts dispatchInstant(), which selects
---     is_instant=true recipients and already handles a null campaign
---     ("campaign is null for instant recipients" — its own comment).
+--   * api-server/src/index.ts lead-capture inserts a recipient with
+--     is_instant: true and campaign_id: null
+--   * jobs/outbound-dispatcher.ts dispatchInstant() selects
+--     is_instant = true and handles a null campaign
 --
--- So the writer inserts null, the column forbids null, and the insert
--- fails with 23502 every single time. The failure is logged inside a
--- .then() and never surfaces: the API still returns 200 to the website
--- form, the lead is still captured, and the automatic call back simply
--- never happens. Nobody gets an error; the feature just does not exist.
+-- Neither could ever have worked, because the table has no is_instant
+-- column at all and campaign_id is NOT NULL. The insert fails on the
+-- unknown column, inside a .then() that only logs; the dispatcher's
+-- select fails 42703 and quietly finds nothing. The website form still
+-- returns 200, the lead is still captured, and the callback the tenant
+-- switched on has never once happened.
 --
--- The dispatcher's own is_instant query is the proof the null case was
--- intended. This makes the column agree with it.
+-- An earlier version of this migration added the constraint below
+-- without adding the column, which is why it failed with 42703 on the
+-- CHECK. The column comes first now.
 -- ══════════════════════════════════════════════════════════════
+
+alter table outbound_recipients
+  add column if not exists is_instant boolean not null default false;
 
 alter table outbound_recipients
   alter column campaign_id drop not null;
 
--- A recipient must still belong to SOMETHING: either a campaign, or be
--- explicitly flagged instant. Without this, dropping NOT NULL would also
--- permit an orphan row that no dispatcher path would ever pick up.
+-- A recipient must belong to SOMETHING: a campaign, or explicitly an
+-- instant callback. Without this, dropping NOT NULL would also permit an
+-- orphan row that no dispatcher path would ever pick up.
 do $$
 begin
   if not exists (
@@ -38,5 +42,11 @@ begin
   end if;
 end $$;
 
+-- dispatchInstant() polls this every 30 seconds.
+create index if not exists outbound_recipients_instant_idx
+  on outbound_recipients(status) where is_instant = true;
+
 comment on column outbound_recipients.campaign_id is
   'Null only for is_instant=true rows — a one-off callback to a lead who just enquired.';
+comment on column outbound_recipients.is_instant is
+  'True for a one-off callback created by lead capture, not part of any campaign.';
