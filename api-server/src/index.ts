@@ -2411,7 +2411,7 @@ import { mountCampaignImport } from "./campaign-import";
 mountCampaignImport(app, sb, verifyJWT, getTenantId, audit);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
-mountAssetRoutes(app, verifyJWT);
+mountAssetRoutes(app, verifyJWT, getTenantId);
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.

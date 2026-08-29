@@ -1,11 +1,12 @@
 // app/setup/page.tsx — Voice Profile Setup
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { VoiceProfile } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import AgentDraftBox from "../../components/AgentDraftBox";
+import BrochureUpload from "../../components/BrochureUpload";
 import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -99,9 +100,12 @@ export default function SetupPage() {
     skip_dnd_for_instant_leads: false,
   });
 
-  useEffect(() => {
+  // Pulled out of the effect so applying a brochure draft can re-run it.
+  // Without this the values land in the database and the form on screen
+  // still shows the old ones, which reads as the apply having failed.
+  const loadProfile = useCallback(async () => {
     const sb = createClient();
-    sb.auth.getUser().then(async ({ data }) => {
+    await sb.auth.getUser().then(async ({ data }) => {
       if (!data.user) { window.location.href = "/login"; return; }
       const { data: tu } = await sb.from("tenant_users")
         .select("tenant_id").eq("user_id", data.user.id).single();
@@ -132,6 +136,8 @@ export default function SetupPage() {
       }
     });
   }, []);
+
+  useEffect(() => { loadProfile(); }, [loadProfile]);
 
   const toggleDay = (day: string) => {
     setForm(f => ({
@@ -200,6 +206,11 @@ export default function SetupPage() {
             {error}
           </div>
         )}
+
+        {/* Above the description box on purpose: a document the owner
+            already has beats asking them to write a description of their own
+            business from scratch. */}
+        <BrochureUpload onApplied={loadProfile} />
 
         {/* Fills the form below from a plain description. Sits above the SKU
             picker because choosing a profile type is the first thing it

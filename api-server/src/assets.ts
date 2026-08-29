@@ -88,12 +88,19 @@ async function readAsset(base64: string, mime: string): Promise<any> {
   return JSON.parse(text);
 }
 
-export function mountAssetRoutes(app: Express, verifyJWT: any) {
+export function mountAssetRoutes(
+  app: Express,
+  verifyJWT: any,
+  // verifyJWT sets req.user to the Supabase auth user, which has no tenant on
+  // it — every JWT route in this codebase resolves the tenant separately, and
+  // assuming req.user.tenant_id made every upload answer "No tenant".
+  getTenantId: (userId: string) => Promise<string | null>,
+) {
   // Upload. Base64 in JSON rather than multipart: the payloads are small,
   // express.json already has a 2mb limit that this raises deliberately for
   // one route, and it avoids adding a multipart dependency for one endpoint.
   app.post("/api/assets", verifyJWT, async (req: any, res: Response) => {
-    const tenantId = req.user?.tenant_id;
+    const tenantId = await getTenantId(req.user.id);
     if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
     const { file_name, mime_type, data_base64, kind } = req.body || {};
@@ -132,17 +139,21 @@ export function mountAssetRoutes(app: Express, verifyJWT: any) {
   });
 
   app.get("/api/assets", verifyJWT, async (req: any, res: Response) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
     const { data, error } = await sb.from("tenant_assets")
       .select("id, kind, file_name, mime_type, size_bytes, status, extracted, error, created_at")
-      .eq("tenant_id", req.user.tenant_id).order("created_at", { ascending: false });
+      .eq("tenant_id", tenantId).order("created_at", { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ assets: data || [] });
   });
 
   app.get("/api/profile-drafts", verifyJWT, async (req: any, res: Response) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
     const { data, error } = await sb.from("profile_drafts")
       .select("id, proposed, status, created_at")
-      .eq("tenant_id", req.user.tenant_id).eq("status", "pending")
+      .eq("tenant_id", tenantId).eq("status", "pending")
       .order("created_at", { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ drafts: data || [] });
@@ -151,9 +162,11 @@ export function mountAssetRoutes(app: Express, verifyJWT: any) {
   // Apply. The whitelist is enforced HERE as well as at extraction, because
   // this endpoint takes an id and the row it reads was written by a model.
   app.post("/api/profile-drafts/:id/apply", verifyJWT, async (req: any, res: Response) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
     const { data: draft } = await sb.from("profile_drafts")
       .select("id, proposed, tenant_id, status")
-      .eq("id", req.params.id).eq("tenant_id", req.user.tenant_id).maybeSingle();
+      .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
     if (!draft) return res.status(404).json({ error: "Draft not found" });
     if (draft.status !== "pending") return res.status(409).json({ error: `Already ${draft.status}` });
 
@@ -177,9 +190,11 @@ export function mountAssetRoutes(app: Express, verifyJWT: any) {
   });
 
   app.post("/api/profile-drafts/:id/dismiss", verifyJWT, async (req: any, res: Response) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
     const { error } = await sb.from("profile_drafts")
       .update({ status: "dismissed", decided_at: new Date().toISOString() })
-      .eq("id", req.params.id).eq("tenant_id", req.user.tenant_id);
+      .eq("id", req.params.id).eq("tenant_id", tenantId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   });
@@ -197,11 +212,16 @@ async function processAsset(id: string, b64: string, mime: string, tenantId: str
     if (facts.length) {
       const { data: vp } = await sb.from("voice_profiles")
         .select("id").eq("tenant_id", tenantId).limit(1).maybeSingle();
-      await sb.from("knowledge_base").insert(facts.map(f => ({
+      // 'document', not 'upload'. knowledge_base constrains source_type to
+      // faq/document/manual/url, and 'upload' failed the check — while this
+      // insert's error went unread, so extraction logged "7 facts" and wrote
+      // none of them. The agent would have had a brochure it could not quote.
+      const { error: kbErr } = await sb.from("knowledge_base").insert(facts.map(f => ({
         tenant_id: tenantId, voice_profile_id: vp?.id || null,
         content: String(f).slice(0, 1000),
-        source_type: "upload", source_name: `asset:${id}`,
+        source_type: "document", source_name: `asset:${id}`,
       })));
+      if (kbErr) throw new Error(`knowledge_base insert: ${kbErr.message}`);
     }
 
     const proposed: Record<string, any> = {};
