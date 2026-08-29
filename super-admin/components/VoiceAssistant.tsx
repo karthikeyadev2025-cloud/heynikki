@@ -9,6 +9,7 @@
 // Backend: /api/admin/voice-query (Gemini + Supabase).
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { X } from "lucide-react";
 import { NIKKI } from "../lib/brand";
 
 declare global {
@@ -19,6 +20,37 @@ declare global {
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+
+// ── NIKKI MARK ───────────────────────────────────────────────
+// The floating button used the 🤖 emoji, which is not a brand asset: every
+// platform draws it differently, and on Windows it renders as a squarish
+// face that reads as a devil rather than as Nikki. This is the mark from
+// the logo — the speech bubble and its waveform — without the rounded tile,
+// because the button already supplies the shape the tile would have drawn.
+//
+// The bars carry a `level`: flat while idle, tall while she is speaking. It
+// is the same signal the phone product shows, and it costs one prop.
+function NikkiMark({ size = 26, color = "#FDFBF7", speaking = false }:
+  { size?: number; color?: string; speaking?: boolean }) {
+  const H = speaking ? [34, 62, 84, 54, 30] : [26, 52, 74, 44, 22];
+  const Y = H.map(h => 116 - h / 2);
+  return (
+    <svg width={size} height={size} viewBox="0 0 256 256" role="img" aria-label="Nikki"
+         style={{ flexShrink: 0, display: "block" }}>
+      <path fill={color}
+        d="M82 62 h92 a26 26 0 0 1 26 26 v54 a26 26 0 0 1 -26 26 h-52
+           l-32 30 a5 5 0 0 1 -8.4 -4.4 l5.4 -25.6 h-5
+           a26 26 0 0 1 -26 -26 v-54 a26 26 0 0 1 26 -26 z" />
+      <g fill="#0B1F33" opacity="0.82">
+        {[76, 98, 120, 142, 164].map((x, i) => (
+          <rect key={x} x={x} y={Y[i]} width="12" height={H[i]} rx="6"
+                style={{ transition: "all .22s ease" }} />
+        ))}
+      </g>
+    </svg>
+  );
+}
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -202,9 +234,8 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
                 width: 36, height: 36, borderRadius: "50%",
                 background: `linear-gradient(135deg, ${C.acc}, #06B6D4)`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 16,
                 boxShadow: status === "speaking" ? `0 0 18px ${C.acc}99` : "none",
-              }}>🤖</div>
+              }}><NikkiMark size={20} speaking={status === "speaking"} /></div>
               {status === "speaking" && (
                 <div style={{
                   position: "absolute", inset: -4, borderRadius: "50%",
@@ -251,8 +282,7 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
                     width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
                     background: `linear-gradient(135deg, ${C.acc}, #06B6D4)`,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11,
-                  }}>🤖</div>
+                  }}><NikkiMark size={13} /></div>
                 )}
                 <div>
                   <div style={{
@@ -271,7 +301,8 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
               <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                 <div style={{ width: 22, height: 22, borderRadius: "50%",
                   background: `linear-gradient(135deg, ${C.acc}, #06B6D4)`,
-                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>🤖</div>
+                  display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <NikkiMark size={13} speaking /></div>
                 <div style={{ background: C.hi, border: `1px solid ${C.bord}`,
                   borderRadius: "4px 12px 12px 12px", padding: "9px 12px",
                   display: "flex", gap: 4 }}>
@@ -377,7 +408,9 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
           animation: !open && pulseCount === 0 ? "nikki-pulse 3s ease-in-out infinite" : "none",
           transition: "background 0.3s, box-shadow 0.3s",
         }}>
-        {open ? "✕" : "🤖"}
+        {open
+          ? <X size={22} color="#FDFBF7" strokeWidth={2.5} />
+          : <NikkiMark size={28} speaking={status === "speaking"} />}
         {/* Unread badge */}
         {!open && pulseCount > 0 && (
           <div style={{

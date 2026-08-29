@@ -32,7 +32,13 @@ insert into crm_pipeline_stages (tenant_id, name, color, sort_order) values
   (null, 'qualified',  '#1D6FA5', 2),
   (null, 'won',        '#10B981', 3),
   (null, 'lost',       '#94A3B8', 4)
-on conflict (tenant_id, name) do nothing;
+-- No conflict target on purpose. These rows have tenant_id NULL, and NULL
+-- never equals NULL in a unique constraint — so "on conflict (tenant_id,
+-- name)" could never fire for them. Once 020 adds the partial unique index
+-- over (name) where tenant_id is null, re-running this file raised 23505 on
+-- 'new'. A bare DO NOTHING catches any unique violation, which is what was
+-- meant.
+on conflict do nothing;
 
 alter table crm_pipeline_stages enable row level security;
 drop policy if exists "crm_pipeline_stages_select" on crm_pipeline_stages;
