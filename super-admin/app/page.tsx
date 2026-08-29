@@ -94,6 +94,8 @@ const TABS = [
   { label: "Revenue",         icon: IndianRupee },
   { label: "Operations",      icon: Activity },
   { label: "KYC Review",      icon: ShieldCheck },
+  { label: "Numbers",         icon: Phone },
+  { label: "Audit Log",       icon: Lock },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
   { label: "Platform Config", icon: Settings },
@@ -132,6 +134,8 @@ export default function SuperAdminPage() {
     <RevenuePanel      key="rev"  token={token} />,
     <OperationsPanel   key="ops"  token={token} />,
     <KycPanel          key="kyc"  token={token} />,
+    <DidPanel          key="did"  token={token} />,
+    <AuditPanel        key="aud"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
     <PlatformConfigPanel key="cfg"   token={token} />,
@@ -1244,6 +1248,208 @@ function KycPanel({ token }: { token: string }) {
             </Card>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * DID inventory — the numbers themselves.
+ *
+ * /api/admin/dids and its assign/release actions existed with no screen, so
+ * onboarding a customer onto a number meant a hand-crafted request. Assigning
+ * a DID is the step that makes a tenant live; it should not be the one thing
+ * you cannot do from the console.
+ *
+ * Release asks for confirmation. It detaches a live phone number from a
+ * paying business, and there is no undo beyond assigning it back.
+ */
+function DidPanel({ token }: { token: string }) {
+  const [dids, setDids]       = useState<any[]>([]);
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing]   = useState<string | null>(null);
+  const [pick, setPick]       = useState<Record<string, string>>({});
+  const [error, setError]     = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const [d, t] = await Promise.all([
+        fetch(`${API}/api/admin/dids`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+        fetch(`${API}/api/admin/tenants`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+      ]);
+      setDids(Array.isArray(d) ? d : (d.dids || []));
+      setTenants(Array.isArray(t) ? t : []);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (number: string, action: "assign" | "release", body?: any) => {
+    setActing(number + action); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/dids/${number}/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setError(j.error || `Failed (${r.status})`); }
+      else await load();
+    } catch (e: any) { setError(e.message); }
+    setActing(null);
+  };
+
+  const free = dids.filter(d => d.status !== "assigned").length;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: SPACE.md }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Numbers</div>
+        <Pill label={`${dids.length} total`} color={C.gbr} />
+        <Pill label={`${free} available`} color={free ? C.grn : C.gold} />
+        <button onClick={load} style={{ marginLeft: "auto", background: "none",
+          border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
+          padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Refresh</button>
+      </div>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
+        <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div></Card>}
+
+      {loading ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+          {dids.map(d => {
+            const assigned = d.status === "assigned";
+            return (
+              <Card key={d.number} hover>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+                    <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, fontFamily: "monospace" }}>
+                      {d.number}
+                    </div>
+                    <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                      {d.provider || "—"} · routing {d.routing_mode || "ai"}
+                      {d.tenant_name ? ` · ${d.tenant_name}` : ""}
+                    </div>
+                  </div>
+                  <Pill label={d.status || "unknown"} color={assigned ? C.grn : C.dim} />
+                  {assigned ? (
+                    <button
+                      onClick={() => {
+                        // Detaches a live number from a paying business, and
+                        // the only undo is assigning it back.
+                        if (window.confirm(`Release ${d.number} from ${d.tenant_name || "its tenant"}? Calls to it stop working immediately.`))
+                          act(d.number, "release");
+                      }}
+                      disabled={acting === d.number + "release"}
+                      style={{ background: C.red + "18", color: C.red, border: "1px solid " + C.red + "44",
+                               borderRadius: 6, padding: "6px 12px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                      Release
+                    </button>
+                  ) : (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <select value={pick[d.number] || ""}
+                        onChange={e => setPick(p => ({ ...p, [d.number]: e.target.value }))}
+                        style={{ background: C.bg, border: "1px solid " + C.bord, borderRadius: 6,
+                                 padding: "6px 9px", color: C.txt, fontSize: TYPE.xs }}>
+                        <option value="">Assign to…</option>
+                        {tenants.map(t => <option key={t.id} value={t.id}>{t.name || t.id.slice(0, 8)}</option>)}
+                      </select>
+                      <button
+                        onClick={() => act(d.number, "assign", { tenant_id: pick[d.number] })}
+                        disabled={!pick[d.number] || acting === d.number + "assign"}
+                        style={{ background: pick[d.number] ? C.grn + "22" : "none",
+                                 color: pick[d.number] ? C.grn : C.dim,
+                                 border: "1px solid " + (pick[d.number] ? C.grn + "55" : C.bord),
+                                 borderRadius: 6, padding: "6px 12px", fontSize: TYPE.xs,
+                                 fontWeight: 700, cursor: pick[d.number] ? "pointer" : "not-allowed" }}>
+                        Assign
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Audit log — who did what.
+ *
+ * Every privileged action already writes here: suspensions, plan overrides,
+ * KYC decisions, DID assignments. Nothing read it back, so the record existed
+ * for no one. On a platform where one account can suspend a business or
+ * detach its phone number, that record is the only account of what happened.
+ */
+function AuditPanel({ token }: { token: string }) {
+  const [rows, setRows]       = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ]             = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/admin/audit-log`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      const j = await r.json();
+      setRows(Array.isArray(j) ? j : []);
+    } catch { setRows([]); }
+    setLoading(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const tone = (a: string) =>
+    /suspend|reject|release|delete/i.test(a) ? C.red
+    : /approve|assign|unsuspend/i.test(a)    ? C.grn
+    : C.gbr;
+
+  const shown = rows.filter(r => !q ||
+    JSON.stringify(r).toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: SPACE.md }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Audit log</div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Filter…"
+          style={{ background: C.bg, border: "1px solid " + C.bord, borderRadius: 7,
+                   padding: "6px 10px", color: C.txt, fontSize: TYPE.xs, marginLeft: "auto", width: 200 }} />
+        <button onClick={load} style={{ background: "none", border: "1px solid " + C.bord,
+          color: C.dim, borderRadius: 7, padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Refresh</button>
+      </div>
+
+      {loading ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>
+      : shown.length === 0 ? (
+        <Card><div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center", padding: SPACE.md }}>
+          {rows.length ? "Nothing matches that filter." : "No admin actions recorded yet."}
+        </div></Card>
+      ) : (
+        <Card>
+          {shown.map((r, i) => (
+            <div key={r.id || i} style={{ display: "flex", gap: 12, alignItems: "flex-start",
+              padding: "10px 0", borderBottom: i < shown.length - 1 ? "1px solid " + C.bord + "55" : "none" }}>
+              <span style={{ color: tone(r.action), fontSize: TYPE.xs, fontWeight: 800,
+                             minWidth: 130, fontFamily: "monospace" }}>{r.action}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: C.mid, fontSize: TYPE.xs, wordBreak: "break-word" }}>
+                  {r.details ? JSON.stringify(r.details) : "—"}
+                </div>
+                {r.target_tenant_id && (
+                  <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
+                    tenant {String(r.target_tenant_id).slice(0, 8)}…
+                  </div>
+                )}
+              </div>
+              <span style={{ color: C.dim, fontSize: TYPE.xs, whiteSpace: "nowrap" }}>
+                {r.created_at ? new Date(r.created_at).toLocaleString("en-IN") : ""}
+              </span>
+            </div>
+          ))}
+        </Card>
       )}
     </div>
   );
