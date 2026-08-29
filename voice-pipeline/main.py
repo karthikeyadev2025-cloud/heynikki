@@ -657,25 +657,53 @@ class GeminiLLM:
             headers = {"Content-Type": "application/json",
                        "x-goog-api-key": self.api_key}
             params: dict = {}
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.post(
-                    self.base_url,
-                    headers=headers,
-                    params=params,
-                    json=payload
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        text = parts[0].get("text", "").strip()
-                        # Vendor name filter — strip before TTS
-                        for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI"]:
-                            text = text.replace(vendor, "our system")
-                        self._consecutive_failures = 0
-                        return text
+            # ONE retry on a transient failure, before anything the caller hears.
+            #
+            # A single 8s attempt with no retry meant one slow response — a
+            # timeout raises httpx.HTTPError with an empty message, which is
+            # exactly what the logs showed — fell straight through to the
+            # OpenAI fallback. OPENAI_API_KEY is not set, so that returned
+            # nothing too, and the caller was told "I didn't hear you" for a
+            # question they had asked perfectly clearly. In an eight-turn test
+            # conversation this happened once. Every eighth turn.
+            #
+            # 7s then 6s, so the worst case is 13s rather than the 16s a naive
+            # doubling would give; a retry after a blip usually lands in about
+            # a second. Only connect/read failures are retried — a 400 is our
+            # own bad request and will fail again identically.
+            data = None
+            last_exc = None
+            for attempt, budget in enumerate((7.0, 6.0)):
+                try:
+                    async with httpx.AsyncClient(timeout=budget) as client:
+                        resp = await client.post(
+                            self.base_url,
+                            headers=headers,
+                            params=params,
+                            json=payload
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                    break
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+                    last_exc = e
+                    if attempt == 0:
+                        log.warning(f"Gemini transient ({type(e).__name__}) — retrying once")
+                        continue
+                    raise
+            if data is None:
+                raise last_exc or RuntimeError("Gemini returned no data")
+
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    text = parts[0].get("text", "").strip()
+                    # Vendor name filter — strip before TTS
+                    for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI"]:
+                        text = text.replace(vendor, "our system")
+                    self._consecutive_failures = 0
+                    return text
         except httpx.HTTPError as e:
             log.error(f"Gemini error: {e} — trying GPT-4o-mini fallback")
             return await self._openai_fallback(system_prompt, recent)
