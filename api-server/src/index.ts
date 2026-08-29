@@ -1073,9 +1073,51 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         detectedLang = String(sttData.language_code);
         // Not used to pick the voice — the reply's own script decides that,
         // below. Logged because it is the only signal of what visitors
-        // actually speak on the landing page, which is worth knowing before
-        // deciding what the demo should answer in.
+        // actually speak on the landing page.
         console.log(`[voice-turn] detected ${detectedLang} for session ${sessionId}`);
+
+        // ── Detected something we do not sell ────────────────────────────
+        // language_code "unknown" lets Sarvam choose from eleven languages,
+        // and on a short utterance it guesses badly: a real session logged
+        // 4 turns of 16 as Bengali or Kannada from a Telugu-and-English
+        // speaker. That is not a cosmetic mislabel — the audio is
+        // TRANSCRIBED with the wrong language model, so the transcript is
+        // wrong, and every downstream step reasons on it.
+        //
+        // This product supports three languages. Anything else is a
+        // misdetection by definition, so the turn is transcribed again as
+        // Telugu, the site's default. Costs one extra STT call on the
+        // minority of turns that need it, at roughly a paisa each.
+        const SUPPORTED = ["te-IN", "hi-IN", "en-IN"];
+        if (!SUPPORTED.includes(detectedLang)) {
+          console.warn(`[voice-turn] ${detectedLang} is not a supported language — re-transcribing as te-IN`);
+          try {
+            const retryForm = new FormData();
+            // Same mime handling and same model as the first attempt — only
+            // the language is pinned. A different model here would make the
+            // retry a second variable rather than a correction.
+            retryForm.append("file", new Blob([audioBuffer], { type: mime }), `turn.${ext}`);
+            retryForm.append("model", "saaras:v3");
+            retryForm.append("language_code", "te-IN");
+            const retryResp = await fetch("https://api.sarvam.ai/speech-to-text", {
+              method: "POST",
+              headers: { "api-subscription-key": SARVAM_KEY },
+              body: retryForm as any,
+            });
+            if (retryResp.ok) {
+              const retryData = await retryResp.json() as any;
+              const retryText = (retryData.transcript || "").trim();
+              // Keep the original if the retry heard less — a confident
+              // wrong-language guess still beats silence.
+              if (retryText.length >= transcript.length) {
+                transcript = retryText;
+                detectedLang = "te-IN";
+              }
+            }
+          } catch (e: any) {
+            console.error("[voice-turn] language retry failed:", e.message);
+          }
+        }
       }
     }
 
