@@ -816,8 +816,10 @@ export default function Home() {
 
         .v2-badge {
           display:inline-flex; align-items:center; gap:9px;
-          padding:7px 15px 7px 12px; border:1px solid var(--border);
-          border-radius:999px; font-size:var(--badge); color:#d8d8d8;
+          padding:7px 15px 7px 12px; border:1px solid rgba(255,255,255,.22);
+          border-radius:999px; font-size:var(--badge); color:#e8e8e8;
+          background:rgba(0,0,0,.30);
+          backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
         }
         .v2-badge-dot {
           width:7px; height:7px; border-radius:50%; background:#22C55E;
@@ -828,20 +830,32 @@ export default function Home() {
           margin:22px 0 0; font-family:${D};
           font-size:var(--h1); line-height:1.04; letter-spacing:-.035em;
           font-weight:700;
+          /* Type over video carries its own contrast. A wide, soft shadow
+             reads as depth; a tight one reads as a 2004 drop shadow. */
+          text-shadow:0 1px 2px rgba(0,0,0,.35), 0 14px 40px rgba(0,0,0,.45);
         }
         .v2-line { display:block; }
-        .v2 h1 em { font-style:italic; color:#8FB4E8; }
+        .v2 h1 em {
+          font-style:italic; color:#8FB4E8;
+          /* Lit from within rather than printed — the closest type gets to
+             sounding, on a page selling a voice. Same face, same italic. */
+          text-shadow:0 0 34px rgba(143,180,232,.50), 0 1px 2px rgba(0,0,0,.35);
+        }
 
         .v2-lede {
           margin:20px 0 0; max-width:520px;
-          font-size:var(--lede); line-height:1.6; color:var(--muted);
+          font-size:var(--lede); line-height:1.62; letter-spacing:.002em;
+          color:rgba(255,255,255,.84);
+          text-shadow:0 1px 12px rgba(0,0,0,.55);
         }
         .v2-actions { display:flex; flex-wrap:wrap; gap:11px; margin:30px 0 0; }
 
         .v2-callnum {
           display:inline-flex; align-items:center; gap:9px; margin:18px 0 0;
-          padding:9px 15px; border:1px solid var(--border); border-radius:999px;
-          color:#d8d8d8; font-size:14px; text-decoration:none;
+          padding:9px 15px; border:1px solid rgba(255,255,255,.22); border-radius:999px;
+          color:#e8e8e8; font-size:14px; text-decoration:none;
+          background:rgba(0,0,0,.30);
+          backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
           transition:border-color .18s ease, color .18s ease;
         }
         .v2-callnum:hover { border-color:rgba(255,255,255,.42); color:#fff; }
@@ -857,7 +871,8 @@ export default function Home() {
         }
         .v2-stat {
           display:inline-flex; align-items:center; gap:8px;
-          font-size:var(--stat); color:#d8d8d8;
+          font-size:var(--stat); color:#e2e2e2;
+          text-shadow:0 1px 10px rgba(0,0,0,.6);
         }
         .v2-stat svg { opacity:.62; flex:none; }
 
