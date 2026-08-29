@@ -211,6 +211,25 @@ async function tick(): Promise<void> {
     .select("*").eq("status", "running");
 
   for (const c of (campaigns || [])) {
+    // Completion is bookkeeping, not dialling, so it runs before the calling
+    // window is considered. It used to sit at the bottom of this loop, after
+    // the `continue` below — so a campaign that finished its last recipient at
+    // 18:59 stayed "running" all night and only closed when the window
+    // reopened the next morning. Outside calling hours every finished campaign
+    // in the system looked live.
+    const { count: outstanding } = await sb.from("outbound_recipients")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", c.id)
+      .in("status", ["pending", "queued", "in_progress", "scrubbing"]);
+    if ((outstanding || 0) === 0) {
+      await sb.from("outbound_campaigns").update({
+        status: "completed",
+        completed_at: new Date().toISOString(),
+      }).eq("id", c.id);
+      console.log(`[dispatcher] campaign ${c.id} completed — no recipients outstanding`);
+      continue;
+    }
+
     if (!withinWindow(c.window_start, c.window_end)) continue;
 
     // How many slots are free?
@@ -257,15 +276,28 @@ async function tick(): Promise<void> {
       }).eq("id", r.id);
 
       try {
-        const callId = await dispatchCall(r, c);
+        const fsUuid = await dispatchCall(r, c);
         // Answered. The pipeline drives the conversation from here and
         // scores the lead on hangup; the brochure, if the lead qualifies,
         // is fired from there rather than guessed at here.
-        await sb.from("outbound_recipients").update({
-          call_id: callId,
-          status:  "in_progress",
-          outcome: "answered",
+        //
+        // What comes back from originate is a FreeSWITCH channel UUID. It is
+        // NOT a calls.id, and call_id is a foreign key to calls.id — so
+        // writing it here raised 23503 on every answered call, and because
+        // the error was never read, the outcome and status in the same update
+        // were lost with it. That is the whole reason recipients sat in
+        // in_progress forever.
+        //
+        // The calls row does not exist yet at this instant anyway: it is
+        // created moments later, when the pipeline registers the answered
+        // leg. So the UUID goes in metadata, where there is no FK, and the
+        // hangup webhook resolves it to a real call_id once the row exists.
+        const { error: linkErr } = await sb.from("outbound_recipients").update({
+          status:   "in_progress",
+          outcome:  "dialled",
+          metadata: { ...(r.metadata || {}), fs_uuid: fsUuid },
         }).eq("id", r.id);
+        if (linkErr) console.error(`[dispatcher] link ${r.id} failed:`, linkErr.message);
       } catch (e: any) {
         const reason = String(e?.message || e).slice(0, 120);
 
@@ -286,17 +318,8 @@ async function tick(): Promise<void> {
       }
     }
 
-    // Mark campaign completed if no more work
-    const { count: remaining } = await sb.from("outbound_recipients")
-      .select("id", { count: "exact", head: true })
-      .eq("campaign_id", c.id)
-      .in("status", ["pending", "queued", "in_progress", "scrubbing"]);
-    if ((remaining || 0) === 0) {
-      await sb.from("outbound_campaigns").update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-      }).eq("id", c.id);
-    }
+    // Completion is checked at the top of the next tick, above the window
+    // guard, so it is not repeated here.
   }
 }
 

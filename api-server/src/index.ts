@@ -2540,7 +2540,13 @@ async function fireAutomationWebhook(event: string, payload: object): Promise<vo
 // place the call row is created.
 app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
   try {
-    const { caller_number, did_number, fs_uuid } = req.body;
+    const { caller_number, did_number, fs_uuid, direction, campaign_id } = req.body;
+
+    // An outbound campaign call reaches this endpoint too — it reuses the
+    // inbound handler deliberately, so it inherits profile lookup, disclosure
+    // and lead scoring. What it must NOT inherit is the assumption that the
+    // caller rang us.
+    const isOutbound = String(direction || "inbound").toLowerCase() === "outbound";
 
     // Jio sends Indian numbers in inconsistent formats on the same
     // trunk — 08633502031 and +918633502031 have both been observed for
@@ -2576,14 +2582,18 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       tenant_id:        did.tenant_id,
       voice_profile_id: did.voice_profile_id,
       caller_number:    caller,
-      direction:        "inbound",
+      direction:        isOutbound ? "outbound" : "inbound",
       status:           "active",
       livekit_room_id:  fs_uuid,   // reuse field for FS UUID
     }).select().single();
 
     // Resolve the ring group for human/hybrid routing.
     let ringGroup = "";
-    if (did.routing_mode === "human" || did.routing_mode === "hybrid") {
+    // routing_mode answers "what happens when someone rings this number".
+    // On an outbound leg the DID is our own CLI, not a number anybody dialled,
+    // so a tenant on 'human' would have had the customer we just called
+    // transferred to their own reception the moment the call connected.
+    if (!isOutbound && (did.routing_mode === "human" || did.routing_mode === "hybrid")) {
       // tenant_users.phone did not exist until migration 020, so this query
       // returned 42703, agents came back null, and the ring group was an
       // empty string — a DID on 'human' or 'hybrid' rang nobody, silently.
@@ -2611,8 +2621,9 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
 
     // A "human" DID with nobody to ring would drop the caller into
     // silence, so fall back to the AI rather than to nothing.
-    const effectiveMode =
-      did.routing_mode === "human" && !ringGroup ? "ai" : (did.routing_mode || "ai");
+    const effectiveMode = isOutbound
+      ? "ai"
+      : (did.routing_mode === "human" && !ringGroup ? "ai" : (did.routing_mode || "ai"));
 
     if (did.routing_mode === "human" && !ringGroup) {
       console.warn(`[FS Inbound] DID ${did_number} is human-routed but no agent has a phone — falling back to AI`);
@@ -2625,6 +2636,8 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       voice_profile_id:   did.voice_profile_id,
       routing_mode:       effectiveMode,
       ring_group:         ringGroup,
+      direction:          isOutbound ? "outbound" : "inbound",
+      campaign_id:        campaign_id || null,
       missed_call_guard:  did.missed_call_guard !== false,
       missed_call_seconds: guardSeconds,
     });
@@ -2875,7 +2888,7 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // error, a failed query is indistinguishable from "no such call" and the
     // completion update below is silently skipped.
     const { data: callRow, error: selErr } = await sb.from("calls")
-      .select("id, tenant_id, voice_profile_id, created_at")
+      .select("id, tenant_id, voice_profile_id, created_at, direction")
       .eq("livekit_room_id", fs_uuid)
       .single();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
@@ -2908,6 +2921,38 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       }).eq("id", callRow.id);
       if (updErr) console.error("[FS Hangup] completion update failed:", updErr.message);
 
+      // ── Close the campaign recipient ────────────────────────────
+      // The dispatcher sets a recipient to in_progress when the originate
+      // succeeds and nothing ever moved it out again. That is not a cosmetic
+      // stall: the tick() slot count subtracts in_progress from
+      // max_concurrent, so a campaign dialled max_concurrent people and then
+      // never dialled again, and the "no work remaining" check counts
+      // in_progress as work, so the campaign never reached completed either.
+      // The admin operations panel already had a detector for recipients
+      // stuck in_progress over a day old — built before the cause was found.
+      //
+      // Matched on the FS UUID, which the dispatcher stored as call_id. There
+      // is no calls.campaign_id column, and this linkage means there needn't
+      // be one.
+      // Matched on metadata->>fs_uuid, not call_id: call_id is a foreign key
+      // to calls.id, and at dial time the dispatcher only has a FreeSWITCH
+      // channel UUID and no calls row yet. This is the first point where both
+      // exist, so it is also where call_id finally gets a real value.
+      const answered = secs >= 5;
+      const { data: recip, error: recipErr } = await sb.from("outbound_recipients")
+        .update({
+          status:  "completed",
+          outcome: answered ? "answered" : `no_conversation_${hangup_cause || "unknown"}`,
+          call_id: callRow.id,
+        })
+        .eq("metadata->>fs_uuid", fs_uuid)
+        .eq("status", "in_progress")
+        .select("id, campaign_id");
+      if (recipErr) console.error("[FS Hangup] recipient close failed:", recipErr.message);
+      else if (recip?.length) {
+        console.log(`[FS Hangup] closed campaign recipient ${recip[0].id} (${answered ? "answered" : "no conversation"})`);
+      }
+
       // Trigger R2 upload in voice pipeline (async)
       fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/hangup`, {
         method:  "POST",
@@ -2921,7 +2966,13 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // arrives empty this test read parseInt(undefined || "0") < 5 as true and
     // overwrote the "completed" status set moments earlier, which is how a
     // two-minute conversation ended up stored as a missed call.
-    if (secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
+    // Outbound is excluded on purpose. This branch sends the "sorry we missed
+    // your call" WhatsApp, and on a campaign leg WE placed the call — telling
+    // someone we missed a call they never made is both wrong and the second
+    // message they get, since the dispatcher already sends its own no-answer
+    // follow-up on the first failed attempt.
+    const wasOutbound = callRow?.direction === "outbound";
+    if (!wasOutbound && secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
       // The n8n missed-call workflow reads business_name straight into the
       // WhatsApp template's {{1}}, and picks the recipient from
       // whatsapp_number falling back to caller_number. This call site sent

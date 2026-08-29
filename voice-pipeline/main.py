@@ -2975,6 +2975,8 @@ async def freeswitch_ws(
     did_number:    str,
     caller_number: str,
     fs_uuid:       str,
+    direction:     str = "inbound",
+    campaign_id:   str = "",
 ):
     """
     FreeSWITCH mod_audio_stream WebSocket handler.
@@ -2986,7 +2988,14 @@ async def freeswitch_ws(
       All inbound PCM accumulated in memory → WAV → Cloudflare R2 on hangup.
     """
     await ws.accept()
-    log.info(f"[FS] Connected: did={did_number} caller={caller_number} uuid={fs_uuid}")
+    # The dialplan has always appended ?direction=outbound&campaign_id=... on
+    # the campaign path; this handler simply never declared the parameters, so
+    # FastAPI dropped them and every campaign call recorded itself as inbound.
+    is_outbound = (direction or "inbound").lower() == "outbound"
+    campaign_id = (campaign_id or "").strip()
+    log.info(f"[FS] Connected: did={did_number} caller={caller_number} "
+             f"uuid={fs_uuid} direction={'outbound' if is_outbound else 'inbound'}"
+             + (f" campaign={campaign_id}" if campaign_id else ""))
 
     db      = SupabaseClient()
     profile = await db.get_voice_profile(did_number)
@@ -3031,6 +3040,8 @@ async def freeswitch_ws(
                     "did_number":    did_number,
                     "caller_number": caller_number,
                     "fs_uuid":       fs_uuid,
+                    "direction":     "outbound" if is_outbound else "inbound",
+                    "campaign_id":   campaign_id or None,
                 },
             )
             if r.status_code == 200:
@@ -3074,7 +3085,7 @@ async def freeswitch_ws(
             "tenant_id":        profile["tenant_id"],
             "voice_profile_id": profile["id"],
             "caller_number":    caller_number,
-            "direction":        "inbound",
+            "direction":        "outbound" if is_outbound else "inbound",
             "status":           "active",
             "livekit_room_id":  fs_uuid,
         })

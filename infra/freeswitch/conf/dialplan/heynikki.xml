@@ -244,9 +244,16 @@
     </extension>
 
     <!-- ── OUTBOUND AI CAMPAIGN CALLS ─────────────────────────
-      The literal token "outbound" sits in the {did_number} position of
-      the WS path; the pipeline treats that as a sentinel and reads
-      campaign context from the campaign_id query param instead.
+      The {did_number} position carries ${outbound_did} — the CLI we
+      dialled from, a number we own — because the pipeline resolves the
+      voice profile from it. It is NOT the literal token "outbound", and
+      there is no sentinel: an earlier version of this comment described
+      a design that was never built, which is a good way to have someone
+      "fix" a working URL.
+
+      direction and campaign_id ride along as query parameters and are
+      read by the handler, which is what makes an outbound call record
+      itself as outbound.
       ============================================================ -->
     <extension name="outbound_campaign" continue="false">
       <condition field="destination_number" expression="^camp_(?:\+?91|0)?(\d{10})$">

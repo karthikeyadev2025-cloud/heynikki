@@ -218,6 +218,14 @@ export class FreeSwitchESL {
       // variable is what lets the dialplan build that URL — without it the
       // outbound extension has no DID to look the profile up by.
       `outbound_did=${cli}`,
+      // The dialplan sets effective_caller_id_number from ${outbound_cli} on
+      // BOTH outbound extensions, and nothing had ever set it — so the two
+      // places that exist to make sure we present a number we own were
+      // assigning an empty string. origination_caller_id_number above covers
+      // the originate itself, which is why this never showed up as a failed
+      // call; it would have shown up the first time an outbound leg was
+      // bridged onward.
+      `outbound_cli=${cli}`,
     ].join(",");
 
     const cmd =
