@@ -19,6 +19,7 @@
 // instruction: applying "Mon-Sat 9-9" silently would let a stale PDF
 // change when a business answers its phone.
 // ────────────────────────────────────────────────────────────────
+import { geminiGenerate } from "./gemini.js";
 import type { Express, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
@@ -78,14 +79,10 @@ async function readAsset(base64: string, mime: string): Promise<any> {
     }],
     generationConfig: { temperature: 0, responseMimeType: "application/json" },
   };
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
-    { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
-  if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const j: any = await r.json();
-  const text = j?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  return JSON.parse(text);
+  // 60s because a scanned brochure is a much bigger read than a sentence.
+  const gen = await geminiGenerate(body, { timeoutMs: 60_000 });
+  if (!gen.ok) throw new Error(`Gemini ${gen.status}: ${gen.detail}`);
+  return gen.data;
 }
 
 export function mountAssetRoutes(

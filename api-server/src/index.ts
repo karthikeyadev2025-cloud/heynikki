@@ -1517,26 +1517,23 @@ app.post("/api/agents/draft", verifyJWT, apiLimiter, async (req: any, res) => {
       description,
     ].join("\n");
 
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || "gemini-flash-lite-latest"}:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
-        }),
-        signal: AbortSignal.timeout(25_000),
+    const gen = await geminiGenerate({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
+    });
+    if (!gen.ok) {
+      console.error("[agent draft] gemini", gen.status, gen.detail);
+      // A stall is not an internal error and must not read like one — the
+      // customer has a paragraph typed into the box and needs to know that
+      // pressing the button again is the right move.
+      return res.status(gen.timedOut ? 504 : 502).json({
+        error: gen.timedOut
+          ? "The agent builder took too long to respond. Your description is safe — press Draft again."
+          : "Could not draft the agent — try again",
       });
-    if (!r.ok) {
-      console.error("[agent draft] gemini", r.status);
-      return res.status(502).json({ error: "Could not draft the agent — try again" });
     }
-    const j: any = await r.json();
-    const raw = j.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const m = raw.match(/\{[\s\S]*\}/);
-    if (!m) return res.status(502).json({ error: "Could not draft the agent — try again" });
-    const d = JSON.parse(m[0]);
+    const d = gen.data;
+
 
     // Constrain before returning. voice_profiles has CHECK constraints and
     // this output is destined for it — an unvalidated draft would be
@@ -3177,6 +3174,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 // ═══════════════════════════════════════════════════════════
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
+import { geminiGenerate } from "./gemini.js";
 import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
 
