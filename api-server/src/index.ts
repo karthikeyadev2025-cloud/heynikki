@@ -2247,6 +2247,112 @@ app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
   res.json({ ok: true });
 });
 
+// ── STAFF ACL / LIFECYCLE / TRIAGE (audit tier 3) ─────────────
+
+// Staff and roles. tenant_users had no mutation route anywhere — the panel
+// that super_admin protects could not grant or revoke super_admin. Roles
+// come from the schema CHECK (owner|member|support|super_admin), and
+// is_super_admin() reads exactly this table, so a change here takes effect
+// on the target's next request.
+app.get("/api/admin/staff/:tenantId", verifySuperAdmin, async (req, res) => {
+  const { data, error } = await sb.from("tenant_users")
+    .select("id, user_id, role, phone, display_name, created_at")
+    .eq("tenant_id", req.params.tenantId).order("created_at");
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ staff: data || [] });
+});
+
+app.post("/api/admin/staff/:rowId/role", verifySuperAdmin, async (req: any, res) => {
+  const role = String(req.body?.role || "");
+  if (!["owner", "member", "support", "super_admin"].includes(role)) {
+    return res.status(400).json({ error: "role must be owner|member|support|super_admin" });
+  }
+  // The one guard that matters: you cannot demote YOURSELF out of
+  // super_admin. A panel that can lock out its last operator is a panel
+  // that will, eventually, at the worst moment.
+  const { data: row } = await sb.from("tenant_users")
+    .select("user_id, role, tenant_id").eq("id", req.params.rowId).maybeSingle();
+  if (!row) return res.status(404).json({ error: "Staff row not found" });
+  if (row.user_id === req.user.id && row.role === "super_admin" && role !== "super_admin") {
+    return res.status(400).json({ error: "You cannot remove your own super_admin role" });
+  }
+  const { error } = await sb.from("tenant_users")
+    .update({ role }).eq("id", req.params.rowId);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "role_changed",
+    target_tenant_id: row.tenant_id,
+    details: { row_id: req.params.rowId, from: row.role, to: role },
+  }).then(r => r.error && console.error("[acl] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Delete a tenant, with the fan-out done in the right order: numbers back
+// to inventory FIRST (a deleted tenant must never keep a DID routed at it),
+// then the dependent rows cascade with the tenant row.
+app.delete("/api/admin/tenants/:id", verifySuperAdmin, async (req: any, res) => {
+  const tid = req.params.id;
+  const { data: t } = await sb.from("tenants").select("name, status").eq("id", tid).maybeSingle();
+  if (!t) return res.status(404).json({ error: "Tenant not found" });
+  // Refuse to delete a tenant that is live. Cancel first — deletion is for
+  // dead signups and expired demos, not an alternative to offboarding.
+  if (!["trial", "suspended", "cancelled"].includes(String(t.status))) {
+    return res.status(409).json({ error: `Tenant is '${t.status}' — cancel or suspend before deleting` });
+  }
+  const { data: dids } = await sb.from("dids")
+    .select("number").eq("tenant_id", tid);
+  await sb.from("dids").update({
+    tenant_id: null, voice_profile_id: null, status: "available",
+  }).eq("tenant_id", tid);
+  const { error } = await sb.from("tenants").delete().eq("id", tid);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "tenant_deleted",
+    details: { tenant_id: tid, name: t.name, released_dids: (dids || []).map((d: any) => d.number) },
+  }).then(r => r.error && console.error("[delete] audit:", r.error.message));
+  res.json({ ok: true, released: (dids || []).length });
+});
+
+// WhatsApp per-message triage: the Operations panel counted failures;
+// nobody could see WHICH message failed or send it again.
+app.get("/api/admin/wa-log", verifySuperAdmin, async (req, res) => {
+  let q = sb.from("wa_dispatch_log")
+    .select("id, tenant_id, message_type, to_number, message_body, status, created_at:sent_at")
+    .order("sent_at", { ascending: false }).limit(100);
+  if (req.query.status) q = q.eq("status", String(req.query.status));
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ rows: data || [] });
+});
+
+app.post("/api/admin/wa-log/:id/resend", verifySuperAdmin, async (req: any, res) => {
+  const { data: row } = await sb.from("wa_dispatch_log")
+    .select("tenant_id, voice_profile_id, message_type, to_number, message_body")
+    .eq("id", req.params.id).maybeSingle();
+  if (!row) return res.status(404).json({ error: "Message not found" });
+  const ok = await sendWhatsApp(row.to_number, row.message_body, row.tenant_id,
+    row.voice_profile_id, row.message_type);
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "wa_resent",
+    target_tenant_id: row.tenant_id, details: { to: row.to_number, type: row.message_type, ok },
+  }).then(r => r.error && console.error("[wa resend] audit:", r.error.message));
+  res.json({ ok });
+});
+
+// Re-score a tenant's call quality: deleting the rows is the whole action —
+// the 15-minute scheduler job re-analyses anything unscored.
+app.post("/api/admin/quality/rescore/:tenantId", verifySuperAdmin, async (req: any, res) => {
+  const { data, error } = await sb.from("call_quality")
+    .delete().eq("tenant_id", req.params.tenantId).select("id");
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "quality_rescore",
+    target_tenant_id: req.params.tenantId, details: { cleared: (data || []).length },
+  }).then(r => r.error && console.error("[rescore] audit:", r.error.message));
+  res.json({ ok: true, cleared: (data || []).length,
+             note: "The scheduler re-scores within 15 minutes" });
+});
+
 // ── AGENT REPAIR + INCIDENT LEVERS (audit tier 2) ─────────────
 // The audit's next-to-hurt findings: an operator could SEE a broken agent
 // in Call Quality and do nothing about it, could see a no-consent campaign

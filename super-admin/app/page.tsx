@@ -585,6 +585,22 @@ function TenantsPanel({ token }: { token: string }) {
                           Restore
                         </button>
                       )}
+                      {["trial", "suspended", "cancelled"].includes(t.status) && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`DELETE "${t.name}" permanently? Numbers return to inventory; everything else is gone.`)) return;
+                            const r = await fetch(`${API}/api/admin/tenants/${t.id}`, {
+                              method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+                            if (!r.ok) alert((await r.json()).error || "Delete failed");
+                            else window.location.reload();
+                          }}
+                          style={{ background: "transparent", color: C.red,
+                            border: "1px solid " + C.red + "44", borderRadius: 5,
+                            padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                          Delete
+                        </button>
+                      )}
+                      <StaffButton token={token} tenantId={t.id} />
                       <select onChange={e => e.target.value && doAction(t.id, "override-plan", { plan: e.target.value })}
                         defaultValue=""
                         style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
@@ -1225,7 +1241,55 @@ function OperationsPanel({ token }: { token: string }) {
           Checked {new Date(data.generated_at).toLocaleString("en-IN")}
         </div>
       )}
+
+      <div style={{ height: SPACE.md }} />
+      <WaTriage token={token} />
     </div>
+  );
+}
+
+// Failed WhatsApp messages, with a resend that goes back through the same
+// template machinery. The Operations counters said HOW MANY failed;
+// nobody could see WHICH, or try again.
+function WaTriage({ token }: { token: string }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(() => {
+    fetch(`${API}/api/admin/wa-log?status=failed`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(j => setRows(j.rows || [])).catch(() => setRows([]));
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <Card>
+      <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>
+        Failed WhatsApp messages
+      </div>
+      {rows.length === 0
+        ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>None. Delivery statuses reconcile from Meta&apos;s webhook.</div>
+        : rows.map(r => (
+          <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center",
+            padding: "6px 0", borderBottom: `1px solid ${C.bord}33`, fontSize: TYPE.sm }}>
+            <span style={{ color: C.txt, fontWeight: 700, minWidth: 110 }}>{r.to_number}</span>
+            <span style={{ color: C.dim, fontSize: TYPE.xs, minWidth: 120 }}>{r.message_type}</span>
+            <span style={{ color: C.mid, flex: 1, overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap" as const }}>{r.message_body}</span>
+            <button disabled={busy === r.id}
+              onClick={async () => {
+                setBusy(r.id);
+                const x = await fetch(`${API}/api/admin/wa-log/${r.id}/resend`,
+                  { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                const j = await x.json();
+                alert(j.ok ? "Resent" : "Send failed again — check the number has WhatsApp");
+                setBusy(null); load();
+              }}
+              style={{ padding: "3px 10px", borderRadius: 6, fontSize: TYPE.xs, fontWeight: 700,
+                background: "transparent", color: C.gbr, border: `1px solid ${C.gbr}66`,
+                cursor: "pointer" }}>
+              {busy === r.id ? "…" : "Resend"}
+            </button>
+          </div>
+        ))}
+    </Card>
   );
 }
 
@@ -1674,8 +1738,21 @@ function QualityPanel({ token }: { token: string }) {
                 {t.avg_score}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700,
+                  display: "flex", gap: 8, alignItems: "center" }}>
                   {t.tenant_name || t.tenant_id.slice(0, 8)}
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Clear this tenant's scores? The scheduler re-analyses everything within 15 minutes.")) return;
+                      const r = await fetch(`${API}/api/admin/quality/rescore/${t.tenant_id}`,
+                        { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                      alert(r.ok ? "Cleared — rescoring within 15 min" : "Failed");
+                    }}
+                    style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                      background: "transparent", color: C.dim, border: `1px solid ${C.bord}`,
+                      cursor: "pointer" }}>
+                    re-score
+                  </button>
                 </div>
                 <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
                   {t.scored} scored · {t.next_step_pct}% next step · {t.negative} negative
@@ -1773,6 +1850,59 @@ function CampaignsPanel({ token }: { token: string }) {
 // Ring a customer so Nikki can interview them. Lives beside the tenant it
 // acts on rather than in a screen of its own — the decision to make this call
 // is made while looking at a tenant who has not finished setup.
+// Roles, inline on the tenant row. The one guard lives server-side: an
+// operator cannot demote their own super_admin — a panel that can lock out
+// its last operator eventually will, at the worst moment.
+function StaffButton({ token, tenantId }: { token: string; tenantId: string }) {
+  const [open, setOpen]   = useState(false);
+  const [staff, setStaff] = useState<any[]>([]);
+  const load = async () => {
+    const r = await fetch(`${API}/api/admin/staff/${tenantId}`,
+      { headers: { Authorization: `Bearer ${token}` } });
+    const j = await r.json();
+    setStaff(j.staff || []);
+  };
+  return (
+    <span style={{ position: "relative" }}>
+      <button onClick={() => { setOpen(o => !o); if (!open) load(); }}
+        style={{ background: "transparent", color: C.mid,
+          border: "1px solid " + C.bord, borderRadius: 5,
+          padding: "4px 10px", fontSize: TYPE.xs, cursor: "pointer" }}>Staff</button>
+      {open && (
+        <div style={{ position: "absolute", zIndex: 40, top: "110%", right: 0,
+          background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 10,
+          padding: 10, minWidth: 260, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+          {staff.length === 0 && <div style={{ color: C.dim, fontSize: TYPE.xs }}>No staff rows.</div>}
+          {staff.map(m => (
+            <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center",
+              padding: "5px 0", fontSize: TYPE.xs }}>
+              <span style={{ color: C.txt, flex: 1, overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                {m.display_name || m.user_id.slice(0, 8)}{m.phone ? ` · ${m.phone}` : ""}
+              </span>
+              <select value={m.role}
+                onChange={async e => {
+                  const r = await fetch(`${API}/api/admin/staff/${m.id}/role`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ role: e.target.value }),
+                  });
+                  if (!r.ok) alert((await r.json()).error || "Failed");
+                  load();
+                }}
+                style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+                  borderRadius: 5, padding: "3px 6px", fontSize: TYPE.xs }}>
+                {["owner", "member", "support", "super_admin"].map(x =>
+                  <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function OnboardingCallButton({ token, tenantId }: { token: string; tenantId: string }) {
   const [state, setState] = useState<"idle" | "calling" | "done" | "failed">("idle");
   const [msg, setMsg]     = useState("");
