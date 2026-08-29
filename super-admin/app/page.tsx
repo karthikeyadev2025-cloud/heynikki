@@ -1386,6 +1386,8 @@ function DidPanel({ token }: { token: string }) {
   const [acting, setActing]   = useState<string | null>(null);
   const [pick, setPick]       = useState<Record<string, string>>({});
   const [error, setError]     = useState("");
+  const [newNum, setNewNum]   = useState("");
+  const [adding, setAdding]   = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -1415,6 +1417,21 @@ function DidPanel({ token }: { token: string }) {
     setActing(null);
   };
 
+  const addDid = async () => {
+    setAdding(true); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/dids`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ number: newNum }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setError(j.error || `Failed (${r.status})`);
+      else { setNewNum(""); await load(); }
+    } catch (e: any) { setError(e.message); }
+    setAdding(false);
+  };
+
   const free = dids.filter(d => d.status !== "assigned").length;
 
   return (
@@ -1427,6 +1444,37 @@ function DidPanel({ token }: { token: string }) {
           border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
           padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Refresh</button>
       </div>
+
+      {/* Nothing could put a number INTO inventory — assign and release both
+          act on rows that had to be created by hand in Supabase first. */}
+      <Card>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
+          <div style={{ color: C.mid, fontSize: TYPE.sm, fontWeight: 700 }}>Add a number</div>
+          <input
+            value={newNum}
+            onChange={e => setNewNum(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && newNum.trim()) addDid(); }}
+            placeholder="10-digit number from Jio"
+            inputMode="numeric"
+            style={{
+              padding: "7px 10px", borderRadius: 7, fontSize: TYPE.sm, minWidth: 200,
+              background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+            }} />
+          <button onClick={addDid} disabled={adding || newNum.replace(/\D/g, "").length < 10}
+            style={{
+              padding: "7px 14px", borderRadius: 7, border: "none",
+              background: adding || newNum.replace(/\D/g, "").length < 10 ? C.bord : C.grn,
+              color: adding || newNum.replace(/\D/g, "").length < 10 ? C.dim : "#04120a",
+              fontSize: TYPE.sm, fontWeight: 800,
+              cursor: adding || newNum.replace(/\D/g, "").length < 10 ? "not-allowed" : "pointer",
+            }}>{adding ? "Adding…" : "Add to inventory"}</button>
+          <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+            Lands as <strong style={{ color: C.grn }}>available</strong>, ready to assign.
+          </span>
+        </div>
+      </Card>
+
+      <div style={{ height: SPACE.sm }} />
 
       {error && <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
         <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div></Card>}

@@ -2117,6 +2117,53 @@ app.get("/api/admin/dids", verifySuperAdmin, async (_req, res) => {
   });
 });
 
+// Put a number INTO inventory. Assign and release existed, but nothing could
+// add a number, so every DID Jio provisions had to be inserted into the table
+// by hand in Supabase — which is why inventory holds two numbers, both on the
+// same tenant, and a new client cannot be given a number at all.
+app.post("/api/admin/dids", verifySuperAdmin, async (req: any, res) => {
+  const raw    = String(req.body?.number || "");
+  const number = raw.replace(/\D/g, "").slice(-10);
+  // Indian mobile and landline DIDs both arrive as 10 digits here; the
+  // dialplan normalises +91/0 prefixes before matching, so storing anything
+  // longer would simply never be found by a call.
+  if (number.length !== 10) {
+    return res.status(400).json({ error: `Need a 10-digit number, got "${raw}"` });
+  }
+
+  const { data: existing } = await sb.from("dids")
+    .select("number, status, tenant_id").eq("number", number).maybeSingle();
+  if (existing) {
+    return res.status(409).json({
+      error: `${number} is already in inventory (${existing.status})`,
+      did: existing,
+    });
+  }
+
+  const cfg  = await getPlatformConfig();
+  const cost = Number(req.body?.monthly_cost_paise);
+
+  const { data, error } = await sb.from("dids").insert({
+    number,
+    display_number:     req.body?.display_number || number,
+    provider:           req.body?.provider || "jio",
+    // Defaults to what a DID is sold for, from the one pricing catalogue, so
+    // a number added today does not disagree with the pricing page.
+    monthly_cost_paise: Number.isFinite(cost) && cost >= 0
+      ? cost : parseInt(cfg["price_jio_did_paise"] || "199900"),
+    status:             "available",
+    routing_mode:       "ai",
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "did_added",
+    details: { number, provider: data.provider },
+  }).then(r => r.error && console.error("[did add] audit:", r.error.message));
+
+  res.json({ ok: true, did: data });
+});
+
 app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) => {
   const number   = String(req.params.number || "").replace(/\D/g, "").slice(-10);
   const adminId  = (req as any).user.id;
