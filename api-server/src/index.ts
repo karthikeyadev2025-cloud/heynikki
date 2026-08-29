@@ -154,7 +154,13 @@ app.use((req, res, next) => {
     // a friendly "keep replies under ~20 seconds". That guard was
     // unreachable: express refused the body at 100kb first, so a longer turn
     // died as PayloadTooLargeError → 500 "Internal server error" instead.
-    express.json({ limit: "2mb" })(req, res, next);
+    // /api/assets carries an uploaded brochure or photo as base64, and
+    // base64 inflates by about a third — so the 8MB the endpoint advertises
+    // arrives here as ~11MB and express would refuse it before the endpoint's
+    // own, much friendlier, size check ever ran. Raised for that route only;
+    // everything else keeps the 2mb ceiling.
+    const limit = req.path === "/api/assets" ? "12mb" : "2mb";
+    express.json({ limit })(req, res, next);
   }
 });
 
@@ -2393,6 +2399,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 // ═══════════════════════════════════════════════════════════
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
+import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
 
 // MUST be mounted BEFORE outbound.ts. Express matches routes in registration
@@ -2404,6 +2411,7 @@ import { mountCampaignImport } from "./campaign-import";
 mountCampaignImport(app, sb, verifyJWT, getTenantId, audit);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
+mountAssetRoutes(app, verifyJWT);
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.
