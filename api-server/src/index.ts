@@ -2840,6 +2840,31 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       return res.status(404).json({ error: "DID not found" });
     }
 
+    // ── Can this tenant afford the call? ────────────────────────
+    // Checked before the row is created, so an exhausted trial does not
+    // accumulate call records it was never going to be billed for.
+    //
+    // A paying subscription overrides the balance: credits are the trial
+    // and the prepaid top-up, not a cap on customers who pay monthly.
+    // Getting this backwards would cut off the accounts that matter most.
+    const { data: tenantRow } = await sb.from("tenants")
+      .select("credit_minutes, status, plan").eq("id", did.tenant_id).maybeSingle();
+    // An ALLOWLIST of the tiers that actually pay, not a denylist of the ones
+    // that do not. Written as a denylist first, and plan='demo' — which two
+    // tenants still carry — fell through it as "paid" and would have dialled
+    // for free forever. A new plan name should default to needing credits,
+    // never to unlimited.
+    const PAID_PLANS = ["starter", "growth", "scale"];
+    const onPaidPlan = PAID_PLANS.includes(String(tenantRow?.plan || "").toLowerCase());
+    if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
+      console.warn(`[FS Inbound] tenant ${did.tenant_id} out of credits — refusing`);
+      return res.json({
+        ok: false, reason: "no_credits",
+        routing_mode: "reject",
+        message: "This number's free minutes have run out.",
+      });
+    }
+
     const { data: callRow } = await sb.from("calls").insert({
       tenant_id:        did.tenant_id,
       voice_profile_id: did.voice_profile_id,
@@ -3225,6 +3250,35 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       if (recipErr) console.error("[FS Hangup] recipient close failed:", recipErr.message);
       else if (recip?.length) {
         console.log(`[FS Hangup] closed campaign recipient ${recip[0].id} (${answered ? "answered" : "no conversation"})`);
+      }
+
+      // ── Spend the minute ────────────────────────────────────────
+      // Billed on completion, from the same derived seconds the call row
+      // stores, so what a customer is charged and what they see in their
+      // call list can never disagree.
+      //
+      // Rounded UP to the minute: a 10-second wrong number costs a credit.
+      // That is how the tiers already describe minutes, and rounding down
+      // would let a hundred hangups cost nothing while consuming a hundred
+      // real Sarvam and Gemini calls.
+      //
+      // The unique index on credit_ledger(call_id) is what makes this safe
+      // to run twice — FreeSWITCH has delivered a duplicate hangup before,
+      // and a second insert is rejected rather than billing the minute
+      // again. A conflict here is expected, not an error.
+      if (callRow.tenant_id && secs > 0) {
+        const minutes = Math.ceil(secs / 60);
+        const { error: cErr } = await sb.from("credit_ledger").insert({
+          tenant_id: callRow.tenant_id,
+          delta:     -minutes,
+          reason:    callRow.direction === "outbound" ? "outbound_call" : "inbound_call",
+          call_id:   callRow.id,
+        });
+        if (cErr && !/duplicate key/i.test(cErr.message)) {
+          console.error("[credits] deduction failed:", cErr.message);
+        } else if (!cErr) {
+          console.log(`[credits] tenant ${callRow.tenant_id} -${minutes} min (call ${callRow.id})`);
+        }
       }
 
       // Trigger R2 upload in voice pipeline (async)
