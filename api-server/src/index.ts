@@ -607,9 +607,9 @@ async function sendViaWati(to: string, message: string): Promise<WhatsAppResult>
   return { ok: false, error: `Wati HTTP ${resp.status}` };
 }
 
-async function sendViaMeta(to: string, message: string): Promise<WhatsAppResult> {
+async function sendViaMeta(to: string, message: string, senderId?: string): Promise<WhatsAppResult> {
   const token   = process.env.META_WA_TOKEN || "";
-  const phoneId = process.env.META_WA_PHONE_NUMBER_ID || "";
+  const phoneId = senderId || process.env.META_WA_PHONE_NUMBER_ID || "";
   const version = process.env.META_WA_API_VERSION || "v21.0";
   if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
 
@@ -642,6 +642,45 @@ async function sendViaMeta(to: string, message: string): Promise<WhatsAppResult>
   return { ok: false, error: `Meta: ${detail}` };
 }
 
+// ── WHICH NUMBER DO WE SEND AS? ──────────────────────────────────────
+// One shared number does not survive a second tenant: a customer of Nila
+// Everyday Jewellery should not be messaged by "HeyNikki" from a number they
+// have never seen. Under Meta's Tech Provider model each client owns a WABA
+// and Embedded Signup grants us access, so the tenant row holds identifiers
+// only — the platform system-user token already covers every WABA shared
+// with us.
+//
+// Falls back to the platform number whenever the tenant has no ACTIVE
+// binding, which is every tenant today. That fallback is also what lets this
+// ship before 024 is applied: a missing table resolves to the platform sender
+// rather than taking messaging down.
+type WaSender = { phoneId: string; tenant: boolean };
+const _waSenderCache = new Map<string, { v: WaSender; exp: number }>();
+
+async function resolveWaSender(tenantId?: string): Promise<WaSender> {
+  const platform = { phoneId: process.env.META_WA_PHONE_NUMBER_ID || "", tenant: false };
+  if (!tenantId) return platform;
+
+  const hit = _waSenderCache.get(tenantId);
+  if (hit && hit.exp > Date.now()) return hit.v;
+
+  let out = platform;
+  try {
+    const { data, error } = await sb.from("tenant_whatsapp")
+      .select("phone_number_id, status")
+      .eq("tenant_id", tenantId).eq("status", "active").maybeSingle();
+    // A missing table (024 not yet applied) is not an error worth shouting
+    // about on every send; anything else is.
+    if (error && !/tenant_whatsapp/i.test(error.message)) {
+      console.error("[WhatsApp] sender lookup failed:", error.message);
+    }
+    if (data?.phone_number_id) out = { phoneId: data.phone_number_id, tenant: true };
+  } catch { /* fall back to platform */ }
+
+  _waSenderCache.set(tenantId, { v: out, exp: Date.now() + 60_000 });
+  return out;
+}
+
 // ── TEMPLATE SENDING (the only thing that works after a phone call) ──
 // A phone call does not open a WhatsApp customer-service window — only an
 // inbound WhatsApp message from the customer does. So every message this
@@ -660,10 +699,10 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
 };
 
 async function sendTemplateViaMeta(
-  to: string, template: string, lang: string, params: string[],
+  to: string, template: string, lang: string, params: string[], senderId?: string,
 ): Promise<WhatsAppResult> {
   const token   = process.env.META_WA_TOKEN || "";
-  const phoneId = process.env.META_WA_PHONE_NUMBER_ID || "";
+  const phoneId = senderId || process.env.META_WA_PHONE_NUMBER_ID || "";
   const version = process.env.META_WA_API_VERSION || "v21.0";
   if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
 
@@ -695,23 +734,24 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   businessName?: string) {
   const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
   const tpl = WA_TEMPLATES[messageType];
+  const sender = await resolveWaSender(tenantId);
 
   let result: WhatsAppResult;
   try {
     if (provider === "meta" && tpl) {
       // Template first — it is the only form deliverable outside the window.
-      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, [businessName || "us"]);
+      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, [businessName || "us"], sender.phoneId);
       // If the customer HAS messaged recently the window is open, and the
       // free-form version carries what the template cannot: the actual date,
       // time and service. Approved templates here take one variable, the
       // business name, so the detail only ever arrives this way. A failure is
       // ignored on purpose — the template above already landed.
       if (result.ok) {
-        sendViaMeta(to, message).catch(() => { /* window closed; expected */ });
+        sendViaMeta(to, message, sender.phoneId).catch(() => { /* window closed; expected */ });
       }
     } else {
       result = provider === "meta"
-        ? await sendViaMeta(to, message)
+        ? await sendViaMeta(to, message, sender.phoneId)
         : await sendViaWati(to, message);
     }
   } catch (err: any) {
@@ -719,7 +759,7 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   }
 
   if (!result.ok) console.error(`[WhatsApp/${provider}]`, result.error);
-  else if (tpl) console.log(`[WhatsApp] template ${tpl.name} -> ${to}`);
+  else if (tpl) console.log(`[WhatsApp] template ${tpl.name} -> ${to} (as ${sender.tenant ? "tenant" : "platform"} number)`);
 
   try {
     await sb.from("wa_dispatch_log").insert({
@@ -1944,7 +1984,110 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
     target_tenant_id: data?.tenant_id, details: { kyc_id: req.params.id, note: note || null },
   }).then(r => r.error && console.error("[kyc review] audit:", r.error.message));
 
+  // Approving KYC is what unlocks a WhatsApp number for this business. Until
+  // now approval only flipped a status and nothing followed it, so the number
+  // a client is promised depended on somebody remembering to start it.
+  //
+  // The row is opened against the tenant's ASSIGNED DID, because the promise
+  // is that the business's phone number and its WhatsApp are the same number.
+  // It lands in awaiting_signup: Embedded Signup is the client's step, not
+  // ours, and inventing an active binding here would mean sending as a number
+  // Meta has not verified.
+  if (decision === "approved" && data?.tenant_id) {
+    const { data: did } = await sb.from("dids")
+      .select("id, number").eq("tenant_id", data.tenant_id)
+      .eq("status", "assigned").limit(1).maybeSingle();
+
+    const { error: provErr } = await sb.from("tenant_whatsapp").upsert({
+      tenant_id:    data.tenant_id,
+      did_id:       did?.id || null,
+      phone_number: did?.number || null,
+      status:       "awaiting_signup",
+      updated_at:   new Date().toISOString(),
+    }, { onConflict: "tenant_id" });
+
+    if (provErr) {
+      // Not fatal to the KYC decision, which has already been recorded — but
+      // it must be visible, or the client waits for a number nobody started.
+      console.error("[kyc review] whatsapp provisioning row failed:", provErr.message);
+    } else {
+      console.log(`[kyc review] tenant ${data.tenant_id} -> awaiting_signup` +
+        (did?.number ? ` for DID ${did.number}` : " (no DID assigned yet)"));
+    }
+  }
+
   res.json({ ok: true, ...data });
+});
+
+// ── WHATSAPP PROVISIONING ─────────────────────────────────────
+// What each tenant's WhatsApp number is, and how far through onboarding it
+// got. Without this the state lives only in somebody's memory of which
+// client has finished Embedded Signup.
+app.get("/api/admin/whatsapp-numbers", verifySuperAdmin, async (_req, res) => {
+  const { data, error } = await sb.from("tenant_whatsapp")
+    .select("id, tenant_id, did_id, phone_number, waba_id, phone_number_id, " +
+            "display_name, status, review_note, verified_at, updated_at")
+    .order("updated_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+
+  const tenantIds = [...new Set((data || []).map((r: any) => r.tenant_id))];
+  const { data: tenants } = tenantIds.length
+    ? await sb.from("tenants").select("id, name").in("id", tenantIds)
+    : { data: [] as any[] };
+  const nameOf = new Map((tenants || []).map((t: any) => [t.id, t.name]));
+
+  res.json({
+    numbers: (data || []).map((r: any) => ({ ...r, tenant_name: nameOf.get(r.tenant_id) || null })),
+    platform_fallback: process.env.META_WA_PHONE_NUMBER_ID || null,
+  });
+});
+
+// Bind the identifiers Embedded Signup returns. Manual today because the
+// Tech Provider application is still pending; when the callback exists it
+// writes the same two fields, so nothing downstream changes.
+app.post("/api/admin/whatsapp-numbers/:tenantId/bind", verifySuperAdmin, async (req: any, res) => {
+  const { waba_id, phone_number_id, display_name, phone_number } = req.body || {};
+  if (!waba_id || !phone_number_id) {
+    return res.status(400).json({ error: "waba_id and phone_number_id are required" });
+  }
+  // Verified against Meta before it is stored. A typo here does not fail
+  // loudly — it sends every one of that tenant's messages as somebody else's
+  // number, or silently as nobody's.
+  const token   = process.env.META_WA_TOKEN || "";
+  const version = process.env.META_WA_API_VERSION || "v21.0";
+  let verified: any = null;
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(String(phone_number_id))}` +
+      `?fields=display_phone_number,verified_name,quality_rating`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) });
+    const body: any = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(400).json({ error: `Meta rejected phone_number_id: ${body?.error?.message || r.status}` });
+    verified = body;
+  } catch (e: any) {
+    return res.status(502).json({ error: `Could not reach Meta to verify: ${e.message}` });
+  }
+
+  const { data, error } = await sb.from("tenant_whatsapp").upsert({
+    tenant_id:       req.params.tenantId,
+    waba_id:         String(waba_id),
+    phone_number_id: String(phone_number_id),
+    phone_number:    phone_number || verified?.display_phone_number || null,
+    display_name:    display_name || verified?.verified_name || null,
+    status:          "active",
+    verified_at:     new Date().toISOString(),
+    updated_at:      new Date().toISOString(),
+  }, { onConflict: "tenant_id" }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  _waSenderCache.delete(req.params.tenantId);
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "whatsapp_bind",
+    target_tenant_id: req.params.tenantId,
+    details: { phone_number_id, waba_id, verified_name: verified?.verified_name },
+  }).then(r => r.error && console.error("[wa bind] audit:", r.error.message));
+
+  res.json({ ok: true, number: data, meta: verified });
 });
 
 // ── DID INVENTORY + ASSIGNMENT ────────────────────────────────

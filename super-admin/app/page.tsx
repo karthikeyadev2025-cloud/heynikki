@@ -11,8 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge,
-} from "lucide-react";
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -95,6 +94,7 @@ const TABS = [
   { label: "Operations",      icon: Activity },
   { label: "KYC Review",      icon: ShieldCheck },
   { label: "Numbers",         icon: Phone },
+  { label: "WhatsApp",        icon: MessageCircle },
   { label: "Call Quality",    icon: Gauge },
   { label: "Campaigns",       icon: Megaphone },
   { label: "Agent Versions",  icon: Bot },
@@ -138,6 +138,7 @@ export default function SuperAdminPage() {
     <OperationsPanel   key="ops"  token={token} />,
     <KycPanel          key="kyc"  token={token} />,
     <DidPanel          key="did"  token={token} />,
+    <WhatsAppNumbersPanel key="wa" token={token} />,
     <QualityPanel      key="qua"  token={token} />,
     <CampaignsPanel    key="cmp"  token={token} />,
     <AgentVersionsPanel key="ver" token={token} />,
@@ -1614,6 +1615,150 @@ function CampaignsPanel({ token }: { token: string }) {
 }
 
 /** Agent edits across tenants — what the profile looked like before each change. */
+// ── WHATSAPP NUMBERS ─────────────────────────────────────────
+// Every tenant currently sends from the platform's own number, which is
+// fine for one client and wrong for ten: a customer of another business
+// gets messaged by "HeyNikki" from a number they have never seen. This is
+// where that stops being invisible.
+function WhatsAppNumbersPanel({ token }: { token: string }) {
+  const [rows, setRows]         = useState<any[]>([]);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [err, setErr]           = useState("");
+  const [binding, setBinding]   = useState<string | null>(null);
+  const [form, setForm]         = useState({ waba_id: "", phone_number_id: "", display_name: "" });
+  const [busy, setBusy]         = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetch(`${API}/api/admin/whatsapp-numbers`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => { setRows(d.numbers || []); setFallback(d.platform_fallback || null); setErr(d.error || ""); })
+      .catch(e => setErr(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, [token]);
+
+  const bind = async (tenantId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/admin/whatsapp-numbers/${tenantId}/bind`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || "Bind failed"); return; }
+      setBinding(null); setForm({ waba_id: "", phone_number_id: "", display_name: "" }); load();
+    } finally { setBusy(false); }
+  };
+
+  const tone = (st: string) =>
+    st === "active" ? C.grn : st === "failed" ? C.red
+      : st === "pending_kyc" ? C.dim : C.gold;
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
+
+  return (
+    <div>
+      {err && <div style={{ color: C.red, fontSize: TYPE.sm, marginBottom: SPACE.sm }}>{err}</div>}
+
+      <Card>
+        <div style={{ color: C.mid, fontSize: TYPE.sm, lineHeight: 1.55 }}>
+          Anything not <strong style={{ color: C.grn }}>active</strong> sends from the platform
+          number{fallback ? <> (<span style={{ color: C.txt }}>{fallback}</span>)</> : null} — so the
+          customer sees HeyNikki, not the business they called.
+        </div>
+      </Card>
+
+      <div style={{ height: SPACE.sm }} />
+
+      {rows.length === 0 ? (
+        <Card>
+          <div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center" as const, padding: SPACE.md }}>
+            No tenant has started WhatsApp provisioning. A row opens automatically when KYC is approved.
+          </div>
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gap: SPACE.sm }}>
+          {rows.map(r => (
+            <Card key={r.id}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE.sm, flexWrap: "wrap" as const }}>
+                <div>
+                  <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>
+                    {r.tenant_name || r.tenant_id}
+                  </div>
+                  <div style={{ color: C.mid, fontSize: TYPE.sm, marginTop: 4 }}>
+                    {r.phone_number || "no number yet"}{r.display_name ? ` · ${r.display_name}` : ""}
+                  </div>
+                  {r.phone_number_id && (
+                    <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 4 }}>
+                      phone_number_id {r.phone_number_id}
+                    </div>
+                  )}
+                  {r.review_note && (
+                    <div style={{ color: C.red, fontSize: TYPE.xs, marginTop: 4 }}>{r.review_note}</div>
+                  )}
+                </div>
+                <div style={{ textAlign: "right" as const }}>
+                  <span style={{
+                    display: "inline-block", padding: "3px 10px", borderRadius: 999,
+                    fontSize: TYPE.xs, fontWeight: 800,
+                    background: tone(r.status) + "22", color: tone(r.status),
+                  }}>{String(r.status).replace(/_/g, " ")}</span>
+                  {r.status !== "active" && (
+                    <div>
+                      <button onClick={() => setBinding(binding === r.tenant_id ? null : r.tenant_id)}
+                        style={{
+                          marginTop: 8, padding: "6px 12px", borderRadius: 7, cursor: "pointer",
+                          background: "transparent", color: C.txt,
+                          border: `1px solid ${C.bord}`, fontSize: TYPE.sm,
+                        }}>
+                        {binding === r.tenant_id ? "Cancel" : "Bind number"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {binding === r.tenant_id && (
+                <div style={{ marginTop: SPACE.sm, paddingTop: SPACE.sm, borderTop: `1px solid ${C.bord}` }}>
+                  <div style={{ color: C.dim, fontSize: TYPE.xs, marginBottom: 8 }}>
+                    From Embedded Signup. Both are checked against Meta before saving — a typo here
+                    would send this tenant&apos;s messages as somebody else&apos;s number.
+                  </div>
+                  <div style={{ display: "grid", gap: 8,
+                                gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+                    {([["waba_id", "WABA ID"], ["phone_number_id", "Phone number ID"],
+                       ["display_name", "Display name (optional)"]] as const).map(([k, label]) => (
+                      <input key={k} placeholder={label} value={(form as any)[k]}
+                        onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
+                        style={{
+                          padding: "8px 10px", borderRadius: 7, fontSize: TYPE.sm,
+                          background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+                        }} />
+                    ))}
+                  </div>
+                  <button disabled={busy || !form.waba_id || !form.phone_number_id}
+                    onClick={() => bind(r.tenant_id)}
+                    style={{
+                      marginTop: 10, padding: "8px 16px", borderRadius: 7,
+                      background: busy ? C.dim : C.grn, color: "#04120a", border: "none",
+                      fontSize: TYPE.sm, fontWeight: 800,
+                      cursor: busy || !form.waba_id || !form.phone_number_id ? "not-allowed" : "pointer",
+                    }}>
+                    {busy ? "Verifying with Meta…" : "Verify and activate"}
+                  </button>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentVersionsPanel({ token }: { token: string }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
