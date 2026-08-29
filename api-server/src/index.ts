@@ -1474,13 +1474,33 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
   const today = new Date().toISOString().split("T")[0];
   const month = new Date().toISOString().slice(0, 7);
 
-  const [todayCalls, monthMinutes] = await Promise.all([
+  // Usage is DERIVED from the calls themselves, not read from
+  // call_minutes.used_seconds. Nothing in this codebase ever incremented that
+  // column — 2,703 seconds of completed calls existed while it still read 0 —
+  // so the dashboard told every customer they had used no minutes, and any
+  // overage billed off it would have been zero forever.
+  //
+  // A counter that must be maintained in three services drifts; a sum over the
+  // rows that already exist cannot. The plan's limit still comes from the
+  // subscription, falling back to the tenant's tier.
+  const monthStart = month + "-01T00:00:00";
+  const [todayCalls, monthCalls, planRow, tenantRow] = await Promise.all([
     sb.from("calls").select("id,status,wa_sent,appointment_created,intent,duration_seconds")
       .eq("tenant_id", tenantId)
       .gte("created_at", today + "T00:00:00"),
-    sb.from("call_minutes").select("used_seconds,plan_limit_seconds")
-      .eq("tenant_id", tenantId).eq("month", month).single(),
+    sb.from("calls").select("duration_seconds")
+      .eq("tenant_id", tenantId).gte("created_at", monthStart),
+    sb.from("call_minutes").select("plan_limit_seconds")
+      .eq("tenant_id", tenantId).eq("month", month).maybeSingle(),
+    sb.from("tenants").select("plan, credit_minutes").eq("id", tenantId).maybeSingle(),
   ]);
+
+  const usedSeconds = (monthCalls.data || [])
+    .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
+  const PLAN_MINUTES: Record<string, number> = { starter: 200, growth: 600, scale: 1500 };
+  const limitMinutes = planRow.data?.plan_limit_seconds
+    ? Math.round(planRow.data.plan_limit_seconds / 60)
+    : (PLAN_MINUTES[String(tenantRow.data?.plan || "").toLowerCase()] ?? 0);
 
   const calls = todayCalls.data || [];
   res.json({
@@ -1494,9 +1514,14 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
         : 0,
     },
     minutes: {
-      used:  Math.round((monthMinutes.data?.used_seconds || 0) / 60),
-      limit: Math.round((monthMinutes.data?.plan_limit_seconds || 12000) / 60),
+      // Rounded UP, the same way a minute is billed. Reporting 0 used after a
+      // 40-second call is how a customer discovers the meter is lying.
+      used:  Math.ceil(usedSeconds / 60),
+      limit: limitMinutes,
     },
+    // Trial balance, so the dashboard can show what is actually left rather
+    // than a plan allowance a trial tenant does not have.
+    credits: Math.max(0, Math.round(Number(tenantRow.data?.credit_minutes ?? 0))),
   });
 });
 
