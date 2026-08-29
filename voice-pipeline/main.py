@@ -52,7 +52,7 @@ try:
 except ImportError:
     _HAS_CRYPTO = False
 
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -3824,12 +3824,31 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
             region_name="auto",
         )
 
-        object_key = f"{tenant_id}/{call_id}.wav"
+        # ── ENCRYPT AT REST ─────────────────────────────────────────
+        # heynikki.in tells customers "Call audio is encrypted with
+        # AES-256-GCM before it is stored", and the FAQ repeats it. The code
+        # that did this existed but returned None on every call because its
+        # key was never set, so the promise was untrue and every recording
+        # sat in R2 as a plain WAV. Encrypt here, on the path that actually
+        # runs. The object layout is [12-byte nonce][ciphertext+tag], and the
+        # call id is bound in as associated data so a blob cannot be replayed
+        # under a different call's identity.
+        body, key_suffix, ctype = local_wav_bytes, "", "audio/wav"
+        blob = _encrypt_recording(local_wav_bytes, tenant_id, call_id)
+        if blob is not None:
+            body, key_suffix, ctype = blob, ".enc", "application/octet-stream"
+        else:
+            # Never silently downgrade a security promise: if the key is
+            # missing the recording is dropped rather than stored in clear.
+            log.error("[FS] recording NOT stored — encryption unavailable")
+            return ""
+
+        object_key = f"{tenant_id}/{call_id}.wav{key_suffix}"
         s3.put_object(
             Bucket=r2_bucket,
             Key=object_key,
-            Body=local_wav_bytes,
-            ContentType="audio/wav",
+            Body=body,
+            ContentType=ctype,
         )
         log.info(f"[FS] Recording uploaded to R2: {object_key} ({len(local_wav_bytes):,}B)")
         # Returns the OBJECT KEY, not a URL. Callers store it in
@@ -3842,6 +3861,99 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
     except Exception as e:
         log.error(f"[FS] R2 upload failed: {e}")
         return ""
+
+
+def _recording_key(tenant_id: str) -> bytes | None:
+    """32-byte AES key for a tenant, per-tenant override then platform key."""
+    b64 = (os.getenv(f"HEYNIKKI_RECORDING_KEY_{tenant_id}")
+           or os.getenv("HEYNIKKI_RECORDING_KEY"))
+    if not b64:
+        return None
+    try:
+        k = base64.b64decode(b64)
+        return k if len(k) == 32 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _encrypt_recording(wav: bytes, tenant_id: str, call_id: str) -> bytes | None:
+    if not _HAS_CRYPTO:
+        return None
+    key = _recording_key(tenant_id)
+    if not key:
+        return None
+    nonce = secrets.token_bytes(12)
+    ct = AESGCM(key).encrypt(nonce, wav, associated_data=str(call_id).encode())
+    return nonce + ct
+
+
+def _decrypt_recording(blob: bytes, tenant_id: str, call_id: str) -> bytes | None:
+    # Objects written before encryption was switched on are plain RIFF WAVs.
+    # Recognise and pass them through rather than failing a customer's
+    # playback on history they had no part in.
+    if blob[:4] == b"RIFF":
+        return blob
+    key = _recording_key(tenant_id)
+    if not key or not _HAS_CRYPTO or len(blob) < 13:
+        return None
+    try:
+        return AESGCM(key).decrypt(blob[:12], blob[12:], associated_data=str(call_id).encode())
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[recording] decrypt failed for {call_id}: {e}")
+        return None
+
+
+@app.get("/api/v1/recording/fetch")
+async def fetch_recording(
+    key: str,
+    tenant_id: str,
+    call_id: str,
+    x_internal_secret: str = Header(None, alias="X-Internal-Secret"),
+):
+    """Return a decrypted WAV for the api-server to stream to its owner.
+
+    Encrypted recordings cannot be served by a presigned URL — the browser
+    would download ciphertext. Decryption needs the key, which lives here
+    with the R2 credentials, so playback is a proxy rather than a redirect.
+    The api-server is what checks that the caller owns the call; this
+    endpoint only proves it is the api-server asking.
+    """
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    if ".." in key or key.startswith("/"):
+        raise HTTPException(status_code=400, detail="bad key")
+    # The key is namespaced by tenant; refuse any that is not this tenant's.
+    if not key.startswith(f"{tenant_id}/"):
+        raise HTTPException(status_code=403, detail="key does not belong to tenant")
+
+    def _get() -> bytes:
+        import boto3
+        from botocore.config import Config as _BotoCfg
+        s3 = boto3.client(
+            "s3",
+            # CF_ACCOUNT_ID — the name _upload_to_r2 uses. A different guess
+            # here would KeyError on the first play, after the upload had
+            # worked perfectly.
+            endpoint_url=f"https://{os.environ['CF_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+            config=_BotoCfg(signature_version="s3v4"), region_name="auto",
+        )
+        return s3.get_object(
+            Bucket=os.environ.get("R2_BUCKET", "heynikki-recordings"), Key=key
+        )["Body"].read()
+
+    try:
+        blob = await asyncio.to_thread(_get)
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[recording] fetch {key}: {e}")
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    wav = _decrypt_recording(blob, tenant_id, call_id)
+    if wav is None:
+        raise HTTPException(status_code=500, detail="could not decrypt recording")
+    return Response(content=wav, media_type="audio/wav",
+                    headers={"Cache-Control": "private, max-age=300"})
 
 
 async def _read_platform_config() -> dict:

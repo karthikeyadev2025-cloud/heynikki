@@ -24,6 +24,8 @@ export type CallRecord = {
   transcript: Array<{ role: string; content: string; ts: string }>;
   intent: string;
   recording_url: string | null;
+  // Where recordings actually live — recording_url has never been written.
+  r2_object_key?: string | null;
   wa_sent: boolean;
   appointment_created: boolean;
   created_at: string;

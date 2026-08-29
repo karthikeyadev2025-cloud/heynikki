@@ -1612,6 +1612,54 @@ app.patch("/api/voice-profiles/:id", verifyJWT, async (req, res) => {
 // genuinely the caller experience. Every precondition is stated plainly
 // rather than faked: no assigned number, no owner phone, or no credits each
 // come back as an honest sentence.
+// Play a recording. Owner AND staff — anyone in tenant_users for the
+// business — since a two-person clinic where the receptionist cannot hear
+// the call she missed is a worse product than the tighter rule is a safer
+// one. Ownership is checked here, on the call row itself, so a guessed id
+// from another tenant gets 404 rather than audio.
+//
+// This proxies rather than redirecting to a presigned URL because the
+// object is AES-256-GCM ciphertext: a browser handed a signed link would
+// download an unplayable blob. The key lives in the pipeline with the R2
+// credentials, so the pipeline decrypts and we stream the result.
+app.get("/api/calls/:id/recording", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const { data: call } = await sb.from("calls")
+    .select("id, tenant_id, r2_object_key, recording_url")
+    .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!call) return res.status(404).json({ error: "Call not found" });
+  if (!call.r2_object_key) {
+    return res.status(404).json({ error: "No recording was kept for this call" });
+  }
+
+  try {
+    const url = new URL(`${PIPELINE_URL}/api/v1/recording/fetch`);
+    url.searchParams.set("key", call.r2_object_key);
+    url.searchParams.set("tenant_id", tenantId);
+    url.searchParams.set("call_id", call.id);
+    const r = await fetch(url, {
+      headers: { "X-Internal-Secret": process.env.INTERNAL_SECRET || "" },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) {
+      // A purged recording is the expected 404 here: retention is by plan,
+      // and a trial keeps audio for seven days.
+      return res.status(r.status === 404 ? 404 : 502)
+        .json({ error: r.status === 404
+          ? "This recording has passed your plan's retention window"
+          : "Could not load the recording" });
+    }
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (e: any) {
+    console.error("[recording]", e.message);
+    res.status(502).json({ error: "Could not load the recording" });
+  }
+});
+
 app.post("/api/test-call", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });

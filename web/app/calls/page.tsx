@@ -96,14 +96,16 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
             </div>
           </div>
 
-          {/* Recording */}
-          {call.recording_url && (
+          {/* Recording. The old condition was `call.recording_url`, a column
+              nothing has ever written — every recording lives in
+              r2_object_key — so no customer could play a single call. */}
+          {(call.r2_object_key || call.recording_url) && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ color: C.mid, fontSize: 11, fontWeight: 800,
                 textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
                 Recording
               </div>
-              <audio controls src={call.recording_url} style={{ width: "100%" }} />
+              <RecordingPlayer callId={call.id} publicUrl={call.recording_url} />
             </div>
           )}
 
@@ -193,6 +195,51 @@ function exportCsv(rows: CallRecord[]) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+
+function RecordingPlayer({ callId, publicUrl }: { callId: string; publicUrl?: string | null }) {
+  const [src, setSrc] = useState<string | null>(publicUrl || null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState("");
+
+  // Blob URLs are revoked on unmount; leaving them attached leaks the audio
+  // of every call the user opened for as long as the tab lives.
+  useEffect(() => () => { if (src && src.startsWith("blob:")) URL.revokeObjectURL(src); }, [src]);
+
+  if (src) return <audio controls src={src} style={{ width: "100%" }} />;
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true); setErr("");
+          try {
+            const sb = createClient();
+            const { data: { session } } = await sb.auth.getSession();
+            const r = await fetch(
+              `${process.env.NEXT_PUBLIC_API_URL}/api/calls/${callId}/recording`,
+              { headers: { Authorization: `Bearer ${session?.access_token}` } });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              setErr(j.error || "Could not load the recording");
+            } else {
+              setSrc(URL.createObjectURL(await r.blob()));
+            }
+          } catch {
+            setErr("Could not load the recording");
+          } finally { setBusy(false); }
+        }}
+        style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.bord}`,
+          background: "transparent", color: C.txt, fontSize: 13, fontWeight: 700,
+          cursor: busy ? "wait" : "pointer" }}>
+        {busy ? "Loading…" : "▶  Play recording"}
+      </button>
+      {err && <div style={{ color: C.dim, fontSize: 12, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
 }
 
 export default function CallsPage() {
