@@ -3452,6 +3452,50 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
 
 
+# ── UTTERANCE COMPLETENESS ──────────────────────────────────────────
+# The first real calls made the failure exact: a caller pausing mid-thought
+# trips the 400ms window, and she answers every fragment. He said "1" — she
+# replied. "2" — "మీరు రెండు అన్నారు". He was LISTING things, and she
+# interrupted after each item until he said, verbatim, "ఈ మధ్యలో మాట్లాడి
+# సంపేస్తాంది" — she keeps talking in the middle.
+#
+# With streaming STT the transcript is already in hand when the window
+# closes, so completeness is judgeable BEFORE committing to a reply. This is
+# intentionally crude — a held fragment is flushed on a short timeout either
+# way, so the worst case of a wrong "incomplete" is ~1.6s of extra
+# listening, while the cost of a wrong "complete" is her interrupting again.
+_CONTINUE_TAIL = re.compile(
+    # ంటే as a SUFFIX, not the word అంటే: in ఏంటంటే / చెప్పేదంటే the "a" is
+    # inherent in the consonant, so the literal అంటే never appears — the
+    # first live test proved it by answering a caller mid-"which is...".
+    r"(మధ్యలో|ఇంకా|మరి|కానీ|అలాగే|కూడా|మరియు|and|but|also|so|then|plus|ంటే)[\s.]*$"
+    # Bare numbers in either script: he is counting or dictating. The first
+    # test caught 'మూడు నాలుగు' sailing through an ASCII-only digit rule.
+    r"|^(?:[-0-9\s.,]|ఒకటి|రెండు|మూడు|నాలుగు|ఐదు|ఆరు|ఏడు|ఎనిమిది|తొమ్మిది|పది|సున్నా|డబల్)+$"
+)
+# A word that ENDS like a finite Telugu verb usually ends the thought:
+# వస్తాను, చెప్పండి, ఉన్నారు, అవుతుంది. "రేపు వస్తాను" is a complete answer
+# and holding it just adds 1.6s to an honest reply.
+_FINITE_END = re.compile(r"(ను|ండి|రు|ది|ంది|ారు|ాను|ేను|దా|ామా|అవును|లేదు)[\s.]*$")
+
+def _utterance_incomplete(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False                      # nothing streamed: let batch decide
+    if re.search(r"[?]|ఆగండి|human|stop|wait", t, re.I):
+        return False                      # questions and commands act now
+    if _CONTINUE_TAIL.search(t):
+        return True
+    words = t.replace(".", " ").split()
+    if len(words) == 1:
+        # Pronouns end like verbs (నేను ends in ను) but are pure fragments —
+        # nobody's whole reply is "I".
+        if words[0] in ("నేను", "మేము", "నువ్వు", "మీరు", "తాను", "వాడు", "అది", "ఇది"):
+            return True
+        return not _FINITE_END.search(t)  # "వస్తాను" alone is still an answer
+    return False
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict,
                     transcript: str | None = None) -> None:
@@ -4001,6 +4045,9 @@ async def freeswitch_ws(
     pending_text = ""             # B7: merged mid-reply interjections
     pending_pcm  = bytearray()
     pending_runner: dict = {"t": None}
+    held_text = ""                # completeness gate: fragments awaiting the rest
+    held_pcm  = bytearray()
+    held_at   = 0.0
     vad_threshold  = float(_SILENCE_THRESHOLD)
     noise_win: "deque" = deque(maxlen=250)   # ~5s of frame RMS while she is silent
     # Per-call streaming STT. Transcribes WHILE the caller talks, so the
@@ -4094,6 +4141,21 @@ async def freeswitch_ws(
 
                 # Accumulate full recording
                 recording_pcm.extend(frame)
+
+                # ── Held-fragment flush ─────────────────────────────────
+                # If nothing followed the fragment for ~1.6s, it was the whole
+                # thought after all — answer it. Without this, a caller whose
+                # entire reply was "1" would wait forever.
+                if held_text and speech_count == 0 \
+                        and time.monotonic() - held_at > 1.6 \
+                        and (turn_task is None or turn_task.done()):
+                    turn_seq += 1
+                    q_text, q_pcm = held_text, bytes(held_pcm)
+                    held_text, held_pcm = "", bytearray()
+                    log.info(f"[hold] flushed after wait: {q_text[:60]!r}")
+                    turn_task = asyncio.create_task(
+                        _run_turn(agent, ws, fs_uuid, q_pcm,
+                                  turn_seq, speaking, transcript=q_text))
 
                 # VAD: compute RMS energy of this frame.
                 #
@@ -4272,6 +4334,24 @@ async def freeswitch_ws(
                             _stream_text = ""
                     if _stream_text:
                         log.info(f"[sttws] streamed: {_stream_text[:80]}")
+
+                    # ── Completeness gate ───────────────────────────────
+                    # A fragment is held, not answered. The next endpoint
+                    # merges into it; the timeout below flushes it if the
+                    # caller really was done.
+                    if held_text:
+                        _stream_text = (held_text + " " + (_stream_text or "")).strip()
+                        utterance_pcm = bytes(held_pcm) + utterance_pcm
+                        held_text, held_pcm = "", bytearray()
+                    if (_stream_text and _utterance_incomplete(_stream_text)
+                            and (turn_task is None or turn_task.done())):
+                        held_text = _stream_text
+                        held_pcm  = bytearray(utterance_pcm)
+                        held_at   = time.monotonic()
+                        log.info(f"[hold] fragment kept, waiting for the rest: {held_text[:60]!r}")
+                        turn_seq -= 0   # no turn consumed
+                        continue
+
                     turn_task = asyncio.create_task(
                         _run_turn(agent, ws, fs_uuid, utterance_pcm,
                                   turn_seq, speaking,
