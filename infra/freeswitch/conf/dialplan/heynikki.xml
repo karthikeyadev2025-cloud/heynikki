@@ -286,6 +286,33 @@
       </condition>
     </extension>
 
+    <!-- ── ONBOARDING INTERVIEW ───────────────────────────────
+      Nikki rings a business that has just signed up and asks them about
+      their business. Same machinery as a campaign call — answer, stream
+      to the pipeline, park — with one difference that matters: the DID
+      position carries ${onboard_did} and the tenant rides along as a
+      query parameter, so the pipeline knows to run the interview prompt
+      instead of answering as that business's receptionist.
+
+      Deliberately NOT reusing camp_, even though the plumbing is
+      identical. A campaign call is subject to consent, DND and calling
+      windows; this is a call to our own customer about their own account,
+      and conflating the two would eventually mean one of them silently
+      inheriting the other's rules.
+      ============================================================ -->
+    <extension name="onboard_interview" continue="false">
+      <condition field="destination_number" expression="^onb_(?:\+?91|0)?(\d{10})$">
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
+        <action application="answer"/>
+        <action application="set" data="process_cdr=true"/>
+        <action application="set" data="session_in_hangup_hook=true"/>
+        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${onboard_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
+        <action application="set" data="stream_result=${uuid_audio_stream(${uuid} start ws://127.0.0.1:8000/ws/freeswitch/${onboard_did}/$1/${uuid}?direction=outbound&amp;onboarding=${onboard_tenant} mono 8000)}"/>
+        <action application="park"/>
+      </condition>
+    </extension>
+
     <!-- ── INTERNAL / INVALID → REJECT ───────────────────────── -->
     <extension name="catch_all">
       <condition field="destination_number" expression="^(.*)$">

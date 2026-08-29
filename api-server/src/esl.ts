@@ -243,6 +243,53 @@ export class FreeSwitchESL {
   }
 
   /**
+   * Ring a business that has just signed up, so Nikki can ask them about
+   * their business and fill their setup from the answers.
+   *
+   * Same originate as a campaign call, a different extension on purpose:
+   * camp_ carries consent, DND and calling-window rules that belong to
+   * marketing. This is a call to our own customer about their own account,
+   * and the two should not be able to inherit each other's rules by accident.
+   *
+   * onboard_tenant rides through as a channel variable so the dialplan can
+   * put it on the websocket URL — that is how the pipeline knows to run the
+   * interview instead of answering as that business's receptionist.
+   */
+  async originateOnboarding(
+    ownerPhone:   string,
+    callerId:     string,
+    tenantId:     string,
+    timeoutSec = 40,
+  ): Promise<string> {
+    const clean = (n: string) => n.replace(/[^0-9+]/g, "");
+    const digits = clean(ownerPhone).replace(/\D/g, "").slice(-10);
+    const cli    = clean(callerId);
+    if (digits.length !== 10) throw new Error(`Bad owner number: ${ownerPhone}`);
+    if (!cli)      throw new Error("Onboarding needs a caller ID we own");
+    if (!tenantId) throw new Error("Onboarding needs a tenant");
+
+    const vars = [
+      `origination_caller_id_number=${cli}`,
+      `origination_caller_id_name=HeyNikki`,
+      `ignore_early_media=true`,
+      `originate_timeout=${timeoutSec}`,
+      `outbound_cli=${cli}`,
+      `onboard_did=${cli}`,
+      `onboard_tenant=${tenantId}`,
+    ].join(",");
+
+    const response = await eslCommand(
+      `api originate {${vars}}sofia/gateway/jio_primary/${digits} ` +
+      `onb_${digits} XML heynikki`,
+      (timeoutSec + 10) * 1000,
+    );
+    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
+    if (match) return match[1];
+    const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
+    throw new Error(`onboarding originate failed: ${reason}`);
+  }
+
+  /**
    * Transfer a live channel into the human ring-group extension.
    *
    * This is what actually makes the dids.routing_mode column mean

@@ -2046,6 +2046,46 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
   res.json({ ok: true, ...data });
 });
 
+// ── ONBOARDING INTERVIEW ──────────────────────────────────────
+// Ring a new customer so Nikki can ask what their business does and fill
+// their setup from the answers. The most reliable way to finish onboarding
+// is to stop asking someone to type.
+app.post("/api/admin/onboarding-call/:tenantId", verifySuperAdmin, async (req: any, res) => {
+  const tenantId = req.params.tenantId;
+
+  const { data: owner } = await sb.from("tenant_users")
+    .select("phone, display_name").eq("tenant_id", tenantId).eq("role", "owner")
+    .not("phone", "is", null).limit(1).maybeSingle();
+  if (!owner?.phone) {
+    return res.status(400).json({
+      error: "No owner phone on file. It is collected at signup; this tenant predates that.",
+    });
+  }
+
+  // Dialled FROM a number we own. Any assigned DID works — the pipeline uses
+  // it only to resolve the tenant's profile, and presenting a number the
+  // customer already knows is better than an unfamiliar one.
+  const { data: did } = await sb.from("dids")
+    .select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle();
+  const { data: anyDid } = did ? { data: did } : await sb.from("dids")
+    .select("number").eq("status", "available").limit(1).maybeSingle();
+  const cli = (did || anyDid)?.number;
+  if (!cli) return res.status(400).json({ error: "No number available to call from" });
+
+  try {
+    const uuid = await fsl.originateOnboarding(owner.phone, cli, tenantId);
+    await sb.from("admin_audit_log").insert({
+      admin_user_id: req.user.id, action: "onboarding_call",
+      target_tenant_id: tenantId, details: { to: owner.phone, from: cli, fs_uuid: uuid },
+    }).then(r => r.error && console.error("[onboarding call] audit:", r.error.message));
+    res.json({ ok: true, calling: owner.phone, from: cli, fs_uuid: uuid });
+  } catch (e: any) {
+    // NO_ANSWER and USER_BUSY are ordinary outcomes for a call to a person,
+    // not faults — say so plainly rather than returning a 500.
+    res.status(200).json({ ok: false, reason: e.message });
+  }
+});
+
 // ── WHATSAPP PROVISIONING ─────────────────────────────────────
 // What each tenant's WhatsApp number is, and how far through onboarding it
 // got. Without this the state lives only in somebody's memory of which

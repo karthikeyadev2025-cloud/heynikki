@@ -562,7 +562,8 @@ function TenantsPanel({ token }: { token: string }) {
                     {t.trial_ends_at ? new Date(t.trial_ends_at).toLocaleDateString("en-IN") : "—"}
                   </td>
                   <td style={{ padding: "10px" }}>
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, alignItems: "center" }}>
+                      <OnboardingCallButton token={token} tenantId={t.id} />
                       {t.status !== "suspended" ? (
                         <button onClick={() => doAction(t.id, "suspend", { reason: "Admin action" })}
                           disabled={acting === t.id + "suspend"}
@@ -1742,6 +1743,43 @@ function CampaignsPanel({ token }: { token: string }) {
 // fine for one client and wrong for ten: a customer of another business
 // gets messaged by "HeyNikki" from a number they have never seen. This is
 // where that stops being invisible.
+// Ring a customer so Nikki can interview them. Lives beside the tenant it
+// acts on rather than in a screen of its own — the decision to make this call
+// is made while looking at a tenant who has not finished setup.
+function OnboardingCallButton({ token, tenantId }: { token: string; tenantId: string }) {
+  const [state, setState] = useState<"idle" | "calling" | "done" | "failed">("idle");
+  const [msg, setMsg]     = useState("");
+
+  const call = async () => {
+    setState("calling"); setMsg("");
+    try {
+      const r = await fetch(`${API}/api/admin/onboarding-call/${tenantId}`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await r.json();
+      if (j.ok) { setState("done"); setMsg(`Ringing ${j.calling}`); }
+      else { setState("failed"); setMsg(j.reason || j.error || "Could not place the call"); }
+    } catch (e: any) { setState("failed"); setMsg(e.message); }
+  };
+
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+      <button onClick={call} disabled={state === "calling"}
+        style={{
+          padding: "5px 11px", borderRadius: 7, fontSize: TYPE.xs, fontWeight: 700,
+          background: "transparent", color: state === "failed" ? C.red : C.txt,
+          border: `1px solid ${state === "failed" ? C.red : C.bord}`,
+          cursor: state === "calling" ? "wait" : "pointer",
+        }}>
+        {state === "calling" ? "Dialling…" : "Interview by phone"}
+      </button>
+      {msg && (
+        <span style={{ fontSize: TYPE.xs, color: state === "done" ? C.grn : C.red }}>{msg}</span>
+      )}
+    </div>
+  );
+}
+
 function WhatsAppNumbersPanel({ token }: { token: string }) {
   const [rows, setRows]         = useState<any[]>([]);
   const [fallback, setFallback] = useState<string | null>(null);

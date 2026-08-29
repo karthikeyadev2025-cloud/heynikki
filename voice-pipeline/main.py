@@ -1531,6 +1531,55 @@ _DEMO_PROFILE: dict = {
     "missed_call_guard_enabled": False,
 }
 
+# ── ONBOARDING INTERVIEW ────────────────────────────────────────────
+# Read aloud, so it is written to be spoken: short questions, one at a time,
+# and no lists. A form asks eleven things at once; a phone call cannot, and
+# pretending otherwise is how these calls end with the owner confused about
+# which question they are answering.
+#
+# She asks only what /setup actually stores. Anything else is a question the
+# customer answers for nothing.
+ONBOARDING_PROMPT = """You are Nikki from HeyNikki, calling {business} — a business
+that has just signed up. You are NOT answering their phone. You are asking THEM
+about their business so their AI receptionist can be set up for them.
+
+Speak Telugu by default, switching to whatever language they use.
+
+Ask these, ONE AT A TIME, and wait for each answer:
+1. What does the business do, in their own words?
+2. Which services do customers ask for most? (get 3 to 5)
+3. What time do they open and close?
+4. Which days are they open? Any weekly off?
+5. Do customers book appointments? What kinds?
+6. What should Nikki say if she cannot answer something?
+
+Rules:
+- One question per turn. Never read a list.
+- If an answer is vague, ask once more plainly, then move on. Do not interrogate.
+- Do not invent anything. If they skip a question, leave it unanswered.
+- Keep every reply under 25 words.
+- When you have what you need, thank them, tell them their setup is ready to
+  review in the dashboard, and stop.
+
+This call costs them nothing and does not use their free minutes."""
+
+
+ONBOARDING_EXTRACT = """From this onboarding call transcript, extract what the OWNER
+stated about their business. Never infer, never fill gaps.
+
+Return strict JSON:
+{{"business_name": string|null, "services": string[], "appointment_types": string[],
+  "open_time": "HH:MM"|null, "close_time": "HH:MM"|null, "open_days": string[],
+  "fallback_message": string|null, "facts": string[]}}
+
+open_days uses Mon Tue Wed Thu Fri Sat Sun.
+If the owner did not answer something, leave it null or empty — a wrong opening
+time reaches real callers.
+
+TRANSCRIPT:
+{transcript}"""
+
+
 _EMOJI_RE = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\u2190-\u21FF\u2B00-\u2BFF]",
     flags=re.UNICODE,
@@ -2909,6 +2958,60 @@ def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
     return buf.getvalue()
 
 
+async def _save_onboarding_draft(tenant_id: str, agent, db) -> None:
+    """Read back what the owner said and propose it as setup fields."""
+    transcript = "\n".join(
+        f"{'Owner' if t.get('role') == 'user' else 'Nikki'}: {t.get('content', '')}"
+        for t in agent.history
+    )[:12000]
+
+    raw = await gemini_generate(
+        "Return only JSON. Extract nothing that was not said.",
+        [{"role": "user", "content": ONBOARDING_EXTRACT.format(transcript=transcript)}],
+    )
+    # gemini_generate returns prose; the model is asked for JSON but a stray
+    # code fence would make json.loads fail and lose the whole interview.
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1].lstrip("json").strip()
+    data = json.loads(text)
+
+    # Same whitelist the brochure path uses. A phone call must not be able to
+    # propose a field a document cannot.
+    allowed = ["business_name", "services", "appointment_types",
+               "open_time", "close_time", "open_days", "fallback_message"]
+    proposed = {k: data[k] for k in allowed
+                if data.get(k) not in (None, "", [], {})}
+
+    async def _post(table: str, payload) -> None:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(f"{db.url}/rest/v1/{table}",
+                                  headers=db.headers, json=payload)
+            # Checked, not fired and forgotten. The brochure path lost seven
+            # extracted facts this way — source_type failed a check constraint
+            # and nobody read the response, so it reported success and wrote
+            # nothing. An interview is far more expensive to repeat than a
+            # re-upload: it means phoning the customer again.
+            if r.status_code >= 300:
+                raise RuntimeError(f"{table} insert {r.status_code}: {r.text[:200]}")
+
+    facts = [f for f in (data.get("facts") or []) if f][:40]
+    if facts:
+        await _post("knowledge_base", [{
+            "tenant_id": tenant_id,
+            "voice_profile_id": agent.profile.get("id"),
+            "content": str(f)[:1000],
+            "source_type": "document",
+            "source_name": f"onboarding_call:{agent.call_id or ''}",
+        } for f in facts])
+
+    if proposed:
+        await _post("profile_drafts", [{"tenant_id": tenant_id, "proposed": proposed}])
+        log.info(f"[onboarding] tenant {tenant_id}: proposed {list(proposed)}")
+    else:
+        log.info(f"[onboarding] tenant {tenant_id}: owner gave nothing usable")
+
+
 async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) -> str:
     """Upload call recording to Cloudflare R2. Returns public URL or ''."""
     # FreeSWITCH mod_audio_stream collects PCM — we receive it here in memory.
@@ -3005,6 +3108,7 @@ async def freeswitch_ws(
     fs_uuid:       str,
     direction:     str = "inbound",
     campaign_id:   str = "",
+    onboarding:    str = "",
 ):
     """
     FreeSWITCH mod_audio_stream WebSocket handler.
@@ -3021,9 +3125,14 @@ async def freeswitch_ws(
     # FastAPI dropped them and every campaign call recorded itself as inbound.
     is_outbound = (direction or "inbound").lower() == "outbound"
     campaign_id = (campaign_id or "").strip()
+    # Set by the onb_ dialplan extension. When present this is Nikki ringing a
+    # business that just signed up, to ask about their business — not Nikki
+    # answering as that business.
+    onboarding  = (onboarding or "").strip()
     log.info(f"[FS] Connected: did={did_number} caller={caller_number} "
              f"uuid={fs_uuid} direction={'outbound' if is_outbound else 'inbound'}"
-             + (f" campaign={campaign_id}" if campaign_id else ""))
+             + (f" campaign={campaign_id}" if campaign_id else "")
+             + (f" ONBOARDING tenant={onboarding}" if onboarding else ""))
 
     db      = SupabaseClient()
     profile = await db.get_voice_profile(did_number)
@@ -3051,6 +3160,17 @@ async def freeswitch_ws(
         log.info(f"[FS] demo call {used + 1}/{limit} for {profile.get('business_name')}")
 
     agent = NikkiAgent(profile, caller_number)
+
+    # ── Onboarding interview ────────────────────────────────────────────
+    # Same agent, different job. She is not answering this business's phone;
+    # she is asking its owner what the business does, so their setup writes
+    # itself. Everything else on this path — barge-in, language detection,
+    # recording, the hangup webhook — is inherited unchanged, which is the
+    # whole reason this reuses the inbound handler.
+    if onboarding:
+        agent.onboarding_tenant = onboarding
+        agent.system_prompt = ONBOARDING_PROMPT.format(
+            business=profile.get("business_name") or "your business")
 
     # ── Routing decision + call record (single source of truth) ──
     # The API server owns both: it resolves DID → tenant → routing_mode,
@@ -3307,6 +3427,18 @@ async def freeswitch_ws(
                 updates["recording_size_bytes"] = len(wav_bytes)
         if agent.call_id:
             await db.update_call(agent.call_id, updates)
+
+        # ── Turn the interview into the same draft a brochure produces ──
+        # Deliberately the SAME profile_drafts table and the same confirm
+        # screen. An owner should not have to learn two different ways to
+        # accept what Nikki worked out about their business, and a phone
+        # answer is no more authoritative than a PDF — both are evidence, and
+        # both get confirmed before anything reaches a live call.
+        if onboarding and len(agent.history) >= 4:
+            try:
+                await _save_onboarding_draft(onboarding, agent, db)
+            except Exception as e:
+                log.error(f"[onboarding] draft failed: {e}")
 
         # Fire post-call automation (missed call if < 8s)
         # Disabled: api-server/src/index.ts fires the same "missed-call" event
