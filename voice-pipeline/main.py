@@ -10,6 +10,7 @@ import os
 import re
 import json
 import asyncio
+from collections import deque
 import logging
 import pathlib
 import base64
@@ -299,6 +300,20 @@ TELUGU_PHONE_PERSONA = (
     " than the business, answer THAT in one short sentence and stop — do not"
     " repeat your request in the same breath. \'ఏం మాట్లాడుతున్నావ్\' means you"
     " are not making sense: apologise, say plainly what you can do, and wait."
+    "\n\n[REGISTER]"
+    "\n- ALWAYS: గారు after every name; -ండి on every imperative (చెప్పండి,"
+    " రండి); అండి on bare answers (అవునండి, లేదండి, సరేనండి); మీరు, never నువ్వు."
+    "\n- English loans stay English with Telugu suffixes: అపాయింట్‌మెంట్‌కి,"
+    " డాక్టర్ గారికి, టైంలో. Never translate them: నియామకం, వైద్యుడు,"
+    " ధన్యవాదములు, స్వాగతం, వీడ్కోలు are BANNED — that is a government notice,"
+    " not a person."
+    "\n- Deflection shape: softener + reason + redirect — \'అదండీ... డాక్టర్"
+    " గారు చూశాకే చెప్పగలరండి. అపాయింట్‌మెంట్ పెట్టమంటారా?\' Never a flat no."
+    "\n- Bad news or a wrong number opens with అయ్యో or పర్వాలేదండి."
+    "\n- Close with \'థాంక్యూ అండి, మంచిది\' or \'ఉంటానండి\' — never a formal"
+    " goodbye."
+    "\n- Times in words with the day part: పొద్దున పదిన్నరకి, సాయంత్రం నాలుగున్నరకి"
+    " — never \'10:30\' or \'PM\'."
     "\n\n[WHAT YOU ARE COLLECTING]"
     "\nHelping comes first; this is secondary. Their name and a 10-digit"
     " number, plus whatever this business needs. Take everything they"
@@ -510,11 +525,16 @@ class SarvamTTS:
 
     async def _synthesize_uncached(self, text: str, speaker: str = "priya",
                                    rate: int = 8000) -> bytes:
-        # Enforce 20-word cap before synthesis
-        words = text.split()
-        if len(words) > 20:
-            text = " ".join(words[:20])
-            log.warning(f"TTS word cap enforced: truncated to 20 words")
+        # No word cap. The old 20-word truncation amputated the tail of every
+        # multi-sentence reply — usually the closing question, which is the
+        # part that keeps a conversation moving. Length control belongs to the
+        # prompt ("one sentence") and to _speak_chunked, which splits long
+        # replies into sentence chunks; discarding words at the TTS layer is
+        # a silent mutilation the model never learns about. bulbul accepts
+        # 2,500 chars; guard only against that hard limit.
+        if len(text) > 2400:
+            log.warning(f"TTS input {len(text)} chars — clamping to 2400")
+            text = text[:2400]
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -945,6 +965,12 @@ async def send_whatsapp(to: str, message: str, wa_number: str, tenant_id: str):
 
 
 # ── VOICE AGENT SESSION ───────────────────────────────────
+# Rolling per-stage timings across ALL calls, for /health percentiles.
+# In-memory on purpose: it answers "is the fleet fast right now", and a
+# restart resetting it is fine — the per-call truth lives on the call rows.
+_TURN_STATS: "deque" = deque(maxlen=500)
+
+
 class NikkiAgent:
     """Complete Telugu voice agent session handler."""
 
@@ -975,6 +1001,8 @@ class NikkiAgent:
         # Set when a booking is written mid-call; enriched at call end.
         self.appointment_id: Optional[str] = None
         self.intent      : str = "unknown"
+        self.turn_timings: list = []      # per-turn stage ms, saved at hangup
+        self.expect_dictation: bool = False
         self.transcript  : list[dict] = []
         self.system_prompt = build_system_prompt(profile)
 
@@ -1152,7 +1180,13 @@ class NikkiAgent:
         reply is the single largest avoidable delay.
         """
         try:
+            # Per-stage wall clock. The industry gap between claimed and
+            # production latency is 2-4x, and only per-stage numbers say
+            # which leg to fix — Sierra's practice, adopted. Written onto the
+            # call row at hangup; percentile summary at /health.
+            _t0 = time.monotonic()
             user_text = await self.stt.transcribe(audio_bytes)
+            _t_stt = time.monotonic() - _t0
             if not user_text.strip():
                 # MUST respect want_text. Returning audio here made
                 # _speech_chunks run a regex over bytes — "cannot use a string
@@ -1181,6 +1215,7 @@ class NikkiAgent:
             # Generate response
             response = await self.llm.generate(
                 self.system_prompt + self._known_facts_block(), self.history)
+            _t_llm = time.monotonic() - _t0 - _t_stt
             log.info(f"LLM: {response}")
             # The model often normalises spoken digits ("ట్రిపుల్ ఎయిట్...")
             # into a real number in its reply, so harvest that side too.
@@ -1188,6 +1223,23 @@ class NikkiAgent:
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
+
+            # Did she just ask for a number? Then the NEXT turn is dictation:
+            # a caller reading out a mobile number pauses mid-way ("తొమ్మిది
+            # ఎనిమిది నాలుగు ఎనిమిది... ఒక్క నిమిషం..."), and a fixed 400ms
+            # window fires in that pause, clips the number in half, and she
+            # asks again — the fastest way a call starts feeling broken.
+            # LiveKit's turn-detector covers 14 languages, none of them
+            # Telugu, so this signal comes from our own side of the dialogue
+            # instead: her question tells us what shape the answer will be.
+            self.turn_timings.append({
+                "stt_ms": round(_t_stt * 1000),
+                "llm_ms": round(_t_llm * 1000),
+            })
+            _TURN_STATS.append((round(_t_stt * 1000), round(_t_llm * 1000)))
+
+            self.expect_dictation = bool(re.search(
+                r"నంబర్|ఫోన్|number|mobile|మొబైల్|digits", response, re.I))
 
             # If appointment booked, handle async (don't delay audio)
             if self.intent == "appointment":
@@ -1514,11 +1566,23 @@ async def handle_outbound_dispatch(req: OutboundDispatchRequest,
 @app.get("/health")
 async def health():
     from app.exotel import circuit_breaker as _cb
+    # Per-stage latency percentiles over the last 500 turns. The industry
+    # gap between claimed and production latency is 2-4x; this is the number
+    # that says which it is today. Targets: <800ms p50, <1400ms p95 total.
+    def _pct(vals, q):
+        return sorted(vals)[int(len(vals) * q)] if vals else None
+    stt = [t[0] for t in _TURN_STATS]
+    llm = [t[1] for t in _TURN_STATS]
     return {
         "status": "ok",
         "service": "nikki-voice-pipeline",
         "timestamp": datetime.now().isoformat(),
         "circuit_breakers": _cb.all_status(),
+        "turn_latency_ms": {
+            "turns": len(_TURN_STATS),
+            "stt": {"p50": _pct(stt, 0.5), "p95": _pct(stt, 0.95)},
+            "llm": {"p50": _pct(llm, 0.5), "p95": _pct(llm, 0.95)},
+        },
     }
 
 # ════════════════════════════════════════════════════════════════
@@ -2511,20 +2575,24 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     script = (profile.get("greeting_script") or "").strip()
     if script:
         if (history or {}).get("previous_calls"):
-            return f"{script} మళ్ళీ స్వాగతం!"
+            return f"{script} మళ్ళీ కాల్ చేసినందుకు థాంక్యూ అండి!"
         return script
 
     biz  = (profile.get("business_name") or "").strip()
     name = _assistant_name(profile)
-    # No "నమస్కారం" here — the TRAI disclosure that plays immediately before
-    # already opens with it, and the caller was hearing it twice. Every second
-    # of this is time the caller cannot speak, so it stays short.
+    # "కి స్వాగతం" is how a website banner talks, not a phone line — the
+    # register research puts స్వాగతం on the banned written-register list, and
+    # documents the real Hyderabad opening as "హలో, [business] అండి. చెప్పండి".
+    # And a bare "ఏం కావాలి?" without అండి is its documented disrespect
+    # failure. The first three seconds are the whole first impression.
+    #
+    # No "నమస్కారం" — the TRAI disclosure just said it; twice reads scripted.
     if (history or {}).get("previous_calls"):
         # Recognition, not a script. A caller who rang before should not be
         # greeted as a stranger — that is the single most machine-like thing
         # a receptionist can do.
-        return f"{biz} కి మళ్ళీ స్వాగతం! నేను {name}. చెప్పండి, ఈసారి ఏం కావాలి?"
-    return f"{biz} కి స్వాగతం! నేను {name}. చెప్పండి, మీకు ఏం కావాలి?"
+        return f"హలో, {biz} అండి — మళ్ళీ కాల్ చేసినందుకు థాంక్యూ! చెప్పండి."
+    return f"హలో, {biz} అండి. నేను {name}. చెప్పండి!"
 
 
 async def _greeting_audio(agent) -> bytes:
@@ -2600,6 +2668,90 @@ def _speech_chunks(text: str, first_max: int = 55, max_chunks: int = 4) -> list:
     return chunks[:max_chunks - 1] + [" ".join(chunks[max_chunks - 1:])]
 
 
+# ── TTS TEXT NORMALISATION ──────────────────────────────────────────
+# Everything spoken on the phone passes through here first. Raw LLM output
+# contains digits, times and markdown, and bulbul reads them literally:
+# "10:30" comes out as "పది ముప్పై", a phone number as one giant number, and
+# an asterisk as a word. Real Telugu speech says పదిన్నర, reads phone numbers
+# digit-by-digit in two groups of five, and says రెండొందలు for 200.
+#
+# This is a normalisation layer, not a filter — it rewrites into the spoken
+# form the register research documents, and it runs on the PHONE path (the
+# browser shows text, where digits are correct).
+
+_TE_DIGIT = {"0": "సున్నా", "1": "ఒకటి", "2": "రెండు", "3": "మూడు", "4": "నాలుగు",
+             "5": "ఐదు", "6": "ఆరు", "7": "ఏడు", "8": "ఎనిమిది", "9": "తొమ్మిది"}
+_TE_HOUR  = {1: "ఒంటి", 2: "రెండు", 3: "మూడు", 4: "నాలుగు", 5: "ఐదు", 6: "ఆరు",
+             7: "ఏడు", 8: "ఎనిమిది", 9: "తొమ్మిది", 10: "పది", 11: "పదకొండు", 12: "పన్నెండు"}
+_TE_HALF  = {1: "ఒకటిన్నర", 2: "రెండున్నర", 3: "మూడున్నర", 4: "నాలుగున్నర", 5: "ఐదున్నర",
+             6: "ఆరున్నర", 7: "ఏడున్నర", 8: "ఎనిమిదిన్నర", 9: "తొమ్మిదిన్నర",
+             10: "పదిన్నర", 11: "పదకొండున్నర", 12: "పన్నెండున్నర"}
+
+def _spoken_phone(m: "re.Match") -> str:
+    digits = re.sub(r"\D", "", m.group(0))
+    # Digit-by-digit, 5-5 grouped with a pause comma, డబల్ for immediate
+    # repeats — exactly how a Hyderabad receptionist reads a mobile number.
+    out, i = [], 0
+    while i < len(digits):
+        if i + 1 < len(digits) and digits[i] == digits[i + 1]:
+            out.append("డబల్ " + _TE_DIGIT[digits[i]]); i += 2
+        else:
+            out.append(_TE_DIGIT[digits[i]]); i += 1
+        if sum(2 if w.startswith("డబల్") else 1 for w in out) == 5:
+            out.append(",")
+    return " ".join(out).replace(" ,", ",")
+
+def _spoken_time(m: "re.Match") -> str:
+    h, mi = int(m.group(1)), int(m.group(2))
+    h12 = h % 12 or 12
+    part = "పొద్దున" if 5 <= h < 12 else "మధ్యాహ్నం" if 12 <= h < 16 \
+        else "సాయంత్రం" if 16 <= h < 20 else "రాత్రి"
+    # If the sentence already carries a day part just before the time
+    # ("సాయంత్రం 6:00"), adding ours would CONTRADICT it — a bare "6:00" has
+    # no am/pm, so 6 reads as పొద్దున while the sentence says సాయంత్రం. The
+    # words already there outrank a guess derived from a 24h reading.
+    before = m.string[max(0, m.start() - 16):m.start()]
+    if any(w in before for w in ("పొద్దున", "మధ్యాహ్నం", "సాయంత్రం", "రాత్రి", "ఉదయం")):
+        part = ""
+    # No trailing case marker: the sentence usually carries its own ("10:30
+    # కి" would otherwise become "పదిన్నరకి కి"). A cleanup pass below
+    # collapses any doubled marker that still slips through.
+    _MIN = {15: "పదిహేను", 20: "ఇరవై", 40: "నలభై", 45: "నలభై ఐదు", 10: "పది", 5: "ఐదు"}
+    if mi == 0:  out = f"{part} {_TE_HOUR[h12]} గంటల"
+    elif mi == 30: out = f"{part} {_TE_HALF[h12]}"
+    elif mi in _MIN:
+        # "తొమ్మిది పదిహేను" — how urban speech actually reads 9:15; the
+        # classical తొమ్మిదింబావు forms are irregular enough that generating
+        # them wrong would sound worse than the plain modern reading.
+        out = f"{part} {_TE_HOUR[h12]} {_MIN[mi]}"
+    else: out = f"{part} {_TE_HOUR[h12]} {' '.join(_TE_DIGIT[d] for d in str(mi))} నిమిషాల"
+    return out.strip()
+
+def _spoken_rupees(m: "re.Match") -> str:
+    n = int(m.group(1).replace(",", ""))
+    special = {100: "వంద", 200: "రెండొందలు", 300: "మూడొందలు", 400: "నాలుగొందలు",
+               500: "ఐదొందలు", 1000: "వెయ్యి", 2000: "రెండు వేలు", 5000: "ఐదు వేలు"}
+    if n in special: return special[n] + " రూపాయలు"
+    if n % 1000 == 0 and n < 100000:
+        return f"{_TE_HOUR.get(n // 1000, str(n // 1000))} వేల రూపాయలు"
+    if n % 500 == 0 and 1000 < n < 10000:
+        # 4500 -> నాలుగున్నర వేలు: the half-thousand form real speech uses.
+        return f"{_TE_HALF[n // 1000]} వేల రూపాయలు"
+    return f"{n} రూపాయలు"   # bulbul handles plain smaller numbers acceptably
+
+def normalize_for_tts(text: str) -> str:
+    t = _clean_for_speech(text)                       # markdown, emoji, vendor names
+    t = re.sub(r"\b[6-9]\d{9}\b", _spoken_phone, t)   # mobile numbers first (longest)
+    t = re.sub(r"\b(\d{1,2}):(\d{2})\s*(?:AM|PM|am|pm)?\b", _spoken_time, t)
+    t = re.sub(r"(?:Rs\.?|₹)\s*([\d,]+)", _spoken_rupees, t)
+    # Commas into any surviving long number so bulbul does not choke
+    # (its docs: >4 digits without separators may fail).
+    t = re.sub(r"\b(\d)(\d{3})(\d{3,})\b", r"\1,\2,\3", t)
+    # Collapse a case marker doubled by substitution ("పదిన్నర కి కి").
+    t = re.sub(r"(కి|కు|లో)\s+\1\b", r"\1", t)
+    return t
+
+
 async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
                          seq: int, speaking: dict) -> None:
     """Synthesise chunk N+1 while chunk N is still playing.
@@ -2613,7 +2765,7 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
         # caller a whole turn of silence. Fail loudly instead of crashing.
         log.error("_speak_chunked got bytes, expected text — dropping turn")
         return
-    chunks = _speech_chunks(text)
+    chunks = _speech_chunks(normalize_for_tts(text))
     if not chunks:
         return
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
@@ -2629,7 +2781,12 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
             return
         # Synthesise the next chunk DURING playback of this one.
         nxt_task = asyncio.create_task(agent.tts.synthesize(nxt, agent.voice))
-        await asyncio.sleep(max(0.0, dur - 0.15))
+        # dur + 0.05, not dur - 0.15: uuid_broadcast INTERRUPTS, so sending
+        # 150ms early cut the tail off every chunk — and phrase-final
+        # lengthening is the exact prosodic cue listeners use to parse turn
+        # structure. Clipping it on every seam was a per-reply robot tell.
+        # The next synthesis already ran concurrently; 150ms buys nothing.
+        await asyncio.sleep(dur + 0.05)
         audio = await nxt_task
 
 
@@ -2887,9 +3044,19 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
     to propagate untouched and everything else is swallowed.
     """
     try:
-        asyncio.create_task(_play_filler(fs_uuid))
+        # The filler waits 1.1s and is cancelled the moment the reply text is
+        # ready. Two research findings drove this: fillers on EVERY turn make
+        # task agents rate less intelligent (they signal low
+        # feeling-of-knowing right before the fact they precede), and a
+        # cached-TTS answer used to collide with the filler mid-word — an
+        # audible glitch, since uuid_broadcast interrupts. A filler is cover
+        # for a genuinely slow turn, not furniture.
+        filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=1.1))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
         reply_text = await agent.on_speech(wav_bytes, want_text=True)
+        # Reply ready: if the filler has not fired yet, it never should.
+        if not filler_task.done():
+            filler_task.cancel()
         if not reply_text:
             return
         # The log showed STT and an LLM reply landing AFTER "Call ended" —
@@ -2933,7 +3100,7 @@ def _wav_duration_secs(audio: bytes) -> float:
         return len(audio) / (8000.0 * 2)
 
 
-async def _play_filler(fs_uuid: str) -> None:
+async def _play_filler(fs_uuid: str, delay: float = 0.0) -> None:
     """Say "I heard you" the instant speech ends, while the turn is computed.
 
     Measured on a live call: 0.52s VAD + ~1.0s STT + 1.23s LLM + 1.29s TTS
@@ -2950,6 +3117,10 @@ async def _play_filler(fs_uuid: str) -> None:
     if not _FILLERS or not fs_uuid:
         return
     try:
+        if delay > 0:
+            # Cancellable wait: a fast turn cancels this task before the
+            # sleep expires and no filler plays at all.
+            await asyncio.sleep(delay)
         pick = _FILLERS[int.from_bytes(os.urandom(2), "big") % len(_FILLERS)]
         await _esl_api(f"uuid_broadcast {fs_uuid} {pick} aleg")
     except Exception as e:  # noqa: BLE001 - cosmetic only
@@ -3358,6 +3529,9 @@ async def freeswitch_ws(
     speaking       = {"until": 0.0}
     frame_secs     = None         # measured from the first frame received
     silence_needed = _SILENCE_FRAMES
+    barge_frames   = 0            # consecutive voiced frames while Nikki speaks
+    vad_threshold  = float(_SILENCE_THRESHOLD)
+    noise_win: "deque" = deque(maxlen=250)   # ~5s of frame RMS while she is silent
     speech_needed  = _MIN_SPEECH_FRAMES
     cfg           = {}
     disclosure_sent = False
@@ -3445,9 +3619,23 @@ async def freeswitch_ws(
                 # Accumulate full recording
                 recording_pcm.extend(frame)
 
-                # VAD: compute RMS energy of this frame
+                # VAD: compute RMS energy of this frame.
+                #
+                # The threshold ADAPTS to this call's noise floor rather than
+                # trusting a fixed 200. A clinic speakerphone near a road can
+                # idle at RMS 300+ (fixed threshold = permanent speech, VAD
+                # storm); a soft speaker on a quiet line can peak under 200
+                # (fixed threshold = deaf). Production systems (Vapi) run a
+                # dynamic baseline off a rolling percentile for exactly this.
+                # The floor only updates while Nikki is NOT speaking, so her
+                # own audio bleeding back never raises it.
                 energy = _rms(frame)
-                is_speech = energy > _SILENCE_THRESHOLD
+                if time.monotonic() >= speaking["until"]:
+                    noise_win.append(energy)
+                    if len(noise_win) >= 50:            # ~1s of samples
+                        floor = sorted(noise_win)[int(len(noise_win) * 0.85)]
+                        vad_threshold = max(_SILENCE_THRESHOLD, floor * 1.5)
+                is_speech = energy > vad_threshold
 
                 if is_speech:
                     speech_buf.extend(frame)
@@ -3458,22 +3646,41 @@ async def freeswitch_ws(
                     if speech_count > 0:
                         speech_buf.extend(frame)  # include trailing silence
 
-                # ── BARGE-IN ──────────────────────────────────────────────
+                # ── BARGE-IN, with a confirmation window ─────────────────
                 # The caller started talking while Nikki is still speaking.
-                # Cut her off, exactly as a person would be cut off. This is
-                # only possible because the turn below runs as a task: the
-                # previous code awaited it inline, so this loop was blocked
-                # for the whole reply and the caller's audio just queued —
-                # she physically could not be interrupted.
+                # Cut her off, exactly as a person would be cut off.
+                #
+                # But NOT on a single 20ms frame. One frame above the RMS
+                # threshold is a cough, a TV, a horn on speakerphone — and
+                # PolyAI's production doctrine is that a false barge-in is
+                # MORE damaging than a missed one: an agent that stops
+                # mid-word for background noise reads as broken in a way a
+                # briefly-talked-over agent does not. Vapi ships 200ms of
+                # sustained voice as its default for exactly this reason.
+                #
+                # ~240ms of consecutive voiced frames (12 x 20ms) is required
+                # before she yields. A caller genuinely interrupting sustains
+                # voice for far longer; a cough does not. The frames are
+                # already accumulating in speech_buf either way, so nothing
+                # the caller says during the window is lost.
                 if is_speech and time.monotonic() < speaking["until"]:
-                    speaking["until"] = 0.0
-                    asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
-                    if turn_task and not turn_task.done():
-                        turn_task.cancel()
-                    log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted")
+                    barge_frames += 1
+                    if barge_frames >= max(3, round(0.24 / (frame_secs or 0.02))):
+                        speaking["until"] = 0.0
+                        barge_frames = 0
+                        asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
+                        if turn_task and not turn_task.done():
+                            turn_task.cancel()
+                        log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted (confirmed)")
+                elif not is_speech:
+                    barge_frames = 0
 
                 # Fire STT when we hit silence after speech
-                if silence_count >= silence_needed and speech_count >= speech_needed:
+                # Triple the wait while a number is being dictated (~1.2s
+                # instead of ~400ms) — correct endpointing behaviour EXTENDS
+                # under dictation rather than shaving the base window.
+                _need = silence_needed * (3 if getattr(agent, "expect_dictation", False) else 1)
+                if silence_count >= _need and speech_count >= speech_needed:
                     utterance_pcm = bytes(speech_buf)
                     speech_buf    = bytearray()
                     speech_count  = 0
@@ -3535,6 +3742,8 @@ async def freeswitch_ws(
                 updates["recording_size_bytes"] = len(wav_bytes)
         if agent.call_id:
             await db.update_call(agent.call_id, updates)
+            if getattr(agent, "turn_timings", None):
+                log.info(f"[FS] {fs_uuid}: stage ms per turn: {agent.turn_timings}")
 
         # ── Turn the interview into the same draft a brochure produces ──
         # Deliberately the SAME profile_drafts table and the same confirm
