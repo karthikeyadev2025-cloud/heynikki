@@ -153,7 +153,9 @@ export async function runOnboarding(): Promise<void> {
     // phone means no recipient: skip quietly rather than inventing one from
     // the business's DID, which would message the business's own callers.
     const { data: owner } = await sb.from("tenant_users")
-      .select("phone").eq("tenant_id", t.id).eq("role", "owner")
+      // Not .eq("role","owner"): a tenant whose only member is a
+      // super_admin (the platform's own) got no onboarding messages at all.
+      .select("phone").eq("tenant_id", t.id)
       .not("phone", "is", null).limit(1).maybeSingle();
     if (!owner?.phone) continue;
 

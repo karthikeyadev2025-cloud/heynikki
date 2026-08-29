@@ -1668,7 +1668,10 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
     sb.from("dids").select("number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
     sb.from("tenant_users").select("phone").eq("tenant_id", tenantId)
-      .eq("role", "owner").not("phone", "is", null).limit(1).maybeSingle(),
+      // Any member with a phone, owner first. Requiring role='owner'
+      // excluded the platform's own tenant, whose single member is a
+      // super_admin — so its test call could never find a number to ring.
+      .not("phone", "is", null).order("role").limit(1).maybeSingle(),
     sb.from("tenants").select("credit_minutes, plan").eq("id", tenantId).maybeSingle(),
   ]);
 
@@ -2780,7 +2783,8 @@ app.post("/api/admin/tenants/:id/owner-phone", verifySuperAdmin, async (req: any
     return res.status(400).json({ error: "Need a 10-digit Indian mobile starting 6-9" });
   }
   const { data, error } = await sb.from("tenant_users")
-    .update({ phone: digits }).eq("tenant_id", req.params.id).eq("role", "owner")
+    .update({ phone: digits }).eq("tenant_id", req.params.id)
+    .in("role", ["owner", "super_admin"])
     .select("id");
   if (error) return res.status(500).json({ error: error.message });
   if (!data?.length) return res.status(404).json({ error: "No owner row for this tenant" });
@@ -2872,7 +2876,8 @@ app.post("/api/admin/onboarding-call/:tenantId", verifySuperAdmin, async (req: a
   const tenantId = req.params.tenantId;
 
   const { data: owner } = await sb.from("tenant_users")
-    .select("phone, display_name").eq("tenant_id", tenantId).eq("role", "owner")
+    .select("phone, display_name").eq("tenant_id", tenantId)
+    .not("phone", "is", null).order("role")
     .not("phone", "is", null).limit(1).maybeSingle();
   if (!owner?.phone) {
     return res.status(400).json({
