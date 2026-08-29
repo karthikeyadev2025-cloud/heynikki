@@ -470,11 +470,12 @@ class SarvamTTS:
     _CACHE_DIR = "/tmp/recordings/ttscache"
     _CACHE_MAX = 400          # ~400 short clips, tmpfs-friendly
 
-    def _cache_path(self, text: str, speaker: str) -> str:
-        h = hashlib.sha1(f"{speaker}|{text}".encode("utf-8")).hexdigest()
+    def _cache_path(self, text: str, speaker: str, rate: int = 8000) -> str:
+        h = hashlib.sha1(f"{speaker}|{rate}|{text}".encode("utf-8")).hexdigest()
         return os.path.join(self._CACHE_DIR, f"{h}.wav")
 
-    async def synthesize(self, text: str, speaker: str = "priya") -> bytes:
+    async def synthesize(self, text: str, speaker: str = "priya",
+                         rate: int = 8000) -> bytes:
         """Synthesise, reusing a cached clip when this exact text was said before.
 
         Sarvam has a floor of roughly 700ms even for a few words, and that sits
@@ -487,7 +488,7 @@ class SarvamTTS:
         Cache lives on the shared spool, which is tmpfs here: it survives
         container restarts, is capped, and losing it costs only latency.
         """
-        key = self._cache_path(text, speaker)
+        key = self._cache_path(text, speaker, rate)
         try:
             if os.path.exists(key) and os.path.getsize(key) > 1000:
                 with open(key, "rb") as f:
@@ -495,7 +496,7 @@ class SarvamTTS:
         except OSError:
             pass
 
-        audio = await self._synthesize_uncached(text, speaker)
+        audio = await self._synthesize_uncached(text, speaker, rate)
 
         if audio and len(audio) > 1000:
             try:
@@ -514,7 +515,8 @@ class SarvamTTS:
                 log.debug(f"tts cache write skipped: {e}")
         return audio
 
-    async def _synthesize_uncached(self, text: str, speaker: str = "priya") -> bytes:
+    async def _synthesize_uncached(self, text: str, speaker: str = "priya",
+                                   rate: int = 8000) -> bytes:
         # Enforce 20-word cap before synthesis
         words = text.split()
         if len(words) > 20:
@@ -535,7 +537,13 @@ class SarvamTTS:
                         "speaker": speaker,
                         "model": "bulbul:v3",
                         "pace": 1.1,
-                        "speech_sample_rate": 8000,
+                        # 8000 for the phone, where the trunk is narrowband
+                        # anyway; 22050 for a browser. The landing-page agent
+                        # was synthesising at 8k and playing it through laptop
+                        # speakers — telephone audio on a hi-fi output, which
+                        # is thin and metallic and reads as "scary" rather than
+                        # as a person.
+                        "speech_sample_rate": rate,
                         "enable_preprocessing": True,
                         "eng_interpolation_wt": 100,
                     }
@@ -1769,7 +1777,10 @@ async def browser_chat(req: BrowserChatRequest):
     if req.tts:
         try:
             tts = SarvamTTS()
-            audio_bytes = await tts.synthesize(response_text, agent.voice)
+            # 22050, not the telephony default: this plays through a laptop or a
+            # handset speaker, not down a narrowband trunk. At 8k it is thin and
+            # metallic — it reads as eerie rather than as a person.
+            audio_bytes = await tts.synthesize(response_text, agent.voice, 22050)
             import base64 as _b64
             audio_b64 = _b64.b64encode(audio_bytes).decode() if audio_bytes else None
         except Exception as e:
