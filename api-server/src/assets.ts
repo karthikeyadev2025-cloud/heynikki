@@ -177,16 +177,29 @@ export function mountAssetRoutes(
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to apply" });
 
+    // A brand-new tenant has no voice profile, and this used to refuse with
+    // 400 "No voice profile yet" — breaking the single promise the brochure
+    // feature makes, that uploading your document sets your agent up. The
+    // draft IS the setup. Every other column on voice_profiles has a
+    // sensible default (09:00-21:00, Mon-Sat, standard SKU), so a profile
+    // built from the draft is immediately usable and the wizard refines it.
     const { data: profile } = await sb.from("voice_profiles")
       .select("id").eq("tenant_id", draft.tenant_id).limit(1).maybeSingle();
-    if (!profile) return res.status(400).json({ error: "No voice profile yet" });
 
-    const { error: upErr } = await sb.from("voice_profiles").update(patch).eq("id", profile.id);
-    if (upErr) return res.status(500).json({ error: upErr.message });
+    let created = false;
+    if (profile) {
+      const { error: upErr } = await sb.from("voice_profiles").update(patch).eq("id", profile.id);
+      if (upErr) return res.status(500).json({ error: upErr.message });
+    } else {
+      const { error: insErr } = await sb.from("voice_profiles")
+        .insert({ tenant_id: draft.tenant_id, status: "active", ...patch });
+      if (insErr) return res.status(500).json({ error: insErr.message });
+      created = true;
+    }
 
     await sb.from("profile_drafts")
       .update({ status: "applied", decided_at: new Date().toISOString() }).eq("id", draft.id);
-    res.json({ ok: true, applied: Object.keys(patch) });
+    res.json({ ok: true, applied: Object.keys(patch), created });
   });
 
   app.post("/api/profile-drafts/:id/dismiss", verifyJWT, async (req: any, res: Response) => {
