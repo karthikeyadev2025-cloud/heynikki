@@ -736,22 +736,38 @@ export default function Home() {
         }
         /* A single soft light source behind the copy. Without it the
            black reads as an unpainted div rather than a backdrop. */
-        .v2-video {
+        /* Scoped as a child selector, not a bare class, and this matters:
+           the .v2 > * rule below sets position:relative on every direct child,
+           and a bare class selector loses to it — same specificity, declared
+           later. (Backticks are deliberately absent from this comment: the
+           whole block lives inside a JS template literal, and one backtick
+           here ends the string and breaks the build.)
+           The video was therefore position:relative, sat in the flex column
+           as an ordinary block, and rendered ABOVE the header instead of
+           behind the whole hero. Two classes beat one class plus a universal. */
+        .v2 > .v2-video {
           position:absolute; inset:0; width:100%; height:100%;
           object-fit:cover; z-index:0; pointer-events:none;
-          /* Behind text, so it is atmosphere and not competition. */
-          opacity:.34;
+          /* Loud enough to be a backdrop rather than a texture. The scrim
+             below, not a low opacity, is what keeps the headline readable. */
+          opacity:.62;
         }
         /* Two layers: a flat wash for contrast, and a bottom-weighted gradient
            so the stats row along the base stays legible over bright frames. */
-        .v2-video-scrim {
+        .v2 > .v2-video-scrim {
           position:absolute; inset:0; z-index:0; pointer-events:none;
+          /* Darkest at the top where the header sits, lifting through the
+             middle so the footage is actually visible behind the headline,
+             then dark again at the base under the stats row. A flat wash
+             would either wash out the video or lose the text. */
           background:
-            linear-gradient(to bottom, rgba(0,0,0,.55) 0%, rgba(0,0,0,.30) 42%, rgba(0,0,0,.80) 100%);
+            linear-gradient(to bottom,
+              rgba(0,0,0,.72) 0%, rgba(0,0,0,.42) 34%,
+              rgba(0,0,0,.46) 62%, rgba(0,0,0,.86) 100%);
         }
         /* Someone who has asked for less motion gets the still frame. */
         @media (prefers-reduced-motion: reduce) {
-          .v2-video { display:none; }
+          .v2 > .v2-video { display:none; }
           .v2 { background-image:url("/hero-poster.jpg"); background-size:cover;
                 background-position:center; }
         }
