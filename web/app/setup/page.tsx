@@ -7,6 +7,7 @@ import type { VoiceProfile } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import AgentDraftBox from "../../components/AgentDraftBox";
 import BrochureUpload from "../../components/BrochureUpload";
+import ScriptAndMenu from "../../components/ScriptAndMenu";
 import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -547,6 +548,14 @@ export default function SetupPage() {
           </div>
         )}
       </form>
+
+      {/* Below the form on purpose. Wording the greeting is a refinement of
+          an agent that already knows the business — putting it first would
+          ask an owner to script a conversation before they have said what
+          they do. */}
+      <div style={{ marginTop: 34 }}>
+        <ScriptAndMenu tenantId={tenantId} profileId={profile?.id ?? null} />
+      </div>
 
       {/* Missed Call Guard section — only shown once a profile exists */}
       {profile && tenantId && (

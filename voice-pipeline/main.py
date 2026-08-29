@@ -3249,6 +3249,30 @@ async def freeswitch_ws(
     # Spoken, not keypad: mod_audio_stream carries audio, not DTMF, so digits
     # would need a second channel — and a voice product asking people to press
     # buttons is arguing against itself. The caller says what they want.
+    # ── The business's own script ───────────────────────────────────────
+    # greeting_script is spoken as written. It is not offered to the model as
+    # a suggestion, because the first line of a call is the one a business is
+    # judged on and it should not be reworded on every call.
+    #
+    # must_ask is a checklist, not a running order for the whole conversation:
+    # she has to come away with these answers, and is told explicitly not to
+    # interrogate for them. A caller who volunteers everything in one sentence
+    # should not then be asked three questions they have already answered.
+    _script = (profile.get("greeting_script") or "").strip()
+    _must   = [q for q in (profile.get("must_ask") or []) if str(q).strip()]
+    if _script or _must:
+        block = "\n\n[THIS BUSINESS'S SCRIPT]\n"
+        if _script:
+            block += (f'Open with exactly this, word for word: "{_script}"\n')
+        if _must:
+            block += ("Before the call ends you must have answers to:\n"
+                      + "\n".join(f"  {i+1}. {q}" for i, q in enumerate(_must))
+                      + "\nAsk for whatever is still missing, naturally, as the "
+                        "conversation allows. Never ask for something they have "
+                        "already told you, and never ask two of these in one breath.\n")
+        agent.system_prompt += block
+        log.info(f"[FS] script: greeting={'yes' if _script else 'no'} must_ask={len(_must)}")
+
     _ivr = routing.get("ivr") or None
     if _ivr and _ivr.get("options"):
         _opts = [o for o in _ivr["options"] if o.get("say")]

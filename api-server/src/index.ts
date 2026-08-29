@@ -746,9 +746,19 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   // the template is the only text they will ever see. It has to be in their
   // language. If Meta is slow to approve te, submitting the same text under
   // "en" works and only this lang field changes.
-  onboarding_welcome:        { name: "onboarding_welcome",        lang: "te" },
+  // Renamed. The originals were approved as MARKETING despite being
+  // submitted as UTILITY — Meta read "thanks for choosing us" and "call and
+  // test her" as promotional, and marketing templates are withheld from
+  // anyone opted out of marketing.
+  //
+  // Deleting them to recategorise was a mistake: Meta locks the NAME for four
+  // weeks afterwards and refuses both a new category and a re-create, so two
+  // working templates were lost to get here. A fresh name may be UTILITY
+  // immediately, which is why these are renamed rather than restored. Do not
+  // delete an approved template to change its category.
+  onboarding_welcome:        { name: "onboarding_account_ready",   lang: "te" },
   onboarding_kyc_verified:   { name: "onboarding_kyc_verified",   lang: "te" },
-  onboarding_number_live:    { name: "onboarding_number_live",    lang: "te" },
+  onboarding_number_live:    { name: "onboarding_number_active",  lang: "te" },
   onboarding_setup_reminder: { name: "onboarding_setup_reminder", lang: "te" },
   onboarding_credits_low:    { name: "onboarding_credits_low",    lang: "te" },
   // The 24-hour reminder and the website-form acknowledgement both sent free
