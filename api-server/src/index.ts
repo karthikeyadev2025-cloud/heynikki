@@ -747,7 +747,7 @@ async function sendTemplateViaMeta(
 
 async function sendWhatsApp(to: string, message: string, tenantId: string,
   voiceProfileId: string, messageType: string, callId?: string, apptId?: string,
-  businessName?: string) {
+  businessName?: string, templateParams?: string[]) {
   const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
   const tpl = WA_TEMPLATES[messageType];
   const sender = await resolveWaSender(tenantId);
@@ -756,7 +756,11 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   try {
     if (provider === "meta" && tpl) {
       // Template first — it is the only form deliverable outside the window.
-      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, [businessName || "us"], sender.phoneId);
+      // Most templates take just the business name. A few take more — the
+      // number-live message is worthless without the number in it — so an
+      // explicit list wins when the caller supplies one.
+      const params = templateParams?.length ? templateParams : [businessName || "us"];
+      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, params, sender.phoneId);
       // If the customer HAS messaged recently the window is open, and the
       // free-form version carries what the template cannot: the actual date,
       // time and service. Approved templates here take one variable, the
@@ -1142,7 +1146,8 @@ app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });
 
   const ok = await sendWhatsApp(to, message, tenant_id, voice_profile_id,
-    message_type, call_id, appointment_id, req.body.business_name);
+    message_type, call_id, appointment_id, req.body.business_name,
+    Array.isArray(req.body.template_params) ? req.body.template_params : undefined);
   res.json({ ok });
 });
 

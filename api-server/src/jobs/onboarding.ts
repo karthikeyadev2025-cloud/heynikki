@@ -31,6 +31,8 @@ type Step = {
   /** Template key in WA_TEMPLATES. Free text alone will not deliver. */
   messageType: string;
   body: (t: any) => string;
+  /** Body variables, in order, when the template takes more than the name. */
+  params?: (t: any) => string[];
 };
 
 const STEPS: Step[] = [
@@ -54,6 +56,7 @@ const STEPS: Step[] = [
     step: "number_live",
     when: t => !!t.did_number,
     messageType: "onboarding_number_live",
+    params: t => [t.name, String(t.did_number)],
     body: t => `${t.name} — మీ HeyNikki number live! 📞 ${t.did_number}\n\n` +
       `ఈ number కి call చేసి Nikki ని మీరే test చేయండి. ` +
       `ప్రతి call మీ dashboard లో కనిపిస్తుంది.`,
@@ -95,6 +98,7 @@ async function sendStep(t: any, s: Step): Promise<void> {
         to: t.phone, message: s.body(t), tenant_id: t.id,
         voice_profile_id: t.voice_profile_id, message_type: s.messageType,
         business_name: t.name,
+        template_params: s.params ? s.params(t) : undefined,
       }),
     });
     const j: any = await r.json().catch(() => ({}));

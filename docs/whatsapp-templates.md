@@ -1,11 +1,20 @@
-# WhatsApp templates to submit
+# WhatsApp templates
 
-Five onboarding templates. Until Meta approves them, those steps fall through
-to free-form text — which the API **accepts and then silently drops** outside
-the 24-hour window, so the send looks successful and nothing arrives.
+All five onboarding templates were **submitted to WABA `1082855697732160` and
+are PENDING** Meta review. Nothing to do here unless one is rejected.
 
-Submit at **Meta Business Suite → WhatsApp Manager → Message templates**, on
-WABA `1082855697732160`.
+Until they are approved these steps fall through to free-form text — which the
+API **accepts and then silently drops** outside the 24-hour window, so the send
+looks successful and nothing arrives.
+
+## Rule that rejected four of them on the first attempt
+
+> Variables can't be at the start or end of the template.
+> *(error_user_title: "Leading or trailing params not allowed")*
+
+`శుభవార్త! {{1}} కోసం మీ KYC verify అయింది.` is rejected; `శుభవార్త! {{1}} కోసం …` is accepted.
+The bodies below are the corrected, submitted versions. Any new template has to
+open and close with literal text.
 
 The `name` and `language` below must match exactly what the code sends
 (`WA_TEMPLATES` in `api-server/src/index.ts`). A mismatch returns error 132001,
@@ -32,7 +41,7 @@ Sample: `Ravi Clinic`
 {{1}} = business name
 
 ```
-{{1}} — మీ KYC verify అయింది.
+శుభవార్త! {{1}} కోసం మీ KYC verify అయింది.
 
 ఇప్పుడు మీ business number assign చేస్తున్నాము.
 Number live అయిన వెంటనే మీకు message వస్తుంది.
@@ -43,22 +52,21 @@ Sample: `Ravi Clinic`
 {{1}} = business name, {{2}} = the assigned number
 
 ```
-{{1}} — మీ HeyNikki number live అయింది: {{2}}
+అభినందనలు! {{1}} కోసం మీ HeyNikki number live అయింది: {{2}}
 
 ఈ number కి call చేసి Nikki ని మీరే test చేయండి.
 ప్రతి call మీ dashboard లో కనిపిస్తుంది.
 ```
 Sample: `Ravi Clinic`, `8633502033`
 
-> Two variables. `sendTemplateViaMeta` currently passes one (the business
-> name). Wire the number in when this one is approved, or submit it with a
-> single variable and keep the number in the free-text follow-up.
+> Two variables. `sendWhatsApp` now accepts `template_params`, and the
+> onboarding job passes `[business_name, did_number]` for this step.
 
 ## 4. `onboarding_setup_reminder` · te · UTILITY
 {{1}} = business name
 
 ```
-{{1}} — మీ Nikki ఇంకా పూర్తిగా setup కాలేదు.
+గుర్తు చేస్తున్నాము: {{1}} కోసం మీ Nikki ఇంకా పూర్తిగా setup కాలేదు.
 
 మీ services మరియు timings చెప్తే, Nikki మీ customers కి సరిగ్గా answer చేస్తుంది.
 Dashboard లో Setup page చూడండి.
@@ -69,7 +77,7 @@ Sample: `Ravi Clinic`
 {{1}} = business name
 
 ```
-{{1}} — మీ free minutes అయిపోతున్నాయి.
+గమనిక: {{1}} కోసం మీ free minutes అయిపోతున్నాయి.
 
 Calls ఆగిపోకుండా ఉండాలంటే dashboard లో plan activate చేయండి.
 ```
@@ -83,7 +91,7 @@ Sample: `Ravi Clinic`
 |---|---|---|
 | `appointment_confirmed` | en | in-call booking confirmation |
 | `missed_call_followup` | en | unanswered inbound call |
-| `interested_lead_brochure` | en | brochure after a qualified call |
+| `interested_lead_brochure` | en | brochure after a qualified call — **MARKETING category**, so it is blocked for anyone opted out of marketing. Worth resubmitting as UTILITY. |
 
 ## Still missing, and worth adding
 
