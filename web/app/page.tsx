@@ -4,10 +4,11 @@
 // The page has one job: make a Telugu business owner believe the AI
 // actually speaks their language, then sign up.
 //
-// So the hero doesn't describe the product — it IS the product. The
-// page opens with a phone ringing and hands the visitor the call.
-// Everything below the fold answers the questions a person asks
-// *after* they've heard it work.
+// The hero states the claim and nothing else — one viewport, black,
+// copy-led. The proof follows immediately underneath: the call console
+// opens the next band, so the visitor hears it work before reading a
+// single feature. Everything below that answers the questions a person
+// asks *after* they've heard it.
 //
 // Structure follows a call's real lifecycle (Ringing → Live → On
 // WhatsApp), because that genuinely is a sequence — not decoration.
@@ -95,102 +96,78 @@ export default function Home() {
   return (
     <main style={{ background: C.paper, color: C.text, fontFamily: BD, overflowX: "hidden" }}>
 
-      {/* ══ NAV ══════════════════════════════════════════════ */}
-      <header style={{
-        position: "sticky", top: 0, zIndex: 60,
-        background: scrolled ? "rgba(247,245,240,0.86)" : "transparent",
-        backdropFilter: scrolled ? "blur(12px)" : "none",
-        borderBottom: `1px solid ${scrolled ? C.line : "transparent"}`,
-        transition: "background 240ms, border-color 240ms",
-      }}>
-        <nav style={{
-          maxWidth: 1180, margin: "0 auto", padding: "16px 5vw",
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20,
-        }}>
-          <a href="/" aria-label="Hey Nikki home" style={{ textDecoration: "none" }}>
-            <NikkiLogo size={34} />
+      {/* ══ HERO — single viewport, black, copy-led ═══════════
+          The old hero put CallConsole
+          beside the headline because "the console is the argument".
+          That argument still holds — so the console has not been
+          deleted, it has been moved to the band immediately below,
+          where it is the first thing the page does after the claim
+          rather than a thing competing with it. ══════════════ */}
+      <div className="v2">
+        <header className="v2-header">
+          <a className="v2-logo" href="#top" aria-label="HeyNikki">
+            <NikkiLogo size={26} showText={false} dark />
+            <span>Hey<span className="v2-logo-suffix">Nikki</span></span>
           </a>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {[
-              ["How it works", "#how"],
-              ["Pricing", "#pricing"],
-              ["Questions", "#faq"],
-            ].map(([label, href]) => (
-              <a key={label} href={href} className="nk-navlink" style={{
-                padding: "8px 13px", fontSize: 13.5, color: C.textMid,
-                textDecoration: "none", borderRadius: 8,
-              }}>{label}</a>
-            ))}
-            <a href="/login" className="nk-navlink" style={{
-              padding: "8px 13px", fontSize: 13.5, color: C.textMid, textDecoration: "none",
-            }}>Sign in</a>
-            <a href="/signup" style={{
-              padding: "10px 18px", background: C.ink, color: "#fff", borderRadius: 999,
-              fontSize: 13.5, fontWeight: 600, textDecoration: "none",
-            }}>Get a number</a>
-          </div>
-        </nav>
-      </header>
+          <nav className="v2-nav" aria-label="Primary">
+            <a href="#how">How it works</a>
+            <a href="#features">Features</a>
+            <a href="#roi">ROI</a>
+            <a href="#pricing">Pricing</a>
+          </nav>
 
-      {/* ══ HERO — the console is the argument ═══════════════ */}
-      <section style={{ padding: "clamp(28px, 5vw, 64px) 5vw clamp(56px, 7vw, 88px)" }}>
-        <div className="nk-hero" style={{
-          maxWidth: 1180, margin: "0 auto",
-          display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.05fr)",
-          gap: "clamp(32px, 5vw, 64px)", alignItems: "center",
-        }}>
-          <div>
-            <Eyebrow>Telugu · Hindi · English</Eyebrow>
+          <a className="v2-btn v2-btn-solid v2-header-cta" href="/signup">Get a number</a>
+        </header>
 
-            <h1 style={{
-              fontFamily: D, fontSize: "clamp(38px, 5.6vw, 68px)", lineHeight: 1.02,
-              letterSpacing: "-0.035em", fontWeight: 700, margin: "20px 0 0", color: C.ink,
-            }}>
-              Every missed call<br />
-              was someone<br />
-              <span style={{ color: C.teal, fontStyle: "italic" }}>ready to buy.</span>
+        <section className="v2-hero" id="top">
+          <div className="v2-copy">
+            <span className="v2-badge">
+              <span className="v2-badge-dot" aria-hidden />
+              Telugu · Hindi · English
+            </span>
+
+            <h1>
+              <span className="v2-line">Every missed call was</span>
+              <span className="v2-line">someone <em>ready to buy.</em></span>
             </h1>
 
-            <p style={{ fontSize: 17.5, lineHeight: 1.65, color: C.textMid, margin: "22px 0 0", maxWidth: 460 }}>
+            <p className="v2-lede">
               Nikki answers your business number in real Telugu — books the appointment,
-              captures the number, sends the WhatsApp. Not a phonetic impression of Telugu.
-              The actual language your customers call you in.
+              captures the number, sends the WhatsApp. Not a phonetic impression of
+              Telugu. The actual language your customers call you in.
             </p>
 
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "30px 0 0" }}>
-              <a href="/signup" style={{
-                display: "inline-flex", alignItems: "center", gap: 9,
-                padding: "15px 26px", background: C.ink, color: "#fff",
-                borderRadius: 999, textDecoration: "none", fontSize: 15, fontWeight: 650,
-              }}>
-                Put Nikki on my number <ArrowRight size={16} />
-              </a>
-              <a href="#how" style={{
-                display: "inline-flex", alignItems: "center", gap: 9,
-                padding: "15px 24px", border: `1px solid ${C.line}`, color: C.text,
-                borderRadius: 999, textDecoration: "none", fontSize: 15, fontWeight: 600,
-                background: C.card,
-              }}>
-                How it works
-              </a>
+            <div className="v2-actions">
+              <a className="v2-btn v2-btn-solid" href="/signup">Put Nikki on my number</a>
+              <a className="v2-btn v2-btn-ghost" href="#demo">Hear a real call</a>
             </div>
 
-            <p style={{ margin: "22px 0 0", fontFamily: M, fontSize: 12, color: C.textDim, letterSpacing: "0.04em" }}>
-              {/* Setup is a same-day handover, not self-serve: a number is assigned
-                  from the admin panel after verification, so "60 seconds" was a
-                  promise the onboarding flow cannot keep. */}
-              Live the same day · Keep your existing number · No app for your customers
-            </p>
-
-            {/* Sits BESIDE the call demo, not instead of it. The call demo
-                shows the product being sold; this shows Nikki explaining it.
-                Two different jobs. */}
-            <div style={{ marginTop: 28 }}>
+            {/* The widget keeps its own markup and logic untouched —
+                every class it renders is restyled below for dark.
+                Porting the design was never going to mean rewriting
+                the one component on this page that holds a mic open. */}
+            <div className="v2-voice">
               <WakeWordNikki />
             </div>
           </div>
+        </section>
 
+        <footer className="v2-stats">
+          <span className="v2-stat"><Languages size={15} /> 3 languages, switched mid-call</span>
+          <span className="v2-stat"><Clock size={15} /> Live the same day</span>
+          <span className="v2-stat"><MessageCircle size={15} /> Confirmed on WhatsApp</span>
+        </footer>
+      </div>
+
+      {/* ══ THE CONSOLE — the argument, now on its own ═══════ */}
+      <section id="demo" className="v2-demo">
+        <div className="v2-demo-inner">
+          <div className="v2-demo-head">
+            <Eyebrow tone="#8FA6BD">Hear it before you believe it</Eyebrow>
+            <h2>Take the call.</h2>
+            <p>No signup. The same agent that answers your customers.</p>
+          </div>
           <CallConsole />
         </div>
       </section>
@@ -625,6 +602,166 @@ export default function Home() {
       </footer>
 
       <style>{`
+        /* ══ V2 HERO ════════════════════════════════════════
+           Token-driven like the spec: one set of custom properties,
+           overridden per breakpoint, so the hero holds a single
+           viewport from a 360px phone to a 27" display without any
+           value being tuned twice. ═════════════════════════ */
+        .v2 {
+          --bg:#000; --fg:#fff; --muted:#9a9a9a;
+          --border:rgba(255,255,255,.16);
+          --h1:44px; --lede:16.5px; --badge:13px; --stat:13.5px;
+          --pad-x:20px; --pad-y:18px; --gap:38px;
+          --btn-h:44px;
+          background:var(--bg); color:var(--fg);
+          min-height:100svh; display:flex; flex-direction:column;
+          position:relative; overflow:hidden;
+          font-family:${BD};
+        }
+        /* A single soft light source behind the copy. Without it the
+           black reads as an unpainted div rather than a backdrop. */
+        .v2::before {
+          content:""; position:absolute; inset:-20% -10% auto -10%; height:80%;
+          background:radial-gradient(60% 60% at 50% 0%, rgba(120,170,255,.13), transparent 70%);
+          pointer-events:none;
+        }
+        .v2 > * { position:relative; z-index:1; }
+
+        .v2-header {
+          display:flex; align-items:center; justify-content:space-between; gap:20px;
+          padding:var(--pad-y) var(--pad-x);
+        }
+        .v2-logo {
+          display:inline-flex; align-items:center; gap:9px;
+          color:var(--fg); text-decoration:none;
+          font-size:15.5px; font-weight:600; letter-spacing:-.01em;
+        }
+        .v2-logo-suffix { color:var(--muted); }
+        .v2-nav { display:none; gap:26px; }
+        .v2-nav a {
+          color:var(--muted); text-decoration:none; font-size:14px;
+          transition:color .18s ease;
+        }
+        .v2-nav a:hover { color:var(--fg); }
+
+        .v2-btn {
+          display:inline-flex; align-items:center; justify-content:center;
+          height:var(--btn-h); padding:0 20px; border-radius:999px;
+          font-size:14px; font-weight:600; text-decoration:none;
+          transition:transform .18s ease, background .18s ease, border-color .18s ease;
+        }
+        .v2-btn:hover { transform:translateY(-1px); }
+        .v2-btn-solid { background:var(--fg); color:#000; }
+        .v2-btn-solid:hover { background:#e8e8e8; }
+        .v2-btn-ghost { border:1px solid var(--border); color:var(--fg); }
+        .v2-btn-ghost:hover { border-color:rgba(255,255,255,.42); }
+        .v2-header-cta { display:none; }
+
+        .v2-hero {
+          flex:1; display:flex; align-items:center;
+          padding:var(--gap) var(--pad-x);
+        }
+        .v2-copy { max-width:860px; }
+
+        .v2-badge {
+          display:inline-flex; align-items:center; gap:9px;
+          padding:7px 15px 7px 12px; border:1px solid var(--border);
+          border-radius:999px; font-size:var(--badge); color:#d8d8d8;
+        }
+        .v2-badge-dot {
+          width:7px; height:7px; border-radius:50%; background:#22C55E;
+          box-shadow:0 0 0 3px rgba(34,197,94,.18);
+        }
+
+        .v2 h1 {
+          margin:22px 0 0; font-family:${D};
+          font-size:var(--h1); line-height:1.04; letter-spacing:-.035em;
+          font-weight:700;
+        }
+        .v2-line { display:block; }
+        .v2 h1 em { font-style:italic; color:#8FB4E8; }
+
+        .v2-lede {
+          margin:20px 0 0; max-width:520px;
+          font-size:var(--lede); line-height:1.6; color:var(--muted);
+        }
+        .v2-actions { display:flex; flex-wrap:wrap; gap:11px; margin:30px 0 0; }
+
+        .v2-stats {
+          display:flex; flex-wrap:wrap; gap:14px 28px;
+          padding:var(--pad-y) var(--pad-x) calc(var(--pad-y) + 6px);
+          border-top:1px solid rgba(255,255,255,.10);
+        }
+        .v2-stat {
+          display:inline-flex; align-items:center; gap:8px;
+          font-size:var(--stat); color:#d8d8d8;
+        }
+        .v2-stat svg { opacity:.62; flex:none; }
+
+        /* ── The widget on dark ──────────────────────────────
+           WakeWordNikki ships its own class names and no inline
+           colours, which is the only reason this port is CSS and
+           not a rewrite of the component holding the microphone. */
+        .v2-voice { margin:32px 0 0; }
+        .v2-voice .wwn { display:flex; flex-wrap:wrap; align-items:center; gap:14px; }
+        .v2-voice .wwn-bars { display:flex; align-items:center; gap:3px; height:26px; }
+        .v2-voice .wwn-bars span {
+          width:3px; height:26px; border-radius:2px; background:rgba(255,255,255,.34);
+          transform-origin:center; transition:transform .09s linear;
+        }
+        .v2-voice .wwn-bars.listening span { background:#8FB4E8; }
+        .v2-voice .wwn-bars.speaking  span { background:#22C55E; }
+        .v2-voice .wwn-caption { margin:0; font-size:13.5px; color:var(--muted); }
+        .v2-voice .wwn-cta {
+          height:38px; padding:0 17px; border-radius:999px;
+          border:1px solid var(--border); background:transparent; color:#fff;
+          font-size:13.5px; font-weight:600; cursor:pointer;
+          transition:border-color .18s ease;
+        }
+        .v2-voice .wwn-cta:hover { border-color:rgba(255,255,255,.42); }
+        .v2-voice .wwn-off {
+          background:none; border:0; color:#7a7a7a; font-size:12.5px;
+          text-decoration:underline; cursor:pointer; padding:0;
+        }
+        .v2-voice .wwn-note, .v2-voice .wwn-err { flex-basis:100%; margin:0; font-size:12.5px; }
+        .v2-voice .wwn-note { color:#7a7a7a; }
+        .v2-voice .wwn-err  { color:#ff9a8a; }
+        .v2-voice .wwn-lines {
+          flex-basis:100%; margin:4px 0 0; padding:14px 16px;
+          border:1px solid rgba(255,255,255,.12); border-radius:14px;
+          background:rgba(255,255,255,.04);
+        }
+        .v2-voice .wwn-lines p { margin:0 0 7px; font-size:14px; line-height:1.5; color:#e4e4e4; }
+        .v2-voice .wwn-lines p:last-child { margin-bottom:0; }
+        .v2-voice .wwn-lines span {
+          display:inline-block; min-width:46px; color:#7a7a7a;
+          font-family:${M}; font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+        }
+
+        /* ── The console band ───────────────────────────────── */
+        .v2-demo { background:#07121D; color:#fff; padding:clamp(56px,8vw,96px) var(--pad-x,20px); }
+        .v2-demo-inner { max-width:1180px; margin:0 auto; }
+        .v2-demo-head { margin:0 0 32px; }
+        .v2-demo-head h2 {
+          margin:16px 0 0; font-family:${D}; font-weight:700;
+          font-size:clamp(30px,4vw,46px); letter-spacing:-.03em;
+        }
+        .v2-demo-head p { margin:12px 0 0; color:#8FA6BD; font-size:16px; }
+
+        @media (min-width:768px) {
+          .v2 { --h1:64px; --lede:18px; --pad-x:44px; --pad-y:24px; --gap:60px; }
+          .v2-nav { display:flex; }
+          .v2-header-cta { display:inline-flex; }
+        }
+        @media (min-width:1200px) {
+          .v2 { --h1:78px; --lede:19.5px; --pad-x:72px; --pad-y:28px; }
+        }
+        @media (prefers-reduced-motion:reduce) {
+          .v2-btn { transition:none; }
+          .v2-btn:hover { transform:none; }
+          .v2-voice .wwn-bars span { transition:none; }
+        }
+
         .nk-navlink:hover { background: rgba(0,0,0,0.04); color: ${C.ink}; }
         a:focus-visible, button:focus-visible, input:focus-visible {
           outline: 2px solid ${C.teal};
