@@ -1693,13 +1693,23 @@ function QualityPanel({ token }: { token: string }) {
 
 /** Campaigns across tenants — and which are running with nothing left to dial. */
 function CampaignsPanel({ token }: { token: string }) {
+  const [acting, setActing] = useState<string | null>(null);
+  const act = async (id: string, verb: "pause" | "resume", reload: () => void) => {
+    setActing(id);
+    const r = await fetch(`${API}/api/admin/campaigns/${id}/${verb}`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) alert((await r.json()).error || "Failed");
+    else reload();
+    setActing(null);
+  };
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch(`${API}/api/admin/campaigns`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json()).then(j => setRows(j.campaigns || []))
       .catch(() => setRows([])).finally(() => setLoading(false));
   }, [token]);
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
   if (!rows.length) return (
@@ -1733,6 +1743,19 @@ function CampaignsPanel({ token }: { token: string }) {
               {!c.consent_declared && <Pill label="no consent" color={C.red} />}
               {c.idle && <Pill label="running, nothing queued" color={C.gold} />}
               <Pill label={c.status} color={c.status === "running" ? C.grn : C.dim} />
+              {/* The audit's finding: a no-consent campaign was visible but
+                  the only lever was suspending the whole tenant. */}
+              {(c.status === "running" || c.status === "paused") && (
+                <button disabled={acting === c.id}
+                  onClick={() => act(c.id, c.status === "running" ? "pause" : "resume", load)}
+                  style={{ padding: "4px 11px", borderRadius: 7, fontSize: TYPE.xs, fontWeight: 700,
+                    background: "transparent",
+                    color: c.status === "running" ? C.red : C.grn,
+                    border: `1px solid ${c.status === "running" ? C.red : C.grn}66`,
+                    cursor: "pointer" }}>
+                  {acting === c.id ? "…" : c.status === "running" ? "Pause" : "Resume"}
+                </button>
+              )}
             </div>
           </div>
         </Card>
@@ -2234,6 +2257,19 @@ function AgentVersionsPanel({ token }: { token: string }) {
             <span style={{ color: C.dim, fontSize: TYPE.xs, marginLeft: "auto" }}>
               {new Date(v.created_at).toLocaleString("en-IN")}
             </span>
+            <button
+              onClick={async () => {
+                if (!confirm("Restore this version? The current state is snapshotted first, so this is undoable.")) return;
+                const r = await fetch(
+                  `${API}/api/admin/voice-profiles/${v.profile_id}/restore/${v.id}`,
+                  { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                alert(r.ok ? "Restored" : ((await r.json()).error || "Failed"));
+              }}
+              style={{ padding: "3px 10px", borderRadius: 6, fontSize: TYPE.xs, fontWeight: 700,
+                background: "transparent", color: C.gbr, border: `1px solid ${C.gbr}66`,
+                cursor: "pointer" }}>
+              Restore
+            </button>
           </div>
           <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 4, wordBreak: "break-word" as const }}>
             was: {Object.entries(v.previous || {}).map(([k, val]) =>
@@ -2578,18 +2614,20 @@ function FreeSwitchPanel({ token }: { token: string }) {
     // tenant_id). Resolves the tenant's voice profile (most recently
     // created, if they have several) and sets both fields, so an
     // assignment here actually routes real calls correctly.
-    const { data: profiles } = await sb.from("voice_profiles")
-      .select("id").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(1);
-    const voiceProfileId = profiles?.[0]?.id || null;
-    if (!voiceProfileId) {
-      alert("This tenant hasn't completed voice profile setup yet — the number will be marked assigned, but real calls won't route until they finish setup.");
-    }
-    await sb.from("dids").update({
-      tenant_id: tenantId,
-      voice_profile_id: voiceProfileId,
-      status: "assigned",
-      assigned_at: new Date().toISOString(),
-    }).eq("id", didId);
+    // Through the API, not a direct Supabase write. The direct path skipped
+    // BOTH the plan-limit check (a Starter tenant could be handed a tenth
+    // number from this screen while the Numbers screen refused) and
+    // admin_audit_log — two panels disagreeing about the rules is worse
+    // than either rule alone. The endpoint also auto-creates the voice
+    // profile, which this path only warned about.
+    const { data: didRow } = await sb.from("dids").select("number").eq("id", didId).single();
+    if (!didRow) { alert("Number not found"); return; }
+    const r = await fetch(`${API}/api/admin/dids/${didRow.number}/assign`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    });
+    if (!r.ok) alert((await r.json()).error || "Assign failed");
     await loadFS();
   };
 
@@ -2753,8 +2791,16 @@ function PricingEnginePanel({ token }: { token: string }) {
 
   const saveAll = async () => {
     setSaving(true);
+    // Through the API so every price change lands in admin_audit_log.
+    // Pricing edits were the one mutation in the panel with no paper trail —
+    // and price history is the first thing a billing dispute asks for.
     for (const [planId, changes] of Object.entries(edited)) {
-      await sb.from("plans").update(changes).eq("id", planId);
+      const r = await fetch(`${API}/api/admin/plans/${planId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(changes),
+      });
+      if (!r.ok) { alert((await r.json()).error || `Failed saving ${planId}`); break; }
     }
     const { data } = await sb.from("plans").select("*");
     setPlans(data || []);

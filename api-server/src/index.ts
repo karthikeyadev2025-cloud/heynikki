@@ -2225,6 +2225,146 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
   res.json({ ok: true, ...data });
 });
 
+// Plan edits, audited. The Pricing panel wrote plans via Supabase directly,
+// so price changes had no paper trail — and price history is the first
+// thing a billing dispute asks for.
+app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
+  // The REAL columns, read from the live table rather than guessed — half
+  // of my first list did not exist and every save would have 400'd.
+  const ALLOWED = ["display_name", "price_monthly_paise", "price_annual_paise",
+                   "minutes_per_month", "max_voice_profiles", "max_phone_numbers",
+                   "max_concurrent_calls", "outbound_campaigns", "api_access",
+                   "recording_days"];
+  const patch: Record<string, any> = {};
+  for (const k of ALLOWED) if (req.body?.[k] !== undefined) patch[k] = req.body[k];
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
+  const { error } = await sb.from("plans").update(patch).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "plan_updated",
+    details: { plan_id: req.params.id, ...patch },
+  }).then(r => r.error && console.error("[plans] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// ── AGENT REPAIR + INCIDENT LEVERS (audit tier 2) ─────────────
+// The audit's next-to-hurt findings: an operator could SEE a broken agent
+// in Call Quality and do nothing about it, could see a no-consent campaign
+// and not pause it, and could not rotate a leaked capture token.
+
+// Cross-tenant restore. Same whitelist discipline as the tenant route —
+// id/tenant_id/timestamps identify the row, did_number is the phone line and
+// status is the kill switch; restoring an old prompt must move none of them.
+app.post("/api/admin/voice-profiles/:id/restore/:versionId", verifySuperAdmin, async (req: any, res) => {
+  const { data: v } = await sb.from("voice_profile_versions")
+    .select("snapshot, tenant_id").eq("id", req.params.versionId)
+    .eq("profile_id", req.params.id).maybeSingle();
+  if (!v) return res.status(404).json({ error: "Version not found" });
+  const snap = v.snapshot as Record<string, any>;
+  const IMMUTABLE = new Set(["id", "tenant_id", "created_at", "updated_at", "did_number", "status"]);
+  const patch: Record<string, any> = {};
+  for (const [k, val] of Object.entries(snap)) if (!IMMUTABLE.has(k)) patch[k] = val;
+  const { error } = await sb.from("voice_profiles")
+    .update(patch).eq("id", req.params.id).select("id").single();
+  if (error) return res.status(400).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "agent_restored",
+    target_tenant_id: v.tenant_id,
+    details: { profile_id: req.params.id, version_id: req.params.versionId },
+  }).then(r => r.error && console.error("[restore] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Knowledge moderation: the entry making an agent answer wrongly, findable
+// and removable without SQL.
+app.get("/api/admin/knowledge/:tenantId", verifySuperAdmin, async (req, res) => {
+  const { data, error } = await sb.from("knowledge_base")
+    .select("id, content, source_type, source_name, created_at")
+    .eq("tenant_id", req.params.tenantId)
+    .order("created_at", { ascending: false }).limit(200);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ rows: data || [] });
+});
+
+app.delete("/api/admin/knowledge/:rowId", verifySuperAdmin, async (req: any, res) => {
+  const { data, error } = await sb.from("knowledge_base")
+    .delete().eq("id", req.params.rowId).select("tenant_id, content").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "knowledge_deleted",
+    target_tenant_id: data.tenant_id, details: { content: String(data.content).slice(0, 120) },
+  }).then(r => r.error && console.error("[kb] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Per-DID routing after assignment — switching an existing number between
+// ai/human/hybrid/ivr previously required SQL.
+app.post("/api/admin/dids/:number/routing", verifySuperAdmin, async (req: any, res) => {
+  const number = String(req.params.number || "").replace(/\D/g, "").slice(-10);
+  const { routing_mode, fallback_message } = req.body || {};
+  const patch: Record<string, any> = {};
+  if (routing_mode !== undefined) {
+    if (!["ai", "human", "hybrid", "ivr"].includes(String(routing_mode))) {
+      return res.status(400).json({ error: "routing_mode must be ai|human|hybrid|ivr" });
+    }
+    patch.routing_mode = routing_mode;
+  }
+  if (fallback_message !== undefined) patch.fallback_message = String(fallback_message).slice(0, 400) || null;
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
+  const { data, error } = await sb.from("dids")
+    .update(patch).eq("number", number).select("tenant_id").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "did_routing_changed",
+    target_tenant_id: data.tenant_id, details: { number, ...patch },
+  }).then(r => r.error && console.error("[routing] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Campaign pause/resume from the operator's seat. Previously pause lived
+// behind verifyInternal, so the only panel lever against a bad campaign
+// was suspending the whole tenant.
+app.post("/api/admin/campaigns/:id/pause", verifySuperAdmin, async (req: any, res) => {
+  const { data, error } = await sb.from("outbound_campaigns")
+    .update({ status: "paused" }).eq("id", req.params.id)
+    .eq("status", "running").select("tenant_id").maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: "Campaign is not running" });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "campaign_paused",
+    target_tenant_id: data.tenant_id, details: { campaign_id: req.params.id },
+  }).then(r => r.error && console.error("[pause] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/campaigns/:id/resume", verifySuperAdmin, async (req: any, res) => {
+  const { data, error } = await sb.from("outbound_campaigns")
+    .update({ status: "running" }).eq("id", req.params.id)
+    .eq("status", "paused").select("tenant_id").maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(409).json({ error: "Campaign is not paused" });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "campaign_resumed",
+    target_tenant_id: data.tenant_id, details: { campaign_id: req.params.id },
+  }).then(r => r.error && console.error("[resume] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Rotate a leaked lead-capture token. The old token stops working the
+// moment this returns; the response carries the new URL to hand back.
+app.post("/api/admin/voice-profiles/:id/rotate-capture-token", verifySuperAdmin, async (req: any, res) => {
+  const fresh = crypto.randomBytes(24).toString("hex");
+  const { data, error } = await sb.from("voice_profiles")
+    .update({ capture_token: fresh }).eq("id", req.params.id)
+    .select("tenant_id").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "capture_token_rotated",
+    target_tenant_id: data.tenant_id, details: { profile_id: req.params.id },
+  }).then(r => r.error && console.error("[token] audit:", r.error.message));
+  res.json({ ok: true, capture_url: `${process.env.SELF_URL || "https://api.heynikki.in"}/webhooks/lead-capture/${fresh}` });
+});
+
 // ── BILLING / TENANT LEVERS ───────────────────────────────────
 // The audit's disqualifying gap: an operator could provision a tenant but
 // not touch money — no credit grant, no ledger view, no invoices, no
