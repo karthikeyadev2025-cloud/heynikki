@@ -104,6 +104,27 @@ export default function Home() {
           where it is the first thing the page does after the claim
           rather than a thing competing with it. ══════════════ */}
       <div className="v2">
+        {/* Background loop. Muted, inline and looping, because a hero video
+            that asks permission to play does not play — and one with sound
+            is blocked outright by every browser.
+
+            The source was 10.5MB at 1708x1212, which is nearly square and
+            about seven times too heavy for a first paint on Indian mobile
+            data. Cropped to 16:9, stripped of its audio track and re-encoded
+            at 1280x720: 0.28MB h264, 0.17MB WebM. The poster shows first, so
+            the hero is never an empty black rectangle while bytes arrive.
+
+            preload="none" on purpose: the headline and the call-to-action
+            must not queue behind a decorative loop. */}
+        <video
+          className="v2-video" autoPlay muted loop playsInline
+          preload="none" poster="/hero-poster.jpg" aria-hidden="true" tabIndex={-1}
+        >
+          <source src="/hero.webm" type="video/webm" />
+          <source src="/hero.mp4" type="video/mp4" />
+        </video>
+        <div className="v2-video-scrim" aria-hidden="true" />
+
         <header className="v2-header">
           <a className="v2-logo" href="#top" aria-label="HeyNikki">
             <NikkiLogo size={26} showText={false} dark />
@@ -715,6 +736,25 @@ export default function Home() {
         }
         /* A single soft light source behind the copy. Without it the
            black reads as an unpainted div rather than a backdrop. */
+        .v2-video {
+          position:absolute; inset:0; width:100%; height:100%;
+          object-fit:cover; z-index:0; pointer-events:none;
+          /* Behind text, so it is atmosphere and not competition. */
+          opacity:.34;
+        }
+        /* Two layers: a flat wash for contrast, and a bottom-weighted gradient
+           so the stats row along the base stays legible over bright frames. */
+        .v2-video-scrim {
+          position:absolute; inset:0; z-index:0; pointer-events:none;
+          background:
+            linear-gradient(to bottom, rgba(0,0,0,.55) 0%, rgba(0,0,0,.30) 42%, rgba(0,0,0,.80) 100%);
+        }
+        /* Someone who has asked for less motion gets the still frame. */
+        @media (prefers-reduced-motion: reduce) {
+          .v2-video { display:none; }
+          .v2 { background-image:url("/hero-poster.jpg"); background-size:cover;
+                background-position:center; }
+        }
         .v2::before {
           content:""; position:absolute; inset:-20% -10% auto -10%; height:80%;
           background:radial-gradient(60% 60% at 50% 0%, rgba(120,170,255,.13), transparent 70%);
