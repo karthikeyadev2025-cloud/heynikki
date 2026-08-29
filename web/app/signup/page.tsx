@@ -132,6 +132,12 @@ export default function SignupPage() {
               type="tel" value={ownerPhone}
               onChange={e => setOwnerPhone(e.target.value.replace(/[^\d+ ]/g, ""))}
               required inputMode="numeric" placeholder="98765 43210"
+              // The first organic signup typed eleven digits; last-10
+              // truncation kept the wrong ten and their onboarding went to
+              // a number starting with 4. Validate the shape HERE, where
+              // the person who knows the right number is still looking.
+              pattern="^(\+?91)?[\s]*[6-9][0-9\s]{9,13}$"
+              title="10-digit mobile starting 6-9"
               style={{
                 width: "100%", padding: "12px 14px", fontSize: 14,
                 background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
