@@ -696,6 +696,22 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   confirmation: { name: "appointment_confirmed",    lang: "en" },
   missed_call:  { name: "missed_call_followup",     lang: "en" },
   brochure:     { name: "interested_lead_brochure", lang: "en" },
+  // ── Onboarding. NOT YET APPROVED on the WABA at the time of writing;
+  // until Meta approves them these fall through to free text, which is
+  // accepted by the API and silently dropped at delivery. The submissions
+  // are in docs/whatsapp-templates.md. Listed here so that the day they are
+  // approved, nothing else has to change.
+  // Submitted as Telugu ("te"), unlike the three above. These go to the
+  // BUSINESS OWNER, who chose a Telugu-first product — and unlike a caller,
+  // an owner may never message us, so the 24-hour window may never open and
+  // the template is the only text they will ever see. It has to be in their
+  // language. If Meta is slow to approve te, submitting the same text under
+  // "en" works and only this lang field changes.
+  onboarding_welcome:        { name: "onboarding_welcome",        lang: "te" },
+  onboarding_kyc_verified:   { name: "onboarding_kyc_verified",   lang: "te" },
+  onboarding_number_live:    { name: "onboarding_number_live",    lang: "te" },
+  onboarding_setup_reminder: { name: "onboarding_setup_reminder", lang: "te" },
+  onboarding_credits_low:    { name: "onboarding_credits_low",    lang: "te" },
 };
 
 async function sendTemplateViaMeta(

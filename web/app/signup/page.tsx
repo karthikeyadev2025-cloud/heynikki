@@ -15,6 +15,7 @@ const J = {
 
 export default function SignupPage() {
   const [businessName, setBusinessName] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -34,7 +35,11 @@ export default function SignupPage() {
     const { error: err } = await sb.auth.signUp({
       email, password,
       options: {
-        data: { business_name: businessName },
+        // Carried into handle_new_user, which normalises it and writes it to
+        // the owner's tenant_users row. Without it there is no address for a
+        // single onboarding message — the first thing a customer would hear
+        // from HeyNikki is a message their own caller triggered.
+        data: { business_name: businessName, owner_phone: ownerPhone },
         emailRedirectTo: window.location.origin + "/dashboard",
       },
     });
@@ -119,6 +124,23 @@ export default function SignupPage() {
                 color: J.chandra, marginBottom: 14, outline: "none",
               }}
             />
+
+            <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
+              YOUR WHATSAPP NUMBER
+            </label>
+            <input
+              type="tel" value={ownerPhone}
+              onChange={e => setOwnerPhone(e.target.value.replace(/[^\d+ ]/g, ""))}
+              required inputMode="numeric" placeholder="98765 43210"
+              style={{
+                width: "100%", padding: "12px 14px", fontSize: 14,
+                background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
+                color: J.chandra, marginBottom: 6, outline: "none",
+              }}
+            />
+            <div style={{ color: J.textDim, fontSize: 11.5, marginBottom: 14, lineHeight: 1.5 }}>
+              Where we send your setup updates. Not shown to your callers.
+            </div>
 
             <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
               EMAIL

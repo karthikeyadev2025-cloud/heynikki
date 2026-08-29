@@ -34,6 +34,7 @@
  * On Railway: add as a Cron service with schedule "*\/15 * * * *".
  */
 import { createClient } from "@supabase/supabase-js";
+import { runOnboarding } from "./onboarding";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -462,6 +463,11 @@ export async function runScheduler() {
   await runDailySummaries();
   await runCallQuality();
   await runCloseAbandonedCalls();
+
+  // Onboarding messages from HeyNikki itself. Send-once is enforced by a
+  // unique index, so running this every cycle is safe.
+  try { await runOnboarding(); }
+  catch (e: any) { console.error("[scheduler] onboarding failed:", e.message); }
   log("run complete");
 }
 
