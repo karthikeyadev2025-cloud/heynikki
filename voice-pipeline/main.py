@@ -160,8 +160,16 @@ Transfer on "human", "manager", "వేరే వ్యక్తి".
     "heynikki": """You are Nikki, the assistant for Hey Nikki itself — a Telugu AI receptionist
 service for Indian businesses, Hyderabad. The caller is a business owner
 evaluating it. Answer their question FIRST and fully. Collecting their name,
-number and business is secondary — ask once when it fits, never twice in a
-row, and never instead of answering what they actually said.
+number and business is secondary — ask ONCE in the whole conversation, when
+they show intent (demo, callback, signup), never twice, and never instead of
+answering what they actually said.
+
+MIRROR THEIR LANGUAGE. Reply in the language of their MOST RECENT message:
+an English question gets an English answer, a Telugu question gets Telugu,
+Hindi gets Hindi. Many evaluators are English-first — answering an English
+"What is Hey Nikki?" in Telugu loses exactly the person the reply exists to
+convince. (This outranks the Telugu-default rule below, which is written for
+answering a business's own callers.)
 
 WHAT IT DOES (state only these):
 - Answers a business's existing number in real Telugu; switches to Hindi or
@@ -172,8 +180,11 @@ WHAT IT DOES (state only these):
 - AI brain and human brain on ONE number, decided per call: routine bookings
   to the AI; a caller asking for a person goes to a telecaller who already
   has their history on screen.
-- 24/7 including Sundays and festivals. First reply under 700ms.
-- Keep your existing number — forward or port it. Live in ~60 seconds.
+- 24/7 including Sundays and festivals. She acknowledges in about half a
+  second and answers fully in a couple more.
+- Keep your existing number — forward or port it. Live the same day.
+  (NOT "in 60 seconds" — a number is assigned after verification, and the
+  landing page stopped promising instant go-live for the same reason.)
 
 PRICING: the live catalogue is injected below under [CURRENT PRICING].
 Quote ONLY from it. Never quote a figure that is not there, never say
@@ -409,6 +420,23 @@ Today: {now} ({weekday})
 
 """ + TELUGU_PHONE_PERSONA + _PRICING_CACHE.get("text", "")
 
+# ── SHARED HTTP POOL for the caller's critical path ─────────────────
+# STT, Gemini and TTS each opened a fresh AsyncClient per request, paying a
+# full TCP + TLS handshake to a US/Mumbai endpoint on every single turn —
+# three handshakes per turn, ~100-300ms each. The research measured
+# flash-lite's real first-token time at ~240-290ms against our ~1s, and
+# named cold connections as the recoverable difference. One pooled client
+# with keep-alive makes every request after the first ride a warm socket.
+#
+# Only the three latency-critical call sites use it. Webhooks and other
+# housekeeping keep their throwaway clients: a leaked handshake there costs
+# nobody anything, and sharing one pool everywhere couples failure domains.
+_POOL = httpx.AsyncClient(
+    timeout=httpx.Timeout(15.0, connect=5.0),
+    limits=httpx.Limits(max_keepalive_connections=10, max_connections=24,
+                        keepalive_expiry=90.0),
+)
+
 # ── SARVAM STT ───────────────────────────────────────────
 class SarvamSTT:
     """Sarvam Saaras V3 STT — Telugu Tanglish optimised."""
@@ -419,20 +447,20 @@ class SarvamSTT:
 
     async def transcribe(self, audio_bytes: bytes) -> str:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    self.base_url,
-                    headers={"api-subscription-key": self.api_key},
-                    files={"file": ("audio.wav", audio_bytes, "audio/wav")},
-                    data={
-                        "model": "saaras:v3",
-                        "language_code": "te-IN",
-                        "with_timestamps": "false",
-                    }
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return data.get("transcript", "")
+            resp = await _POOL.post(
+                self.base_url,
+                headers={"api-subscription-key": self.api_key},
+                files={"file": ("audio.wav", audio_bytes, "audio/wav")},
+                data={
+                    "model": "saaras:v3",
+                    "language_code": "te-IN",
+                    "with_timestamps": "false",
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("transcript", "")
         except httpx.HTTPError as e:
             log.error(f"Sarvam STT error: {e} — switching to Google fallback")
             return await self._google_fallback(audio_bytes)
@@ -537,35 +565,35 @@ class SarvamTTS:
             text = text[:2400]
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    "https://api.sarvam.ai/text-to-speech",
-                    headers={
-                        "api-subscription-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "inputs": [text],
-                        "target_language_code": "te-IN",
-                        "speaker": speaker,
-                        "model": "bulbul:v3",
-                        "pace": 1.1,
-                        # 8000 for the phone, where the trunk is narrowband
-                        # anyway; 22050 for a browser. The landing-page agent
-                        # was synthesising at 8k and playing it through laptop
-                        # speakers — telephone audio on a hi-fi output, which
-                        # is thin and metallic and reads as "scary" rather than
-                        # as a person.
-                        "speech_sample_rate": rate,
-                        "enable_preprocessing": True,
-                        "eng_interpolation_wt": 100,
-                    }
-                )
-                resp.raise_for_status()
-                import base64
-                data = resp.json()
-                audio_b64 = data.get("audios", [""])[0]
-                return base64.b64decode(audio_b64)
+            resp = await _POOL.post(
+                "https://api.sarvam.ai/text-to-speech",
+                headers={
+                    "api-subscription-key": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "inputs": [text],
+                    "target_language_code": "te-IN",
+                    "speaker": speaker,
+                    "model": "bulbul:v3",
+                    "pace": 1.1,
+                    # 8000 for the phone, where the trunk is narrowband
+                    # anyway; 22050 for a browser. The landing-page agent
+                    # was synthesising at 8k and playing it through laptop
+                    # speakers — telephone audio on a hi-fi output, which
+                    # is thin and metallic and reads as "scary" rather than
+                    # as a person.
+                    "speech_sample_rate": rate,
+                    "enable_preprocessing": True,
+                    "eng_interpolation_wt": 100,
+                },
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            import base64
+            data = resp.json()
+            audio_b64 = data.get("audios", [""])[0]
+            return base64.b64decode(audio_b64)
         except httpx.HTTPError as e:
             log.error(f"Sarvam TTS error: {e} — switching to Azure fallback")
             return await self._azure_fallback(text)
@@ -621,7 +649,8 @@ class GeminiLLM:
             ":generateContent"
         )
 
-    async def generate(self, system_prompt: str, history: list[dict]) -> str:
+    async def generate(self, system_prompt: str, history: list[dict],
+                       temperature: float | None = None) -> str:
         # 12 exchanges, not 4. A booking needs name, phone, service and time;
         # at 4 exchanges the earliest facts fell out of context mid-call and
         # the model re-asked for them. Slot state above is the real fix, but
@@ -661,7 +690,13 @@ class GeminiLLM:
                 # the prompt, which is the right place for it. The token
                 # cap is a safety limit, not a style control.
                 "maxOutputTokens": 300,
-                "temperature": 0.15,  # lowered from 0.3 for more literal, less improvised answers
+                # 0.15 default; callers may pin it. The web product persona
+                # passes 0.0 so identical questions from different visitors
+                # produce identical replies — which is what lets the
+                # api-server's TTS cache actually hit. Phone calls keep 0.15:
+                # their history differs every turn, so variety never depended
+                # on sampling noise anyway.
+                "temperature": 0.15 if temperature is None else temperature,
                 "topP": 0.8,
             }
         }
@@ -696,15 +731,18 @@ class GeminiLLM:
             last_exc = None
             for attempt, budget in enumerate((7.0, 6.0)):
                 try:
-                    async with httpx.AsyncClient(timeout=budget) as client:
-                        resp = await client.post(
-                            self.base_url,
-                            headers=headers,
-                            params=params,
-                            json=payload
-                        )
-                        resp.raise_for_status()
-                        data = resp.json()
+                    # Warm pooled connection — the research put flash-lite's
+                    # real first-token at ~240-290ms against our measured ~1s,
+                    # and a fresh TLS handshake per call was the named suspect.
+                    resp = await _POOL.post(
+                        self.base_url,
+                        headers=headers,
+                        params=params,
+                        json=payload,
+                        timeout=budget,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
                     break
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
                     last_exc = e
@@ -1805,7 +1843,9 @@ async def browser_chat(req: BrowserChatRequest):
     history.append({"role": "user", "content": req.text})
 
     llm = GeminiLLM()
-    response_text = await llm.generate(system_prompt, history)
+    response_text = await llm.generate(
+        system_prompt, history,
+        temperature=0.0 if (req.persona or "") == "product" else None)
 
     # Update agent history. The synthetic call-start instruction is NOT
     # stored — it's stage direction for one turn, and leaving it in the

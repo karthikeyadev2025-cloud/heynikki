@@ -681,6 +681,27 @@ async function planLimitsFor(plan?: string | null) {
   return { ...TRIAL_LIMITS, tier: key };
 }
 
+// ── WEB-DEMO TTS CACHE ───────────────────────────────────────────────
+// The landing agent's answers repeat heavily across visitors — the greeting,
+// "what is Hey Nikki", the pricing lines. Synthesis for a ~200-char reply
+// measures ~3.5s, which is the entire remaining latency of a web turn now
+// that the LLM leg is ~1.1s. A hit here removes it outright.
+// In-memory and bounded: 80 entries × ~600KB ≈ 48MB worst case, evicted
+// oldest-first. A restart losing it costs one slow turn per phrase.
+const _webTtsCache = new Map<string, string>();
+function webTtsGet(key: string): string | undefined {
+  const v = _webTtsCache.get(key);
+  if (v) { _webTtsCache.delete(key); _webTtsCache.set(key, v); } // LRU bump
+  return v;
+}
+function webTtsPut(key: string, b64: string): void {
+  if (_webTtsCache.size >= 80) {
+    const oldest = _webTtsCache.keys().next().value;
+    if (oldest !== undefined) _webTtsCache.delete(oldest);
+  }
+  _webTtsCache.set(key, b64);
+}
+
 // ── WHICH NUMBER DO WE SEND AS? ──────────────────────────────────────
 // One shared number does not survive a second tenant: a customer of Nila
 // Everyday Jewellery should not be messaged by "HeyNikki" from a number they
@@ -1193,7 +1214,21 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     const ttsLang = hasTelugu ? "te-IN" : hasDevanagari ? "hi-IN" : "en-IN";
 
     try {
-      const speakText = reply.length > 480 ? reply.slice(0, 480) : reply;
+      // Speak the FIRST SENTENCE; show the full text. Synthesis time scales
+      // with audio length — a 200-char reply costs ~3.5s before the visitor
+      // hears anything, and the transcript is already on screen carrying the
+      // rest. One spoken sentence lands in ~1.2s and reads as responsiveness;
+      // fourteen seconds of read-aloud reads as a screen reader.
+      const firstStop = reply.search(/[.!?।?]\s/);
+      const speakText = (firstStop > 20 && firstStop < 260)
+        ? reply.slice(0, firstStop + 1)
+        : (reply.length > 260 ? reply.slice(0, 260) : reply);
+
+      const cacheKey = `${ttsLang}|${speakText}`;
+      const cached = webTtsGet(cacheKey);
+      if (cached) {
+        audioBase64 = cached;
+      } else {
       const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
         method: "POST",
         headers: {
@@ -1236,6 +1271,8 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (!ttsResp.ok) throw new Error(`Sarvam TTS ${ttsResp.status}`);
       const ttsData = await ttsResp.json() as any;
       audioBase64 = ttsData.audios?.[0] || null;
+      if (audioBase64) webTtsPut(cacheKey, audioBase64);
+      }
     } catch (e: any) {
       // Text still returns — the console falls back to browser speech
       // rather than going silent mid-conversation.
