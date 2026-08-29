@@ -393,7 +393,8 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
         `${match.business_name || "మేము"} మీ enquiry అందుకున్నాము. ` +
         `మా team షార్ట్‌గా మిమ్మల్ని సంప్రదిస్తుంది.\n\n` +
         `Thanks for reaching out — we'll call you shortly.`;
-      sendWhatsApp(phone, ackMsg, match.tenant_id, match.id, "lead_capture_ack")
+      sendWhatsApp(phone, ackMsg, match.tenant_id, match.id, "lead_capture_ack",
+        undefined, undefined, match.business_name)
         .catch(e => console.error("[lead-capture] whatsapp ack failed:", e));
     }
 
@@ -648,6 +649,38 @@ async function sendViaMeta(to: string, message: string, senderId?: string): Prom
   return { ok: false, error: `Meta: ${detail}` };
 }
 
+// ── PLAN LIMITS ──────────────────────────────────────────────────────
+// The tiers were a price list. plan_tier_1/2/3 was read in exactly one place —
+// the endpoint that serves the catalogue to the pricing page — so a Starter
+// customer at Rs 1,999 could take ten numbers and run ten simultaneous calls,
+// which is the Scale plan at a fifth of the price.
+//
+// Read from platform_config so the limits enforced here and the limits
+// advertised on the page cannot drift apart. A tenant on no recognised plan
+// gets the trial shape: one number, one call at a time, and credits.
+const TRIAL_LIMITS = { minutes: 0, numbers: 1, seats: 0, concurrent: 1 };
+
+async function planLimitsFor(plan?: string | null) {
+  const key = String(plan || "").toLowerCase();
+  if (!["starter", "growth", "scale"].includes(key)) return { ...TRIAL_LIMITS, tier: "trial" };
+  const cfg = await getPlatformConfig();
+  for (const k of ["plan_tier_1", "plan_tier_2", "plan_tier_3"]) {
+    try {
+      const t = JSON.parse(cfg[k] || "{}");
+      if (String(t.id).toLowerCase() === key) {
+        return {
+          minutes:    Number(t.minutes) || 0,
+          numbers:    Number(t.numbers) || 1,
+          seats:      Number(t.seats) || 0,
+          concurrent: Number(t.concurrent) || 1,
+          tier: key,
+        };
+      }
+    } catch { /* a malformed tier must not take calls down */ }
+  }
+  return { ...TRIAL_LIMITS, tier: key };
+}
+
 // ── WHICH NUMBER DO WE SEND AS? ──────────────────────────────────────
 // One shared number does not survive a second tenant: a customer of Nila
 // Everyday Jewellery should not be messaged by "HeyNikki" from a number they
@@ -718,6 +751,24 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   onboarding_number_live:    { name: "onboarding_number_live",    lang: "te" },
   onboarding_setup_reminder: { name: "onboarding_setup_reminder", lang: "te" },
   onboarding_credits_low:    { name: "onboarding_credits_low",    lang: "te" },
+  // The 24-hour reminder and the website-form acknowledgement both sent free
+  // text, which Meta accepts and then drops outside the window — so neither
+  // has ever been delivered to anyone who had not messaged us first.
+  reminder:         { name: "appointment_reminder", lang: "te" },
+  lead_capture_ack: { name: "lead_capture_ack",     lang: "te" },
+};
+
+// interested_lead_brochure is APPROVED but registered as MARKETING, so it is
+// withheld from anyone opted out of marketing — and Meta refuses to change the
+// category of an approved template ("You cannot update an approved template
+// category"). A UTILITY replacement is pending under a new name.
+//
+// Rather than require a second deploy on the day it is approved, the brochure
+// send tries the UTILITY one first and falls back to the approved MARKETING
+// one when Meta says it does not exist yet (132001). The fallback disappears
+// on its own.
+const WA_TEMPLATE_PREFERRED: Record<string, { name: string; lang: string }> = {
+  brochure: { name: "lead_brochure_details", lang: "te" },
 };
 
 async function sendTemplateViaMeta(
@@ -766,7 +817,15 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
       // number-live message is worthless without the number in it — so an
       // explicit list wins when the caller supplies one.
       const params = templateParams?.length ? templateParams : [businessName || "us"];
-      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, params, sender.phoneId);
+      const pref = WA_TEMPLATE_PREFERRED[messageType];
+      result = pref
+        ? await sendTemplateViaMeta(to, pref.name, pref.lang, params, sender.phoneId)
+        : await sendTemplateViaMeta(to, tpl.name, tpl.lang, params, sender.phoneId);
+      // 132001 means the preferred template is not approved yet. Anything else
+      // is a real failure and must not be papered over by a second attempt.
+      if (!result.ok && pref && /132001|does not exist/i.test(result.error || "")) {
+        result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, params, sender.phoneId);
+      }
       // If the customer HAS messaged recently the window is open, and the
       // free-form version carries what the template cannot: the actual date,
       // time and service. Approved templates here take one variable, the
@@ -1192,7 +1251,8 @@ app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
     (service ? `🏷️ ${service}\n` : "") +
     `\nతప్పక వచ్చేందుకు request చేస్తున్నాము. ధన్యవాదాలు! 🙏`;
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
-    "reminder", undefined, appointment_id);
+    "reminder", undefined, appointment_id, business_name,
+    [business_name || "us", slot_time || "your appointment time"]);
   if (ok) {
     await sb.from("appointments").update({ wa_reminder_sent: true }).eq("id", appointment_id);
   }
@@ -1518,6 +1578,11 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
       // 40-second call is how a customer discovers the meter is lying.
       used:  Math.ceil(usedSeconds / 60),
       limit: limitMinutes,
+      // Minutes past the plan allowance. Deliberately reported rather than
+      // blocked: the pricing page sells extra minutes at Rs 15, so going over
+      // is a purchase, not a fault. What was broken is that nobody could see
+      // it — usage read 0 forever, so overage could never have been billed.
+      overage: limitMinutes > 0 ? Math.max(0, Math.ceil(usedSeconds / 60) - limitMinutes) : 0,
     },
     // Trial balance, so the dashboard can show what is actually left rather
     // than a plan allowance a trial tenant does not have.
@@ -2266,6 +2331,24 @@ app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) =>
   if (!number || number.length !== 10) return res.status(400).json({ error: "10-digit number required" });
   if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
 
+  // The plan says how many numbers this tenant may hold, and until now nothing
+  // read it — Starter includes one number and there was no code path that
+  // would have stopped a tenth being assigned.
+  const { data: planT } = await sb.from("tenants").select("plan").eq("id", tenant_id).maybeSingle();
+  const numLimits = await planLimitsFor(planT?.plan);
+  const { count: heldNow } = await sb.from("dids")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenant_id).eq("status", "assigned");
+  // Re-assigning a number the tenant already holds is not a new number.
+  const { data: alreadyMine } = await sb.from("dids")
+    .select("id").eq("number", number).eq("tenant_id", tenant_id).maybeSingle();
+  if (!alreadyMine && (heldNow || 0) >= numLimits.numbers) {
+    return res.status(409).json({
+      error: `${numLimits.tier} includes ${numLimits.numbers} number(s); this tenant already holds ${heldNow}. Upgrade the plan first.`,
+      held: heldNow, limit: numLimits.numbers, tier: numLimits.tier,
+    });
+  }
+
   const { data: did, error: didErr } = await sb.from("dids")
     .select("number, status, tenant_id").like("number", `%${number}`).single();
   if (didErr || !did) return res.status(404).json({ error: `DID ${number} not in inventory` });
@@ -2950,6 +3033,21 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // never to unlimited.
     const PAID_PLANS = ["starter", "growth", "scale"];
     const onPaidPlan = PAID_PLANS.includes(String(tenantRow?.plan || "").toLowerCase());
+
+    // Concurrency is the cap with real cost behind it: the trunk carries ten
+    // channels in total, so one tenant on Scale can occupy all of them.
+    const limits = await planLimitsFor(tenantRow?.plan);
+    const { count: liveNow } = await sb.from("calls")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", did.tenant_id).eq("status", "active");
+    if ((liveNow || 0) >= limits.concurrent) {
+      console.warn(`[FS Inbound] tenant ${did.tenant_id} at concurrency cap ` +
+        `(${liveNow}/${limits.concurrent}, ${limits.tier}) — refusing`);
+      return res.json({
+        ok: false, reason: "concurrency_limit", routing_mode: "reject",
+        message: `All ${limits.concurrent} lines on this plan are busy.`,
+      });
+    }
     if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} out of credits — refusing`);
       return res.json({
