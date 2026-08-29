@@ -2247,6 +2247,118 @@ app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
   res.json({ ok: true });
 });
 
+// ── FINAL DEFERRED FIVE (audit tier 4) ────────────────────────
+
+// SIP trunk CRUD. Credential rotation was SQL-only; the panel could only
+// toggle Jio/Vi. Passwords are AES-256-GCM under a key derived from
+// INTERNAL_SECRET, and are NEVER returned — the list shows metadata only.
+function encTrunkPassword(plain: string): string {
+  const key = crypto.createHash("sha256").update("trunk:" + (process.env.INTERNAL_SECRET || "")).digest();
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([c.update(plain, "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64");
+}
+
+app.get("/api/admin/trunks", verifySuperAdmin, async (_req, res) => {
+  const { data, error } = await sb.from("sip_trunks")
+    .select("id, provider, display_name, host, port, username, transport, priority, status")
+    .order("priority");
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ trunks: data || [] });
+});
+
+app.post("/api/admin/trunks", verifySuperAdmin, async (req: any, res) => {
+  const { provider, display_name, host, port, username, password, transport, priority } = req.body || {};
+  if (!provider || !display_name || !host || !username || !password) {
+    return res.status(400).json({ error: "provider, display_name, host, username, password required" });
+  }
+  const { data, error } = await sb.from("sip_trunks").insert({
+    provider, display_name, host, port: port || 5060, username,
+    password_enc: encTrunkPassword(String(password)),
+    transport: transport || "udp", priority: priority || 2, status: "standby",
+  }).select("id").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "trunk_created",
+    details: { trunk_id: data.id, provider, host },
+  }).then(r => r.error && console.error("[trunk] audit:", r.error.message));
+  res.json({ ok: true, id: data.id,
+    note: "Created as standby — FreeSWITCH gateway config is separate; activate after testing" });
+});
+
+app.post("/api/admin/trunks/:id", verifySuperAdmin, async (req: any, res) => {
+  const patch: Record<string, any> = {};
+  for (const k of ["host", "port", "username", "transport", "priority", "status", "display_name"]) {
+    if (req.body?.[k] !== undefined) patch[k] = req.body[k];
+  }
+  if (req.body?.password) patch.password_enc = encTrunkPassword(String(req.body.password));
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
+  const { error } = await sb.from("sip_trunks").update(patch).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "trunk_updated",
+    details: { trunk_id: req.params.id,
+      fields: Object.keys(patch).map(k => k === "password_enc" ? "password" : k) },
+  }).then(r => r.error && console.error("[trunk] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// API keys behind the operator's own JWT — the internal routes exist but
+// needed the server-to-server secret, which an operator does not have.
+app.get("/api/admin/api-keys/:tenantId", verifySuperAdmin, async (req, res) => {
+  const { data, error } = await sb.from("api_keys")
+    .select("id, name, prefix, scopes, created_at, expires_at, revoked_at")
+    .eq("tenant_id", req.params.tenantId).order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ keys: data || [] });
+});
+
+app.post("/api/admin/api-keys/:id/revoke", verifySuperAdmin, async (req: any, res) => {
+  const { data, error } = await sb.from("api_keys")
+    .update({ revoked_at: new Date().toISOString(), revoked_by: req.user.id })
+    .eq("id", req.params.id).select("id, tenant_id, name").single();
+  if (error || !data) return res.status(404).json({ error: "Not found" });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "api_key_revoked",
+    target_tenant_id: data.tenant_id, details: { key_id: data.id, name: data.name },
+  }).then(r => r.error && console.error("[keys] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+// Annotate an STT eval sample — truth is what a human heard, entities are
+// what the metric actually scores.
+app.post("/api/admin/voice-lab/samples/:id/annotate", verifySuperAdmin, async (req: any, res) => {
+  const { truth_transcript, entities, noise_band } = req.body || {};
+  const patch: Record<string, any> = { annotated: true };
+  if (truth_transcript !== undefined) patch.truth_transcript = String(truth_transcript).slice(0, 4000);
+  if (entities && typeof entities === "object") patch.entities = entities;
+  if (["quiet", "street", "speakerphone", "unknown"].includes(noise_band)) patch.noise_band = noise_band;
+  const { error } = await sb.from("stt_eval_samples").update(patch).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Demo tenants: a sandbox with a stamped expiry the scheduler enforces,
+// instead of the "Hey Nikki" demo rows that sat as ordinary tenants for
+// two months because nothing knew they were disposable.
+app.post("/api/admin/demo-tenants", verifySuperAdmin, async (req: any, res) => {
+  const name = String(req.body?.name || "").trim();
+  const days = Math.min(Math.max(Number(req.body?.days) || 7, 1), 30);
+  if (name.length < 3) return res.status(400).json({ error: "name required (3+ chars)" });
+  const { data, error } = await sb.from("tenants").insert({
+    name: `[demo] ${name}`, plan: "trial", status: "trial",
+    is_demo: true,
+    demo_expires_at: new Date(Date.now() + days * 86400_000).toISOString(),
+  }).select("id, demo_expires_at").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "demo_tenant_created",
+    target_tenant_id: data.id, details: { name, days },
+  }).then(r => r.error && console.error("[demo] audit:", r.error.message));
+  res.json({ ok: true, tenant_id: data.id, expires_at: data.demo_expires_at });
+});
+
 // ── STAFF ACL / LIFECYCLE / TRIAGE (audit tier 3) ─────────────
 
 // Staff and roles. tenant_users had no mutation route anywhere — the panel

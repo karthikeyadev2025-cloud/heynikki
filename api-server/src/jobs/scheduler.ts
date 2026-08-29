@@ -468,6 +468,20 @@ export async function runScheduler() {
   // unique index, so running this every cycle is safe.
   try { await runOnboarding(); }
   catch (e: any) { console.error("[scheduler] onboarding failed:", e.message); }
+
+  // Recording retention. Each tenant's plan says how long recordings are
+  // kept; past that they are deleted from R2 and the call row forgets the
+  // key. Deliberately runs AFTER everything else, capped at 200 per cycle —
+  // a purge that can never run away is worth more than one that finishes
+  // a backlog in one pass.
+  try { await runRetentionPurge(); }
+  catch (e: any) { console.error("[scheduler] retention failed:", e.message); }
+
+  // Demo expiry: a stamped demo_expires_at becomes a suspension. Demos are
+  // disposable by construction now — the alternative was the two "Hey
+  // Nikki" demo rows that sat as ordinary tenants for two months.
+  try { await runExpireDemos(); }
+  catch (e: any) { console.error("[scheduler] demo expiry failed:", e.message); }
   log("run complete");
 }
 
@@ -475,4 +489,61 @@ if (require.main === module) {
   runScheduler()
     .then(() => process.exit(0))
     .catch(e => { console.error("[scheduler] fatal", e); process.exit(1); });
+}
+
+
+/* ── Recording retention purge ──────────────────────────────── */
+const PIPELINE = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
+const INTERNAL = process.env.INTERNAL_SECRET || "";
+
+async function runRetentionPurge(): Promise<void> {
+  // recording_days per plan; anything unrecognised keeps the tightest
+  // default. A retention bug must err toward keeping less, not more —
+  // these are recordings of real people's calls.
+  const { data: plans } = await sb.from("plans").select("id, recording_days");
+  const daysOf = new Map((plans || []).map((p: any) => [String(p.id), p.recording_days || 30]));
+
+  const { data: tenants } = await sb.from("tenants").select("id, plan");
+  let purged = 0;
+  for (const t of tenants || []) {
+    const days = daysOf.get(String(t.plan)) ?? 30;
+    const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+    const { data: calls } = await sb.from("calls")
+      .select("id, r2_object_key")
+      .eq("tenant_id", t.id).not("r2_object_key", "is", null)
+      .lt("created_at", cutoff).limit(200 - purged);
+    if (!calls?.length) continue;
+
+    const keys = calls.map((c: any) => c.r2_object_key).filter(Boolean);
+    const r = await fetch(`${PIPELINE}/api/v1/recording/purge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL },
+      body: JSON.stringify({ keys }),
+    });
+    if (!r.ok) {
+      console.error(`[retention] purge call failed: ${r.status}`);
+      continue;   // keys stay on the rows; retried next cycle
+    }
+    // Only forget keys AFTER R2 confirmed. A row that forgets its key
+    // while the object survives is an orphan nobody can ever delete.
+    await sb.from("calls")
+      .update({ r2_object_key: null, recording_path: null })
+      .in("id", calls.map((c: any) => c.id));
+    purged += calls.length;
+    if (purged >= 200) break;
+  }
+  if (purged) console.log(`[scheduler] retention: purged ${purged} recordings`);
+}
+
+/* ── Demo tenant expiry ─────────────────────────────────────── */
+async function runExpireDemos(): Promise<void> {
+  const { data, error } = await sb.from("tenants")
+    .update({ status: "suspended" })
+    .eq("is_demo", true).eq("status", "trial")
+    .lt("demo_expires_at", new Date().toISOString())
+    .select("id, name");
+  if (error) { console.error("[demos]", error.message); return; }
+  for (const t of data || []) {
+    console.log(`[scheduler] demo expired: ${t.name}`);
+  }
 }

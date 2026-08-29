@@ -1891,6 +1891,51 @@ async def handle_outbound_dispatch(req: OutboundDispatchRequest,
         raise HTTPException(status_code=502, detail=result["error"] or "dispatch failed")
 
 
+class RecordingPurgeRequest(BaseModel):
+    keys: list
+
+
+@app.post("/api/v1/recording/purge")
+async def purge_recordings(req: RecordingPurgeRequest,
+                           x_internal_secret: str = Header(default="")):
+    """Delete recordings from R2. Lives here for the same reason presign
+    does: boto3 and the R2 credentials are already in this container.
+
+    Internal-only and bounded — the retention job sends at most a couple
+    hundred keys per run, and a wildcard or empty key is refused outright:
+    a purge endpoint that can be talked into deleting everything is a
+    disaster with an API."""
+    if x_internal_secret != INTERNAL_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    keys = [str(k) for k in (req.keys or []) if isinstance(k, str)
+            and 8 < len(k) < 300 and "*" not in k and ".." not in k]
+    if not keys or len(keys) > 500:
+        raise HTTPException(status_code=400, detail="1-500 concrete keys required")
+    cf_account_id = os.environ.get("CF_ACCOUNT_ID", "")
+    r2_access_key = os.environ.get("R2_ACCESS_KEY_ID", "")
+    r2_secret     = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+    r2_bucket     = os.environ.get("R2_BUCKET", "heynikki-recordings")
+    if not all([cf_account_id, r2_access_key, r2_secret]):
+        raise HTTPException(status_code=503, detail="R2 not configured")
+    import boto3
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=f"https://{cf_account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=r2_access_key,
+        aws_secret_access_key=r2_secret,
+        region_name="auto",
+    )
+    resp = await asyncio.to_thread(
+        s3.delete_objects,
+        Bucket=r2_bucket,
+        Delete={"Objects": [{"Key": k} for k in keys], "Quiet": True},
+    )
+    errors = resp.get("Errors", [])
+    log.info(f"[purge] deleted {len(keys) - len(errors)}/{len(keys)} recordings")
+    return {"deleted": len(keys) - len(errors),
+            "errors": [e.get("Key") for e in errors][:10]}
+
+
 @app.get("/health")
 async def health():
     from app.exotel import circuit_breaker as _cb

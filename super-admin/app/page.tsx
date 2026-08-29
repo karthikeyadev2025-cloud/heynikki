@@ -2075,6 +2075,9 @@ function BillingPanel({ token }: { token: string }) {
           </Card>
 
           <div style={{ height: SPACE.sm }} />
+          <ApiKeysCard token={token} tenantId={sel} />
+
+          <div style={{ height: SPACE.sm }} />
           <Card>
             <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>
               Invoices
@@ -2105,6 +2108,77 @@ function BillingPanel({ token }: { token: string }) {
         </>
       )}
     </div>
+  );
+}
+
+// Type what the caller ACTUALLY said; entity accuracy is scored against it.
+function SampleAnnotator({ token, sample }: { token: string; sample: any }) {
+  const [truth, setTruth] = useState("");
+  const [done, setDone] = useState(false);
+  if (done) return null;
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.bord}55` }}>
+      <div style={{ color: C.dim, fontSize: TYPE.xs, marginBottom: 5 }}>
+        sample {String(sample.id).slice(0, 8)} · {sample.noise_band} · {new Date(sample.created_at).toLocaleString()}
+      </div>
+      <textarea value={truth} onChange={e => setTruth(e.target.value)} rows={2}
+        placeholder="ground-truth transcript — exactly what the caller said"
+        style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontSize: TYPE.sm,
+          background: C.hi, color: C.txt, border: `1px solid ${C.bord}`, resize: "vertical" }} />
+      <button disabled={truth.trim().length < 4}
+        onClick={async () => {
+          const r = await fetch(`${API}/api/admin/voice-lab/samples/${sample.id}/annotate`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ truth_transcript: truth }),
+          });
+          if (r.ok) setDone(true); else alert("Failed");
+        }}
+        style={{ marginTop: 6, padding: "5px 12px", borderRadius: 6, fontSize: TYPE.xs,
+          fontWeight: 800, background: C.grn, color: "#04120a", border: "none", cursor: "pointer" }}>
+        Save annotation
+      </button>
+    </div>
+  );
+}
+
+// API keys behind the operator's JWT — the internal routes needed the
+// server-to-server secret, which an operator does not have.
+function ApiKeysCard({ token, tenantId }: { token: string; tenantId: string }) {
+  const [keys, setKeys] = useState<any[]>([]);
+  const load = useCallback(() => {
+    fetch(`${API}/api/admin/api-keys/${tenantId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(j => setKeys(j.keys || [])).catch(() => setKeys([]));
+  }, [token, tenantId]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <Card>
+      <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>API keys</div>
+      {keys.length === 0
+        ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>None issued.</div>
+        : keys.map(k => (
+          <div key={k.id} style={{ display: "flex", gap: 10, alignItems: "center",
+            padding: "5px 0", borderBottom: `1px solid ${C.bord}33`, fontSize: TYPE.sm }}>
+            <span style={{ color: C.txt, fontWeight: 700 }}>{k.name}</span>
+            <span style={{ color: C.dim, fontFamily: "monospace", fontSize: TYPE.xs }}>{k.prefix}…</span>
+            <span style={{ flex: 1 }} />
+            {k.revoked_at
+              ? <Pill label="revoked" color={C.dim} />
+              : <button
+                  onClick={async () => {
+                    if (!confirm(`Revoke "${k.name}"? Integrations using it stop working immediately.`)) return;
+                    const r = await fetch(`${API}/api/admin/api-keys/${k.id}/revoke`,
+                      { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                    if (!r.ok) alert("Failed"); load();
+                  }}
+                  style={{ padding: "3px 10px", borderRadius: 6, fontSize: TYPE.xs, fontWeight: 700,
+                    background: "transparent", color: C.red, border: `1px solid ${C.red}66`,
+                    cursor: "pointer" }}>
+                  Revoke
+                </button>}
+          </div>
+        ))}
+    </Card>
   );
 }
 
@@ -2211,6 +2285,11 @@ function VoiceLabPanel({ token }: { token: string }) {
         <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>Telugu entity test set</div>
         <div style={{ color: C.mid, fontSize: TYPE.sm, marginTop: 6, lineHeight: 1.55 }}>
           {d?.samples?.total ?? 0} sample(s), {d?.samples?.annotated ?? 0} annotated.
+        </div>
+        {(d?.samples?.recent || []).filter((x: any) => !x.annotated).slice(0, 5).map((sm: any) => (
+          <SampleAnnotator key={sm.id} token={token} sample={sm} />
+        ))}
+        <div style={{ color: C.mid, fontSize: TYPE.sm, marginTop: 6, lineHeight: 1.55 }}>
           Every STT vendor scores 33–47% WER on noisy Telugu — entity accuracy on OUR
           calls is the only ruler that matters, and nobody else has the corpus.
           Add samples from any call&apos;s detail view once real calls exist.
@@ -2876,7 +2955,66 @@ function FreeSwitchPanel({ token }: { token: string }) {
           </table>
         )}
       </Card>
+
+      <div style={{ height: SPACE.md }} />
+      <TrunksCard token={token} />
     </div>
+  );
+}
+
+// SIP trunk management — credential rotation was SQL-only. Passwords go up,
+// never come back down: the list is metadata, and a rotate writes a fresh
+// AES-256-GCM blob server-side.
+function TrunksCard({ token }: { token: string }) {
+  const [trunks, setTrunks] = useState<any[]>([]);
+  const [pw, setPw] = useState<Record<string, string>>({});
+  const load = useCallback(() => {
+    fetch(`${API}/api/admin/trunks`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(j => setTrunks(j.trunks || [])).catch(() => setTrunks([]));
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+  const patch = async (id: string, body: any) => {
+    const r = await fetch(`${API}/api/admin/trunks/${id}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) alert((await r.json()).error || "Failed");
+    load();
+  };
+  return (
+    <Card>
+      <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>SIP trunks</div>
+      {trunks.length === 0 && <div style={{ color: C.dim, fontSize: TYPE.sm }}>No trunk rows.</div>}
+      {trunks.map(t => (
+        <div key={t.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const,
+          padding: "8px 0", borderBottom: `1px solid ${C.bord}33`, fontSize: TYPE.sm }}>
+          <span style={{ color: C.txt, fontWeight: 700, minWidth: 130 }}>{t.display_name}</span>
+          <span style={{ color: C.mid }}>{t.provider} · {t.host}:{t.port} · {t.transport} · p{t.priority}</span>
+          <Pill label={t.status} color={t.status === "active" ? C.grn : t.status === "error" ? C.red : C.gold} />
+          <select value={t.status}
+            onChange={e => patch(t.id, { status: e.target.value })}
+            style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+              borderRadius: 5, padding: "3px 6px", fontSize: TYPE.xs }}>
+            {["active", "standby", "disabled"].map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <input type="password" placeholder="new password" value={pw[t.id] || ""}
+            onChange={e => setPw(v => ({ ...v, [t.id]: e.target.value }))}
+            style={{ width: 130, padding: "4px 8px", borderRadius: 5, fontSize: TYPE.xs,
+              background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+          <button disabled={!(pw[t.id] || "").trim()}
+            onClick={() => { patch(t.id, { password: pw[t.id] }); setPw(v => ({ ...v, [t.id]: "" })); }}
+            style={{ padding: "3px 10px", borderRadius: 5, fontSize: TYPE.xs, fontWeight: 700,
+              background: "transparent", color: C.gold, border: `1px solid ${C.gold}66`,
+              cursor: "pointer" }}>
+            Rotate
+          </button>
+        </div>
+      ))}
+      <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 8 }}>
+        Rotating a password stores it encrypted; FreeSWITCH gateway config is separate — reload after changing.
+      </div>
+    </Card>
   );
 }
 
