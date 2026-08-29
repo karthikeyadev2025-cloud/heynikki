@@ -1,3 +1,4 @@
+import FetchResilience from "../components/FetchResilience";
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Bricolage_Grotesque, Manrope, JetBrains_Mono, Noto_Sans_Telugu } from "next/font/google";
@@ -191,6 +192,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${bricolage.variable} ${manrope.variable} ${jetbrainsMono.variable} ${notoTelugu.variable}`}>
+        <FetchResilience />
         <Script
           id="heynikki-jsonld"
           type="application/ld+json"
