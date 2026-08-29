@@ -496,6 +496,158 @@ class SarvamSTT:
         return ""
 
 
+# ── SARVAM STREAMING STT ────────────────────────────────────────────
+# The batch POST above pays its whole round-trip AFTER the caller stops
+# speaking — the expensive pattern (Coval measured 1-2s of serial post-turn
+# STT across vendors). This client holds a WebSocket open for the call and
+# is fed the same 20ms frames the FreeSWITCH handler already receives, so
+# the transcript is essentially ready the moment the silence window closes.
+#
+# Fails OPEN to batch: any error marks the stream dead and the turn falls
+# back to SarvamSTT.transcribe with the buffered utterance. A streaming
+# outage must never cost a caller their call.
+class SarvamStreamingSTT:
+    URL = ("wss://api.sarvam.ai/speech-to-text/ws"
+           "?model=saaras:v3&language_code=unknown&sample_rate=8000"
+           "&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=false")
+
+    _FLUSH = object()          # queue sentinel: flush ordered after prior audio
+
+    def __init__(self):
+        self._ws = None
+        self._segments: list = []
+        self._recv_task = None
+        self._send_task = None
+        # One ordered queue, one sender task. Spawning a task per frame gives
+        # no ordering guarantee across tasks — out-of-order 20ms frames
+        # garble transcription silently. put_nowait from the frame loop also
+        # means a network stall can never block the loop handling barge-in.
+        self._q: "asyncio.Queue" = asyncio.Queue(maxsize=600)
+        self._flush_evt = asyncio.Event()
+        self.dead = False
+
+    async def start(self) -> bool:
+        try:
+            import websockets
+            log.info("[sttws] connecting...")
+            self._ws = await asyncio.wait_for(
+                websockets.connect(
+                    self.URL,
+                    additional_headers={"Api-Subscription-Key": SARVAM_KEY},
+                    max_size=2 ** 22,
+                ),
+                timeout=4.0,
+            )
+            self._recv_task = asyncio.create_task(self._recv_loop())
+            self._send_task = asyncio.create_task(self._send_loop())
+            log.info("[sttws] connected")
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[sttws] connect failed ({e}) — batch fallback for this call")
+            self.dead = True
+            return False
+
+    async def _recv_loop(self):
+        import base64  # noqa: F401
+        try:
+            async for raw in self._ws:
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                data = msg.get("data") or {}
+                if isinstance(data, dict) and data.get("transcript") is not None:
+                    log.info(f"[sttws] segment: {str(data['transcript'])[:60]!r}")
+                    self._segments.append(str(data["transcript"]))
+                    # Any transcript after a flush means the flush answered.
+                    self._flush_evt.set()
+                elif msg.get("type") == "error":
+                    log.warning(f"[sttws] server error: {str(msg)[:160]}")
+        except Exception as e:  # noqa: BLE001
+            if not self.dead:
+                log.debug(f"[sttws] recv loop ended: {e}")
+        finally:
+            self.dead = True
+            self._flush_evt.set()
+
+    def feed(self, pcm: bytes) -> None:
+        """Queue one chunk of raw 8kHz s16le PCM. Never blocks, never raises."""
+        if self.dead:
+            return
+        try:
+            self._q.put_nowait(pcm)
+        except asyncio.QueueFull:
+            # 600 x 20ms = 12s of backlog: the socket is not keeping up, and
+            # batch fallback will carry the call from here.
+            log.warning("[sttws] queue full — batch fallback")
+            self.dead = True
+
+    async def _send_loop(self):
+        import base64
+        try:
+            while not self.dead:
+                item = await self._q.get()
+                if item is self._FLUSH:
+                    await self._ws.send(json.dumps({"type": "flush"}))
+                    continue
+                await self._ws.send(json.dumps({
+                    "audio": {
+                        "data": base64.b64encode(item).decode(),
+                        # Live-server enum: only 'audio/wav' passes; the raw
+                        # format is carried by the connection-level
+                        # input_audio_codec=pcm_s16le.
+                        "encoding": "audio/wav",
+                        "sample_rate": 8000,
+                    },
+                }))
+        except Exception as e:  # noqa: BLE001
+            if not self.dead:
+                log.warning(f"[sttws] send loop ended ({e}) — batch fallback")
+            self.dead = True
+
+    async def finish_turn(self, timeout: float = 1.2) -> str:
+        """Flush, wait briefly for the final segment, return + reset."""
+        if self.dead or not self._ws:
+            return ""
+        try:
+            self._flush_evt.clear()
+            # Through the queue, so the flush lands AFTER every frame already
+            # queued — sending it around them would finalise early.
+            self._q.put_nowait(self._FLUSH)
+            try:
+                await asyncio.wait_for(self._flush_evt.wait(), timeout=timeout)
+                # Grace drain: a caller's LAST word often rides a segment that
+                # finalises a beat after the first flush response — observed
+                # live as "సోమవారం సరే నా పేరు." with the name itself arriving
+                # just after return and being thrown away with the reset.
+                await asyncio.sleep(0.15)
+            except asyncio.TimeoutError:
+                # Segments that arrived DURING speech are still usable; only
+                # the tail is at risk, and batch fallback would cost more
+                # than it saves at this point.
+                pass
+            out = " ".join(x for x in self._segments if x).strip()
+            log.info(f"[sttws] finish_turn -> {len(out)} chars, dead={self.dead}")
+            self._segments = []
+            return out
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[sttws] flush failed ({e})")
+            self.dead = True
+            return ""
+
+    async def close(self):
+        self.dead = True
+        try:
+            if self._send_task:
+                self._send_task.cancel()
+            if self._recv_task:
+                self._recv_task.cancel()
+            if self._ws:
+                await self._ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # ── SARVAM TTS ───────────────────────────────────────────
 class SarvamTTS:
     """Sarvam Bulbul V3 TTS — 8kHz telephony, Mulaw output."""
@@ -1208,7 +1360,8 @@ class NikkiAgent:
         )
         return "".join(lines)
 
-    async def on_speech(self, audio_bytes: bytes, want_text: bool = False):
+    async def on_speech(self, audio_bytes: bytes, want_text: bool = False,
+                        transcript_override: str | None = None):
         """Process one turn: STT -> detect intent -> LLM -> TTS.
 
         want_text=True returns the reply TEXT instead of synthesised audio, so
@@ -1223,7 +1376,14 @@ class NikkiAgent:
             # which leg to fix — Sierra's practice, adopted. Written onto the
             # call row at hangup; percentile summary at /health.
             _t0 = time.monotonic()
-            user_text = await self.stt.transcribe(audio_bytes)
+            if transcript_override:
+                # The per-call streaming socket transcribed WHILE the caller
+                # spoke; the batch round-trip is off the critical path
+                # entirely. Anything falsy falls through to batch — a
+                # streaming outage costs milliseconds, never the turn.
+                user_text = transcript_override
+            else:
+                user_text = await self.stt.transcribe(audio_bytes)
             _t_stt = time.monotonic() - _t0
             if not user_text.strip():
                 # MUST respect want_text. Returning audio here made
@@ -3075,7 +3235,8 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
 
 
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
-                    seq: int, speaking: dict) -> None:
+                    seq: int, speaking: dict,
+                    transcript: str | None = None) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
 
     Runs detached so the receive loop keeps reading frames while Nikki is
@@ -3093,7 +3254,8 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # for a genuinely slow turn, not furniture.
         filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=1.1))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
-        reply_text = await agent.on_speech(wav_bytes, want_text=True)
+        reply_text = await agent.on_speech(wav_bytes, want_text=True,
+                                           transcript_override=transcript)
         # Reply ready: if the filler has not fired yet, it never should.
         if not filler_task.done():
             filler_task.cancel()
@@ -3572,6 +3734,11 @@ async def freeswitch_ws(
     barge_frames   = 0            # consecutive voiced frames while Nikki speaks
     vad_threshold  = float(_SILENCE_THRESHOLD)
     noise_win: "deque" = deque(maxlen=250)   # ~5s of frame RMS while she is silent
+    # Per-call streaming STT. Transcribes WHILE the caller talks, so the
+    # transcript is ~ready when the silence window closes — the batch POST's
+    # 300-600ms round-trip leaves the critical path. Fails open to batch.
+    stt_stream = SarvamStreamingSTT()
+    asyncio.create_task(stt_stream.start())
     speech_needed  = _MIN_SPEECH_FRAMES
     cfg           = {}
     disclosure_sent = False
@@ -3681,10 +3848,16 @@ async def freeswitch_ws(
                     speech_buf.extend(frame)
                     speech_count  += 1
                     silence_count  = 0
+                    # Mirror into the streaming socket. Same gating as the
+                    # local buffer, so billed STT seconds do not change.
+                    if not stt_stream.dead:
+                        stt_stream.feed(bytes(frame))
                 else:
                     silence_count += 1
                     if speech_count > 0:
                         speech_buf.extend(frame)  # include trailing silence
+                        if not stt_stream.dead:
+                            stt_stream.feed(bytes(frame))
 
                 # ── BARGE-IN, with a confirmation window ─────────────────
                 # The caller started talking while Nikki is still speaking.
@@ -3743,15 +3916,31 @@ async def freeswitch_ws(
                             continue
 
                     turn_seq += 1
+                    # Streamed transcript first; empty string falls back to
+                    # batch inside on_speech. The flush wait is bounded so a
+                    # stuck socket costs at most ~1.2s once, then dead-flags.
+                    _stream_text = ""
+                    if not stt_stream.dead:
+                        try:
+                            _stream_text = await stt_stream.finish_turn()
+                        except Exception:  # noqa: BLE001
+                            _stream_text = ""
+                    if _stream_text:
+                        log.info(f"[sttws] streamed: {_stream_text[:80]}")
                     turn_task = asyncio.create_task(
                         _run_turn(agent, ws, fs_uuid, utterance_pcm,
-                                  turn_seq, speaking))
+                                  turn_seq, speaking,
+                                  transcript=_stream_text or None))
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
 
     finally:
         # ── Call cleanup ───────────────────────────────────────────────────
+        try:
+            await stt_stream.close()
+        except Exception:  # noqa: BLE001
+            pass
         duration = int(time.time() - call_start_ts)
         log.info(f"[FS] {fs_uuid}: Call ended, duration={duration}s, pcm={len(recording_pcm)}B")
 
