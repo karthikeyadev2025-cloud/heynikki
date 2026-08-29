@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle } from "lucide-react";
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -85,6 +85,21 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
   );
 }
 
+
+// Eighteen destinations do not fit in a row of tabs. They fit in six groups,
+// and the grouping is the point: an operator arrives knowing whether they are
+// here about a CUSTOMER, a CALL, or the PLATFORM, and only then which screen.
+// Order within each group runs in the order the work actually happens.
+const NAV_GROUPS: { title: string; labels: string[] }[] = [
+  { title: "Overview",  labels: ["Dashboard"] },
+  { title: "Customers", labels: ["Tenants", "KYC Review", "CRM", "Revenue"] },
+  { title: "Telephony", labels: ["Live Calls", "Numbers", "WhatsApp", "FreeSWITCH"] },
+  { title: "Quality",   labels: ["Call Quality", "Agent Versions"] },
+  { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
+  { title: "Platform",  labels: ["Operations", "API Health", "Platform Config",
+                                 "Pricing Engine", "Audit Log"] },
+];
+
 const TABS = [
   { label: "Dashboard",       icon: LayoutDashboard },
   { label: "Tenants",         icon: Building2 },
@@ -109,6 +124,7 @@ const TABS = [
 
 export default function SuperAdminPage() {
   const [tab, setTab]           = useState(0);
+  const [navOpen, setNavOpen]   = useState(false);
   const [authed, setAuthed]     = useState(false);
   const [checking, setChecking] = useState(true);
   const [token, setToken]       = useState("");
@@ -154,45 +170,103 @@ export default function SuperAdminPage() {
   return (
     <div style={{ background: C.bg, minHeight: "100vh",
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: C.txt }}>
-      <style>{"*{box-sizing:border-box;margin:0;padding:0} a{color:inherit}"}</style>
+      <style>{`
+        *{box-sizing:border-box;margin:0;padding:0} a{color:inherit}
+        .nk-shell{display:grid;grid-template-columns:232px minmax(0,1fr);
+                  max-width:1400px;margin:0 auto;align-items:start}
+        .nk-side{position:sticky;top:56px;max-height:calc(100vh - 56px);
+                 overflow-y:auto;padding:18px 10px 40px;
+                 border-right:1px solid ${C.bord}}
+        .nk-side button:hover{background:${C.hi}}
+        .nk-side button:focus-visible{outline:2px solid ${C.glow};outline-offset:-2px}
+        .nk-burger{display:none}
+        .nk-scrim{display:none}
+        @media (max-width: 900px){
+          .nk-shell{grid-template-columns:minmax(0,1fr)}
+          .nk-burger{display:inline-flex}
+          .nk-side{position:fixed;top:56px;left:0;bottom:0;width:250px;z-index:60;
+                   background:${C.surf};transform:translateX(-100%);
+                   transition:transform .18s ease}
+          .nk-side-open{transform:translateX(0)}
+          .nk-scrim{display:block;position:fixed;inset:56px 0 0;z-index:55;
+                    background:rgba(15,23,42,.38)}
+        }
+        @media (max-width: 560px){ .nk-hide-sm{display:none} }
+        @media (prefers-reduced-motion: reduce){ .nk-side{transition:none} }
+      `}</style>
 
       {/* Header */}
-      <div style={{ background: C.surf, borderBottom: "1px solid " + C.bord,
-        padding: "0 24px", position: "sticky", top: 0, zIndex: 50 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8,
-          padding: "12px 0 8px", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red,
-              boxShadow: "0 0 8px " + C.red }} />
-            <span style={{ fontSize: TYPE.base, fontWeight: 900 }}>Nikki — Super Admin</span>
-            <Pill label="RESTRICTED ACCESS" color={C.red} />
-          </div>
+      <header style={{ background: C.surf, borderBottom: "1px solid " + C.bord,
+        padding: "0 20px", position: "sticky", top: 0, zIndex: 50,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        height: 56 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button className="nk-burger" onClick={() => setNavOpen(o => !o)}
+            aria-label="Menu" aria-expanded={navOpen}
+            style={{ background: "none", border: "1px solid " + C.bord, color: C.mid,
+              borderRadius: 7, padding: "5px 8px", cursor: "pointer", lineHeight: 0 }}>
+            <Menu size={16} />
+          </button>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red,
+            boxShadow: "0 0 8px " + C.red, flex: "none" }} />
+          <span style={{ fontSize: TYPE.base, fontWeight: 900, whiteSpace: "nowrap" }}>
+            Nikki — Super Admin
+          </span>
+          <span className="nk-hide-sm"><Pill label="RESTRICTED ACCESS" color={C.red} /></span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="nk-hide-sm" style={{ color: C.dim, fontSize: TYPE.xs }}>
+            {TABS[tab].label}
+          </span>
           <button onClick={() => sb.auth.signOut().then(() => window.location.reload())}
             style={{ background: "none", border: "1px solid " + C.bord, color: C.dim,
-              borderRadius: 7, padding: "6px 12px", fontSize: TYPE.sm }}>Sign Out</button>
+              borderRadius: 7, padding: "6px 12px", fontSize: TYPE.sm, cursor: "pointer" }}>
+            Sign Out
+          </button>
         </div>
-        <div style={{ display: "flex", gap: 0, overflowX: "auto" }}>
-          {TABS.map((t, i) => {
-            const TabIcon = t.icon;
-            return (
-              <button key={t.label} onClick={() => setTab(i)} style={{
-                background: "none", border: "none", display: "flex",
-                alignItems: "center", gap: 6,
-                borderBottom: "2px solid " + (tab === i ? C.glow : "transparent"),
-                color: tab === i ? C.gbr : C.dim,
-                padding: "8px 14px", fontSize: TYPE.xs, fontWeight: tab === i ? 700 : 400,
-                cursor: "pointer", whiteSpace: "nowrap",
-              }}>
-                <TabIcon size={14} />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      </header>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 24px 60px" }}>
-        {panels[tab]}
+      <div className="nk-shell">
+        <nav className={"nk-side" + (navOpen ? " nk-side-open" : "")} aria-label="Sections">
+          {NAV_GROUPS.map(g => (
+            <div key={g.title} style={{ marginBottom: 18 }}>
+              <div style={{ color: C.dim, fontSize: 10, fontWeight: 800,
+                letterSpacing: "0.12em", textTransform: "uppercase" as const,
+                padding: "0 10px 6px" }}>{g.title}</div>
+              {g.labels.map(label => {
+                const i = TABS.findIndex(t => t.label === label);
+                if (i < 0) return null;           // a renamed tab loses its icon, not the console
+                const Icon = TABS[i].icon;
+                const on = tab === i;
+                return (
+                  <button key={label} onClick={() => { setTab(i); setNavOpen(false); }}
+                    aria-current={on ? "page" : undefined}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 9, width: "100%",
+                      padding: "7px 10px", marginBottom: 1, borderRadius: 8,
+                      border: "none", cursor: "pointer", textAlign: "left" as const,
+                      background: on ? C.glow + "1A" : "transparent",
+                      color: on ? C.gbr : C.mid,
+                      fontSize: TYPE.sm, fontWeight: on ? 700 : 500,
+                      borderLeft: "2px solid " + (on ? C.glow : "transparent"),
+                    }}>
+                    <Icon size={14} style={{ flex: "none", opacity: on ? 1 : 0.75 }} />
+                    <span style={{ whiteSpace: "nowrap" as const }}>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+
+        {navOpen && <div className="nk-scrim" onClick={() => setNavOpen(false)} />}
+
+        <main style={{ minWidth: 0, padding: "22px 20px 60px" }}>
+          <h1 style={{ fontSize: 19, fontWeight: 900, marginBottom: 16, color: C.txt }}>
+            {TABS[tab].label}
+          </h1>
+          {panels[tab]}
+        </main>
       </div>
     </div>
   );
