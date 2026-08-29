@@ -11,7 +11,7 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu } from "lucide-react";
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -94,7 +94,7 @@ const NAV_GROUPS: { title: string; labels: string[] }[] = [
   { title: "Overview",  labels: ["Dashboard"] },
   { title: "Customers", labels: ["Tenants", "KYC Review", "CRM", "Revenue"] },
   { title: "Telephony", labels: ["Live Calls", "Numbers", "WhatsApp", "FreeSWITCH"] },
-  { title: "Quality",   labels: ["Call Quality", "Agent Versions"] },
+  { title: "Quality",   labels: ["Call Quality", "Agent Versions", "Voice Lab"] },
   { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
   { title: "Platform",  labels: ["Operations", "API Health", "Platform Config",
                                  "Pricing Engine", "Audit Log"] },
@@ -113,6 +113,7 @@ const TABS = [
   { label: "Call Quality",    icon: Gauge },
   { label: "Campaigns",       icon: Megaphone },
   { label: "Agent Versions",  icon: Bot },
+  { label: "Voice Lab",       icon: Mic },
   { label: "Audit Log",       icon: Lock },
   { label: "API Health",      icon: Plug },
   { label: "Broadcast",       icon: Megaphone },
@@ -158,6 +159,7 @@ export default function SuperAdminPage() {
     <QualityPanel      key="qua"  token={token} />,
     <CampaignsPanel    key="cmp"  token={token} />,
     <AgentVersionsPanel key="ver" token={token} />,
+    <VoiceLabPanel     key="vlab" token={token} />,
     <AuditPanel        key="aud"  token={token} />,
     <APIHealthPanel    key="api"  token={token} />,
     <BroadcastPanel    key="bc"   token={token} />,
@@ -1776,6 +1778,123 @@ function OnboardingCallButton({ token, tenantId }: { token: string; tenantId: st
       {msg && (
         <span style={{ fontSize: TYPE.xs, color: state === "done" ? C.grn : C.red }}>{msg}</span>
       )}
+    </div>
+  );
+}
+
+// ── VOICE LAB ────────────────────────────────────────────────
+// How each tenant's names are pronounced, and the noisy-Telugu test set.
+// A receptionist mispronouncing her employer's name is the most
+// trust-costly mistake she can make; this is where it gets fixed, per
+// tenant, in one field.
+function VoiceLabPanel({ token }: { token: string }) {
+  const [d, setD] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [rows, setRows] = useState<Array<{ k: string; v: string }>>([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetch(`${API}/api/admin/voice-lab`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(setD).catch(() => setD(null)).finally(() => setLoading(false));
+  };
+  useEffect(load, [token]);
+
+  const openEditor = (p: any) => {
+    setEditing(p.id);
+    const m = p.pronunciation_map || {};
+    setRows(Object.entries(m).map(([k, v]) => ({ k, v: String(v) })));
+  };
+  const save = async (profileId: string) => {
+    setBusy(true);
+    const map: Record<string, string> = {};
+    rows.forEach(r => { if (r.k.trim() && r.v.trim()) map[r.k.trim()] = r.v.trim(); });
+    const r = await fetch(`${API}/api/admin/voice-lab/${profileId}/pronunciations`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ pronunciation_map: map }),
+    });
+    if (!r.ok) alert((await r.json()).error || "Save failed");
+    else { setEditing(null); load(); }
+    setBusy(false);
+  };
+
+  if (loading) return <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>;
+
+  return (
+    <div>
+      <Card>
+        <div style={{ color: C.mid, fontSize: TYPE.sm, lineHeight: 1.55 }}>
+          Written form → how Nikki should say it, applied just before speech.
+          Fixes a mispronounced business name in one entry —
+          <span style={{ color: C.txt }}> రామ్య → రామ్యా</span> — without touching the model.
+        </div>
+      </Card>
+      <div style={{ height: SPACE.sm }} />
+      <div style={{ display: "grid", gap: SPACE.sm }}>
+        {(d?.profiles || []).map((p: any) => (
+          <Card key={p.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: SPACE.sm, flexWrap: "wrap" as const }}>
+              <div>
+                <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>{p.business_name}</div>
+                <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                  {p.tenant_name || p.tenant_id} · {Object.keys(p.pronunciation_map || {}).length} pronunciation(s)
+                </div>
+              </div>
+              <button onClick={() => editing === p.id ? setEditing(null) : openEditor(p)}
+                style={{ padding: "6px 12px", borderRadius: 7, fontSize: TYPE.xs, fontWeight: 700,
+                  background: "transparent", color: C.txt, border: `1px solid ${C.bord}`,
+                  cursor: "pointer", alignSelf: "flex-start" }}>
+                {editing === p.id ? "Close" : "Edit"}
+              </button>
+            </div>
+            {editing === p.id && (
+              <div style={{ marginTop: SPACE.sm, paddingTop: SPACE.sm, borderTop: `1px solid ${C.bord}` }}>
+                {rows.map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 7 }}>
+                    <input value={r.k} placeholder="written (రామ్య)"
+                      onChange={e => setRows(v => v.map((x, j) => j === i ? { ...x, k: e.target.value } : x))}
+                      style={{ flex: 1, padding: "7px 10px", borderRadius: 7, fontSize: TYPE.sm,
+                        background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+                    <input value={r.v} placeholder="spoken (రామ్యా)"
+                      onChange={e => setRows(v => v.map((x, j) => j === i ? { ...x, v: e.target.value } : x))}
+                      style={{ flex: 1, padding: "7px 10px", borderRadius: 7, fontSize: TYPE.sm,
+                        background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+                    <button onClick={() => setRows(v => v.filter((_, j) => j !== i))}
+                      style={{ padding: "0 11px", borderRadius: 7, background: "transparent",
+                        border: `1px solid ${C.bord}`, color: C.dim, cursor: "pointer" }}>×</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setRows(v => [...v, { k: "", v: "" }])}
+                    style={{ padding: "6px 12px", borderRadius: 7, fontSize: TYPE.xs,
+                      background: "transparent", color: C.txt, border: `1px solid ${C.bord}`, cursor: "pointer" }}>
+                    + Add word
+                  </button>
+                  <button onClick={() => save(p.id)} disabled={busy}
+                    style={{ padding: "6px 14px", borderRadius: 7, fontSize: TYPE.xs, fontWeight: 800,
+                      background: C.grn, color: "#04120a", border: "none",
+                      cursor: busy ? "wait" : "pointer" }}>
+                    {busy ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ height: SPACE.md }} />
+      <Card>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>Telugu entity test set</div>
+        <div style={{ color: C.mid, fontSize: TYPE.sm, marginTop: 6, lineHeight: 1.55 }}>
+          {d?.samples?.total ?? 0} sample(s), {d?.samples?.annotated ?? 0} annotated.
+          Every STT vendor scores 33–47% WER on noisy Telugu — entity accuracy on OUR
+          calls is the only ruler that matters, and nobody else has the corpus.
+          Add samples from any call&apos;s detail view once real calls exist.
+        </div>
+      </Card>
     </div>
   );
 }

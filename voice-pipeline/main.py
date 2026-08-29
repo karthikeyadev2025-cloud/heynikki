@@ -453,7 +453,14 @@ class SarvamSTT:
                 files={"file": ("audio.wav", audio_bytes, "audio/wav")},
                 data={
                     "model": "saaras:v3",
+                    # te-IN + codemix. codemix is what handles the English
+                    # words inside Telugu speech (39.7% of tokens), writing
+                    # them in Latin script; the language pin is what stops
+                    # the OTHER failure — with "unknown", short fragments
+                    # came back transcribed as Hindi, Punjabi and Kannada in
+                    # one synthetic call, a per-segment language lottery.
                     "language_code": "te-IN",
+                    "mode": "codemix",
                     "with_timestamps": "false",
                 },
                 timeout=10.0,
@@ -508,7 +515,7 @@ class SarvamSTT:
 # outage must never cost a caller their call.
 class SarvamStreamingSTT:
     URL = ("wss://api.sarvam.ai/speech-to-text/ws"
-           "?model=saaras:v3&language_code=unknown&sample_rate=8000"
+           "?model=saaras:v3&language_code=te-IN&mode=codemix&sample_rate=8000"
            "&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=false")
 
     _FLUSH = object()          # queue sentinel: flush ordered after prior audio
@@ -2828,6 +2835,36 @@ def _stage_fillers() -> list:
 
 _FILLERS = _stage_fillers()
 
+# ── B8: listener backchannels ───────────────────────────────────────
+# Indian phone pragmatics backchannel every 5-10 seconds; a silent listener
+# gets "హలో? హలో?" line-checks because silence reads as a dropped call, not
+# politeness. Clips are synthesised once per voice into the shared spool
+# (FreeSWITCH reads the file path, same constraint as the fillers) and
+# played at most once every 7 seconds while the CALLER is mid-monologue.
+_BC_TEXTS = ["హా", "ఊ", "అర్థమైంది", "సరే"]
+_BC_DIR = pathlib.Path(_TTS_SPOOL) / "backchannels"
+
+
+async def _backchannel_clip(tts, voice: str) -> str:
+    """Path to one ready backchannel clip for this voice, or ''. Lazy: the
+    first call on a voice pays one small TTS round; every later call is a
+    file that already exists."""
+    try:
+        _BC_DIR.mkdir(parents=True, exist_ok=True)
+        import random  # noqa: PLC0415 — seeded by os.urandom below, not time
+        idx = int.from_bytes(os.urandom(1), "big") % len(_BC_TEXTS)
+        path = _BC_DIR / f"bc_{voice}_{idx}.wav"
+        if not path.exists() or path.stat().st_size < 500:
+            audio = await tts.synthesize(_BC_TEXTS[idx], voice)
+            if not audio:
+                return ""
+            path.write_bytes(audio)
+        return str(path)
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"[bc] clip failed: {e}")
+        return ""
+
+
 
 def _demo_limit_for(profile: dict) -> int:
     """Per-profile demo cap, 0 = uncapped."""
@@ -2935,7 +2972,8 @@ async def _greeting_audio(agent) -> bytes:
     # first call cached a wav under this name and every later call reads it
     # back. Silent, permanent, and exactly the kind of thing discovered weeks
     # later by someone wondering why their new opening never plays.
-    text = _greeting_text(agent.profile, agent.caller_history)
+    text = normalize_for_tts(_greeting_text(agent.profile, agent.caller_history),
+                             (agent.profile or {}).get("pronunciation_map"))
     stamp = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
     path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}_{variant}_{stamp}.wav"
     try:
@@ -3062,8 +3100,19 @@ def _spoken_rupees(m: "re.Match") -> str:
         return f"{_TE_HALF[n // 1000]} వేల రూపాయలు"
     return f"{n} రూపాయలు"   # bulbul handles plain smaller numbers acceptably
 
-def normalize_for_tts(text: str) -> str:
+def normalize_for_tts(text: str, pmap: dict | None = None) -> str:
     t = _clean_for_speech(text)                       # markdown, emoji, vendor names
+    # The tenant's own words first — their business name, their doctors,
+    # their products, spelled the way bulbul actually says them right. This
+    # fixes both failure modes at once: the LLM re-spelling a name it was
+    # told never to touch (రామ్య came out రామ్మా on an eval), and the TTS
+    # mispronouncing a correct spelling. Longest keys first, so a longer
+    # phrase wins over a word it contains.
+    if pmap:
+        for k in sorted(pmap, key=len, reverse=True):
+            v = pmap.get(k)
+            if k and isinstance(v, str) and v:
+                t = t.replace(k, v)
     t = re.sub(r"\b[6-9]\d{9}\b", _spoken_phone, t)   # mobile numbers first (longest)
     t = re.sub(r"\b(\d{1,2}):(\d{2})\s*(?:AM|PM|am|pm)?\b", _spoken_time, t)
     t = re.sub(r"(?:Rs\.?|₹)\s*([\d,]+)", _spoken_rupees, t)
@@ -3088,7 +3137,8 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
         # caller a whole turn of silence. Fail loudly instead of crashing.
         log.error("_speak_chunked got bytes, expected text — dropping turn")
         return
-    chunks = _speech_chunks(normalize_for_tts(text))
+    chunks = _speech_chunks(normalize_for_tts(
+        text, (getattr(agent, "profile", None) or {}).get("pronunciation_map")))
     if not chunks:
         return
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
@@ -3393,7 +3443,9 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
 
             async def _speak_prefix():
                 audio = await agent.tts.synthesize(
-                    normalize_for_tts(prefix), agent.voice)
+                    normalize_for_tts(prefix,
+                        (agent.profile or {}).get("pronunciation_map")),
+                    agent.voice)
                 if audio:
                     dur = _wav_duration_secs(audio)
                     speaking["until"] = time.monotonic() + dur
@@ -3900,6 +3952,10 @@ async def freeswitch_ws(
     frame_secs     = None         # measured from the first frame received
     silence_needed = _SILENCE_FRAMES
     barge_frames   = 0            # consecutive voiced frames while Nikki speaks
+    last_backchannel = 0.0        # B8 cooldown
+    pending_text = ""             # B7: merged mid-reply interjections
+    pending_pcm  = bytearray()
+    pending_runner: dict = {"t": None}
     vad_threshold  = float(_SILENCE_THRESHOLD)
     noise_win: "deque" = deque(maxlen=250)   # ~5s of frame RMS while she is silent
     # Per-call streaming STT. Transcribes WHILE the caller talks, so the
@@ -4020,6 +4076,20 @@ async def freeswitch_ws(
                     # local buffer, so billed STT seconds do not change.
                     if not stt_stream.dead:
                         stt_stream.feed(bytes(frame))
+                    # ── B8: she is listening, audibly ───────────────────
+                    # Six seconds of continuous caller speech with Nikki
+                    # silent earns a soft "హా" — and at most one every
+                    # seven seconds, randomised, because the same murmur on
+                    # a metronome is worse than silence.
+                    if (speech_count * (frame_secs or 0.02) > 6.0
+                            and time.monotonic() >= speaking["until"]
+                            and time.monotonic() - last_backchannel > 7.0):
+                        last_backchannel = time.monotonic()
+                        async def _bc():
+                            clip = await _backchannel_clip(agent.tts, agent.voice)
+                            if clip and time.monotonic() >= speaking["until"]:
+                                await _esl_api(f"uuid_broadcast {fs_uuid} {clip} aleg")
+                        asyncio.create_task(_bc())
                 else:
                     silence_count += 1
                     if speech_count > 0:
@@ -4078,8 +4148,70 @@ async def freeswitch_ws(
                         if words >= 0.7:
                             turn_task.cancel()
                         else:
-                            log.info(f"[FS] {fs_uuid}: short backchannel "
-                                     f"({words:.1f}s) — letting the reply finish")
+                            # ── B7: classify, don't discard ─────────────────
+                            # Duration alone cannot separate "సరే" from
+                            # "ఆగండి". The streaming socket has usually
+                            # already transcribed the clip; a quick flush
+                            # says which it was. A backchannel is ignored, a
+                            # stop-word stops her, and a real question is
+                            # queued for the moment the current reply ends —
+                            # previously all three were thrown away, including
+                            # two requests for a human on a real call.
+                            async def _classify_short(pcm: bytes, tt):
+                                txt = ""
+                                if not stt_stream.dead:
+                                    try:
+                                        txt = await stt_stream.finish_turn(timeout=0.8)
+                                    except Exception:  # noqa: BLE001
+                                        txt = ""
+                                if not txt:
+                                    return          # nothing intelligible; old behaviour
+                                low = txt.strip().lower()
+                                log.info(f"[FS] {fs_uuid}: short utterance: {low!r}")
+                                if re.fullmatch(
+                                    r"[\s,.!]*?(హా|ఆ|ఊ|అవును|సరే|ఒకే|ఓకే|హ్మ్|అవునండి|సరేనండి|"
+                                    r"ok(ay)?|yes|haan|hm+|right|acha)[\s,.!]*", low):
+                                    return          # true backchannel — she talks on
+                                if re.search(r"ఆగండి|ఆపండి|wait|stop|hold|ఒక్క నిమిషం", low):
+                                    speaking["until"] = 0.0
+                                    await _esl_api(f"uuid_break {fs_uuid} all")
+                                    if tt and not tt.done():
+                                        tt.cancel()
+                                    log.info(f"[FS] {fs_uuid}: caller said wait — stopped")
+                                    return
+                                # A real interjection: MERGED into one
+                                # pending turn, answered when the current
+                                # reply ends. The first version made every
+                                # fragment its own queued turn, and a paused
+                                # monologue produced a serial stack of
+                                # replies — the phone version of two Nikkis
+                                # talking at once.
+                                nonlocal pending_text, pending_pcm
+                                pending_text = (pending_text + " " + txt).strip()
+                                pending_pcm += pcm
+                                if pending_runner["t"] is None or pending_runner["t"].done():
+                                    async def _drain_pending():
+                                        nonlocal pending_text, pending_pcm, turn_seq, turn_task
+                                        if tt:
+                                            try:
+                                                await asyncio.wait_for(
+                                                    asyncio.shield(tt), timeout=20)
+                                            except Exception:  # noqa: BLE001
+                                                pass
+                                        # settle: later fragments may still land
+                                        await asyncio.sleep(0.6)
+                                        q_text, q_pcm = pending_text, bytes(pending_pcm)
+                                        pending_text, pending_pcm = "", bytearray()
+                                        if not q_text:
+                                            return
+                                        turn_seq += 1
+                                        turn_task = asyncio.create_task(
+                                            _run_turn(agent, ws, fs_uuid, q_pcm,
+                                                      turn_seq, speaking,
+                                                      transcript=q_text))
+                                    pending_runner["t"] = asyncio.create_task(_drain_pending())
+                            asyncio.create_task(
+                                _classify_short(utterance_pcm, turn_task))
                             speech_buf = bytearray()
                             continue
 

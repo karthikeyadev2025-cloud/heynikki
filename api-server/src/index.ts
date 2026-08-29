@@ -2225,6 +2225,79 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
   res.json({ ok: true, ...data });
 });
 
+// ── VOICE LAB ─────────────────────────────────────────────────
+// Per-tenant pronunciation lexicons and the noisy-Telugu entity test set.
+app.get("/api/admin/voice-lab", verifySuperAdmin, async (_req, res) => {
+  const [{ data: profiles }, { data: samples }] = await Promise.all([
+    sb.from("voice_profiles")
+      .select("id, tenant_id, business_name, pronunciation_map")
+      .order("business_name"),
+    sb.from("stt_eval_samples")
+      .select("id, noise_band, annotated, created_at")
+      .order("created_at", { ascending: false }).limit(200),
+  ]);
+  const tenantIds = [...new Set((profiles || []).map((p: any) => p.tenant_id))];
+  const { data: tenants } = tenantIds.length
+    ? await sb.from("tenants").select("id, name").in("id", tenantIds)
+    : { data: [] as any[] };
+  const nameOf = new Map((tenants || []).map((t: any) => [t.id, t.name]));
+  res.json({
+    profiles: (profiles || []).map((p: any) => ({
+      ...p, tenant_name: nameOf.get(p.tenant_id) || null,
+    })),
+    samples: {
+      total: (samples || []).length,
+      annotated: (samples || []).filter((x: any) => x.annotated).length,
+      recent: (samples || []).slice(0, 20),
+    },
+  });
+});
+
+// The map is written whole, not patched: a lexicon is small (tens of
+// entries) and merge semantics on a jsonb of pronunciations invite the
+// stale-entry bug where a deleted word keeps being applied forever.
+app.post("/api/admin/voice-lab/:profileId/pronunciations", verifySuperAdmin, async (req: any, res) => {
+  const map = req.body?.pronunciation_map;
+  if (!map || typeof map !== "object" || Array.isArray(map)) {
+    return res.status(400).json({ error: "pronunciation_map must be an object of written -> spoken" });
+  }
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (typeof v === "string" && k.trim() && v.trim() && k.length <= 120 && v.length <= 200) {
+      clean[k.trim()] = v.trim();
+    }
+  }
+  const { error } = await sb.from("voice_profiles")
+    .update({ pronunciation_map: clean }).eq("id", req.params.profileId);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "pronunciations_updated",
+    details: { profile_id: req.params.profileId, entries: Object.keys(clean).length },
+  }).then(r => r.error && console.error("[voice-lab] audit:", r.error.message));
+  res.json({ ok: true, entries: Object.keys(clean).length });
+});
+
+// Capture a real call into the test set. Copies nothing — the recording is
+// already in R2; this records WHICH calls are part of the ruler.
+app.post("/api/admin/voice-lab/samples", verifySuperAdmin, async (req: any, res) => {
+  const { call_id, noise_band } = req.body || {};
+  if (!call_id) return res.status(400).json({ error: "call_id required" });
+  const { data: call } = await sb.from("calls")
+    .select("id, tenant_id, r2_object_key, transcript").eq("id", call_id).maybeSingle();
+  if (!call) return res.status(404).json({ error: "Call not found" });
+  if (!call.r2_object_key) return res.status(400).json({ error: "Call has no recording" });
+  const machine = Array.isArray(call.transcript)
+    ? call.transcript.filter((t: any) => t.role === "user").map((t: any) => t.content).join(" ")
+    : null;
+  const { data, error } = await sb.from("stt_eval_samples").insert({
+    call_id: call.id, tenant_id: call.tenant_id, r2_object_key: call.r2_object_key,
+    machine_transcript: machine,
+    noise_band: ["quiet", "street", "speakerphone"].includes(noise_band) ? noise_band : "unknown",
+  }).select("id").single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, sample_id: data.id });
+});
+
 // ── ONBOARDING INTERVIEW ──────────────────────────────────────
 // Ring a new customer so Nikki can ask what their business does and fill
 // their setup from the answers. The most reliable way to finish onboarding
