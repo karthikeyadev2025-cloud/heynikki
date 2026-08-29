@@ -16,7 +16,7 @@
 // pipeline, not the browser's Web Speech API (which has little to no
 // real Telugu support).
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { createClient } from "../lib/supabase";
 import { NIKKI } from "../lib/brand";
 import { Bot, Mic, Loader2, X, Square, Volume2 } from "lucide-react";
@@ -27,7 +27,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 const C = {
   acc: NIKKI.teal, gbr: NIKKI.tealLight, surf: NIKKI.surface,
   bord: NIKKI.border, txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
-  red: NIKKI.red,
+  red: NIKKI.red, grn: NIKKI.emerald,
 };
 
 type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
@@ -35,6 +35,7 @@ type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
 export default function OwnerVoiceAssistant() {
   const [open, setOpen]     = useState(false);
   const [status, setStatus] = useState<Status>("idle");
+  const [wakeOn, setWakeOn] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [answer, setAnswer] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -42,6 +43,79 @@ export default function OwnerVoiceAssistant() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+
+  // ── "Hey Nikki" wake word, everywhere in the dashboard ──────────────
+  // The panel existed on every page through Shell but only opened by click.
+  // A voice product whose own dashboard cannot be woken by voice is arguing
+  // against itself — this is the same continuous-recognition pattern the
+  // landing page's widget already proved, including its two hard-won rules:
+  // restart recognition on a DELAY (Chrome ends it after every result, and
+  // an immediate restart loops the last transcript), and never listen while
+  // she is answering (she would wake herself).
+  const recogRef       = useRef<any>(null);
+  const wakeStopRef    = useRef(false);
+  const restartRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusRef      = useRef<Status>("idle");
+  const openRef        = useRef(false);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { openRef.current = open; }, [open]);
+
+  const startWake = useCallback(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return false;
+    wakeStopRef.current = false;
+    const r = new SR();
+    r.lang = "en-IN"; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev: any) => {
+      if (openRef.current || statusRef.current !== "idle") return;
+      const text = Array.from(ev.results as any)
+        .map((x: any) => x[0]?.transcript || "").join(" ").toLowerCase();
+      if (/\b(hey|hai|hi)?\s*nik+i+\b|నిక్కి/.test(text)) {
+        try { r.stop(); } catch { /* noop */ }
+        setOpen(true);
+        // Straight into listening — saying her name twice is the failure.
+        setTimeout(() => { startRecording(); }, 250);
+      }
+    };
+    r.onend = () => {
+      if (wakeStopRef.current) return;
+      // Deferred restart. Chrome ends recognition constantly; restarting in
+      // the same tick replays the final transcript and she wakes herself.
+      restartRef.current = setTimeout(() => {
+        if (!wakeStopRef.current && !openRef.current) {
+          try { r.start(); } catch { /* already running */ }
+        }
+      }, 400);
+    };
+    r.onerror = () => { /* onend follows and handles restart */ };
+    try { r.start(); } catch { return false; }
+    recogRef.current = r;
+    return true;
+  }, []);
+
+  const stopWake = useCallback(() => {
+    wakeStopRef.current = true;
+    if (restartRef.current) clearTimeout(restartRef.current);
+    try { recogRef.current?.stop(); } catch { /* noop */ }
+    recogRef.current = null;
+  }, []);
+
+  const toggleWake = useCallback(() => {
+    setWakeOn(on => {
+      if (on) { stopWake(); return false; }
+      const ok = startWake();
+      return ok;
+    });
+  }, [startWake, stopWake]);
+
+  // The panel closing resumes the wake listener; unmount kills it.
+  useEffect(() => {
+    if (wakeOn && !open && statusRef.current === "idle") {
+      const t = setTimeout(() => { if (!openRef.current) startWake(); }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [open, wakeOn, startWake]);
+  useEffect(() => () => stopWake(), [stopWake]);
 
   const startRecording = useCallback(async () => {
     setErrorMsg("");
@@ -188,6 +262,28 @@ export default function OwnerVoiceAssistant() {
           </button>
         </div>
       )}
+
+      {/* Wake-word toggle rides above the FAB. Green dot = she is listening
+          for her name on this page; say "Hey Nikki" and the panel opens
+          already recording. Off by default — an always-on mic must be the
+          owner's explicit choice, made once per session. */}
+      <button
+        onClick={toggleWake}
+        title={wakeOn ? "Voice wake is on — say 'Hey Nikki'" : "Enable 'Hey Nikki' voice wake"}
+        style={{
+          position: "fixed", bottom: 86, right: 24, zIndex: 9999,
+          padding: "6px 12px", borderRadius: 999, border: `1px solid ${wakeOn ? C.grn : C.bord}`,
+          background: wakeOn ? "rgba(16,185,129,0.12)" : C.surf,
+          color: wakeOn ? C.grn : C.mid, fontSize: 11.5, fontWeight: 700,
+          cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+        }}>
+        <span style={{
+          width: 7, height: 7, borderRadius: "50%",
+          background: wakeOn ? C.grn : C.dim,
+          boxShadow: wakeOn ? `0 0 0 3px rgba(16,185,129,0.2)` : "none",
+        }} />
+        {wakeOn ? "\u201cHey Nikki\u201d on" : "\u201cHey Nikki\u201d wake"}
+      </button>
 
       <button
         onClick={toggle}
