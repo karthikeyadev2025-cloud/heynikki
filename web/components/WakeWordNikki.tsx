@@ -299,6 +299,27 @@ export default function WakeWordNikki() {
     }
   }, [runMeter, startWakeListener]);
 
+  // Stand down while the call console owns the page's voice. Both widgets
+  // holding open mics meant one utterance got TWO answers at once — and this
+  // widget could hear the console's Nikki speaking and answer HER. While a
+  // console call is live this one suspends completely; when the call ends it
+  // resumes only if the visitor had it on.
+  const wasOnRef = useRef(false);
+  useEffect(() => {
+    const onConsole = (e: Event) => {
+      const active = !!(e as CustomEvent).detail?.active;
+      if (active) {
+        wasOnRef.current = phaseRef.current !== "idle";
+        if (wasOnRef.current) teardown();
+      } else if (wasOnRef.current) {
+        wasOnRef.current = false;
+        enable();
+      }
+    };
+    window.addEventListener("nikki:console", onConsole);
+    return () => window.removeEventListener("nikki:console", onConsole);
+  }, [teardown]);   // enable is stable via its own useCallback
+
   const disable = useCallback(() => {
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
     setEnabled(false);

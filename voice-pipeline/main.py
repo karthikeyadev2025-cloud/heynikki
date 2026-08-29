@@ -703,6 +703,44 @@ class SarvamTTS:
                 log.debug(f"tts cache write skipped: {e}")
         return audio
 
+    async def _synthesize_ws(self, text: str, speaker: str, rate: int) -> bytes:
+        """bulbul over WebSocket: measured 75ms to first audio after a 195ms
+        connect, against a ~700ms floor per REST request. Chunks arrive as
+        complete RIFF WAVs; their PCM is concatenated and re-wrapped, because
+        playback is file-based (uuid_broadcast) and needs one clip.
+        Raises on any problem — the caller falls back to REST."""
+        import websockets
+        uri = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3&send_completion_event=true"
+        pcm = bytearray()
+        async with websockets.connect(
+            uri, additional_headers={"Api-Subscription-Key": self.api_key},
+            open_timeout=3.0, max_size=2 ** 22,
+        ) as ws:
+            await ws.send(json.dumps({"type": "config", "data": {
+                "target_language_code": "te-IN", "speaker": speaker,
+                "pace": 1.1, "speech_sample_rate": rate,
+                "enable_preprocessing": True, "output_audio_codec": "wav",
+                "min_buffer_size": 30, "max_chunk_length": 120,
+            }}))
+            await ws.send(json.dumps({"type": "text", "data": {"text": text}}))
+            await ws.send(json.dumps({"type": "flush"}))
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=6.0)
+                m = json.loads(raw)
+                t = m.get("type")
+                if t == "audio":
+                    import base64
+                    b = base64.b64decode(m["data"]["audio"])
+                    pcm.extend(b[44:] if b[:4] == b"RIFF" else b)
+                elif t == "error":
+                    raise RuntimeError(str(m)[:200])
+                else:
+                    # completion / event frame — synthesis is done.
+                    break
+        if not pcm:
+            raise RuntimeError("ws synthesis returned no audio")
+        return _pcm16_to_wav_bytes(bytes(pcm), rate)
+
     async def _synthesize_uncached(self, text: str, speaker: str = "priya",
                                    rate: int = 8000) -> bytes:
         # No word cap. The old 20-word truncation amputated the tail of every
@@ -715,6 +753,16 @@ class SarvamTTS:
         if len(text) > 2400:
             log.warning(f"TTS input {len(text)} chars — clamping to 2400")
             text = text[:2400]
+
+        # WebSocket first on the phone path — it is what turns the ~700ms
+        # REST floor into ~300ms end to end for a short chunk. REST stays as
+        # the fallback and as the browser path (22050 works fine there and a
+        # web turn is not latency-critical to the same degree).
+        if rate == 8000:
+            try:
+                return await self._synthesize_ws(text, speaker, rate)
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[ttsws] fell back to REST: {e}")
 
         try:
             resp = await _POOL.post(
@@ -802,7 +850,76 @@ class GeminiLLM:
         )
 
     async def generate(self, system_prompt: str, history: list[dict],
-                       temperature: float | None = None) -> str:
+                       temperature: float | None = None,
+                       first_clause_cb=None) -> str:
+        """first_clause_cb: called ONCE with the first clause (~sentence or
+        ~55 chars at a comma) as soon as the token stream produces it, while
+        the rest is still generating. The phone path uses it to start TTS on
+        the opening clause immediately — the tail of generation leaves the
+        caller's critical path. Falls back to the batch request on any
+        streaming error; the callback simply never fires and the turn
+        proceeds exactly as before."""
+        if first_clause_cb is not None:
+            try:
+                return await self._generate_streaming(
+                    system_prompt, history, temperature, first_clause_cb)
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"Gemini stream failed ({e}) — batch fallback")
+        return await self._generate_batch(system_prompt, history, temperature)
+
+    async def _generate_streaming(self, system_prompt, history, temperature,
+                                  first_clause_cb) -> str:
+        payload = self._payload(system_prompt, history, temperature)
+        url = self.base_url.replace(":generateContent", ":streamGenerateContent")
+        headers = {"Content-Type": "application/json",
+                   "x-goog-api-key": self.api_key}
+        text, fired = "", False
+        async with _POOL.stream("POST", url, headers=headers,
+                                params={"alt": "sse"}, json=payload,
+                                timeout=12.0) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    j = json.loads(line[6:])
+                    piece = j["candidates"][0]["content"]["parts"][0]["text"]
+                except Exception:  # noqa: BLE001 — keepalives, finish chunks
+                    continue
+                text += piece
+                if not fired:
+                    cut = self._first_clause_cut(text)
+                    if cut:
+                        fired = True
+                        try:
+                            first_clause_cb(text[:cut])
+                        except Exception as e:  # noqa: BLE001
+                            log.debug(f"first_clause_cb error: {e}")
+        for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo",
+                       "supabase", "OpenAI"]:
+            text = text.replace(vendor, "our system")
+        if text.strip():
+            self._consecutive_failures = 0
+            return text.strip()
+        raise RuntimeError("empty stream")
+
+    @staticmethod
+    def _first_clause_cut(text: str) -> int:
+        """Index to cut the opening clause at, or 0 if not yet determined.
+        A sentence end wins; a comma after enough words is good enough —
+        Telugu's agglutinative words make sub-clause cuts risky, so nothing
+        shorter than a clause is ever dispatched."""
+        m = re.search(r"[.!?\u0964]\s", text)
+        if m and m.start() >= 12:
+            return m.start() + 1
+        if len(text) >= 55:
+            c = text.rfind(",", 25, 90)
+            if c > 0:
+                return c + 1
+        return 0
+
+    def _payload(self, system_prompt: str, history: list[dict],
+                 temperature: float | None = None) -> dict:
         # 12 exchanges, not 4. A booking needs name, phone, service and time;
         # at 4 exchanges the earliest facts fell out of context mid-call and
         # the model re-asked for them. Slot state above is the real fix, but
@@ -852,7 +969,11 @@ class GeminiLLM:
                 "topP": 0.8,
             }
         }
+        return payload
 
+    async def _generate_batch(self, system_prompt: str, history: list[dict],
+                              temperature: float | None = None) -> str:
+        payload = self._payload(system_prompt, history, temperature)
         try:
             # x-goog-api-key works for BOTH key formats, so no branching.
             # The previous code sent AQ./IQ./EQ. keys as Authorization: Bearer,
@@ -1361,7 +1482,8 @@ class NikkiAgent:
         return "".join(lines)
 
     async def on_speech(self, audio_bytes: bytes, want_text: bool = False,
-                        transcript_override: str | None = None):
+                        transcript_override: str | None = None,
+                        first_clause_cb=None):
         """Process one turn: STT -> detect intent -> LLM -> TTS.
 
         want_text=True returns the reply TEXT instead of synthesised audio, so
@@ -1412,7 +1534,8 @@ class NikkiAgent:
 
             # Generate response
             response = await self.llm.generate(
-                self.system_prompt + self._known_facts_block(), self.history)
+                self.system_prompt + self._known_facts_block(), self.history,
+                first_clause_cb=first_clause_cb)
             _t_llm = time.monotonic() - _t0 - _t_stt
             log.info(f"LLM: {response}")
             # The model often normalises spoken digits ("ట్రిపుల్ ఎయిట్...")
@@ -2953,7 +3076,7 @@ def normalize_for_tts(text: str) -> str:
 
 
 async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
-                         seq: int, speaking: dict) -> None:
+                         seq: int, speaking: dict, sub_offset: int = 0) -> None:
     """Synthesise chunk N+1 while chunk N is still playing.
 
     uuid_broadcast INTERRUPTS whatever is playing rather than queueing, so
@@ -2969,7 +3092,7 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
     if not chunks:
         return
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
-    sub = 0
+    sub = sub_offset
     for i, nxt in enumerate(chunks[1:] + [None]):
         if not audio:
             return
@@ -3254,8 +3377,33 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # for a genuinely slow turn, not furniture.
         filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=1.1))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
+
+        # ── First-clause fast path ──────────────────────────────────────
+        # The token stream hands us the opening clause while the rest is
+        # still generating; it goes to TTS and the caller's ear immediately.
+        # clause["until"] is when its audio finishes — the remainder must
+        # not broadcast before that, because uuid_broadcast interrupts.
+        clause = {"text": None, "until": 0.0, "task": None}
+
+        def _on_first_clause(prefix: str) -> None:
+            log.info(f"[b2] first clause ({len(prefix)} chars) -> TTS early: {prefix[:60]!r}")
+            clause["text"] = prefix
+            if not filler_task.done():
+                filler_task.cancel()          # real speech is starting
+
+            async def _speak_prefix():
+                audio = await agent.tts.synthesize(
+                    normalize_for_tts(prefix), agent.voice)
+                if audio:
+                    dur = _wav_duration_secs(audio)
+                    speaking["until"] = time.monotonic() + dur
+                    clause["until"] = speaking["until"]
+                    await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10)
+            clause["task"] = asyncio.create_task(_speak_prefix())
+
         reply_text = await agent.on_speech(wav_bytes, want_text=True,
-                                           transcript_override=transcript)
+                                           transcript_override=transcript,
+                                           first_clause_cb=_on_first_clause)
         # Reply ready: if the filler has not fired yet, it never should.
         if not filler_task.done():
             filler_task.cancel()
@@ -3269,7 +3417,27 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             return
         # speaking["until"] is published inside, before each chunk is sent, so
         # a caller who interrupts immediately still trips the barge-in check.
-        await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking)
+        if clause["text"] and reply_text.startswith(clause["text"]):
+            # The opening clause is already playing (or in flight). Speak only
+            # the remainder, starting after the clause audio ends, with sub
+            # sequence numbers above it.
+            if clause["task"]:
+                await clause["task"]
+            remainder = reply_text[len(clause["text"]):].strip()
+            if remainder:
+                await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
+                await _speak_chunked(agent, ws, fs_uuid, remainder, seq, speaking,
+                                     sub_offset=1)
+        else:
+            if clause["task"]:
+                # A prefix was dispatched but the final text diverged (vendor
+                # filter rewrote it, or the fallback path answered). Let the
+                # clause finish, then speak the WHOLE reply — a one-off echo
+                # of the opening beats a reply that skips its first words.
+                await clause["task"]
+                await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
+            await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking,
+                                 sub_offset=1 if clause["text"] else 0)
 
         if getattr(agent, "transfer_requested", False):
             agent.transfer_requested = False
