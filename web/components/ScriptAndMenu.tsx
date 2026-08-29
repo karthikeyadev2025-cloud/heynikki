@@ -28,6 +28,7 @@ const inputStyle = {
 export default function ScriptAndMenu({ tenantId, profileId }:
   { tenantId: string | null; profileId: string | null }) {
   const [greeting, setGreeting] = useState("");
+  const [webhook, setWebhook]   = useState("");
   const [mustAsk, setMustAsk]   = useState<string[]>([]);
   const [menuOn, setMenuOn]     = useState(false);
   const [menuGreet, setMenuGreet] = useState("");
@@ -40,10 +41,11 @@ export default function ScriptAndMenu({ tenantId, profileId }:
     if (!tenantId || !profileId) return;
     const sb = createClient();
     const [{ data: vp }, { data: menu }] = await Promise.all([
-      sb.from("voice_profiles").select("greeting_script, must_ask").eq("id", profileId).maybeSingle(),
+      sb.from("voice_profiles").select("greeting_script, must_ask, automation_webhook_url").eq("id", profileId).maybeSingle(),
       sb.from("ivr_menus").select("enabled, greeting, options").eq("tenant_id", tenantId).maybeSingle(),
     ]);
     setGreeting(vp?.greeting_script || "");
+    setWebhook((vp as any)?.automation_webhook_url || "");
     setMustAsk(Array.isArray(vp?.must_ask) ? vp!.must_ask as string[] : []);
     if (menu) {
       setMenuOn(!!menu.enabled);
@@ -63,8 +65,14 @@ export default function ScriptAndMenu({ tenantId, profileId }:
       .map(o => ({ ...o, say: o.say.trim(), label: (o.label || o.say).trim(),
                    target: o.target.replace(/[^\d+]/g, "") }));
 
+    const wh = webhook.trim();
     const { error: e1 } = await sb.from("voice_profiles")
-      .update({ greeting_script: greeting.trim() || null, must_ask: clean })
+      .update({
+        greeting_script: greeting.trim() || null,
+        must_ask: clean,
+        // http(s) or nothing — a typo'd scheme would fail silently per event.
+        automation_webhook_url: /^https?:\/\//.test(wh) ? wh : null,
+      })
       .eq("id", profileId);
 
     // Upserting on tenant_id matches the unique index, so saving twice edits
@@ -119,6 +127,18 @@ export default function ScriptAndMenu({ tenantId, profileId }:
                        border: `1px solid ${C.bord}`, color: C.dim, cursor: "pointer" }}>×</button>
           </div>
         ))}
+        <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700, margin: "18px 0 4px" }}>
+          Webhook for your own automations <span style={{ color: C.dim, fontWeight: 400 }}>(optional)</span>
+        </div>
+        <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+          When Nikki books an appointment we POST the details to
+          <code style={{ color: C.txt }}> your-url/appointment-confirmed</code> —
+          plug it into Zapier, n8n, or your own CRM.
+        </div>
+        <input value={webhook} onChange={e => setWebhook(e.target.value)}
+          placeholder="https://hooks.example.com/nikki" style={inputStyle} />
+
+        <div style={{ height: 14 }} />
         <button onClick={() => setMustAsk(m => [...m, ""])}
           style={{ padding: "7px 13px", borderRadius: 8, background: "transparent",
                    border: `1px solid ${C.bord}`, color: C.txt, fontSize: 13, cursor: "pointer" }}>

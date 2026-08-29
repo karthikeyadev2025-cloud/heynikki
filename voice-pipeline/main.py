@@ -1762,6 +1762,21 @@ class NikkiAgent:
         Sets transfer_requested so the websocket handler performs the actual
         uuid_transfer via the API server and closes the leg.
         """
+        # An IVR menu may route different requests to different numbers —
+        # "billing" to one phone, "doctor" to another. Match the caller's
+        # last words against the option phrases and re-point the ring group
+        # before committing.
+        tmap = getattr(self, "ivr_transfer_map", None)
+        if tmap:
+            last = ""
+            for turn in reversed(self.history):
+                if turn.get("role") == "user":
+                    last = str(turn.get("content", "")).lower()
+                    break
+            for phrase, digits in tmap.items():
+                if phrase and phrase in last:
+                    self.ring_group = f"sofia/gateway/jio_primary/{digits}"
+                    break
         if not self.ring_group:
             # Never claim a transfer we cannot make.
             return ("క్షమించండి, ఇప్పుడు staff అందుబాటులో లేరు. "
@@ -3862,6 +3877,23 @@ async def _fire_automation_webhook(event: str, payload: dict, cfg: dict):
     except Exception as e:
         log.warning(f"[FS] Automation webhook failed ({event}): {e}")
 
+    # The TENANT's own webhook, if they set one. voice_profiles has carried
+    # automation_webhook_url since the schema was written and nothing ever
+    # fired it — a per-tenant integration column that was pure decoration.
+    # Events go to {their_url}/{event} with the same payload the platform
+    # engine gets, so a business can drive its own Zapier/n8n/CRM without
+    # touching ours. Failures are theirs to notice; a broken customer
+    # endpoint must never delay a call.
+    tenant_url = str(payload.get("_tenant_webhook") or "").strip()
+    payload.pop("_tenant_webhook", None)
+    if tenant_url.startswith("http"):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{tenant_url.rstrip('/')}/{event}", json=payload)
+            log.info(f"[FS] Tenant webhook fired: {event}")
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[FS] Tenant webhook failed ({event}): {e}")
+
 
 # ── FreeSWITCH WebSocket endpoint ────────────────────────────────────────────
 @app.websocket("/ws/freeswitch/{did_number}/{caller_number}/{fs_uuid}")
@@ -4005,6 +4037,24 @@ async def freeswitch_ws(
     _ivr = routing.get("ivr") or None
     if _ivr and _ivr.get("options"):
         _opts = [o for o in _ivr["options"] if o.get("say")]
+
+        # Per-option transfer targets. The menu let a business type "put them
+        # through to THIS number" per option, and the transfer then rang the
+        # generic staff group anyway — the typed number was decoration. The
+        # map lets the transfer moment pick the right line from what the
+        # caller actually said; a menu with one transfer target (the common
+        # case) also becomes the default ring group so even an unmatched
+        # "human please" reaches the number the business chose.
+        _tmap = {}
+        for o in _opts:
+            if o.get("action") == "transfer":
+                digits = re.sub(r"\D", "", str(o.get("target") or ""))[-10:]
+                if len(digits) == 10:
+                    _tmap[str(o["say"]).lower()] = digits
+        if _tmap:
+            agent.ivr_transfer_map = _tmap
+            first = next(iter(_tmap.values()))
+            agent.ring_group = f"sofia/gateway/jio_primary/{first}"
         _lines = "\n".join(
             f"- If they want {o.get('label') or o['say']} (they may say "
             f"\"{o['say']}\"): " +
@@ -4462,6 +4512,7 @@ async def freeswitch_ws(
             # confirmation WhatsApp could never have gone out. business_name
             # is included because the template reads it into {{1}}.
             await _fire_automation_webhook("appointment-confirmed", {
+                "_tenant_webhook": (agent.profile or {}).get("automation_webhook_url"),
                 "caller_number": caller_number,
                 "tenant_id":     profile["tenant_id"],
                 "call_id":       agent.call_id,
