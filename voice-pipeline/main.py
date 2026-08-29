@@ -2507,6 +2507,20 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     Previously the caller heard the disclosure and then silence — she waited
     for them to speak first, which on a phone call reads as a dead line.
     """
+    # The business's own words win outright. This is spoken verbatim — not
+    # offered to the model, which paraphrased it: a script of "నమస్కారం, శ్రీ
+    # రామ్య డెంటల్ క్లినిక్..." came back as "హలో, ..." with a question bolted on.
+    # An owner who writes their opening line means that line.
+    #
+    # A returning caller still gets recognised, but AFTER the scripted
+    # opening rather than instead of it, so the business keeps its words and
+    # the caller keeps being remembered.
+    script = (profile.get("greeting_script") or "").strip()
+    if script:
+        if (history or {}).get("previous_calls"):
+            return f"{script} మళ్ళీ స్వాగతం!"
+        return script
+
     biz  = (profile.get("business_name") or "").strip()
     name = _assistant_name(profile)
     # No "నమస్కారం" here — the TRAI disclosure that plays immediately before
@@ -2532,12 +2546,18 @@ async def _greeting_audio(agent) -> bytes:
     # Separate cache entry per variant, or a returning caller would be served
     # the stranger greeting from cache and the recognition would never be heard.
     variant = "back" if (agent.caller_history or {}).get("previous_calls") else "new"
-    path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}_{variant}.wav"
+    # The greeting text is part of the key. Without it, an owner editing their
+    # greeting_script on /setup would change nothing a caller ever hears — the
+    # first call cached a wav under this name and every later call reads it
+    # back. Silent, permanent, and exactly the kind of thing discovered weeks
+    # later by someone wondering why their new opening never plays.
+    text = _greeting_text(agent.profile, agent.caller_history)
+    stamp = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}_{variant}_{stamp}.wav"
     try:
         if path.exists() and path.stat().st_size > 1000:
             return path.read_bytes()
-        audio = await agent.tts.synthesize(
-            _greeting_text(agent.profile, agent.caller_history), agent.voice)
+        audio = await agent.tts.synthesize(text, agent.voice)
         if audio:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(audio)
@@ -3263,7 +3283,11 @@ async def freeswitch_ws(
     if _script or _must:
         block = "\n\n[THIS BUSINESS'S SCRIPT]\n"
         if _script:
-            block += (f'Open with exactly this, word for word: "{_script}"\n')
+            # Spoken as audio before the model is ever consulted, so this only
+            # tells it what the caller already heard — repeating it would have
+            # the caller greeted twice.
+            block += (f'You have ALREADY said this out loud: "{_script}" '
+                      f'Do not repeat it or greet them again.\n')
         if _must:
             block += ("Before the call ends you must have answers to:\n"
                       + "\n".join(f"  {i+1}. {q}" for i, q in enumerate(_must))
