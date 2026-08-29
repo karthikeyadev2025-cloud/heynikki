@@ -24,26 +24,10 @@ const C = {
 // so the page still renders if the API is unreachable; they are NOT the
 // source of truth and must never be edited to change a price.
 const PLANS_FALLBACK = [
-  {
-    // Entry tier added because the monthly-only ladder lost on price
-    // comparison before a prospect ever heard the voice: a competitor sells
-    // pay-as-you-go at Rs 3.5/min with zero setup, so an SMB doing 200
-    // minutes a month compares Rs 700 against our Rs 1,999 and stops
-    // reading. This keeps a low entry point without discounting the tiers
-    // that suit real volume — above ~570 minutes Starter is already cheaper
-    // than per-minute, and the page says so rather than hiding it.
-    id: "payg", name: "Pay as you go", price: 0, annual: 0,
-    minutes: 0, profiles: 1, numbers: 1, concurrent: 2,
-    perMinute: 3.5,
-    color: C.mid,
-    features: [
-      "Rs 3.5 per minute of talk-time",
-      "No monthly commitment",
-      "Telugu + Tanglish AI",
-      "Inbound reception on one number",
-      "Recordings 30 days",
-    ],
-  },
+  /* "Pay as you go" was removed: the checkout endpoint rejects the id with
+     400 "Invalid plan" because no such row exists in `plans`, so the
+     left-most, most prominent card on this page was a dead end for every
+     customer who pressed it. Offer it again when it exists end to end. */
   {
     id: "starter", name: "Starter", price: 1999, annual: 1599,
     minutes: 200, profiles: 1, numbers: 1, concurrent: 2,
@@ -123,14 +107,7 @@ export default function BillingPage() {
           popular: i === 1,
           features: PLANS_FALLBACK.find((p: any) => p.id === t.id)?.features || [],
         }));
-        const payg = {
-          id: "payg", name: "Pay as you go", price: 0, annual: 0,
-          minutes: 0, profiles: 1, numbers: 1, concurrent: 2,
-          perMinute: (Number(d.per_minute_paise) || 350) / 100,
-          color: C.mid,
-          features: PLANS_FALLBACK.find((p: any) => p.id === "payg")?.features || [],
-        };
-        setPlans([payg, ...tiers]);
+        setPlans(tiers);
       })
       .catch(() => {});
   }, []);

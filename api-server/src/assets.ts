@@ -188,10 +188,21 @@ export function mountAssetRoutes(
       const { error: upErr } = await sb.from("voice_profiles").update(patch).eq("id", profile.id);
       if (upErr) return res.status(500).json({ error: upErr.message });
     } else {
-      const { error: insErr } = await sb.from("voice_profiles")
-        .insert({ tenant_id: draft.tenant_id, status: "active", ...patch });
+      const { data: newProfile, error: insErr } = await sb.from("voice_profiles")
+        .insert({ tenant_id: draft.tenant_id, status: "active", ...patch })
+        .select("id").single();
       if (insErr) return res.status(500).json({ error: insErr.message });
       created = true;
+
+      // Facts extracted from the brochure were written at UPLOAD time, when
+      // this tenant had no profile, so they carry voice_profile_id NULL —
+      // and match_knowledge() matches on voice_profile_id only. Every fact
+      // Gemini pulled out of the document was unreachable on a call: the
+      // agent held a brochure it could not quote. Adopt them now.
+      const { error: adoptErr } = await sb.from("knowledge_base")
+        .update({ voice_profile_id: newProfile.id })
+        .eq("tenant_id", draft.tenant_id).is("voice_profile_id", null);
+      if (adoptErr) console.error("[apply] knowledge adopt failed:", adoptErr.message);
     }
 
     await sb.from("profile_drafts")

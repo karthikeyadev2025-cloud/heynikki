@@ -1602,12 +1602,50 @@ app.patch("/api/voice-profiles/:id", verifyJWT, async (req, res) => {
 });
 
 // Test call endpoint
-app.post("/api/voice-profiles/:id/test-call", verifyJWT, async (req, res) => {
-  const { to_number } = req.body;
-  if (!to_number) return res.status(400).json({ error: "to_number required" });
-  // In production: trigger Exotel outbound call to to_number using this profile
-  console.log(`[Test Call] Profile ${req.params.id} → ${to_number}`);
-  res.json({ ok: true, message: "Test call initiated. Your phone will ring in 5 seconds." });
+// A real test call. Both halves of this were theatre: the button was a
+// setTimeout that alerted "your phone will ring in 5 seconds", and this
+// endpoint console.logged and returned ok. A customer pressed it, waited for
+// a call that was never placed, and concluded the product does not work.
+//
+// It now dials the owner's own phone from the business's assigned DID
+// through the same originate path campaigns use, so the call that arrives is
+// genuinely the caller experience. Every precondition is stated plainly
+// rather than faked: no assigned number, no owner phone, or no credits each
+// come back as an honest sentence.
+app.post("/api/test-call", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const [{ data: did }, { data: owner }, { data: tenant }] = await Promise.all([
+    sb.from("dids").select("number").eq("tenant_id", tenantId)
+      .eq("status", "assigned").limit(1).maybeSingle(),
+    sb.from("tenant_users").select("phone").eq("tenant_id", tenantId)
+      .eq("role", "owner").not("phone", "is", null).limit(1).maybeSingle(),
+    sb.from("tenants").select("credit_minutes, plan").eq("id", tenantId).maybeSingle(),
+  ]);
+
+  if (!did?.number) {
+    return res.status(409).json({
+      error: "Your HeyNikki number isn't assigned yet — we'll message you the moment it is.",
+    });
+  }
+  if (!owner?.phone) {
+    return res.status(409).json({
+      error: "We don't have your mobile number yet. Add it in your profile, then try again.",
+    });
+  }
+  if ((tenant?.credit_minutes ?? 0) <= 0 && !["starter", "growth", "scale"].includes(String(tenant?.plan))) {
+    return res.status(402).json({ error: "Your free minutes have run out — add a plan to keep calling." });
+  }
+
+  try {
+    const uuid = await fsl.originateOutbound(owner.phone, did.number);
+    console.log(`[test-call] tenant=${tenantId} -> ${owner.phone} via ${did.number} uuid=${uuid}`);
+    res.json({ ok: true, message: `Calling ${owner.phone} now — Nikki will answer.` });
+  } catch (e: any) {
+    console.error("[test-call]", e.message);
+    res.status(502).json({ error: "Could not place the call right now. Please try again." });
+  }
 });
 
 // ════════════════════════════════════════════════

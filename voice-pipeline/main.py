@@ -3934,8 +3934,17 @@ async def freeswitch_ws(
     profile = await db.get_voice_profile(did_number)
 
     if not profile:
-        log.warning(f"[FS] No voice profile for DID: {did_number} — sending 404 and closing")
+        # The dialplan has ALREADY answered the leg by the time we get here,
+        # so closing the websocket alone leaves the caller holding a live
+        # line with permanent silence — billed, and convinced the business
+        # is broken. Every unassigned number in inventory did this. Kill the
+        # channel so the network returns a clean disconnect instead.
+        log.warning(f"[FS] No voice profile for DID: {did_number} — hanging up the leg")
         await ws.send_text(json.dumps({"error": "no_profile", "did": did_number}))
+        try:
+            await _esl_api(f"uuid_kill {fs_uuid}")
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[FS] uuid_kill after no_profile failed: {e}")
         await ws.close(code=1008)
         return
 
@@ -4096,8 +4105,35 @@ async def freeswitch_ws(
             await ws.close(code=1000)
             return
 
+    # ── REFUSAL ─────────────────────────────────────────────────────────
+    # The api-server answers 200 with ok:false when a tenant is out of
+    # credits or over its concurrency cap, and deliberately writes no calls
+    # row. That verdict was computed and then ignored: every plan cap and
+    # the trial credit cutoff were advisory, so a tenant at zero credits
+    # kept being served indefinitely and the fallback below invented a
+    # calls row for the call the server had just refused.
+    if routing and (routing.get("ok") is False or routing.get("routing_mode") == "reject"):
+        reason = routing.get("reason", "refused")
+        log.warning(f"[FS] call refused ({reason}) — {did_number} from {caller_number}")
+        msg = routing.get("message") or "క్షమించండి, ఈ నంబర్ ప్రస్తుతం అందుబాటులో లేదు."
+        try:
+            tts = SarvamTTS()
+            wav = await tts.synthesize(normalize_for_tts(msg), profile.get("voice") or "priya", 8000)
+            await _send_audio_to_freeswitch(ws, wav, fs_uuid)
+            # 8kHz mono 16-bit => 16000 bytes/sec; wait for playback to finish
+            # before killing the channel or the caller hears nothing at all.
+            await asyncio.sleep(max(1.0, len(wav) / 16000.0))
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[FS] refusal message failed: {e}")
+        try:
+            await _esl_api(f"uuid_kill {fs_uuid}")
+        except Exception:  # noqa: BLE001
+            pass
+        await ws.close(code=1000)
+        return
+
     agent.call_id = routing.get("call_id")
-    if not agent.call_id:
+    if not agent.call_id and routing.get("ok") is not False:
         # API server unreachable — still log the call so it isn't lost.
         agent.call_id = await db.save_call({
             "tenant_id":        profile["tenant_id"],

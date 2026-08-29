@@ -58,7 +58,7 @@ export default function WhatsAppPage() {
           .eq("status", "approved").order("name"),
         sb.from("wa_dispatch_log").select("*")
           .eq("tenant_id", tu.tenant_id)
-          .order("created_at", { ascending: false }).limit(50),
+          .order("sent_at", { ascending: false }).limit(50),
       ]);
       setTemplates(tmpl.data || []);
       setDispatch(disp.data || []);
@@ -105,8 +105,8 @@ export default function WhatsAppPage() {
 
   // 24h service window — messages where customer replied in last 24h
   const within24h = dispatch.filter(d => {
-    if (!d.created_at) return false;
-    return Date.now() - new Date(d.created_at).getTime() < 86400000;
+    if (!d.sent_at) return false;
+    return Date.now() - new Date(d.sent_at).getTime() < 86400000;
   }).length;
 
   const statusColor = (s: string) =>
@@ -259,7 +259,7 @@ export default function WhatsAppPage() {
                       onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
                       onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                       <td style={{ padding: "10px", color: C.dim, fontSize: 11 }}>
-                        {new Date(d.created_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                        {new Date(d.sent_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
                       </td>
                       <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 600 }}>
                         {d.to_number}

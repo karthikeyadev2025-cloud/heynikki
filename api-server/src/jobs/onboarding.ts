@@ -54,10 +54,16 @@ const STEPS: Step[] = [
   },
   {
     step: "number_live",
-    when: t => !!t.did_number,
+    // voice_profiles.did_number is a free-text field the TENANT fills in on
+    // /setup under the label "Your Business Phone Number". Gating on it sent
+    // "your HeyNikki number is live: <their own mobile>" minutes after signup
+    // and permanently burned the send-once row, so the real assignment could
+    // never be announced. assigned_did comes from the dids table, which only
+    // an operator can write.
+    when: t => !!t.assigned_did,
     messageType: "onboarding_number_live",
-    params: t => [t.name, String(t.did_number)],
-    body: t => `${t.name} — మీ HeyNikki number live! 📞 ${t.did_number}\n\n` +
+    params: t => [t.name, String(t.assigned_did)],
+    body: t => `${t.name} — మీ HeyNikki number live! 📞 ${t.assigned_did}\n\n` +
       `ఈ number కి call చేసి Nikki ని మీరే test చేయండి. ` +
       `ప్రతి call మీ dashboard లో కనిపిస్తుంది.`,
   },
@@ -65,7 +71,7 @@ const STEPS: Step[] = [
     step: "setup_incomplete",
     // Only once they have a number. Nagging about setup before there is
     // anything to set up reads as spam, and it is.
-    when: t => !!t.did_number && !t.profile_ready && t.hours_since_signup >= 24,
+    when: t => !!t.assigned_did && !t.profile_ready && t.hours_since_signup >= 24,
     messageType: "onboarding_setup_reminder",
     body: t => `${t.name} — మీ Nikki ఇంకా పూర్తిగా setup కాలేదు.\n\n` +
       `మీ services, timings చెప్తే Nikki మీ customers కి సరిగ్గా answer చేస్తుంది. ` +
@@ -87,7 +93,21 @@ async function sendStep(t: any, s: Step): Promise<void> {
   const { error: claimErr } = await sb.from("onboarding_events").insert({
     tenant_id: t.id, step: s.step, to_number: t.phone, status: "sending",
   });
-  if (claimErr) return;                     // already sent; unique index did its job
+  if (claimErr) {
+    // The unique index says this step was claimed before. That is final for
+    // a step that SENT — but a step that FAILED had its one chance eaten by
+    // whatever was wrong at the time (a Meta outage, a transient 500), and a
+    // customer silently never receiving their welcome message is not an
+    // acceptable resting state. Re-claim a failed step up to three times.
+    const { data: prior } = await sb.from("onboarding_events")
+      .select("status, attempts").eq("tenant_id", t.id).eq("step", s.step).maybeSingle();
+    if (!prior || prior.status !== "failed" || (prior.attempts ?? 1) >= 3) return;
+    const { error: reclaimErr } = await sb.from("onboarding_events")
+      .update({ status: "sending" })
+      .eq("tenant_id", t.id).eq("step", s.step).eq("status", "failed");
+    if (reclaimErr) return;
+    console.log(`[onboarding] retrying ${s.step} for ${t.name} (attempt ${(prior.attempts ?? 1) + 1})`);
+  }
 
   let ok = false, detail = "";
   try {
@@ -108,8 +128,14 @@ async function sendStep(t: any, s: Step): Promise<void> {
     detail = e.message;
   }
 
+  const { data: cur } = await sb.from("onboarding_events")
+    .select("attempts").eq("tenant_id", t.id).eq("step", s.step).maybeSingle();
   await sb.from("onboarding_events")
-    .update({ status: ok ? "sent" : "failed", detail: detail || null })
+    .update({
+      status:   ok ? "sent" : "failed",
+      detail:   detail || null,
+      attempts: ok ? (cur?.attempts ?? 1) : (cur?.attempts ?? 0) + 1,
+    })
     .eq("tenant_id", t.id).eq("step", s.step);
 
   console.log(`[onboarding] ${s.step} -> ${t.name} ${ok ? "sent" : "FAILED " + detail}`);
@@ -131,12 +157,18 @@ export async function runOnboarding(): Promise<void> {
       .not("phone", "is", null).limit(1).maybeSingle();
     if (!owner?.phone) continue;
 
-    const [{ data: profile }, { data: kyc }] = await Promise.all([
+    const [{ data: profile }, { data: kyc }, { data: assigned }] = await Promise.all([
       sb.from("voice_profiles")
         .select("id, did_number, status, services, open_time")
         .eq("tenant_id", t.id).limit(1).maybeSingle(),
       sb.from("kyc_documents")
         .select("id").eq("tenant_id", t.id).eq("status", "approved").limit(1).maybeSingle(),
+      // The only trustworthy answer to "does this business have a HeyNikki
+      // number yet" — a row an operator assigned, not a field the customer
+      // typed into a form.
+      sb.from("dids")
+        .select("number").eq("tenant_id", t.id).eq("status", "assigned")
+        .limit(1).maybeSingle(),
     ]);
 
     const ctx = {
@@ -144,6 +176,7 @@ export async function runOnboarding(): Promise<void> {
       phone: owner.phone,
       voice_profile_id: profile?.id || null,
       did_number: profile?.did_number || null,
+      assigned_did: assigned?.number || null,
       // "Ready" means Nikki could actually answer a caller — a profile row
       // exists but says nothing about the business is not ready.
       profile_ready: !!(profile?.status === "active" && profile?.open_time &&

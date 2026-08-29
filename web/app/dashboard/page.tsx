@@ -364,7 +364,7 @@ export default function DashboardPage() {
                   <div style={{ fontSize: 14, fontWeight: 700 }}>Pick a voice profile</div>
                   <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Choose Standard / Clinic / Real Estate / Premium →</div>
                 </a>
-                <a href="/setup#forwarding" style={{
+                <a href="/setup" style={{
                   display: "block", padding: 16, background: C.surf,
                   border: "1px solid " + C.bord, borderRadius: 10,
                   textDecoration: "none", color: C.txt, textAlign: "left",

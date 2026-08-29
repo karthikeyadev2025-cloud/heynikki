@@ -214,13 +214,13 @@ export default function BrochureUpload({ onApplied }: { onApplied?: () => void }
             </div>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => decide(d.id, "apply")} disabled={busy}
+              <button type="button" onClick={() => decide(d.id, "apply")} disabled={busy}
                 style={{
                   padding: "8px 16px", borderRadius: 8, border: "none",
                   background: C.grn, color: "#04120a", fontSize: 13, fontWeight: 800,
                   cursor: busy ? "not-allowed" : "pointer",
                 }}>Apply to my setup</button>
-              <button onClick={() => decide(d.id, "dismiss")} disabled={busy}
+              <button type="button" onClick={() => decide(d.id, "dismiss")} disabled={busy}
                 style={{
                   padding: "8px 14px", borderRadius: 8, background: "transparent",
                   border: `1px solid ${C.bord}`, color: C.mid, fontSize: 13,

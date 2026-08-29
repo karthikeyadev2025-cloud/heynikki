@@ -104,7 +104,7 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
       />
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
-        <button
+        <button type="button"
           onClick={generate}
           disabled={busy || text.trim().length < 10}
           style={{
@@ -120,7 +120,7 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
         {/* The blank path stays one click away. Someone who already knows
             exactly what they want should not have to describe it to a model
             first. */}
-        <button
+        <button type="button"
           onClick={() => { setText(""); setError(""); setDone(false); }}
           style={{
             padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,

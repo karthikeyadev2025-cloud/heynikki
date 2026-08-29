@@ -113,8 +113,12 @@ export default function SetupPage() {
       if (!tu) return;
       setTenantId(tu.tenant_id);
 
+      // Ordered, because an unordered limit(1) on a tenant that has two
+      // profiles hands the owner whichever row Postgres felt like — they
+      // then edit one profile while calls route through the other.
       const { data: vp } = await sb.from("voice_profiles")
-        .select("*").eq("tenant_id", tu.tenant_id).limit(1).single();
+        .select("*").eq("tenant_id", tu.tenant_id)
+        .order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (vp) {
         setProfile(vp);
         setForm({
@@ -168,7 +172,11 @@ export default function SetupPage() {
       services:          form.services.split(",").map(s => s.trim()).filter(Boolean),
       appointment_types: form.appointment_types.split(",").map(s => s.trim()).filter(Boolean),
       whatsapp_number:   form.whatsapp_number || null,
-      did_number:        form.did_number || null,
+      // did_number is NOT written here. It means "the HeyNikki number
+      // assigned to this business", an operator-owned fact; writing it from
+      // a field the customer fills in made the onboarding job announce
+      // "your number is live: <their own mobile>" minutes after signup and
+      // permanently consumed the send-once row for the real announcement.
       dialect_region:    form.dialect_region || "neutral",
       auto_whatsapp_new_leads: form.auto_whatsapp_new_leads,
       auto_call_new_leads:     form.auto_call_new_leads,
@@ -176,11 +184,23 @@ export default function SetupPage() {
       status:            "active",
     };
 
+    // The insert used to discard its result and never call setProfile, so
+    // after a SUCCESSFUL first save the page still believed the tenant had
+    // no profile: Test Call stayed disabled under "Save your profile first",
+    // the script/menu card stayed dead, and the customer — reasonably —
+    // pressed Save again, taking the insert branch a second time and
+    // creating a duplicate profile the DID might then bind to.
     let err;
     if (profile) {
-      ({ error: err } = await sb.from("voice_profiles").update(payload).eq("id", profile.id));
+      const { data, error } = await sb.from("voice_profiles")
+        .update(payload).eq("id", profile.id).select().single();
+      err = error;
+      if (data) setProfile(data);
     } else {
-      ({ error: err } = await sb.from("voice_profiles").insert(payload));
+      const { data, error } = await sb.from("voice_profiles")
+        .insert(payload).select().single();
+      err = error;
+      if (data) setProfile(data);
     }
 
     if (err) { setError(err.message); setSaving(false); return; }
@@ -189,13 +209,29 @@ export default function SetupPage() {
     setTimeout(() => setSaved(false), 3000);
   };
 
+  // This was a setTimeout that alerted "your phone will ring in 5 seconds"
+  // and contacted nothing. A customer who pressed it waited for a call that
+  // was never placed and concluded the product does not work. Until the
+  // outbound test path is wired end to end, say what is actually true.
   const handleTestCall = async () => {
     setTestCalling(true);
-    // In production: POST to /api/v1/test-call which dials the tenant's own number
-    setTimeout(() => {
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/test-call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json",
+                   Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ profile_id: profile?.id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) alert(j.message || "Calling you now — Nikki will answer.");
+      else alert(j.error || "Could not place the test call right now.");
+    } catch {
+      alert("Could not place the test call right now.");
+    } finally {
       setTestCalling(false);
-      alert("Test call initiated! Your phone will ring in 5 seconds with the Telugu AI receptionist.");
-    }, 1500);
+    }
   };
 
   return (

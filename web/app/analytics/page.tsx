@@ -105,7 +105,7 @@ export default function AnalyticsPage() {
         sb.from("click_to_call_log").select("*").eq("tenant_id", tu.tenant_id)
           .gte("created_at", since),
         sb.from("wa_dispatch_log").select("*").eq("tenant_id", tu.tenant_id)
-          .gte("created_at", since),
+          .gte("sent_at", since),
         // Scored conversations. Joined to calls for the timestamp, because
         // analysed_at is when the JOB ran — batching a backlog would stack
         // every one of them on a single day and invent a cliff in the trend.

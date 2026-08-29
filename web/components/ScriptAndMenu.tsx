@@ -78,11 +78,23 @@ export default function ScriptAndMenu({ tenantId, profileId }:
     // Upserting on tenant_id matches the unique index, so saving twice edits
     // the same menu rather than creating a second one the router would then
     // have to choose between.
-    const { error: e2 } = await sb.from("ivr_menus").upsert({
+    // The table's only unique index is an EXPRESSION index,
+    // (tenant_id, coalesce(did_number,'')), and Postgres cannot infer an
+    // arbiter from "tenant_id" alone — so this upsert failed every single
+    // time with "no unique or exclusion constraint matching the ON CONFLICT
+    // specification", and no tenant has ever saved a call menu. Read then
+    // write: it needs no arbiter at all, and the tenant-wide row is exactly
+    // one row by definition.
+    const row = {
       tenant_id: tenantId, did_number: null, enabled: menuOn,
       greeting: menuGreet.trim() || null, options: cleanOpts,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "tenant_id" });
+    };
+    const { data: existing } = await sb.from("ivr_menus")
+      .select("id").eq("tenant_id", tenantId).is("did_number", null).maybeSingle();
+    const { error: e2 } = existing
+      ? await sb.from("ivr_menus").update(row).eq("id", existing.id)
+      : await sb.from("ivr_menus").insert(row);
 
     if (e1 || e2) setErr((e1 || e2)!.message);
     else { setSaved(true); setTimeout(() => setSaved(false), 2500); }
