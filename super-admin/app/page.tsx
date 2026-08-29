@@ -92,7 +92,7 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
 // Order within each group runs in the order the work actually happens.
 const NAV_GROUPS: { title: string; labels: string[] }[] = [
   { title: "Overview",  labels: ["Dashboard"] },
-  { title: "Customers", labels: ["Tenants", "KYC Review", "CRM", "Revenue"] },
+  { title: "Customers", labels: ["Tenants", "KYC Review", "Billing", "CRM", "Revenue"] },
   { title: "Telephony", labels: ["Live Calls", "Numbers", "WhatsApp", "FreeSWITCH"] },
   { title: "Quality",   labels: ["Call Quality", "Agent Versions", "Voice Lab"] },
   { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
@@ -106,6 +106,7 @@ const TABS = [
   { label: "Live Calls",      icon: Phone },
   { label: "CRM",             icon: Users },
   { label: "Revenue",         icon: IndianRupee },
+  { label: "Billing",         icon: CreditCard },
   { label: "Operations",      icon: Activity },
   { label: "KYC Review",      icon: ShieldCheck },
   { label: "Numbers",         icon: Phone },
@@ -152,6 +153,7 @@ export default function SuperAdminPage() {
     <LiveCallsPanel    key="live" token={token} />,
     <CrmPanel          key="crm"  token={token} />,
     <RevenuePanel      key="rev"  token={token} />,
+    <BillingPanel      key="bill" token={token} />,
     <OperationsPanel   key="ops"  token={token} />,
     <KycPanel          key="kyc"  token={token} />,
     <DidPanel          key="did"  token={token} />,
@@ -1787,6 +1789,172 @@ function OnboardingCallButton({ token, tenantId }: { token: string; tenantId: st
 // A receptionist mispronouncing her employer's name is the most
 // trust-costly mistake she can make; this is where it gets fixed, per
 // tenant, in one field.
+// ── BILLING ──────────────────────────────────────────────────
+// The audit's disqualifying gap. "Where did my minutes go" is the named
+// first support ticket in migration 025, and until now the only answer was
+// service-key SQL. This panel answers it, grants and corrects credits with
+// a reason the customer can read, extends trials, fixes a mistyped owner
+// phone, and marks invoices refunded.
+function BillingPanel({ token }: { token: string }) {
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [sel, setSel]         = useState<string>("");
+  const [d, setD]             = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy]       = useState(false);
+  const [delta, setDelta]     = useState("");
+  const [reason, setReason]   = useState("");
+  const [phone, setPhone]     = useState("");
+  const [msg, setMsg]         = useState("");
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/tenants`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(t => setTenants(Array.isArray(t) ? t : []))
+      .catch(() => setTenants([]));
+  }, [token]);
+
+  const load = useCallback((tid: string) => {
+    if (!tid) return;
+    setLoading(true); setMsg("");
+    fetch(`${API}/api/admin/tenants/${tid}/ledger`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(setD).catch(() => setD(null)).finally(() => setLoading(false));
+  }, [token]);
+  useEffect(() => { if (sel) load(sel); }, [sel, load]);
+
+  const post = async (path: string, body: any, okMsg: string) => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await fetch(`${API}${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) setMsg(j.error || `Failed (${r.status})`);
+      else { setMsg(okMsg); load(sel); }
+    } catch (e: any) { setMsg(e.message); }
+    setBusy(false);
+  };
+
+  const inp = { padding: "8px 10px", borderRadius: 7, fontSize: TYPE.sm,
+    background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
+  const btn = (bg: string) => ({ padding: "8px 14px", borderRadius: 7, border: "none",
+    background: bg, color: "#04120a", fontSize: TYPE.sm, fontWeight: 800,
+    cursor: busy ? "wait" : "pointer" } as const);
+
+  return (
+    <div>
+      <select value={sel} onChange={e => setSel(e.target.value)}
+        style={{ ...inp, minWidth: 260, marginBottom: 14 }}>
+        <option value="">Choose a tenant…</option>
+        {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+
+      {loading && <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>}
+      {msg && <div style={{ color: msg.startsWith("Failed") || msg.includes("required") ? C.red : C.grn,
+        fontSize: TYPE.sm, marginBottom: 10 }}>{msg}</div>}
+
+      {d?.tenant && (
+        <>
+          <div style={{ display: "grid", gap: SPACE.sm, marginBottom: SPACE.md,
+            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
+            {[["Balance", `${Math.round(d.tenant.credit_minutes ?? 0)} min`, C.grn],
+              ["Plan", `${d.tenant.plan} · ${d.tenant.status}`, C.txt],
+              ["Trial ends", d.tenant.trial_ends_at
+                 ? new Date(d.tenant.trial_ends_at).toLocaleDateString() : "—", C.gold],
+             ].map(([l, v, c]) => (
+              <Card key={String(l)}>
+                <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase" as const,
+                  letterSpacing: "0.08em" }}>{l}</div>
+                <div style={{ color: c as string, fontSize: 20, fontWeight: 900, marginTop: 4 }}>{v}</div>
+              </Card>
+            ))}
+          </div>
+
+          <Card>
+            <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 10 }}>Levers</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" }}>
+              <input value={delta} onChange={e => setDelta(e.target.value)}
+                placeholder="±minutes" inputMode="numeric" style={{ ...inp, width: 90 }} />
+              <input value={reason} onChange={e => setReason(e.target.value)}
+                placeholder="reason (shown to the customer)" style={{ ...inp, minWidth: 220, flex: 1 }} />
+              <button disabled={busy} style={btn(C.grn)}
+                onClick={() => post(`/api/admin/tenants/${sel}/credits`,
+                  { delta: Number(delta), reason }, "Credits adjusted")}>Adjust credits</button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 10 }}>
+              <button disabled={busy} style={btn(C.gold)}
+                onClick={() => post(`/api/admin/tenants/${sel}/trial`, { days: 7 }, "Trial +7 days")}>
+                Trial +7 days
+              </button>
+              <input value={phone} onChange={e => setPhone(e.target.value)}
+                placeholder="fix owner phone (98765…)" inputMode="numeric" style={{ ...inp, width: 190 }} />
+              <button disabled={busy} style={btn(C.cyn)}
+                onClick={() => post(`/api/admin/tenants/${sel}/owner-phone`, { phone }, "Phone updated")}>
+                Save phone
+              </button>
+              <button disabled={busy}
+                style={{ ...btn(C.red), color: "#fff" }}
+                onClick={() => { if (confirm("Mark this tenant cancelled?"))
+                  post(`/api/admin/tenants/${sel}/cancel`, {}, "Cancelled"); }}>
+                Cancel tenant
+              </button>
+            </div>
+          </Card>
+
+          <div style={{ height: SPACE.sm }} />
+          <Card>
+            <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>
+              Credit ledger
+            </div>
+            {(d.ledger || []).length === 0
+              ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>No entries.</div>
+              : (d.ledger || []).map((r: any, i: number) => (
+                <div key={i} style={{ display: "flex", gap: 10, fontSize: TYPE.sm,
+                  padding: "6px 0", borderBottom: `1px solid ${C.bord}33` }}>
+                  <span style={{ color: r.delta >= 0 ? C.grn : C.red, minWidth: 62,
+                    fontWeight: 800 }}>{r.delta >= 0 ? "+" : ""}{r.delta}</span>
+                  <span style={{ color: C.mid, flex: 1 }}>{r.reason}</span>
+                  <span style={{ color: C.dim }}>{`→ ${r.balance_after}`}</span>
+                  <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+                    {new Date(r.created_at).toLocaleString()}</span>
+                </div>
+              ))}
+          </Card>
+
+          <div style={{ height: SPACE.sm }} />
+          <Card>
+            <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 8 }}>
+              Invoices
+            </div>
+            {(d.invoices || []).length === 0
+              ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>None yet.</div>
+              : (d.invoices || []).map((iv: any) => (
+                <div key={iv.id} style={{ display: "flex", gap: 10, fontSize: TYPE.sm,
+                  padding: "6px 0", borderBottom: `1px solid ${C.bord}33`, alignItems: "center" }}>
+                  <span style={{ color: C.txt, fontWeight: 700 }}>
+                    {"₹"}{(iv.amount_paise / 100).toLocaleString("en-IN")}</span>
+                  <span style={{ color: C.mid, flex: 1 }}>{iv.plan_id || iv.description || "—"}</span>
+                  <span style={{ color: iv.status === "refunded" ? C.gold
+                    : iv.status === "paid" ? C.grn : C.red }}>{iv.status}</span>
+                  {iv.status === "paid" && (
+                    <button disabled={busy}
+                      style={{ padding: "3px 10px", borderRadius: 6, fontSize: TYPE.xs,
+                        background: "transparent", color: C.gold,
+                        border: `1px solid ${C.gold}66`, cursor: "pointer" }}
+                      onClick={() => { if (confirm("Mark refunded? (Do the actual refund in Razorpay.)"))
+                        post(`/api/admin/invoices/${iv.id}/refund`, {}, "Marked refunded"); }}>
+                      Mark refunded
+                    </button>
+                  )}
+                </div>
+              ))}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 function VoiceLabPanel({ token }: { token: string }) {
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);

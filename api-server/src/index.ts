@@ -2225,6 +2225,116 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
   res.json({ ok: true, ...data });
 });
 
+// ── BILLING / TENANT LEVERS ───────────────────────────────────
+// The audit's disqualifying gap: an operator could provision a tenant but
+// not touch money — no credit grant, no ledger view, no invoices, no
+// refunds. "Where did my minutes go" is the named first support ticket in
+// migration 025, and until now the only answer was service-key SQL.
+app.get("/api/admin/tenants/:id/ledger", verifySuperAdmin, async (req, res) => {
+  const tid = req.params.id;
+  const [{ data: ledger }, { data: invoices }, { data: tenant }] = await Promise.all([
+    sb.from("credit_ledger")
+      .select("delta, reason, balance_after, call_id, created_at")
+      .eq("tenant_id", tid).order("created_at", { ascending: false }).limit(200),
+    sb.from("invoices")
+      .select("id, amount_paise, plan_id, description, status, razorpay_payment_id, created_at")
+      .eq("tenant_id", tid).order("created_at", { ascending: false }).limit(100),
+    sb.from("tenants")
+      .select("name, plan, status, credit_minutes, trial_ends_at, wallet_balance, razorpay_cust_id")
+      .eq("id", tid).maybeSingle(),
+  ]);
+  res.json({ tenant, ledger: ledger || [], invoices: invoices || [] });
+});
+
+app.post("/api/admin/tenants/:id/credits", verifySuperAdmin, async (req: any, res) => {
+  const delta = Number(req.body?.delta);
+  const reason = String(req.body?.reason || "").trim();
+  // Bounded and reasoned: a grant without a reason is unexplainable in the
+  // ledger a customer will one day read, and a fat-fingered 10000 should
+  // fail loudly rather than mint a year of free minutes.
+  if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 1000) {
+    return res.status(400).json({ error: "delta must be a non-zero number of minutes, |delta| <= 1000" });
+  }
+  if (reason.length < 5) {
+    return res.status(400).json({ error: "A reason of at least 5 characters is required — it appears in the customer's ledger" });
+  }
+  const { data, error } = await sb.from("credit_ledger").insert({
+    tenant_id: req.params.id, delta, reason: `admin: ${reason}`,
+  }).select("balance_after").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "credits_adjusted",
+    target_tenant_id: req.params.id, details: { delta, reason },
+  }).then(r => r.error && console.error("[credits] audit:", r.error.message));
+  res.json({ ok: true, balance_after: data.balance_after });
+});
+
+app.post("/api/admin/invoices/:id/refund", verifySuperAdmin, async (req: any, res) => {
+  // Marks the RECORD refunded — the actual Razorpay refund is done in their
+  // dashboard, which holds the money. Pretending this endpoint moves rupees
+  // would be worse than the gap it closes.
+  const { data, error } = await sb.from("invoices")
+    .update({ status: "refunded" }).eq("id", req.params.id)
+    .select("id, tenant_id, amount_paise").single();
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "invoice_refunded",
+    target_tenant_id: data.tenant_id, details: { invoice_id: data.id, amount_paise: data.amount_paise },
+  }).then(r => r.error && console.error("[refund] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/tenants/:id/trial", verifySuperAdmin, async (req: any, res) => {
+  const days = Number(req.body?.days);
+  if (!Number.isFinite(days) || days === 0 || Math.abs(days) > 90) {
+    return res.status(400).json({ error: "days must be non-zero, |days| <= 90" });
+  }
+  const { data: t } = await sb.from("tenants")
+    .select("trial_ends_at").eq("id", req.params.id).maybeSingle();
+  if (!t) return res.status(404).json({ error: "Tenant not found" });
+  // Extends from whichever is LATER — now, or the current end. Extending an
+  // already-expired trial from its old date would grant less than promised.
+  const base = Math.max(Date.now(), new Date(t.trial_ends_at || Date.now()).getTime());
+  const next = new Date(base + days * 86400_000).toISOString();
+  const { error } = await sb.from("tenants")
+    .update({ trial_ends_at: next }).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "trial_adjusted",
+    target_tenant_id: req.params.id, details: { days, new_end: next },
+  }).then(r => r.error && console.error("[trial] audit:", r.error.message));
+  res.json({ ok: true, trial_ends_at: next });
+});
+
+app.post("/api/admin/tenants/:id/cancel", verifySuperAdmin, async (req: any, res) => {
+  const { error } = await sb.from("tenants")
+    .update({ status: "cancelled" }).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "tenant_cancelled",
+    target_tenant_id: req.params.id, details: { reason: req.body?.reason || null },
+  }).then(r => r.error && console.error("[cancel] audit:", r.error.message));
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/tenants/:id/owner-phone", verifySuperAdmin, async (req: any, res) => {
+  // The exact riya incident: a mistyped signup phone had no fix but SQL.
+  const digits = String(req.body?.phone || "").replace(/\D/g, "").slice(-10);
+  if (!/^[6-9]\d{9}$/.test(digits)) {
+    return res.status(400).json({ error: "Need a 10-digit Indian mobile starting 6-9" });
+  }
+  const { data, error } = await sb.from("tenant_users")
+    .update({ phone: digits }).eq("tenant_id", req.params.id).eq("role", "owner")
+    .select("id");
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data?.length) return res.status(404).json({ error: "No owner row for this tenant" });
+  await sb.from("admin_audit_log").insert({
+    admin_user_id: req.user.id, action: "owner_phone_fixed",
+    target_tenant_id: req.params.id, details: { phone: digits },
+  }).then(r => r.error && console.error("[phone] audit:", r.error.message));
+  res.json({ ok: true, phone: digits });
+});
+
 // ── VOICE LAB ─────────────────────────────────────────────────
 // Per-tenant pronunciation lexicons and the noisy-Telugu entity test set.
 app.get("/api/admin/voice-lab", verifySuperAdmin, async (_req, res) => {
