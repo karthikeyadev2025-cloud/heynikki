@@ -437,6 +437,8 @@ _POOL = httpx.AsyncClient(
                         keepalive_expiry=90.0),
 )
 
+_SARVAM_402_AT: float = 0.0   # last time Sarvam said 402 — /health shows it
+
 # ── SARVAM STT ───────────────────────────────────────────
 class SarvamSTT:
     """Sarvam Saaras V3 STT — Telugu Tanglish optimised."""
@@ -469,7 +471,14 @@ class SarvamSTT:
             data = resp.json()
             return data.get("transcript", "")
         except httpx.HTTPError as e:
-            log.error(f"Sarvam STT error: {e} — switching to Google fallback")
+            if "402" in str(e):
+                # Out of Sarvam credits. This is an OUTAGE, not an error to
+                # absorb quietly: every caller on every tenant is now deaf.
+                global _SARVAM_402_AT
+                _SARVAM_402_AT = time.time()
+                log.critical("SARVAM CREDITS EXHAUSTED — every call is deaf until topped up")
+            else:
+                log.error(f"Sarvam STT error: {e} — switching to Google fallback")
             return await self._google_fallback(audio_bytes)
         except Exception as e:
             log.error(f"Sarvam STT unexpected error: {e}")
@@ -477,6 +486,11 @@ class SarvamSTT:
 
     async def _google_fallback(self, audio_bytes: bytes) -> str:
         """Google Cloud STT Chirp 2 — fallback for Sarvam failures."""
+        # The real calls that exposed this had ?key= — EMPTY — in the log:
+        # the fallback has never once worked, and each attempt added ~400ms
+        # of guaranteed 403 to a turn that was already failing.
+        if not os.environ.get("GOOGLE_STT_KEY"):
+            return ""
         try:
             import base64
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1520,8 +1534,21 @@ class NikkiAgent:
                 # pattern on a bytes-like object" — which killed the whole turn
                 # and gave the caller SILENCE instead of "say that again".
                 # Seen 4 times on live calls, including on a request for a human.
-                log.info("STT returned nothing — asking the caller to repeat")
-                msg = "ఒక్కసారి మళ్ళీ చెప్తారా?"
+                self._stt_failures = getattr(self, "_stt_failures", 0) + 1
+                if self._stt_failures >= 3:
+                    # Three deaf turns is an outage, not a mumble. The real
+                    # 402 calls show her asking "మళ్ళీ చెప్తారా?" five and six
+                    # times at people speaking perfectly clearly — the honest
+                    # move is one apology and a promised callback, once.
+                    log.error("STT failed 3x this call — apologising instead of looping")
+                    msg = ("క్షమించండి అండి, లైన్‌లో టెక్నికల్ సమస్య ఉంది. "
+                           "మీ నంబర్ నోట్ అయింది, మా టీమ్ మీకు కాల్ బ్యాక్ చేస్తుంది.")
+                    self._stt_failures = -100    # say it once, then stay quiet
+                elif self._stt_failures < 0:
+                    return "" if want_text else b""
+                else:
+                    log.info("STT returned nothing — asking the caller to repeat")
+                    msg = "ఒక్కసారి మళ్ళీ చెప్తారా?"
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
             log.info(f"STT: {user_text}")
@@ -1946,8 +1973,11 @@ async def health():
         return sorted(vals)[int(len(vals) * q)] if vals else None
     stt = [t[0] for t in _TURN_STATS]
     llm = [t[1] for t in _TURN_STATS]
+    sarvam_out = _SARVAM_402_AT and (time.time() - _SARVAM_402_AT) < 1800
     return {
-        "status": "ok",
+        "status": "degraded" if sarvam_out else "ok",
+        # Half an hour of memory: a top-up clears it by simply working.
+        "sarvam_credits_exhausted": bool(sarvam_out),
         "service": "nikki-voice-pipeline",
         "timestamp": datetime.now().isoformat(),
         "circuit_breakers": _cb.all_status(),
