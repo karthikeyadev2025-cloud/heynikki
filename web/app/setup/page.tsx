@@ -614,19 +614,27 @@ export default function SetupPage() {
             {saving ? "Saving..." : saved ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={14} /> Saved!</span>) : "Save & Go Live"}
           </button>
 
-          <button type="button" onClick={handleTestCall} disabled={testCalling || !profile} style={{
+          {/* Both preconditions, checked here rather than discovered by a
+              failed request: a test call needs a profile AND the mobile to
+              ring. The button used to be enabled with a phone missing, so
+              pressing it returned 409 and printed a console error while the
+              field that fixes it sat higher up the same page. */}
+          <button type="button" onClick={handleTestCall}
+            disabled={testCalling || !profile || !ownerPhone.trim()} style={{
             padding: "12px 20px", background: "transparent", color: C.gbr,
             border: "1px solid " + C.glow + "66", borderRadius: 8,
             fontSize: 13, fontWeight: 700,
-            opacity: (!profile || testCalling) ? 0.5 : 1,
+            opacity: (!profile || testCalling || !ownerPhone.trim()) ? 0.5 : 1,
           }}>
             {testCalling ? "Calling..." : (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Test Call</span>)}
           </button>
         </div>
 
-        {!profile && (
+        {(!profile || !ownerPhone.trim()) && (
           <div style={{ color: C.dim, fontSize: 11, marginTop: 8, textAlign: "center" }}>
-            Save your profile first to enable test calls
+            {!profile
+              ? "Save your profile first to enable test calls"
+              : "Add your mobile number above — that's the phone we'll ring"}
           </div>
         )}
       </form>
