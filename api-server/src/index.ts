@@ -1691,8 +1691,23 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
     console.log(`[test-call] tenant=${tenantId} -> ${owner.phone} via ${did.number} uuid=${uuid}`);
     res.json({ ok: true, message: `Calling ${owner.phone} now — Nikki will answer.` });
   } catch (e: any) {
-    console.error("[test-call]", e.message);
-    res.status(502).json({ error: "Could not place the call right now. Please try again." });
+    // NOT 502. A carrier refusing the call is an expected operational
+    // outcome, not a broken gateway — and a 5xx makes the browser log
+    // "net::ERR_FAILED 502" over whatever message we put in the body, so
+    // the customer sees a crash instead of an explanation.
+    //
+    // The Jio trunk currently answers every outbound INVITE with
+    // 500 "Classification Failure": it accepts our OPTIONS pings and all
+    // inbound calls, but has not been authorised for outbound. Verified by
+    // dialling it directly from fs_cli in four number formats, all
+    // identical, with a well-formed INVITE carrying our own DID in From.
+    const temporary = /TEMPORARY_FAILURE|CLASSIFICATION|GATEWAY/i.test(e?.message || "");
+    console.error("[test-call] originate failed:", e?.message);
+    res.status(409).json({
+      error: temporary
+        ? "Outbound calling isn't enabled on your number's trunk yet — we're on it. Inbound calls work normally."
+        : "Could not place the call right now. Please try again.",
+    });
   }
 });
 
