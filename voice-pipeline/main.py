@@ -1351,34 +1351,54 @@ class NikkiAgent:
             })
             self.appointment_id = appt_id
 
-            # Send WhatsApp confirmation
-            if self.profile.get("whatsapp_number"):
-                wa_msg = (
-                    f"నమస్కారం! మీ appointment {self.profile.get('business_name','')} లో "
-                    f"confirm అయింది. మేము soon మీకు details పంపుతాం. ధన్యవాదాలు!"
-                )
-                sent = await send_whatsapp(
-                    self.caller_num,
-                    wa_msg,
-                    self.profile["whatsapp_number"],
-                    self.profile["tenant_id"]
-                )
-                if appt_id:
-                    await self.db.update_call(self.call_id, {
-                        "appointment_created": True,
-                        "wa_sent": sent,
-                    })
-                if sent:
-                    await self.db.log_wa_dispatch({
-                        "tenant_id":        self.profile["tenant_id"],
-                        "voice_profile_id": self.profile["id"],
-                        "call_id":          self.call_id,
-                        "appointment_id":   appt_id,
-                        "message_type":     "confirmation",
-                        "to_number":        self.caller_num,
-                        "message_body":     wa_msg,
-                        "status":           "sent" if sent else "failed",
-                    })
+            # Send WhatsApp confirmation.
+            #
+            # Two things were wrong here and both failed silently.
+            #
+            # It was gated on the TENANT having a whatsapp_number. That number
+            # is a 360dialog "send as" address; on Meta Cloud API the sender is
+            # our own platform number, so the gate blocked confirmations for
+            # every tenant that had not filled in a field Meta never reads —
+            # which is currently all of them.
+            #
+            # And it called send_whatsapp() above, which posts to WATI_API_URL.
+            # That variable is empty, so the function logged "WhatsApp not
+            # configured" and returned False. Nothing was ever sent, and the
+            # caller was told on the phone that a confirmation was coming.
+            #
+            # The API server owns messaging: it holds the Meta credentials,
+            # picks the approved template (free text is refused outside the
+            # 24-hour window, and a phone call never opens one) and writes
+            # wa_dispatch_log itself — so this no longer logs it twice.
+            sent = False
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.post(
+                        f"{API_SERVER_URL}/api/whatsapp/appointment-confirm",
+                        headers={"X-Internal-Secret": INTERNAL_SECRET},
+                        json={
+                            "caller_number":    self.caller_num,
+                            "business_name":    self.profile.get("business_name") or "",
+                            "slot_date":        self.slots.get("date"),
+                            "slot_time":        self.slots.get("time"),
+                            "service":          self.slots.get("service"),
+                            "tenant_id":        self.profile["tenant_id"],
+                            "voice_profile_id": self.profile["id"],
+                            "call_id":          self.call_id,
+                            "appointment_id":   appt_id,
+                        },
+                    )
+                    sent = r.status_code == 200 and bool(r.json().get("ok"))
+                    if not sent:
+                        log.error(f"[WA] confirmation refused: HTTP {r.status_code} {r.text[:160]}")
+            except Exception as e:
+                log.error(f"[WA] confirmation send failed: {e}")
+
+            if appt_id:
+                await self.db.update_call(self.call_id, {
+                    "appointment_created": True,
+                    "wa_sent": sent,
+                })
         except Exception as e:
             log.error(f"Appointment booking error: {e}")
 

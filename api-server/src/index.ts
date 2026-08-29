@@ -593,7 +593,7 @@ async function updateMinuteLimit(tenantId: string, planId: string) {
 // requires a pre-approved TEMPLATE and will reject plain text. The
 // missed-call follow-up is exactly that case — it goes out through the
 // n8n workflows, which use the template endpoint.
-type WhatsAppResult = { ok: boolean; error?: string };
+type WhatsAppResult = { ok: boolean; error?: string; id?: string };
 
 async function sendViaWati(to: string, message: string): Promise<WhatsAppResult> {
   if (!WATI_KEY || !WATI_URL) return { ok: false, error: "Wati not configured" };
@@ -629,7 +629,10 @@ async function sendViaMeta(to: string, message: string): Promise<WhatsAppResult>
     signal: AbortSignal.timeout(10_000),
   });
 
-  if (resp.ok) return { ok: true };
+  if (resp.ok) {
+    const okBody = await resp.json().catch(() => ({} as any));
+    return { ok: true, id: okBody?.messages?.[0]?.id };
+  }
 
   // Meta's errors are actually useful — surface them rather than a bare
   // status code, because "template required" and "invalid token" need
@@ -639,20 +642,84 @@ async function sendViaMeta(to: string, message: string): Promise<WhatsAppResult>
   return { ok: false, error: `Meta: ${detail}` };
 }
 
+// ── TEMPLATE SENDING (the only thing that works after a phone call) ──
+// A phone call does not open a WhatsApp customer-service window — only an
+// inbound WhatsApp message from the customer does. So every message this
+// system sends because of a CALL is, by definition, outside the window, and
+// Meta rejects free-form text there. That is why call-triggered WhatsApp has
+// never arrived: the api-server sent text Meta refused, and the n8n missed-call
+// workflow posted its template to $env.WATI_API_URL, which is empty.
+//
+// These are the templates actually APPROVED on WABA 1082855697732160, checked
+// against the Graph API rather than assumed. Each takes exactly one body
+// variable: the business name.
+const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
+  confirmation: { name: "appointment_confirmed",    lang: "en" },
+  missed_call:  { name: "missed_call_followup",     lang: "en" },
+  brochure:     { name: "interested_lead_brochure", lang: "en" },
+};
+
+async function sendTemplateViaMeta(
+  to: string, template: string, lang: string, params: string[],
+): Promise<WhatsAppResult> {
+  const token   = process.env.META_WA_TOKEN || "";
+  const phoneId = process.env.META_WA_PHONE_NUMBER_ID || "";
+  const version = process.env.META_WA_API_VERSION || "v21.0";
+  if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
+
+  const msisdn = to.replace(/[^\d]/g, "");
+  const components = params.length
+    ? [{ type: "body", parameters: params.map(t => ({ type: "text", text: String(t || "").slice(0, 60) })) }]
+    : [];
+
+  const resp = await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type:    "individual",
+      to:                msisdn,
+      type:              "template",
+      template: { name: template, language: { code: lang }, components },
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  const body = await resp.json().catch(() => ({} as any));
+  if (resp.ok) return { ok: true, id: body?.messages?.[0]?.id };
+  return { ok: false, error: `Meta template ${template}: ${body?.error?.message || `HTTP ${resp.status}`}` };
+}
+
 async function sendWhatsApp(to: string, message: string, tenantId: string,
-  voiceProfileId: string, messageType: string, callId?: string, apptId?: string) {
+  voiceProfileId: string, messageType: string, callId?: string, apptId?: string,
+  businessName?: string) {
   const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
+  const tpl = WA_TEMPLATES[messageType];
 
   let result: WhatsAppResult;
   try {
-    result = provider === "meta"
-      ? await sendViaMeta(to, message)
-      : await sendViaWati(to, message);
+    if (provider === "meta" && tpl) {
+      // Template first — it is the only form deliverable outside the window.
+      result = await sendTemplateViaMeta(to, tpl.name, tpl.lang, [businessName || "us"]);
+      // If the customer HAS messaged recently the window is open, and the
+      // free-form version carries what the template cannot: the actual date,
+      // time and service. Approved templates here take one variable, the
+      // business name, so the detail only ever arrives this way. A failure is
+      // ignored on purpose — the template above already landed.
+      if (result.ok) {
+        sendViaMeta(to, message).catch(() => { /* window closed; expected */ });
+      }
+    } else {
+      result = provider === "meta"
+        ? await sendViaMeta(to, message)
+        : await sendViaWati(to, message);
+    }
   } catch (err: any) {
     result = { ok: false, error: err.message };
   }
 
   if (!result.ok) console.error(`[WhatsApp/${provider}]`, result.error);
+  else if (tpl) console.log(`[WhatsApp] template ${tpl.name} -> ${to}`);
 
   try {
     await sb.from("wa_dispatch_log").insert({
@@ -663,7 +730,12 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
       message_type:     messageType,
       to_number:        to,
       message_body:     message,
+      // "sent" means Meta ACCEPTED it, which is not the same as delivered.
+      // Meta accepts free-form text outside the 24-hour window and drops it
+      // asynchronously, so this row said "sent" for messages nobody received.
+      // The id is what lets the delivery webhook below correct that.
       status:           result.ok ? "sent" : "failed",
+      provider_msg_id:  result.id || null,
     });
   } catch (err: any) {
     // A logging failure must never swallow a successful send.
@@ -1014,7 +1086,7 @@ app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });
 
   const ok = await sendWhatsApp(to, message, tenant_id, voice_profile_id,
-    message_type, call_id, appointment_id);
+    message_type, call_id, appointment_id, req.body.business_name);
   res.json({ ok });
 });
 
@@ -1029,7 +1101,7 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
     `\nమీ అపాయింట్మెంట్ రద్దు చేయాలంటే CANCEL reply చేయండి.\nధన్యవాదాలు! 🙏`;
 
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
-    "confirmation", call_id, appointment_id);
+    "confirmation", call_id, appointment_id, business_name);
   res.json({ ok });
 });
 
@@ -1040,7 +1112,7 @@ app.post("/api/whatsapp/missed-call", verifyInternal, async (req, res) => {
     `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము.\n\n` +
     `అర్జెంట్ అయితే, మళ్ళీ call చేయండి. ధన్యవాదాలు! 🙏`;
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
-    "missed_call", call_id);
+    "missed_call", call_id, undefined, business_name);
   res.json({ ok });
 });
 
@@ -2830,7 +2902,7 @@ app.get("/webhooks/whatsapp", (req, res) => {
   return res.sendStatus(403);
 });
 
-app.post("/webhooks/whatsapp", (req, res) => {
+app.post("/webhooks/whatsapp", async (req, res) => {
   const rawBody = req.body as Buffer;
   const sig     = (req.headers["x-hub-signature-256"] as string) || "";
 
@@ -2869,6 +2941,18 @@ app.post("/webhooks/whatsapp", (req, res) => {
         }
         for (const st of v.statuses || []) {
           console.log(`[WhatsApp] status ${st.id} -> ${st.status}`);
+          // Meta reports delivery asynchronously, and until now nothing read
+          // it: wa_dispatch_log kept whatever it guessed at send time. A
+          // message Meta accepted and then failed to deliver stayed "sent"
+          // forever, so the log could not answer the one question it exists
+          // to answer. Terminal states only — 'sent' here would overwrite a
+          // later 'delivered' depending on webhook ordering.
+          if (["delivered", "read", "failed"].includes(st.status) && st.id) {
+            const { error: stErr } = await sb.from("wa_dispatch_log")
+              .update({ status: st.status })
+              .eq("provider_msg_id", st.id);
+            if (stErr) console.error("[WhatsApp] status reconcile failed:", stErr.message);
+          }
         }
       }
     }
@@ -2990,15 +3074,17 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         vp = data;
       }
 
-      if (vp?.fallback_wa_enabled !== false) {
-        await fireAutomationWebhook("missed-call", {
-          caller_number,
-          did_number,
-          call_id:         callRow?.id,
-          tenant_id:       callRow?.tenant_id,
-          business_name:   vp?.business_name   || "our team",
-          whatsapp_number: vp?.whatsapp_number || caller_number,
-        });
+      // Sent directly rather than through n8n. The missed-call workflow's
+      // send node posts a template to $env.WATI_API_URL, which is empty — so
+      // the workflow ran green, reported success, and delivered nothing. This
+      // path uses the approved missed_call_followup template on Meta, and
+      // writes wa_dispatch_log itself.
+      if (vp?.fallback_wa_enabled !== false && callRow?.tenant_id) {
+        const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
+          `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
+        await sendWhatsApp(caller_number, msg, callRow.tenant_id,
+          callRow.voice_profile_id, "missed_call", callRow.id, undefined,
+          vp?.business_name || "our team");
       }
 
       // Log missed call in Supabase
@@ -3039,14 +3125,17 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
         .select("business_name, whatsapp_number, fallback_wa_enabled")
         .eq("id", did.voice_profile_id).single();
 
+      // Sent directly rather than through n8n. The missed-call workflow's
+      // send node posts a template to $env.WATI_API_URL, which is empty — so
+      // the workflow ran green, reported success, and delivered nothing. This
+      // path uses the approved missed_call_followup template on Meta, and
+      // writes wa_dispatch_log itself.
       if (vp?.fallback_wa_enabled !== false) {
-        await fireAutomationWebhook("missed-call", {
-          caller_number,
-          did_number,
-          tenant_id:     did.tenant_id,
-          business_name: vp?.business_name || "our team",
-          whatsapp_number: vp?.whatsapp_number || caller_number,
-        });
+        const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
+          `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
+        await sendWhatsApp(caller_number, msg, did.tenant_id,
+          did.voice_profile_id, "missed_call", undefined, undefined,
+          vp?.business_name || "our team");
       }
     }
 
@@ -3211,14 +3300,24 @@ app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) 
     if (disposition === "interested" || disposition === "booked") {
       const { data: lead } = await sb.from("leads")
         .select("phone, name").eq("id", log?.lead_id).single();
-      if (lead) {
-        await fireAutomationWebhook("interested-lead", {
-          tenant_id:   tenantId,
-          phone:       lead.phone,
-          name:        lead.name,
-          disposition,
-          notes,
-        });
+      if (lead?.phone) {
+        // Sent here rather than through the interested-lead n8n workflow, for
+        // the same reason as missed-call: that workflow's send node posts to
+        // $env.WATI_API_URL, which is empty. The brochure a caller was
+        // promised on the phone has never actually been sent.
+        // Resolved by tenant, not by lead.voice_profile_id — leads has no such
+        // column. Checked against the live table rather than assumed, because
+        // a select on a column that does not exist returns 400 and this whole
+        // block would have gone quiet again.
+        const { data: vp } = await sb.from("voice_profiles")
+          .select("id, business_name").eq("tenant_id", tenantId)
+          .eq("status", "active").limit(1).maybeSingle();
+        const bn = vp?.business_name || "our team";
+        const msg = `నమస్కారం${lead.name ? " " + lead.name : ""}! ${bn} గురించి ` +
+          `మీ ఆసక్తికి ధన్యవాదాలు. మీరు అడిగిన details ఇక్కడ ఉన్నాయి. ` +
+          `ఏవైనా సందేహాలుంటే ఇక్కడే reply చేయండి. 🙏`;
+        await sendWhatsApp(lead.phone, msg, tenantId, vp?.id as string,
+          "brochure", undefined, undefined, bn);
       }
     }
 
