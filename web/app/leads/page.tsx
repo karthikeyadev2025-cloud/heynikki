@@ -488,7 +488,7 @@ export default function LeadsPage() {
                     ) : (
                       <div style={{ marginTop: 8 }}>
                         {l.notes && (
-                          <div style={{ fontSize: 12, color: C.mid, fontStyle: "italic",
+                          <div onClick={e => e.stopPropagation()} /* the card itself opens the drawer; without this every button inside it also opened a full-screen overlay on top of what it just revealed */  style={{ fontSize: 12, color: C.mid, fontStyle: "italic",
                             marginBottom: 4, lineHeight: 1.5 }}>{l.notes}</div>
                         )}
                         <button

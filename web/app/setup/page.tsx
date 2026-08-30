@@ -594,13 +594,11 @@ export default function SetupPage() {
           </FieldGroup>
 
           <FieldGroup>
-            <Label>WhatsApp Business Number</Label>
+            <Label>Your WhatsApp for daily summaries</Label>
             <input value={form.whatsapp_number}
               onChange={e => setForm(f => ({ ...f, whatsapp_number: e.target.value }))}
               placeholder="+91 98765 43210" />
-            <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
-              Confirmation messages sent from this number to your callers
-            </div>
+            <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>Where we send your nightly business summary. This is NOT the number your customers see — that's set on the Verification page once your KYC is approved.</div>
           </FieldGroup>
         </Card>
 

@@ -414,11 +414,22 @@ export default function CampaignsPage() {
                     { l:"Pending",   v:s.pending,     c:C.mid },
                     { l:"Queued",    v:s.queued,      c:C.cyn },
                     { l:"Called",    v:s.completed,   c:C.grn },
-                    { l:"DND",       v:s.blocked_dnd, c:C.gold },
+                    { l:"Blocked",   v:s.blocked_dnd, c:C.gold },
                     { l:"Opted out", v:s.opted_out,   c:C.red },
                   ].map(x => (
                     <div key={x.l}>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
+
+                  {/* Blocked is not a failure — with no DND scrubbing provider
+                      configured the dispatcher refuses every number that did not
+                      submit its own enquiry, which is the safe reading of TRAI and
+                      was never explained on this page. */}
+                  {s.blocked_dnd > 0 && (
+                    <div style={{ color: C.dim, fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+                      Blocked numbers did not submit their own enquiry, and DND scrubbing
+                      isn&apos;t switched on — so we don&apos;t dial them. Contacts who filled in
+                      your form or asked for a callback are dialled normally.
+                    </div>
+                  )}                      <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
                       <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
                     </div>
                   ))}

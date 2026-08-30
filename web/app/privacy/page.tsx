@@ -56,7 +56,11 @@ export default function Privacy() {
 
       <h2>4. How long we keep your data</h2>
       <ul>
-        <li><strong>Call recordings:</strong> 90 days, then permanently deleted. You can request shorter retention in your dashboard settings.</li>
+        <li><strong>Call recordings:</strong> kept for the period your plan
+        includes — 7 days on the free trial, 90 days on Starter, 1 year on
+        Growth, 2 years on Scale — then permanently deleted automatically.
+        The recordings are encrypted at rest, and you can ask us to delete
+        any recording sooner.</li>
         <li><strong>Transcripts:</strong> 2 years (for analytics and dispute resolution).</li>
         <li><strong>Billing records:</strong> 8 years (statutory requirement under Indian tax law).</li>
         <li><strong>Account data:</strong> until you delete your account, plus 30 days for backup expiry.</li>

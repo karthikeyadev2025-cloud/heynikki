@@ -99,6 +99,14 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
           {/* Recording. The old condition was `call.recording_url`, a column
               nothing has ever written — every recording lives in
               r2_object_key — so no customer could play a single call. */}
+          {/* recording_size_bytes survives the purge, so a call that HAD audio
+              can say what happened to it instead of looking like it never
+              had any. Retention is by plan — seven days on trial. */}
+          {(!call.r2_object_key && !call.recording_url && (call as any).recording_size_bytes) ? (
+            <div style={{ marginBottom: 16, color: C.dim, fontSize: 12.5 }}>
+              Recording deleted — your plan keeps call audio for a limited time.
+            </div>
+          ) : null}
           {(call.r2_object_key || call.recording_url) && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ color: C.mid, fontSize: 11, fontWeight: 800,
@@ -168,7 +176,12 @@ function exportCsv(rows: CallRecord[]) {
     { key: "status",           label: "Status" },
     { key: "intent",           label: "Intent" },
     { key: "duration_seconds", label: "Duration (s)" },
-    { key: "transcript",       label: "Transcript",   map: v => (v || "").toString().replace(/\s+/g, " ").slice(0, 8000) },
+    { key: "transcript",       label: "Transcript",
+    // An array of {role, content} turns — .toString() on it exported
+    // "[object Object], [object Object]" for every call ever downloaded.
+    map: (v: any) => (Array.isArray(v)
+      ? v.map((t: any) => `${t.role}: ${t.content}`).join(" | ")
+      : String(v ?? "")).replace(/\s+/g, " ").slice(0, 8000) },
   ];
 
   const escape = (val: any) => {

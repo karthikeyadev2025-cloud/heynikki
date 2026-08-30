@@ -116,7 +116,7 @@ export default function DashboardPage() {
       sb.from("tenants").select("credit_minutes, plan").eq("id", tid).maybeSingle(),
       // warm leads still sitting untouched — the follow-up worklist
       sb.from("leads").select("id, name, phone, interest, score, intent")
-        .eq("tenant_id", tid).eq("stage", "new").gte("score", 50)
+        .eq("tenant_id", tid).not("stage", "in", '("won","lost")').gte("score", 50)
         .order("score", { ascending: false }).limit(5),
       // whole month, for the value banner
       sb.from("calls").select("created_at, appointment_created")

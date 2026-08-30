@@ -74,7 +74,21 @@ export default function WhatsAppPage() {
     const { data: { session } } = await sb.auth.getSession();
     const r = await fetch(`${API}/api/whatsapp/inbox?limit=60`,
       { headers: { Authorization: `Bearer ${session?.access_token}` } });
-    if (r.ok) { const j = await r.json(); setInbox(j.messages || []); setUnread(j.unread || 0); }
+    if (r.ok) {
+      const j = await r.json();
+      setInbox(j.messages || []);
+      setUnread(j.unread || 0);
+      // Seen is seen. Without this the unread badge never cleared and every
+      // reply stayed "NEW" forever.
+      const fresh = (j.messages || []).filter((m: any) => !m.read_at).map((m: any) => m.id);
+      if (fresh.length) {
+        fetch(`${API}/api/whatsapp/inbox/read`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: fresh }),
+        }).catch(() => {});
+      }
+    }
   }, []);
 
   useEffect(() => { loadInbox(); }, [loadInbox]);

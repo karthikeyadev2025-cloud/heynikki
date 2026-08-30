@@ -94,8 +94,10 @@ export default function AnalyticsPage() {
     sb.auth.getUser().then(async ({ data }) => {
       if (!data.user) { window.location.href = "/login"; return; }
       const { data: tu } = await sb.from("tenant_users")
-        .select("tenant_id").eq("user_id", data.user.id).single();
-      if (!tu) return;
+        .select("tenant_id").eq("user_id", data.user.id).maybeSingle();
+      // A failed lookup used to `return` with loading still true, so the page
+      // span forever with no way to tell why.
+      if (!tu) { setLoading(false); return; }
 
       const since = new Date(Date.now() - parseInt(range) * 86400000).toISOString();
       const [c, l, ctc, wa, q, ap] = await Promise.all([
@@ -139,8 +141,15 @@ export default function AnalyticsPage() {
   // and the chart series all read 0 on an account that has appointments.
   // Count the bookings themselves.
   const appointments     = appts.length;
-  const waSent           = waLogs.length;
-  const waDelivered      = waLogs.filter(w => w.status === "delivered" || w.status === "read").length;
+  // Only messages sent to the business's CUSTOMERS. wa_dispatch_log also
+  // holds HeyNikki's own onboarding messages TO THE OWNER, so a tenant that
+  // had never messaged a customer still showed WhatsApp volume — and the
+  // revenue estimate below turned our own welcome message into rupees.
+  const CUSTOMER_WA = ["missed_call", "confirmation", "reminder", "brochure",
+                       "manual_template", "manual_reply", "interested_lead"];
+  const custWa           = waLogs.filter(w => CUSTOMER_WA.includes(String(w.message_type)));
+  const waSent           = custWa.length;
+  const waDelivered      = custWa.filter(w => w.status === "delivered" || w.status === "read").length;
   const avgDur           = totalCalls ? Math.round(calls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / totalCalls) : 0;
 
   // ROI
@@ -162,7 +171,11 @@ export default function AnalyticsPage() {
 
   // WhatsApp conversion rate
   const waConversionRate = waSent ? Math.round((waDelivered / waSent) * 100) : 0;
-  const waRevenue        = waDelivered * WA_CONVERSION_VALUE * 0.15; // 15% of delivered convert
+  // Deliberately an ESTIMATE, and labelled as one where it is rendered. It
+  // multiplies delivered messages by a fixed assumed value — it is not
+  // revenue, nothing measures a sale, and presenting it as "WA Revenue"
+  // reported rupees a business never earned.
+  const waRevenue        = waDelivered * WA_CONVERSION_VALUE * 0.15;
 
   // ── Chart data ────────────────────────────────────────────
   const days = parseInt(range);
@@ -239,7 +252,7 @@ export default function AnalyticsPage() {
             {[
               { label: "Staff Cost Avoided", value: `₹${humanCostSaved.toLocaleString()}`, color: C.grn },
               { label: "Calls Auto-Resolved", value: `${aiHandled}`,                       color: C.gbr },
-              { label: "WA Revenue Est.",     value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.cyn },
+              { label: "Est. value (assumed)",     value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.cyn },
             ].map(s => (
               <div key={s.label} style={{ textAlign: "center" }}>
                 <div style={{ color: s.color, fontSize: 22, fontWeight: 900 }}>{s.value}</div>

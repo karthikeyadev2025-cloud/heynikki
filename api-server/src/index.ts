@@ -142,7 +142,14 @@ app.use((req, res, next) => {
     // change the payload and every signature check would fail. Listed as an
     // exact path, never a prefix — see the note above.
     express.raw({ type: "application/json" })(req, res, next);
-  } else if (req.path.startsWith("/webhooks/exotel/")) {
+  } else if (req.path.startsWith("/webhooks/exotel/")
+             || req.path.startsWith("/webhooks/lead-capture/")) {
+    // Lead capture too: /setup tells the customer to point "a plain HTML
+    // form" at this URL, and a plain form posts
+    // application/x-www-form-urlencoded. express.json() ignores that and
+    // leaves req.body empty, so every field read as "" and the lead was
+    // rejected as invalid — the one integration we actively instruct people
+    // to build could not work.
     // Exotel posts application/x-www-form-urlencoded (CallSid, Status,
     // Duration, From/To...). express.json() ignores a non-JSON content type
     // and leaves req.body = {}, so every field read below silently became
@@ -388,7 +395,11 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
 
     // Fire-and-forget from here — failures are logged, never surfaced to
     // the form submitter as an error (the lead is already safely saved).
-    if (match.auto_whatsapp_new_leads && match.whatsapp_number) {
+    // NOT gated on whatsapp_number: that is a 360dialog "send as" address,
+    // and on Meta Cloud API the sender is our own number. The gate blocked
+    // the instant reply for every tenant that had not filled in a field
+    // Meta never reads — which is all of them.
+    if (match.auto_whatsapp_new_leads) {
       const ackMsg = `నమస్కారం${name ? " " + name : ""}! 🙏\n` +
         `${match.business_name || "మేము"} మీ enquiry అందుకున్నాము. ` +
         `మా team షార్ట్‌గా మిమ్మల్ని సంప్రదిస్తుంది.\n\n` +
@@ -1394,6 +1405,13 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
 
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
     "confirmation", call_id, appointment_id, business_name);
+  // The dashboard shows a "WA" badge on appointments where wa_confirmed is
+  // true, and nothing ever set it — the reminder job writes its own flag but
+  // this handler never did, so the badge could not appear for any booking.
+  if (ok && appointment_id) {
+    await sb.from("appointments").update({ wa_confirmed: true }).eq("id", appointment_id)
+      .then(r => r.error && console.error("[confirm] wa_confirmed:", r.error.message));
+  }
   res.json({ ok });
 });
 
@@ -4313,9 +4331,16 @@ app.get("/api/appointments/:id/invite.ics", async (req, res) => {
     // every row looked like this.
     if (!a.slot_date) return res.status(409).json({ error: "This appointment has no date yet" });
 
-    const { data: t } = await sb.from("tenants")
-      .select("business_name").eq("id", a.tenant_id).maybeSingle();
-    const business = t?.business_name || "Your appointment";
+    // tenants has no business_name column, so this returned nothing and every
+    // calendar invite was titled "Your appointment" with no clue whose. The
+    // name a caller knows the business by lives on the voice profile.
+    const [{ data: vp }, { data: t }] = await Promise.all([
+      sb.from("voice_profiles").select("business_name")
+        .eq("tenant_id", a.tenant_id).limit(1).maybeSingle(),
+      sb.from("tenants").select("name").eq("id", a.tenant_id).maybeSingle(),
+    ]);
+    const bizName = vp?.business_name || t?.name || "";
+    const business = bizName || "Your appointment";
 
     // Slots are stored as local IST wall-clock. Emitting them as UTC would
     // shift every appointment 5.5 hours; TZID keeps 3pm meaning 3pm.
@@ -4699,7 +4724,7 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
 
       // Log missed call in Supabase
       if (callRow) {
-        await sb.from("calls").update({ status: "missed" }).eq("id", callRow.id);
+        await sb.from("calls").update({ status: "missed", wa_sent: true }).eq("id", callRow.id);
       }
     }
 
