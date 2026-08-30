@@ -476,7 +476,7 @@ export default function LeadsPage() {
                       textDecoration: "none",
                     }}>{l.phone}</a>
                     <div style={{ fontSize: 13, color: C.mid, marginTop: 4 }}>
-                      {l.intent ? (INTENT_LABELS[l.intent] || l.intent) : "—"}
+                      {l.intent ? ((INTENT_LABELS[l.intent] || titleCase(l.intent || "other")) || l.intent) : "—"}
                       {l.interest && <span style={{ color: C.txt }}> · {l.interest}</span>}
                     </div>
                     <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>

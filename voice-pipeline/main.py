@@ -2434,7 +2434,7 @@ async def browser_save_booking(req: BookingSaveRequest):
             "direction":     "inbound",
             "status":        "completed",
             "intent":        "appointment",
-            "source":        "web_widget",
+            "source":        "widget",
         })
         call_id = lead_resp
 
@@ -2462,7 +2462,7 @@ async def browser_save_booking(req: BookingSaveRequest):
                             "interest":          req.service,
                             "stage":             "qualified",
                             "score":             80,
-                            "source":            "web_widget",
+                            "source":            "widget",
                             "last_contacted_at": datetime.now().isoformat(),
                         }
                     )
@@ -3579,13 +3579,32 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         _VALID_STAGES = ("new", "contacted", "qualified", "won", "lost")
         stage = d.get("stage") if d.get("stage") in _VALID_STAGES else "contacted"
 
+        # The leads page renders a friendly label per intent, and the model was
+        # free to invent the key — it wrote "service_inquiry" where the UI knows
+        # "service_enquiry", so the card showed raw snake_case to the customer.
+        # Coerce to the set the UI can actually name.
+        _VALID_INTENTS = ("book_appointment", "reschedule", "cancel",
+                          "pricing_enquiry", "service_enquiry", "location_hours",
+                          "complaint", "follow_up", "other")
+        _INTENT_ALIASES = {
+            "service_inquiry": "service_enquiry", "price_enquiry": "pricing_enquiry",
+            "price_inquiry": "pricing_enquiry", "pricing_inquiry": "pricing_enquiry",
+            "appointment": "book_appointment", "booking": "book_appointment",
+            "hours": "location_hours", "location": "location_hours",
+            "abuse_hangup": "other", "wrong_number": "other",
+        }
+        _raw_intent = str(d.get("intent") or "other").strip().lower()
+        intent = _INTENT_ALIASES.get(_raw_intent, _raw_intent)
+        if intent not in _VALID_INTENTS:
+            intent = "other"
+
         digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
         prof   = agent.profile or {}
         row = {
             "tenant_id": prof.get("tenant_id"),
             "phone":     digits,
             "name":      (agent.slots or {}).get("name"),
-            "intent":    str(d.get("intent") or "")[:64] or None,
+            "intent":    intent,
             "interest":  str(d.get("interest") or "")[:200] or None,
             "notes":     str(d.get("summary") or "")[:500] or None,
             "stage":     stage,
