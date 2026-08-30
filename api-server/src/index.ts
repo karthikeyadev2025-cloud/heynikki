@@ -374,7 +374,11 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
     // form twice, or later calls in, converges on one record either way.
     const { data: leadId, error: leadErr } = await sb.rpc("upsert_lead_from_call", {
       p_tenant_id: match.tenant_id,
-      p_phone:     phone,
+      // Last ten digits, always. The pipeline normalises before it writes,
+      // this path did not, so the same person arriving through a web form as
+      // "+91 98765 43210" became a second lead beside the one their phone
+      // call created — and the CRM's whole dedupe rests on this column.
+      p_phone:     String(phone).replace(/\D/g, "").slice(-10),
       p_name:      name,
       p_intent:    "other",
       p_interest:  message,
@@ -764,6 +768,10 @@ async function resolveWaSender(tenantId?: string): Promise<WaSender> {
 // against the Graph API rather than assumed. Each takes exactly one body
 // variable: the business name.
 const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
+  // Submitted to Meta today. The nightly summary had no template at all, so
+  // sendWhatsApp fell through to free text, which Meta refuses outside the
+  // 24-hour window — and a scheduled job is by definition outside it.
+  daily_summary: { name: "daily_business_summary", lang: "te" },
   confirmation: { name: "appointment_confirmed",    lang: "en" },
   missed_call:  { name: "missed_call_followup",     lang: "en" },
   brochure:     { name: "interested_lead_brochure", lang: "en" },

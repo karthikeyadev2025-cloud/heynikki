@@ -52,6 +52,10 @@ type Lead = {
   tags: string[] | null;
 };
 
+// The fallback, and the platform defaults. crm_pipeline_stages holds the
+// same five rows with tenant_id null, plus any a business defines for
+// itself — and nothing has ever read it, so a tenant row would have had no
+// effect anywhere. loadStages() below prefers the table.
 const STAGES = [
   { id: "new",       label: "New",       color: C.cyn  },
   { id: "contacted", label: "Contacted", color: C.gbr  },
@@ -59,6 +63,9 @@ const STAGES = [
   { id: "won",       label: "Won",       color: C.grn  },
   { id: "lost",      label: "Lost",      color: C.dim  },
 ];
+
+const titleCase = (s: string) =>
+  String(s).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
 const INTENT_LABELS: Record<string, string> = {
   book_appointment:     "Wants to book",
@@ -183,6 +190,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [stages, setStages] = useState(STAGES);
   const [openLead, setOpenLead] = useState<Lead | null>(null);
   const [error, setError] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
@@ -253,6 +261,15 @@ export default function LeadsPage() {
     const { data: tu } = await sb.from("tenant_users")
       .select("tenant_id").eq("user_id", auth.user.id).maybeSingle();
     setTenantId(tu?.tenant_id ?? null);
+
+    const { data: st } = await sb.from("crm_pipeline_stages")
+      .select("name, color, tenant_id, sort_order").order("sort_order");
+    if (st?.length) {
+      // A tenant's own stage replaces the platform stage of the same name.
+      const mine = st.filter((x: any) => x.tenant_id === tu?.tenant_id);
+      const rows = (mine.length ? mine : st.filter((x: any) => !x.tenant_id));
+      setStages(rows.map((x: any) => ({ id: x.name, label: titleCase(x.name), color: x.color || C.dim })));
+    }
 
     const { data, error: e } = await sb.from("leads")
       .select("*")
@@ -375,7 +392,7 @@ export default function LeadsPage() {
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
           gap: 10, marginBottom: 20,
         }}>
-          {STAGES.map(s => (
+          {stages.map(s => (
             <button key={s.id}
               onClick={() => setStageFilter(stageFilter === s.id ? "all" : s.id)}
               style={{
@@ -529,7 +546,7 @@ export default function LeadsPage() {
                     )}
                     {/* Stage buttons */}
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {STAGES.map(s => (
+                      {stages.map(s => (
                         <button key={s.id}
                           onClick={() => updateLead(l.id, { stage: s.id })}
                           title={`Mark ${s.label}`}

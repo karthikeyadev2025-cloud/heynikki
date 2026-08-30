@@ -5,8 +5,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
-} from "recharts";
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, ComposedChart } from "recharts";
 import { BarChart3, Trophy } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
 
@@ -179,8 +178,13 @@ export default function AnalyticsPage() {
 
   // ── Chart data ────────────────────────────────────────────
   const days = parseInt(range);
-  const dailyData = Array.from({ length: Math.min(days, 30) }, (_, i) => {
-    const d = new Date(Date.now() - (Math.min(days, 30) - 1 - i) * 86400000);
+  // The chart caps at 30 points so 90 days does not become an unreadable
+  // hairline — but it said "90 days" and drew 30 without mentioning it, so
+  // a business comparing the chart to the KPI tiles saw two different
+  // periods. The cap is now stated where the chart is drawn.
+  const chartDays = Math.min(days, 30);
+  const dailyData = Array.from({ length: chartDays }, (_, i) => {
+    const d = new Date(Date.now() - (chartDays - 1 - i) * 86400000);
     const label = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
     const dayStr = d.toISOString().split("T")[0];
     const dayCalls  = calls.filter(c => c.created_at?.startsWith(dayStr));
@@ -348,8 +352,8 @@ export default function AnalyticsPage() {
           {/* ── Daily Calls + Cost Saved ───────────────────────── */}
           <Card title="Daily Call Volume & Savings" subtitle="AI handled calls vs savings vs missed"
             style={{ marginBottom: 16 }}>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={dailyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            {chartDays < parseInt(range) ? ` — last ${chartDays} days` : ""}<ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={dailyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gAI" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor={C.glow} stopOpacity={0.3}/>
@@ -368,7 +372,7 @@ export default function AnalyticsPage() {
                 <Area type="monotone" dataKey="ai_handled"   name="AI Handled"    stroke={C.glow} fill="url(#gAI)"  strokeWidth={2} />
                 <Area type="monotone" dataKey="appointments" name="Appointments"  stroke={C.grn}  fill="url(#gGrn)" strokeWidth={2} />
                 <Bar  dataKey="missed"       name="Missed"       fill={C.gold} radius={[2,2,0,0]} />
-              </AreaChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </Card>
 

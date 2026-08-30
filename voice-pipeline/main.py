@@ -1899,6 +1899,17 @@ class NikkiAgent:
             # picks the approved template (free text is refused outside the
             # 24-hour window, and a phone call never opens one) and writes
             # wa_dispatch_log itself — so this no longer logs it twice.
+            # HOLD the confirmation when the slot is still unknown. This
+            # runs mid-call, before _enrich_appointment has read the
+            # transcript, so self.slots is usually empty — and the message
+            # went out reading "Date: soon, Time: TBD", which is worse than
+            # no message: the caller was told in Telugu that a confirmation
+            # was coming and then received one that confirmed nothing.
+            # _enrich_appointment sends it once the date is actually known.
+            if not (self.slots.get("date") or self.slots.get("time")):
+                log.info("[FS] confirmation held — slot not captured yet, will send after enrichment")
+                return
+
             sent = False
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
@@ -3449,6 +3460,33 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
                           params={"id": f"eq.{appt_id}"},
                           json=patch)
         log.info(f"[FS] {fs_uuid}: appointment enriched {patch}")
+
+        # NOW the confirmation can say something true. The mid-call send is
+        # held when the slot is unknown, which is almost always — the caller
+        # is still mid-sentence when the row is written. Here the date and
+        # time have been read out of the whole transcript, so the message
+        # the customer receives actually confirms their appointment instead
+        # of reading "Date: soon, Time: TBD".
+        if patch.get("slot_date") or patch.get("slot_time"):
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as c:
+                    r = await c.post(
+                        f"{API_SERVER_URL}/api/whatsapp/appointment-confirm",
+                        headers={"X-Internal-Secret": INTERNAL_SECRET},
+                        json={
+                            "caller_number":    agent.caller_num,
+                            "business_name":    agent.profile.get("business_name") or "",
+                            "slot_date":        patch.get("slot_date"),
+                            "slot_time":        patch.get("slot_time"),
+                            "service":          patch.get("service"),
+                            "tenant_id":        agent.profile["tenant_id"],
+                            "voice_profile_id": agent.profile["id"],
+                            "call_id":          agent.call_id,
+                            "appointment_id":   appt_id,
+                        })
+                    log.info(f"[FS] {fs_uuid}: confirmation sent after enrichment ({r.status_code})")
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[FS] {fs_uuid}: post-enrichment confirmation failed: {e}")
     except Exception as e:  # noqa: BLE001 - never break cleanup
         log.warning(f"[FS] {fs_uuid}: appointment enrich failed: {e}")
 

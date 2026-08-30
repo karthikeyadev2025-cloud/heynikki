@@ -121,6 +121,59 @@ function StatusPill({ status }: { status: string }) {
   }}>{status}</span>;
 }
 
+
+// Who was actually dialled. The campaign card showed five counters and no
+// way to see a single contact behind them — a business could not tell which
+// number failed, which was blocked, or who had already been reached.
+function RecipientList({ campaignId }: { campaignId: string }) {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    const sb = createClient();
+    const { data } = await sb.from("outbound_recipients")
+      .select("phone, name, status, attempts, last_error")
+      .eq("campaign_id", campaignId)
+      .order("status").limit(200);
+    setRows(data || []);
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button type="button"
+        onClick={() => { setOpen(o => !o); if (!rows) load(); }}
+        style={{ background: "none", border: "none", color: C.gbr, fontSize: 12,
+          fontWeight: 700, cursor: "pointer", padding: 0 }}>
+        {open ? "Hide contacts" : "See contacts"}
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, maxHeight: 260, overflowY: "auto",
+          border: `1px solid ${C.bord}`, borderRadius: 8 }}>
+          {rows === null ? (
+            <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>Loading…</div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>
+              No contacts imported yet — upload a list before starting.
+            </div>
+          ) : rows.map((r: any, i: number) => (
+            <div key={i} style={{ display: "flex", gap: 10, alignItems: "center",
+              padding: "7px 10px", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
+              <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
+              <span style={{ color: C.mid, flex: 1 }}>{r.name || "—"}</span>
+              <span style={{ color: r.status === "completed" ? C.grn
+                : r.status === "failed" ? C.red
+                : r.status === "blocked_dnd" ? C.gold : C.dim }}>
+                {r.status === "blocked_dnd" ? "not dialled (no consent)" : r.status}
+              </span>
+              {r.attempts > 1 && <span style={{ color: C.dim }}>{r.attempts} tries</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CampaignsPage() {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -244,13 +297,23 @@ export default function CampaignsPage() {
     }
   }
 
+  // Start and Pause used to write outbound_campaigns.status straight from
+  // the browser, walking past every guard the real endpoints enforce: a
+  // consent declaration, and having any recipients at all. A campaign with
+  // zero contacts could be set "running" and would sit there dialling
+  // nobody with no explanation. These endpoints exist and were never called.
   async function setStatus(id: string, status: string) {
     setError(""); setNotice("");
     const sb = createClient();
-    const { error: e } = await sb.from("outbound_campaigns")
-      .update({ status }).eq("id", id);
-    if (e) setError(e.message);
-    else { setNotice(`Campaign ${status}.`); load(); }
+    const { data: { session } } = await sb.auth.getSession();
+    const action = status === "running" ? "start" : "pause";
+    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/campaigns/${id}/${action}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}` },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) setError(j.error || `Could not ${action} the campaign`);
+    else { setNotice(j.recipients ? `Campaign started — ${j.recipients} to dial.` : `Campaign ${action}d.`); load(); }
   }
 
   const inputStyle: React.CSSProperties = {
@@ -430,7 +493,8 @@ export default function CampaignsPage() {
                       your form or asked for a callback are dialled normally.
                     </div>
                   )}                      <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
-                      <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
+
+                  <RecipientList campaignId={c.id} />                      <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
                     </div>
                   ))}
                 </div>
