@@ -582,7 +582,17 @@ class SarvamSTT:
                             "sampleRateHertz": 8000,
                             "languageCode": "te-IN",
                             "alternativeLanguageCodes": ["en-IN"],
-                            "model": "chirp_2",
+                            # NOT chirp_2. Chirp and Chirp 2 exist only on the
+                            # v2 API, which is a different host, needs a
+                            # recognizer resource, and does not accept API keys
+                            # at all — so this request would have been rejected
+                            # for the model even once a key was set, and the
+                            # error would have looked like a bad key.
+                            # "telephony" is the v1 model built for 8kHz
+                            # narrowband call audio, which is exactly what
+                            # arrives here.
+                            "model": "telephony",
+                            "useEnhanced": True,
                         },
                         "audio": {"content": base64.b64encode(audio_bytes).decode()}
                     }
@@ -591,6 +601,11 @@ class SarvamSTT:
                     results = resp.json().get("results", [])
                     if results:
                         return results[0]["alternatives"][0]["transcript"]
+                    log.warning("Google STT returned no results")
+                else:
+                    # Say what Google actually objected to. A silent fallback
+                    # that fails is worse than no fallback: it looks configured.
+                    log.error(f"Google STT {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
             log.error(f"Google STT fallback also failed: {e}")
         return ""
