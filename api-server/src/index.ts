@@ -3151,6 +3151,17 @@ app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) =>
   }).eq("number", did.number);
   if (updErr) return res.status(500).json({ error: `did: ${updErr.message}` });
 
+  // Mirror the assignment onto the profile. did_number was written ONLY when
+  // this endpoint created a profile, so any tenant that already had one — every
+  // tenant that used the brochure flow or the setup wizard — kept whatever was
+  // in that column before. For the live customer that was their own mobile,
+  // typed into a field that used to be labelled "Your Business Phone Number",
+  // which is why their dashboard showed a personal number where their HeyNikki
+  // number belongs.
+  const { error: mirrorErr } = await sb.from("voice_profiles")
+    .update({ did_number: did.number }).eq("id", profile!.id);
+  if (mirrorErr) console.error("[assign_did] profile mirror failed:", mirrorErr.message);
+
   await sb.from("admin_audit_log").insert({
     admin_user_id: adminId, action: "assign_did",
     target_tenant_id: tenant_id, details: { number, voice_profile_id: profile!.id },
@@ -3169,6 +3180,14 @@ app.post("/api/admin/dids/:number/release", verifySuperAdmin, async (req, res) =
     .update({ tenant_id: null, voice_profile_id: null, status: "available" })
     .eq("number", did.number);
   if (error) return res.status(500).json({ error: error.message });
+
+  // Take it off the profile too, or the business keeps showing a number that
+  // no longer routes to them.
+  if (did.tenant_id) {
+    await sb.from("voice_profiles")
+      .update({ did_number: null })
+      .eq("tenant_id", did.tenant_id).eq("did_number", did.number);
+  }
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: adminId, action: "release_did",
