@@ -517,6 +517,7 @@ _POOL = httpx.AsyncClient(
 )
 
 _SARVAM_402_AT: float = 0.0   # last time Sarvam said 402 — /health shows it
+_TTS_VENDOR: str = "sarvam"   # which vendor last spoke; /health shows it
 
 # ── SARVAM STT ───────────────────────────────────────────
 class SarvamSTT:
@@ -908,13 +909,99 @@ class SarvamTTS:
             import base64
             data = resp.json()
             audio_b64 = data.get("audios", [""])[0]
+            # Failing over is only half the job; coming back is the other
+            # half. A top-up should restore the real voice on the next line
+            # without anyone restarting anything.
+            global _TTS_VENDOR
+            if _TTS_VENDOR != "sarvam":
+                log.critical(f"TTS RECOVERED — back on sarvam from {_TTS_VENDOR}")
+                _TTS_VENDOR = "sarvam"
             return base64.b64decode(audio_b64)
         except httpx.HTTPError as e:
-            log.error(f"Sarvam TTS error: {e} — switching to Azure fallback")
-            return await self._azure_fallback(text)
-        except Exception as e:
-            log.error(f"Sarvam TTS unexpected: {e}")
+            if "402" in str(e):
+                global _SARVAM_402_AT
+                _SARVAM_402_AT = time.time()
+                log.critical("SARVAM CREDITS EXHAUSTED — falling back for speech")
+            else:
+                log.error(f"Sarvam TTS error: {e} — falling back")
+            return await self._fallback_tts(text, rate)
+        except Exception as e:  # noqa: BLE001
+            # Any failure at all, not only an HTTP one: a DNS blip or a
+            # timeout leaves the caller in exactly the same silence.
+            log.error(f"Sarvam TTS unexpected: {e} — falling back")
+            return await self._fallback_tts(text, rate)
+
+    async def _fallback_tts(self, text: str, rate: int = 8000) -> bytes:
+        """Speak when Sarvam cannot.
+
+        Sarvam ran out of credits mid-day and every caller heard the cached
+        greeting followed by silence, because the only fallback here needed
+        an Azure key nobody had set — it returned b"" and said nothing about
+        why. A fallback that is never exercised is not a fallback; it is a
+        comment.
+
+        So: try each configured vendor in turn, say in the log which one
+        served the line, and record that we are degraded so /health can show
+        it. Order is deliberate — Azure's te-IN neural voice is markedly
+        closer to Sarvam's than Google's standard voice, so a caller mid-call
+        hears less of a change.
+        """
+        global _TTS_VENDOR
+        for name, fn, configured in (
+            ("azure",  self._azure_fallback, bool(os.environ.get("AZURE_SPEECH_KEY"))),
+            ("google", self._google_tts,     bool(os.environ.get("GOOGLE_TTS_KEY")
+                                                  or os.environ.get("GOOGLE_STT_KEY"))),
+        ):
+            if not configured:
+                continue
+            try:
+                audio = await fn(text, rate) if name == "google" else await fn(text)
+                if audio and len(audio) > 1000:
+                    if _TTS_VENDOR != name:
+                        log.critical(f"TTS FAILING OVER to {name} — Sarvam is not answering")
+                        _TTS_VENDOR = name
+                    return audio
+                log.error(f"[tts] {name} returned nothing usable")
+            except Exception as e:  # noqa: BLE001
+                log.error(f"[tts] {name} fallback failed: {e}")
+
+        log.critical(
+            "TTS DOWN — Sarvam is failing and no fallback vendor is configured. "
+            "Callers will hear cached lines only. Set AZURE_SPEECH_KEY or GOOGLE_TTS_KEY."
+        )
+        return b""
+
+    async def _google_tts(self, text: str, rate: int = 8000) -> bytes:
+        """Google Cloud TTS, te-IN. Uses an API key, so it needs no service
+        account — and the same key works for the STT fallback if both APIs
+        are enabled on the project, which is one key to obtain rather than
+        two."""
+        key = os.environ.get("GOOGLE_TTS_KEY") or os.environ.get("GOOGLE_STT_KEY", "")
+        if not key:
             return b""
+        resp = await _POOL.post(
+            "https://texttospeech.googleapis.com/v1/text:synthesize",
+            params={"key": key},
+            json={
+                "input": {"text": text[:2400]},
+                # Standard-A is the female te-IN voice, the closest match to
+                # the bulbul speakers used everywhere else.
+                "voice": {"languageCode": "te-IN", "name": "te-IN-Standard-A"},
+                "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": rate},
+            },
+            timeout=12.0,
+        )
+        if resp.status_code != 200:
+            log.error(f"[tts] google {resp.status_code}: {resp.text[:180]}")
+            return b""
+        import base64 as _b64
+        audio = _b64.b64decode(resp.json().get("audioContent", ""))
+        # LINEAR16 comes back as a RIFF container, but wrap defensively: the
+        # playback path writes the bytes to a file FreeSWITCH plays, and raw
+        # PCM with no header is played as noise rather than refused.
+        if audio[:4] != b"RIFF":
+            audio = _pcm16_to_wav_bytes(audio, sample_rate=rate)
+        return audio
 
     async def _azure_fallback(self, text: str) -> bytes:
         """Azure te-IN-ShrutiNeural — TTS fallback."""
@@ -2146,6 +2233,15 @@ async def health():
         "status": "degraded" if sarvam_out else "ok",
         # Half an hour of memory: a top-up clears it by simply working.
         "sarvam_credits_exhausted": bool(sarvam_out),
+        # Which vendor last spoke a fresh line. Anything but "sarvam" means we
+        # are running on a fallback and someone should know.
+        "tts_vendor": _TTS_VENDOR,
+        "tts_fallbacks_configured": [
+            n for n, ok in (("azure",  bool(os.environ.get("AZURE_SPEECH_KEY"))),
+                            ("google", bool(os.environ.get("GOOGLE_TTS_KEY")
+                                            or os.environ.get("GOOGLE_STT_KEY"))))
+            if ok
+        ],
         "service": "nikki-voice-pipeline",
         "timestamp": datetime.now().isoformat(),
         "circuit_breakers": _cb.all_status(),
