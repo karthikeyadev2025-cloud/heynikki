@@ -1351,7 +1351,23 @@ app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
 // ════════════════════════════════════════════════
 // SUBSCRIPTION CREATION (called from dashboard)
 // ════════════════════════════════════════════════
+// Payments are only as configured as their keys. RAZORPAY_KEY_ID and its
+// secret are empty placeholders in the environment today, so every upgrade
+// button on /billing and /pricing reached this and got a 500 "Payment
+// initialization failed" — which reads as "your card was refused" or "the
+// product is broken", when the truth is that we have not finished setting
+// up payments. Say that instead, and log it loudly at our end.
+function paymentsConfigured(): boolean {
+  return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+}
+
 app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
+  if (!paymentsConfigured()) {
+    console.error("[billing] RAZORPAY_KEY_ID / SECRET are not set — no customer can pay");
+    return res.status(503).json({
+      error: "Online payment isn't switched on yet — message us and we'll activate your plan.",
+    });
+  }
   const userId   = (req as any).user.id;
   const tenantId = await getTenantId(userId);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
