@@ -10,6 +10,7 @@
 // short-lived signed URLs on the admin side.
 // ─────────────────────────────────────────────────────────────────────────
 
+import WhatsAppNumberChoice from "../../components/WhatsAppNumberChoice";
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
@@ -168,6 +169,8 @@ export default function VerificationPage() {
           </div>
         ))}
       </div>
+      <WhatsAppNumberChoice />
+
     </Shell>
   );
 }

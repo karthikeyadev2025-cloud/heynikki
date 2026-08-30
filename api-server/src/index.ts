@@ -1669,21 +1669,31 @@ app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (re
     return res.status(400).json({ error: "A display name of at least 3 characters is required" });
   }
 
-  const [{ data: did }, { data: tenant }] = await Promise.all([
+  const [{ data: did }, { data: choice }] = await Promise.all([
     sb.from("dids").select("id, number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
-    sb.from("tenants").select("name").eq("id", tenantId).maybeSingle(),
+    sb.from("tenant_whatsapp").select("phone_number, did_id, display_name")
+      .eq("tenant_id", tenantId).maybeSingle(),
   ]);
-  if (!did?.number) return res.status(409).json({ error: "This tenant has no assigned number yet" });
 
-  const local = String(did.number).replace(/\D/g, "").slice(-10);
+  // The client may have asked for their OWN number instead of the DID we
+  // lease them. Honour that: registering the DID over their request would
+  // hand them an identity they explicitly declined.
+  const chosen = choice?.phone_number || did?.number;
+  if (!chosen) {
+    return res.status(409).json({
+      error: "No number to register — assign a DID, or have the client choose their own.",
+    });
+  }
+  const usingDid = !choice?.phone_number || choice.phone_number === did?.number;
+  const local = String(chosen).replace(/\D/g, "").slice(-10);
   try {
     const created = await metaGraph(`${WABA_ID()}/phone_numbers`, {
       cc: "91", phone_number: local, verified_name: displayName,
     });
     const { error } = await sb.from("tenant_whatsapp").upsert({
       tenant_id: tenantId,
-      did_id: did.id,
+      did_id: usingDid ? did?.id ?? null : null,
       phone_number: local,
       waba_id: WABA_ID(),
       phone_number_id: created.id,
@@ -1751,6 +1761,90 @@ app.post("/api/admin/whatsapp/:tenantId/verify-code", verifySuperAdmin, async (r
       .update({ review_note: e.message.slice(0, 300) }).eq("tenant_id", req.params.tenantId);
     res.status(502).json({ error: e.message });
   }
+});
+
+// ── WHICH NUMBER THIS BUSINESS WHATSAPPS FROM ─────────────────
+// Their HeyNikki number by default — one identity for calls and messages,
+// nothing for them to arrange, and it is live the same day. Or their own
+// number, which carries a cost they must be told about BEFORE choosing:
+// putting a number on the WhatsApp Cloud API ends its WhatsApp Business app
+// account. Their existing chats do not come across. For an Indian small
+// business that has been messaging customers from that number for years,
+// that is a real loss, and discovering it afterwards would be our fault.
+app.get("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const [{ data: row }, { data: did }, { data: kyc }] = await Promise.all([
+    sb.from("tenant_whatsapp").select("phone_number, display_name, status, verified_at")
+      .eq("tenant_id", tenantId).maybeSingle(),
+    sb.from("dids").select("number").eq("tenant_id", tenantId)
+      .eq("status", "assigned").limit(1).maybeSingle(),
+    sb.from("kyc_documents").select("id").eq("tenant_id", tenantId)
+      .eq("status", "approved").limit(1).maybeSingle(),
+  ]);
+  res.json({
+    kyc_approved: !!kyc,
+    heynikki_number: did?.number || null,
+    chosen: row?.phone_number || null,
+    display_name: row?.display_name || null,
+    status: row?.status || null,
+    verified_at: row?.verified_at || null,
+  });
+});
+
+app.post("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const mode = String(req.body?.mode || "").toLowerCase();
+  const displayName = String(req.body?.display_name || "").trim();
+  if (displayName.length < 3) {
+    return res.status(400).json({ error: "Choose the name customers should see (3+ characters)" });
+  }
+
+  // Gate on KYC, as agreed: a WhatsApp sender carries our WABA's reputation,
+  // and a number registered to a business we have not verified is how a
+  // whole WABA gets restricted for everyone on it.
+  const { data: kyc } = await sb.from("kyc_documents").select("id")
+    .eq("tenant_id", tenantId).eq("status", "approved").limit(1).maybeSingle();
+  if (!kyc) return res.status(409).json({ error: "We'll enable this as soon as your KYC is approved." });
+
+  const { data: existing } = await sb.from("tenant_whatsapp")
+    .select("status").eq("tenant_id", tenantId).maybeSingle();
+  if (existing?.status === "active") {
+    return res.status(409).json({ error: "Your WhatsApp number is already live. Contact us to change it." });
+  }
+
+  let phone: string | null = null;
+  let didId: string | null = null;
+  if (mode === "did") {
+    const { data: did } = await sb.from("dids").select("id, number").eq("tenant_id", tenantId)
+      .eq("status", "assigned").limit(1).maybeSingle();
+    if (!did?.number) return res.status(409).json({ error: "Your HeyNikki number isn't assigned yet." });
+    phone = did.number; didId = did.id;
+  } else if (mode === "own") {
+    const d = String(req.body?.phone || "").replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(d)) return res.status(400).json({ error: "Enter a 10-digit Indian mobile number" });
+    phone = d;
+  } else {
+    return res.status(400).json({ error: "mode must be 'did' or 'own'" });
+  }
+
+  const { error } = await sb.from("tenant_whatsapp").upsert({
+    tenant_id: tenantId, did_id: didId, phone_number: phone,
+    display_name: displayName,
+    // 'requested' — an intent, not a sender. resolveWaSender only uses
+    // 'active', so nothing sends from this until Meta has verified it.
+    status: "requested", review_note: null,
+  }, { onConflict: "tenant_id" });
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({
+    ok: true,
+    message: mode === "did"
+      ? "Done — we're registering your HeyNikki number for WhatsApp. It'll be live shortly."
+      : "Done — we'll send a verification code to that number and confirm with you.",
+  });
 });
 
 app.get("/api/whatsapp/inbox", verifyJWT, async (req: any, res) => {
