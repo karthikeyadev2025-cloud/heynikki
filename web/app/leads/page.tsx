@@ -93,9 +93,96 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
+
+// Bulk import. Every lead in this product had to arrive through a phone
+// call — a business switching from a spreadsheet, or with a list from an
+// exhibition, had no way in at all.
+//
+// Parsed in the browser and inserted directly: the rows are a few hundred at
+// most, and a server round trip per row would be slower and no safer, since
+// RLS already scopes the insert to this tenant.
+function ImportLeads({ tenantId, onDone }: { tenantId: string | null; onDone: (n: number) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState("");
+
+  const parse = (text: string) => {
+    const rows = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!rows.length) return [];
+    // A header row is optional; detect it rather than demanding one.
+    const first = rows[0].toLowerCase();
+    const hasHeader = /name|phone|mobile|number/.test(first);
+    const cols = hasHeader ? first.split(/[,;\t]/).map(c => c.trim()) : [];
+    const idxOf = (...names: string[]) => cols.findIndex(c => names.some(n => c.includes(n)));
+    const iPhone = hasHeader ? idxOf("phone", "mobile", "number") : -1;
+    const iName  = hasHeader ? idxOf("name") : -1;
+    const iNote  = hasHeader ? idxOf("interest", "note", "remark") : -1;
+
+    const out: any[] = [];
+    const seen = new Set<string>();
+    for (const line of rows.slice(hasHeader ? 1 : 0)) {
+      const parts = line.split(/[,;\t]/).map(c => c.trim().replace(/^"|"$/g, ""));
+      // Without a header, find the field that looks like an Indian mobile.
+      const phoneRaw = iPhone >= 0 ? parts[iPhone]
+        : parts.find(c => /(?:\+?91|0)?[6-9]\d{9}/.test(c.replace(/\D/g, ""))) || "";
+      const digits = String(phoneRaw).replace(/\D/g, "").slice(-10);
+      if (!/^[6-9]\d{9}$/.test(digits) || seen.has(digits)) continue;
+      seen.add(digits);
+      out.push({
+        tenant_id: tenantId,
+        phone: digits,
+        name: (iName >= 0 ? parts[iName] : parts.find(c => c && !/\d{6}/.test(c))) || null,
+        interest: (iNote >= 0 ? parts[iNote] : null) || null,
+        stage: "new",
+        source: "import",
+      });
+    }
+    return out;
+  };
+
+  const run = async (text: string) => {
+    setErr("");
+    if (!tenantId) { setErr("No business linked yet."); return; }
+    const rows = parse(text);
+    if (!rows.length) { setErr("No valid 10-digit Indian mobile numbers found."); return; }
+    setBusy(true);
+    const sb = createClient();
+    // Skip numbers this tenant already has rather than creating a second
+    // lead for someone the business is already talking to.
+    const { data: existing } = await sb.from("leads")
+      .select("phone").eq("tenant_id", tenantId);
+    const have = new Set((existing || []).map((e: any) => String(e.phone).slice(-10)));
+    const fresh = rows.filter(r => !have.has(r.phone));
+    if (!fresh.length) { setBusy(false); setErr("Every number in that file is already a lead."); return; }
+    const { error } = await sb.from("leads").insert(fresh);
+    setBusy(false);
+    if (error) setErr(error.message);
+    else onDone(fresh.length);
+  };
+
+  return (
+    <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <label style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid " + C.bord,
+        color: C.txt, fontSize: 13, fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
+        {busy ? "Importing…" : "Import leads (CSV)"}
+        <input type="file" accept=".csv,.txt" disabled={busy} style={{ display: "none" }}
+          onChange={async e => {
+            const f = e.target.files?.[0];
+            if (f) await run(await f.text());
+            e.target.value = "";
+          }} />
+      </label>
+      <span style={{ color: C.dim, fontSize: 11.5 }}>
+        Name, phone, interest — a header row is optional. Duplicates are skipped.
+      </span>
+      {err && <span style={{ color: C.gold, fontSize: 12 }}>{err}</span>}
+    </div>
+  );
+}
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tenantId, setTenantId] = useState<string | null>(null);
   const [openLead, setOpenLead] = useState<Lead | null>(null);
   const [error, setError] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
@@ -161,6 +248,12 @@ export default function LeadsPage() {
     const { data: auth } = await sb.auth.getUser();
     if (!auth.user) { window.location.href = "/login"; return; }
 
+    // Reads are scoped by RLS so this page never needed the tenant id.
+    // An INSERT does: the column is NOT NULL and the policy checks it.
+    const { data: tu } = await sb.from("tenant_users")
+      .select("tenant_id").eq("user_id", auth.user.id).maybeSingle();
+    setTenantId(tu?.tenant_id ?? null);
+
     const { data, error: e } = await sb.from("leads")
       .select("*")
       .order("last_contacted_at", { ascending: false })
@@ -209,6 +302,8 @@ export default function LeadsPage() {
 
   return (
     <Shell>
+      <ImportLeads tenantId={tenantId} onDone={(n: number) => { setToast(`${n} lead(s) imported`); load(); }} />
+
       {/* Toast */}
       {toast && (
         <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999,

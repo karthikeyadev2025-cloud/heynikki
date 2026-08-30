@@ -1,6 +1,6 @@
 // app/whatsapp/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -40,6 +40,9 @@ export default function WhatsAppPage() {
   const [modal, setModal]         = useState<{ template: any } | null>(null);
   const [toNumber, setToNumber]   = useState("");
   const [vars, setVars]           = useState<Record<string, string>>({});
+  const [inbox, setInbox]   = useState<any[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [toast, setToast]         = useState<string | null>(null);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -65,6 +68,32 @@ export default function WhatsAppPage() {
       setLoading(false);
     });
   }, []);
+
+  const loadInbox = useCallback(async () => {
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(`${API}/api/whatsapp/inbox?limit=60`,
+      { headers: { Authorization: `Bearer ${session?.access_token}` } });
+    if (r.ok) { const j = await r.json(); setInbox(j.messages || []); setUnread(j.unread || 0); }
+  }, []);
+
+  useEffect(() => { loadInbox(); }, [loadInbox]);
+
+  // Free text only reaches a person inside Meta's 24-hour window; outside it
+  // Meta accepts the call and silently drops the message, which is worse
+  // than refusing. Say which one applies before the customer types.
+  const replyTo = async (number: string, text: string) => {
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(`${API}/api/whatsapp/send`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ to_number: number, message: text }),
+    });
+    setToast(r.ok ? "Reply sent!" : "Could not send the reply");
+    setTimeout(() => setToast(""), 2500);
+    loadInbox();
+  };
 
   const sendMessage = async () => {
     if (!modal || !toNumber.trim()) return;
@@ -135,6 +164,115 @@ export default function WhatsAppPage() {
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 16 }}>
               Template: <span style={{ color: C.gbr }}>{modal.template.name}</span>
             </div>
+
+            {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
+
+                container log, and vanish — a business could send a follow-up and
+
+                never learn the customer said yes. */}
+
+            <div style={{ marginBottom: 26 }}>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+
+                <h2 style={{ color: C.txt, fontSize: 17, fontWeight: 800, margin: 0 }}>Replies</h2>
+
+                {unread > 0 && (
+
+                  <span style={{ background: C.grn, color: "#04120a", borderRadius: 20,
+
+                    padding: "2px 9px", fontSize: 11.5, fontWeight: 800 }}>{unread} new</span>
+
+                )}
+
+              </div>
+
+              {inbox.length === 0 ? (
+
+                <div style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.6 }}>
+
+                  No replies yet. When someone answers one of your WhatsApp messages,
+
+                  it appears here and against their lead.
+
+                </div>
+
+              ) : inbox.map((m: any) => {
+
+                const hours = (Date.now() - new Date(m.received_at).getTime()) / 3600000;
+
+                const canReply = hours < 24;
+
+                return (
+
+                  <div key={m.id} style={{ padding: "11px 0", borderBottom: `1px solid ${C.bord}44` }}>
+
+                    <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+
+                      <span style={{ color: C.txt, fontWeight: 800, fontSize: 13.5 }}>{m.from_number}</span>
+
+                      <span style={{ color: C.dim, fontSize: 11.5 }}>
+
+                        {new Date(m.received_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+
+                      </span>
+
+                      {!m.read_at && <span style={{ color: C.grn, fontSize: 11, fontWeight: 800 }}>NEW</span>}
+
+                    </div>
+
+                    <div style={{ color: C.mid, fontSize: 14, margin: "5px 0 8px", lineHeight: 1.5 }}>{m.body}</div>
+
+                    {canReply ? (
+
+                      <div style={{ display: "flex", gap: 7 }}>
+
+                        <input
+
+                          value={replyDraft[m.id] || ""}
+
+                          onChange={e => setReplyDraft(d => ({ ...d, [m.id]: e.target.value }))}
+
+                          placeholder="Reply…"
+
+                          style={{ flex: 1, padding: "7px 11px", borderRadius: 7, fontSize: 13,
+
+                            background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+
+                        <button type="button"
+
+                          disabled={!(replyDraft[m.id] || "").trim()}
+
+                          onClick={() => { replyTo(m.from_number, replyDraft[m.id]); setReplyDraft(d => ({ ...d, [m.id]: "" })); }}
+
+                          style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
+
+                            fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
+
+                          Send
+
+                        </button>
+
+                      </div>
+
+                    ) : (
+
+                      <div style={{ color: C.dim, fontSize: 11.5 }}>
+
+                        Over 24 hours old — WhatsApp only allows a template now, not a free reply.
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                );
+
+              })}
+
+            </div>
+
 
             {/* Template preview */}
             <div style={{ background: C.hi, borderRadius: 8, padding: 12, marginBottom: 16,

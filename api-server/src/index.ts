@@ -1622,6 +1622,36 @@ app.patch("/api/voice-profiles/:id", verifyJWT, async (req, res) => {
 // object is AES-256-GCM ciphertext: a browser handed a signed link would
 // download an unplayable blob. The key lives in the pipeline with the R2
 // credentials, so the pipeline decrypts and we stream the result.
+// ── WhatsApp inbox ────────────────────────────────────────────
+// Replies, newest first, optionally filtered to one lead's thread.
+app.get("/api/whatsapp/inbox", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  let q = sb.from("wa_inbound")
+    .select("id, from_number, body, msg_type, received_at, read_at, lead_id")
+    .eq("tenant_id", tenantId)
+    .order("received_at", { ascending: false })
+    .limit(Math.min(200, parseInt(req.query.limit) || 50));
+  if (req.query.lead_id)  q = q.eq("lead_id", String(req.query.lead_id));
+  if (req.query.number)   q = q.like("from_number", `%${String(req.query.number).replace(/\D/g, "").slice(-10)}`);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  const unread = (data || []).filter((m: any) => !m.read_at).length;
+  res.json({ messages: data || [], unread });
+});
+
+app.post("/api/whatsapp/inbox/read", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 200) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids required" });
+  const { error } = await sb.from("wa_inbound")
+    .update({ read_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).in("id", ids).is("read_at", null);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, marked: ids.length });
+});
+
 app.get("/api/calls/:id/recording", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
@@ -4105,7 +4135,55 @@ app.post("/webhooks/whatsapp", async (req, res) => {
         const v = ch.value || {};
         for (const m of v.messages || []) {
           const text = m.text?.body ?? `[${m.type}]`;
-          console.log(`[WhatsApp] in from ${m.from}: ${String(text).slice(0, 200)}`);
+          const from = String(m.from || "").replace(/\D/g, "").slice(-10);
+          console.log(`[WhatsApp] in from ${from}: ${String(text).slice(0, 200)}`);
+          if (!from) continue;
+
+          // WHOSE reply is this? Meta tells us the sender and the number it
+          // arrived on, not which of our businesses it belongs to. Match the
+          // sender against the leads and calls we already hold: a person
+          // replying to a HeyNikki message has, by definition, been in touch
+          // with exactly the business that messaged them. Most recent wins
+          // when a number somehow reaches two.
+          const [{ data: lead }, { data: call }] = await Promise.all([
+            sb.from("leads").select("id, tenant_id")
+              .like("phone", `%${from}`).order("updated_at", { ascending: false })
+              .limit(1).maybeSingle(),
+            sb.from("calls").select("tenant_id")
+              .like("caller_number", `%${from}`).order("created_at", { ascending: false })
+              .limit(1).maybeSingle(),
+          ]);
+          const tenantId = lead?.tenant_id || call?.tenant_id;
+          if (!tenantId) {
+            // Nobody we have ever spoken to. Storing it against a guessed
+            // tenant would put a stranger's message in someone's inbox.
+            console.warn(`[WhatsApp] reply from unknown number ${from} — not stored`);
+            continue;
+          }
+
+          const { error: inErr } = await sb.from("wa_inbound").insert({
+            tenant_id: tenantId,
+            lead_id:   lead?.id || null,
+            from_number: from,
+            body:      String(text).slice(0, 4000),
+            msg_type:  m.type || "text",
+            provider_msg_id: m.id || null,
+            received_at: m.timestamp
+              ? new Date(Number(m.timestamp) * 1000).toISOString()
+              : new Date().toISOString(),
+          });
+          // A duplicate is Meta redelivering, which is expected and fine.
+          if (inErr && !/duplicate key/i.test(inErr.message)) {
+            console.error("[WhatsApp] inbound store failed:", inErr.message);
+          }
+
+          // A reply is a live lead. Nudge the lead's recency so it surfaces
+          // in the follow-up worklist instead of ageing out silently.
+          if (lead?.id) {
+            await sb.from("leads")
+              .update({ last_contacted_at: new Date().toISOString() })
+              .eq("id", lead.id);
+          }
         }
         for (const st of v.statuses || []) {
           console.log(`[WhatsApp] status ${st.id} -> ${st.status}`);
