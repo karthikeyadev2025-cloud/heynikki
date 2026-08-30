@@ -174,6 +174,102 @@ function RecipientList({ campaignId }: { campaignId: string }) {
   );
 }
 
+
+// Do-not-call, owned by the business.
+//
+// The dispatcher has always cross-referenced this table before every dial,
+// and the import screen has always promised opt-outs are filtered — but a
+// customer had no way to see the list or add to it, so the promise rested on
+// rows only we could write. A person who says "stop calling me" is a legal
+// obligation under TRAI, not a preference, and the business needs to be able
+// to honour it the moment they hear it.
+function OptOutList({ tenantId }: { tenantId: string | null }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    if (!tenantId) return;
+    const sb = createClient();
+    const { data } = await sb.from("outbound_opt_outs")
+      .select("id, phone, reason, created_at")
+      .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(300);
+    setRows(data || []);
+  }, [tenantId]);
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const add = async () => {
+    const digits = phone.replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(digits)) { setMsg("Enter a 10-digit Indian mobile number."); return; }
+    const sb = createClient();
+    // Stored as ten digits, the same shape the dispatcher compares against —
+    // a number saved as +91… would silently never match and the person would
+    // keep being called.
+    const { error } = await sb.from("outbound_opt_outs")
+      .insert({ tenant_id: tenantId, phone: digits, reason: reason.trim() || "asked not to be called" });
+    setMsg(error ? (/duplicate/i.test(error.message) ? "Already on the list." : error.message) : "Added — we won't call this number.");
+    if (!error) { setPhone(""); setReason(""); load(); }
+    setTimeout(() => setMsg(""), 3000);
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ background: "none", border: `1px solid ${C.bord}`, color: C.txt,
+          borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+        Do-not-call list{rows.length ? ` (${rows.length})` : ""}
+      </button>
+      {open && (
+        <div style={{ marginTop: 10, border: `1px solid ${C.bord}`, borderRadius: 10, padding: 14 }}>
+          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+            Numbers here are skipped by every campaign. Add anyone who asks not to be
+            called — under TRAI that request has to be honoured.
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" as const, marginBottom: 10 }}>
+            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="98765 43210"
+              style={{ width: 150, padding: "7px 10px", borderRadius: 7, fontSize: 12.5,
+                background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+            <input value={reason} onChange={e => setReason(e.target.value)} placeholder="reason (optional)"
+              style={{ flex: 1, minWidth: 160, padding: "7px 10px", borderRadius: 7, fontSize: 12.5,
+                background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+            <button type="button" onClick={add}
+              style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
+                fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
+              Add
+            </button>
+          </div>
+          {msg && <div style={{ color: C.mid, fontSize: 12, marginBottom: 8 }}>{msg}</div>}
+          {rows.length === 0 ? (
+            <div style={{ color: C.dim, fontSize: 12.5 }}>Nobody on the list yet.</div>
+          ) : (
+            <div style={{ maxHeight: 220, overflowY: "auto" }}>
+              {rows.map(r => (
+                <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center",
+                  padding: "6px 0", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
+                  <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
+                  <span style={{ color: C.mid, flex: 1 }}>{r.reason || "—"}</span>
+                  <button type="button"
+                    onClick={async () => {
+                      const sb = createClient();
+                      await sb.from("outbound_opt_outs").delete().eq("id", r.id);
+                      load();
+                    }}
+                    style={{ background: "none", border: "none", color: C.dim, fontSize: 12,
+                      cursor: "pointer" }}>
+                    remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CampaignsPage() {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -354,6 +450,9 @@ export default function CampaignsPage() {
             </div>
           </div>
         </Card>
+
+        <OptOutList tenantId={tenantId} />
+
 
         {error && (
           <Card style={{ borderColor: C.red + "55", background: C.red + "0D", marginBottom: 16 }}>

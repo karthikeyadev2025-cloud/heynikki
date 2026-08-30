@@ -295,7 +295,12 @@ export async function runCallQuality(): Promise<number> {
     // the honest test of whether there is anything to judge.
     .select("id, tenant_id, transcript, duration_seconds, intent")
     .not("transcript", "is", null)
-    .order("created_at", { ascending: false })
+    // OLDEST first. Newest-first takes the same 200 recent calls every run
+    // and filters the already-scored ones out AFTERWARDS, so once the recent
+    // window is scored the job does nothing while an older unscored call
+    // waits behind it forever — and /quality tells customers "every call is
+    // scored, not a sample". Oldest-first drains the backlog instead.
+    .order("created_at", { ascending: true })
     .limit(200);
   if (error) { log("quality: call fetch failed:", error.message); return 0; }
 
