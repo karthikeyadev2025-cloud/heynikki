@@ -38,6 +38,7 @@ export default function OwnerVoiceAssistant() {
   const [wakeOn, setWakeOn] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [answer, setAnswer] = useState("");
+  const [typed, setTyped]   = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -180,6 +181,34 @@ export default function OwnerVoiceAssistant() {
     }
   };
 
+  // Ask by typing. The spoken path needs Sarvam for transcription, so when
+  // voice is unavailable — no mic permission, a browser without
+  // MediaRecorder, or the speech vendor being down, which has happened —
+  // the assistant was completely unusable rather than merely quiet. The
+  // answer is the same one the voice path gives; only the way in differs.
+  const askTyped = async () => {
+    const q = typed.trim();
+    if (!q) return;
+    setStatus("thinking"); setErrorMsg(""); setAnswer(""); setTranscript(q);
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const res = await fetch(`${API}/api/admin/voice-query`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      setAnswer(data.answer || "");
+      setTyped("");
+      setStatus("idle");
+    } catch (e: any) {
+      setStatus("error");
+      setErrorMsg(e.message || "Something went wrong — please try again.");
+    }
+  };
+
   const playAnswer = (audioBase64: string, mime: string) => {
     setStatus("speaking");
     const audio = new Audio(`data:${mime};base64,${audioBase64}`);
@@ -238,6 +267,22 @@ export default function OwnerVoiceAssistant() {
               <div style={{ color: C.txt, fontSize: 12 }}>{transcript}</div>
             </div>
           )}
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+            <input
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") askTyped(); }}
+              placeholder="…or type: how many calls today?"
+              style={{ flex: 1, padding: "7px 10px", borderRadius: 7, fontSize: 12.5,
+                background: NIKKI.vault, color: C.txt, border: `1px solid ${C.bord}` }} />
+            <button type="button" onClick={askTyped} disabled={!typed.trim()}
+              style={{ padding: "7px 12px", borderRadius: 7, border: "none", fontSize: 12,
+                fontWeight: 800, background: C.grn, color: "#04120a",
+                cursor: typed.trim() ? "pointer" : "default", opacity: typed.trim() ? 1 : 0.5 }}>
+              Ask
+            </button>
+          </div>
+
           {answer && (
             <div style={{ background: C.acc + "15", borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
               <div style={{ color: C.acc, fontSize: 9, textTransform: "uppercase", marginBottom: 2 }}>Nikki</div>
