@@ -85,12 +85,15 @@ export default function WhatsAppPage() {
   const replyTo = async (number: string, text: string) => {
     const sb = createClient();
     const { data: { session } } = await sb.auth.getSession();
-    const r = await fetch(`${API}/api/whatsapp/send`, {
+    // /api/whatsapp/send is behind verifyInternal — a shared secret a browser
+    // can never hold — so this 401'd on every press.
+    const r = await fetch(`${API}/api/whatsapp/send-as-tenant`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ to_number: number, message: text }),
     });
-    setToast(r.ok ? "Reply sent!" : "Could not send the reply");
+    const rj = await r.json().catch(() => ({}));
+    setToast(r.ok ? "Reply sent!" : (rj.error || "Could not send the reply"));
     setTimeout(() => setToast(""), 2500);
     loadInbox();
   };
@@ -102,7 +105,9 @@ export default function WhatsAppPage() {
       const sb = createClient();
       const { data: { session } } = await sb.auth.getSession();
 
-      await fetch(`${API}/api/whatsapp/send`, {
+      // Same 401, plus a body the server does not parse — and the result was
+      // never checked, so it toasted "Message sent!" over every failure.
+      const r = await fetch(`${API}/api/whatsapp/send-template`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session?.access_token}`,
@@ -114,6 +119,12 @@ export default function WhatsAppPage() {
           variables:     vars,
         }),
       });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setToast(j.error || "Could not send");
+        setSending(null);
+        return;
+      }
 
       setToast("Message sent!");
       setModal(null);
@@ -165,113 +176,6 @@ export default function WhatsAppPage() {
               Template: <span style={{ color: C.gbr }}>{modal.template.name}</span>
             </div>
 
-            {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
-
-                container log, and vanish — a business could send a follow-up and
-
-                never learn the customer said yes. */}
-
-            <div style={{ marginBottom: 26 }}>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-
-                <h2 style={{ color: C.txt, fontSize: 17, fontWeight: 800, margin: 0 }}>Replies</h2>
-
-                {unread > 0 && (
-
-                  <span style={{ background: C.grn, color: "#04120a", borderRadius: 20,
-
-                    padding: "2px 9px", fontSize: 11.5, fontWeight: 800 }}>{unread} new</span>
-
-                )}
-
-              </div>
-
-              {inbox.length === 0 ? (
-
-                <div style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.6 }}>
-
-                  No replies yet. When someone answers one of your WhatsApp messages,
-
-                  it appears here and against their lead.
-
-                </div>
-
-              ) : inbox.map((m: any) => {
-
-                const hours = (Date.now() - new Date(m.received_at).getTime()) / 3600000;
-
-                const canReply = hours < 24;
-
-                return (
-
-                  <div key={m.id} style={{ padding: "11px 0", borderBottom: `1px solid ${C.bord}44` }}>
-
-                    <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-
-                      <span style={{ color: C.txt, fontWeight: 800, fontSize: 13.5 }}>{m.from_number}</span>
-
-                      <span style={{ color: C.dim, fontSize: 11.5 }}>
-
-                        {new Date(m.received_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
-
-                      </span>
-
-                      {!m.read_at && <span style={{ color: C.grn, fontSize: 11, fontWeight: 800 }}>NEW</span>}
-
-                    </div>
-
-                    <div style={{ color: C.mid, fontSize: 14, margin: "5px 0 8px", lineHeight: 1.5 }}>{m.body}</div>
-
-                    {canReply ? (
-
-                      <div style={{ display: "flex", gap: 7 }}>
-
-                        <input
-
-                          value={replyDraft[m.id] || ""}
-
-                          onChange={e => setReplyDraft(d => ({ ...d, [m.id]: e.target.value }))}
-
-                          placeholder="Reply…"
-
-                          style={{ flex: 1, padding: "7px 11px", borderRadius: 7, fontSize: 13,
-
-                            background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
-
-                        <button type="button"
-
-                          disabled={!(replyDraft[m.id] || "").trim()}
-
-                          onClick={() => { replyTo(m.from_number, replyDraft[m.id]); setReplyDraft(d => ({ ...d, [m.id]: "" })); }}
-
-                          style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
-
-                            fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
-
-                          Send
-
-                        </button>
-
-                      </div>
-
-                    ) : (
-
-                      <div style={{ color: C.dim, fontSize: 11.5 }}>
-
-                        Over 24 hours old — WhatsApp only allows a template now, not a free reply.
-
-                      </div>
-
-                    )}
-
-                  </div>
-
-                );
-
-              })}
-
-            </div>
 
 
             {/* Template preview */}
@@ -326,6 +230,60 @@ export default function WhatsAppPage() {
         <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading WhatsApp...</div>
       ) : (
         <>
+    {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
+        container log, and vanish — a business could send a follow-up and
+        never learn the customer said yes. */}
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <h2 style={{ color: C.txt, fontSize: 17, fontWeight: 800, margin: 0 }}>Replies</h2>
+        {unread > 0 && (
+          <span style={{ background: C.grn, color: "#04120a", borderRadius: 20,
+            padding: "2px 9px", fontSize: 11.5, fontWeight: 800 }}>{unread} new</span>
+        )}
+      </div>
+      {inbox.length === 0 ? (
+        <div style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.6 }}>
+          No replies yet. When someone answers one of your WhatsApp messages,
+          it appears here and against their lead.
+        </div>
+      ) : inbox.map((m: any) => {
+        const hours = (Date.now() - new Date(m.received_at).getTime()) / 3600000;
+        const canReply = hours < 24;
+        return (
+          <div key={m.id} style={{ padding: "11px 0", borderBottom: `1px solid ${C.bord}44` }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ color: C.txt, fontWeight: 800, fontSize: 13.5 }}>{m.from_number}</span>
+              <span style={{ color: C.dim, fontSize: 11.5 }}>
+                {new Date(m.received_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+              </span>
+              {!m.read_at && <span style={{ color: C.grn, fontSize: 11, fontWeight: 800 }}>NEW</span>}
+            </div>
+            <div style={{ color: C.mid, fontSize: 14, margin: "5px 0 8px", lineHeight: 1.5 }}>{m.body}</div>
+            {canReply ? (
+              <div style={{ display: "flex", gap: 7 }}>
+                <input
+                  value={replyDraft[m.id] || ""}
+                  onChange={e => setReplyDraft(d => ({ ...d, [m.id]: e.target.value }))}
+                  placeholder="Reply…"
+                  style={{ flex: 1, padding: "7px 11px", borderRadius: 7, fontSize: 13,
+                    background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+                <button type="button"
+                  disabled={!(replyDraft[m.id] || "").trim()}
+                  onClick={() => { replyTo(m.from_number, replyDraft[m.id]); setReplyDraft(d => ({ ...d, [m.id]: "" })); }}
+                  style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
+                    fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
+                  Send
+                </button>
+              </div>
+            ) : (
+              <div style={{ color: C.dim, fontSize: 11.5 }}>
+                Over 24 hours old — WhatsApp only allows a template now, not a free reply.
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
           {/* KPI Row */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
             {[

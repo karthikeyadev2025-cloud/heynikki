@@ -63,7 +63,7 @@ export default function AppointmentsPage() {
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<"upcoming" | "all">("upcoming");
+  const [filter, setFilter] = useState<"upcoming" | "all">("all");
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {

@@ -1295,6 +1295,83 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
   }
 });
 
+// The phone a signed-in person is reachable on. auth.users.phone is empty
+// for email signups, which is all of them; tenant_users.phone is where the
+// number actually lives.
+async function agentPhoneFor(userId: string): Promise<string> {
+  const { data } = await sb.from("tenant_users")
+    .select("phone").eq("user_id", userId).not("phone", "is", null).limit(1).maybeSingle();
+  return data?.phone || "";
+}
+
+// ── B. Customer-facing WhatsApp sending ───────────────────────────
+// /api/whatsapp/send is guarded by verifyInternal — it wants a shared secret
+// a browser can never hold — so the Send button and the reply box both got
+// 401 on every press, and sendMessage never checked r.ok so it toasted
+// "Message sent!" over the failure. These two are the browser's doors:
+// the tenant comes from the session, never from the body.
+app.post("/api/whatsapp/send-as-tenant", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const to = String(req.body?.to_number || "").replace(/\D/g, "").slice(-10);
+  const message = String(req.body?.message || "").trim();
+  if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
+  if (!message) return res.status(400).json({ error: "Type a message first" });
+
+  // Free text only lands inside Meta's 24-hour window, which an inbound
+  // message opens. Outside it Meta accepts the call and drops the message,
+  // so check before sending rather than reporting a success that never
+  // arrives.
+  const { data: recent } = await sb.from("wa_inbound")
+    .select("received_at").eq("tenant_id", tenantId)
+    .like("from_number", `%${to}`).order("received_at", { ascending: false })
+    .limit(1).maybeSingle();
+  const openWindow = recent?.received_at &&
+    (Date.now() - new Date(recent.received_at).getTime()) < 24 * 3600 * 1000;
+  if (!openWindow) {
+    return res.status(409).json({
+      error: "WhatsApp only allows a free reply within 24 hours of their last message. Send a template instead.",
+    });
+  }
+
+  const ok = await sendWhatsApp(to, message, tenantId, undefined, "manual_reply");
+  if (!ok) return res.status(502).json({ error: "WhatsApp did not accept the message" });
+  res.json({ ok: true });
+});
+
+app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const to = String(req.body?.to_number || "").replace(/\D/g, "").slice(-10);
+  const name = String(req.body?.template_name || "").trim();
+  if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
+  if (!name) return res.status(400).json({ error: "template_name required" });
+
+  // Only templates this tenant can actually see — platform rows or its own.
+  const { data: tmpl } = await sb.from("wa_templates")
+    .select("name, tenant_id").eq("name", name).limit(1).maybeSingle();
+  if (!tmpl || (tmpl.tenant_id && tmpl.tenant_id !== tenantId)) {
+    return res.status(404).json({ error: "Template not found" });
+  }
+
+  const vars = req.body?.variables && typeof req.body.variables === "object"
+    ? Object.values(req.body.variables).map((v: any) => String(v).slice(0, 200))
+    : [];
+  const sender = await resolveWaSender(tenantId);
+  // (to, template, lang, params, senderId) — params and lang are not
+  // interchangeable and a swapped call typechecks as string vs string[].
+  const result = await sendTemplateViaMeta(to, name, "te", vars, sender.phoneId);
+  if (!result?.ok) {
+    return res.status(502).json({ error: result?.error || "WhatsApp rejected the template" });
+  }
+  await sb.from("wa_dispatch_log").insert({
+    tenant_id: tenantId, to_number: to, message_type: "manual_template",
+    message_body: `template:${name}`, status: "sent",
+    provider_msg_id: result.id || null,
+  }).then(r => r.error && console.error("[wa manual] log:", r.error.message));
+  res.json({ ok: true });
+});
+
 app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   const { to, message, tenant_id, voice_profile_id, message_type, call_id, appointment_id } = req.body;
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });
@@ -4702,9 +4779,17 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     let fsUuid = "";
     if (engine === "freeswitch") {
       // Use FreeSWITCH ESL for 2-leg bridge
-      const agentNumber = agent_phone || user.phone || "";
+      // auth.users.phone is empty for every account here — signup is by
+      // email, and the owner's mobile is written to tenant_users.phone. So
+      // this read the one column guaranteed to be blank and every press of
+      // "Call Lead" returned 400. click_to_call_log has zero rows to show
+      // for a button that sits on every lead card and is sold as the
+      // "Human CRM Seat".
+      const agentNumber = agent_phone || user.phone || (await agentPhoneFor(user.id)) || "";
       if (!agentNumber) {
-        return res.status(400).json({ error: "agent_phone required — no phone on your account" });
+        return res.status(400).json({
+          error: "Add your mobile number on the Setup page — that's the phone we ring first.",
+        });
       }
       fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
     } else {
@@ -4718,7 +4803,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       const sid   = process.env.EXOTEL_SID   || "";
       const key   = process.env.EXOTEL_API_KEY || "";
       const token = process.env.EXOTEL_API_TOKEN || "";
-      const agentNumber = agent_phone || user.phone || "";
+      const agentNumber = agent_phone || user.phone || (await agentPhoneFor(user.id)) || "";
 
       if (!sid || !key || !token) {
         return res.status(503).json({

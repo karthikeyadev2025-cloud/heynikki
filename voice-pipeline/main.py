@@ -1280,6 +1280,22 @@ class SupabaseClient:
         except Exception as e:
             log.error(f"Supabase wa_log: {e}")
 
+    async def get_campaign_script(self, campaign_id: str) -> str:
+        """The script the business wrote for this campaign."""
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r = await client.get(
+                    f"{self.url}/rest/v1/outbound_campaigns",
+                    headers=self.headers,
+                    params={"select": "script", "id": f"eq.{campaign_id}", "limit": "1"},
+                )
+                if r.status_code != 200 or not r.json():
+                    return ""
+                return (r.json()[0].get("script") or "").strip()
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[campaign] script fetch failed: {e}")
+            return ""
+
     async def get_knowledge(self, voice_profile_id: str) -> list[str]:
         """Everything this business has taught Nikki, newest first."""
         if not voice_profile_id:
@@ -1839,6 +1855,15 @@ class NikkiAgent:
 
     async def _handle_appointment_booking(self, user_text: str, response: str):
         """Extract appointment details and save + send WhatsApp."""
+        # One booking, one row. self.intent is recomputed from keywords on
+        # EVERY turn, and this fires whenever it reads 'appointment' — so a
+        # caller who says "appointment" three times got three rows. Five of
+        # the six appointments in the live database share a single call_id,
+        # and _enrich_appointment only ever patches the last one, so the
+        # earlier duplicates keep null date, time and service forever and the
+        # business sees five blank bookings for one caller.
+        if self.appointment_id:
+            return
         try:
             # Written bare on purpose: the caller is mid-sentence and an LLM
             # extraction here would sit on the critical path. The date, time,
@@ -3499,13 +3524,43 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             # score — used to be dropped on the floor with a warning. Update
             # the existing lead instead.
             if r.status_code == 409:
+                # Read the count before incrementing it — PostgREST has no
+                # atomic increment, and a lead that has been called ten times
+                # showing "1 call" is why the repeat-caller badge never
+                # appeared for anyone.
+                existing_count = 1
+                try:
+                    cur = await c.get(
+                        f"{agent.db.url}/rest/v1/leads"
+                        f"?tenant_id=eq.{row['tenant_id']}&phone=eq.{digits}&select=call_count",
+                        headers=agent.db.headers)
+                    if cur.status_code == 200 and cur.json():
+                        existing_count = cur.json()[0].get("call_count") or 1
+                except Exception:  # noqa: BLE001
+                    pass
                 # first_call_id is deliberately excluded: it records the FIRST
                 # call and must not drift forward. Nones are dropped too, so a
                 # call that failed to capture a name does not blank the name
                 # captured last time.
+                # stage and notes are the CUSTOMER'S columns. A business
+                # that dragged a lead to "won" and typed a note about the
+                # deal had both overwritten by the model on the next call —
+                # the stage reverting to whatever it inferred, the note
+                # replaced by an AI summary. The RPC in 011 deliberately
+                # protects human-edited fields; this path bypassed it.
+                # score and intent are ours to update, stage and notes are
+                # not, and last_call_id/call_count/last_contacted_at were
+                # never written at all, so "3 calls" badges never appeared
+                # and the most active leads sank to the bottom of a list
+                # ordered by last contact.
                 patch = {k: v for k, v in row.items()
-                         if k not in ("tenant_id", "phone", "first_call_id")
+                         if k not in ("tenant_id", "phone", "first_call_id",
+                                      "stage", "notes")
                          and v is not None}
+                patch["last_contacted_at"] = datetime.now(timezone.utc).isoformat()
+                patch["call_count"] = int(existing_count or 1) + 1
+                if agent.call_id:
+                    patch["last_call_id"] = agent.call_id
                 if patch:
                     r = await c.patch(
                         f"{agent.db.url}/rest/v1/leads"
@@ -4137,6 +4192,29 @@ async def freeswitch_ws(
     if knowledge:
         log.info(f"[knowledge] {len(knowledge)} fact(s) loaded for {profile.get('business_name')}")
     agent = NikkiAgent(profile, caller_number, knowledge)
+
+    # ── CAMPAIGN SCRIPT ─────────────────────────────────────────────────
+    # "What should Hey Nikki say?" is the whole point of creating a campaign,
+    # and on this path she never saw it. The only code that read
+    # outbound_campaigns.script lives in the retired Exotel bridge, and it
+    # found its recipient through outbound_recipients.exotel_call_sid — a
+    # column that does not exist in this database. So every campaign call
+    # was answered by the ordinary inbound receptionist prompt, and the
+    # script the business wrote was decoration.
+    if campaign_id:
+        try:
+            camp = await db.get_campaign_script(campaign_id)
+            if camp:
+                from app.exotel.bridge import build_outbound_prompt
+                agent.system_prompt = build_outbound_prompt(camp).replace(
+                    "__LANGUAGE_RULE__",
+                    "- Speak Telugu with natural English words mixed in, as Hyderabad speaks.")
+                log.info(f"[FS] campaign {campaign_id[:8]}: script applied ({len(camp)} chars)")
+            else:
+                log.warning(f"[FS] campaign {campaign_id[:8]} has no script — using the default prompt")
+        except Exception as e:  # noqa: BLE001
+            # A missing script must never cost the call.
+            log.error(f"[FS] campaign script load failed: {e}")
 
     # ── Onboarding interview ────────────────────────────────────────────
     # Same agent, different job. She is not answering this business's phone;

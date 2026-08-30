@@ -81,6 +81,7 @@ const Tooltip2 = ({ active, payload, label }: any) => {
 
 export default function AnalyticsPage() {
   const [calls, setCalls]   = useState<any[]>([]);
+  const [appts, setAppts] = useState<any[]>([]);
   const [leads, setLeads]   = useState<any[]>([]);
   const [ctcLogs, setCtcLogs] = useState<any[]>([]);
   const [waLogs, setWaLogs]   = useState<any[]>([]);
@@ -97,7 +98,7 @@ export default function AnalyticsPage() {
       if (!tu) return;
 
       const since = new Date(Date.now() - parseInt(range) * 86400000).toISOString();
-      const [c, l, ctc, wa, q] = await Promise.all([
+      const [c, l, ctc, wa, q, ap] = await Promise.all([
         sb.from("calls").select("*").eq("tenant_id", tu.tenant_id)
           .gte("created_at", since).order("created_at", { ascending: true }),
         sb.from("leads").select("*").eq("tenant_id", tu.tenant_id)
@@ -113,7 +114,13 @@ export default function AnalyticsPage() {
           .select("overall_score, resolution_score, next_step_captured, sentiment, calls!inner(created_at)")
           .eq("tenant_id", tu.tenant_id)
           .gte("calls.created_at", since),
+        // The bookings themselves. calls.appointment_created is never set by
+        // the live pipeline, so counting that flag reported zero appointments
+        // on accounts that had them.
+        sb.from("appointments").select("id, created_at, status")
+          .eq("tenant_id", tu.tenant_id).gte("created_at", since),
       ]);
+      setAppts(ap.data || []);
       setCalls(c.data || []);
       setLeads(l.data || []);
       setCtcLogs(ctc.data || []);
@@ -127,7 +134,11 @@ export default function AnalyticsPage() {
   const totalCalls       = calls.length;
   const aiHandled        = calls.filter(c => c.status === "completed" && c.duration_seconds && c.duration_seconds > 5).length;
   const missedCalls      = calls.filter(c => c.status === "missed").length;
-  const appointments     = calls.filter(c => c.appointment_created).length;
+  // calls.appointment_created is false on all 52 live calls while the
+  // appointments table holds real bookings — so this KPI, the booking rate
+  // and the chart series all read 0 on an account that has appointments.
+  // Count the bookings themselves.
+  const appointments     = appts.length;
   const waSent           = waLogs.length;
   const waDelivered      = waLogs.filter(w => w.status === "delivered" || w.status === "read").length;
   const avgDur           = totalCalls ? Math.round(calls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / totalCalls) : 0;
