@@ -1409,7 +1409,7 @@ class NikkiAgent:
 
         # Voice speaker based on profile SKU
         # NOTE: must be real bulbul:v2 speaker IDs — see SKU_VOICE in
-        # app/exotel/bridge.py for the verified source of truth. This dict
+        # app/widget.py for the verified source of truth. This dict
         # CRITICAL FIX (confirmed via a real Sarvam API call, not guessed):
         # anushka/vidya/karun/manisha are NOT valid bulbul:v3 speakers —
         # confirmed by Sarvam's own error response listing the real
@@ -2069,7 +2069,7 @@ async def purge_recordings(req: RecordingPurgeRequest,
 
 @app.get("/health")
 async def health():
-    from app.exotel import circuit_breaker as _cb
+    from app import circuit_breaker as _cb
     # Per-stage latency percentiles over the last 500 turns. The industry
     # gap between claimed and production latency is 2-4x; this is the number
     # that says which it is today. Targets: <800ms p50, <1400ms p95 total.
@@ -2878,20 +2878,12 @@ if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
 
-# ─── Exotel WebSocket bridge ──────────────────────────────
-from app.exotel.bridge import handle_exotel_ws, handle_widget_ws
+# ─── Website voice widget ─────────────────────────────────
+# The carrier bridge is gone; the website widget it shared a file with is not.
+from app.widget import handle_widget_ws
 from fastapi import WebSocket as _WebSocket
 
-@app.websocket("/ws/exotel")
-async def exotel_ws(ws: _WebSocket):
-    await handle_exotel_ws(ws)
 
-@app.websocket("/ws/plivo")
-async def plivo_ws(ws: _WebSocket):
-    # Same handler, Plivo wire-format adapter. Point a Plivo number's
-    # <Stream> answer-URL XML at wss://<host>/ws/plivo to route its calls
-    # here. Exotel calls continue to hit /ws/exotel untouched.
-    await handle_exotel_ws(ws, provider="plivo")
 
 @app.websocket("/ws/widget")
 async def widget_ws(ws: _WebSocket):
@@ -2900,7 +2892,7 @@ async def widget_ws(ws: _WebSocket):
 
 # ════════════════════════════════════════════════════════════════
 # FREESWITCH mod_audio_stream — WebSocket handler
-# Added for Hey Nikki v4.0 — parallel path; Exotel untouched.
+# The only telephony path there is.
 #
 # FreeSWITCH dialplan sends audio here via:
 #   audio_stream data="ws://127.0.0.1:8000/ws/freeswitch/{did}/{caller}/{uuid}"
@@ -4243,7 +4235,7 @@ async def freeswitch_ws(
         try:
             camp = await db.get_campaign_script(campaign_id)
             if camp:
-                from app.exotel.bridge import build_outbound_prompt
+                from app.widget import build_outbound_prompt
                 agent.system_prompt = build_outbound_prompt(camp).replace(
                     "__LANGUAGE_RULE__",
                     "- Speak Telugu with natural English words mixed in, as Hyderabad speaks.")

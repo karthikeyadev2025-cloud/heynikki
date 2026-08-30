@@ -3,7 +3,7 @@ Ingest FAQ/knowledge content for a voice profile's RAG knowledge base.
 
 There's no PDF-upload dashboard UI yet (that's a separate, larger piece of
 work) — this is a usable interim path: give it a JSON file of Q&A/FAQ
-entries and it embeds + inserts each one via app/exotel/knowledge.py.
+entries and it embeds + inserts each one via app/knowledge.py.
 
 Usage:
   python3 scripts/ingest_knowledge.py \\
@@ -27,7 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.exotel.knowledge import ingest_knowledge_entry  # noqa: E402
+from app.knowledge import ingest_knowledge_entry  # noqa: E402
 
 
 async def main():

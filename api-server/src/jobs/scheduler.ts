@@ -43,7 +43,7 @@ const GEMINI_KEY    = process.env.GEMINI_API_KEY || "";
 const API_URL       = process.env.API_URL || "http://localhost:4000";
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "";
 
-// Must match voice-pipeline/app/exotel/knowledge.py — a mismatch here means
+// Must match voice-pipeline/app/knowledge.py — a mismatch here means
 // embeddings that can never match at query time.
 const EMBED_MODEL = "gemini-embedding-001";
 const EMBED_DIMENSIONS = 1536;

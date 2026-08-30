@@ -74,8 +74,8 @@ export default function Terms() {
         <li>Google Gemini (language understanding)</li>
         <li>Supabase (data storage)</li>
         <li>Razorpay (payments)</li>
-        <li>Wati (WhatsApp Business API)</li>
-        <li>Exotel (telephony)</li>
+        <li>Meta Platforms (WhatsApp Business API)</li>
+        <li>Reliance Jio (telephony)</li>
       </ul>
       <p>
         Their outages affect ours. We are not liable for failures caused by these

@@ -24,7 +24,7 @@ import wave
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.exotel.bridge import sarvam_stt, sarvam_tts, LANGUAGE_NAMES  # noqa: E402
+from app.widget import sarvam_stt, sarvam_tts, LANGUAGE_NAMES  # noqa: E402
 
 TEST_PHRASES = {
     "te-IN": "నమస్కారం, మీరు ఎలా ఉన్నారు",
@@ -94,7 +94,7 @@ async def main():
     else:
         print("WARNING: not all languages detected correctly. Check the raw responses")
         print("above — if the field name is wrong (not 'language_code'), update")
-        print("sarvam_stt() in app/exotel/bridge.py to match what Sarvam actually returns.")
+        print("sarvam_stt() in app/widget.py to match what Sarvam actually returns.")
         sys.exit(1)
 
 

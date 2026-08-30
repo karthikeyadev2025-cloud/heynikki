@@ -142,18 +142,13 @@ app.use((req, res, next) => {
     // change the payload and every signature check would fail. Listed as an
     // exact path, never a prefix — see the note above.
     express.raw({ type: "application/json" })(req, res, next);
-  } else if (req.path.startsWith("/webhooks/exotel/")
-             || req.path.startsWith("/webhooks/lead-capture/")) {
+  } else if (req.path.startsWith("/webhooks/lead-capture/")) {
     // Lead capture too: /setup tells the customer to point "a plain HTML
     // form" at this URL, and a plain form posts
     // application/x-www-form-urlencoded. express.json() ignores that and
     // leaves req.body empty, so every field read as "" and the lead was
     // rejected as invalid — the one integration we actively instruct people
     // to build could not work.
-    // Exotel posts application/x-www-form-urlencoded (CallSid, Status,
-    // Duration, From/To...). express.json() ignores a non-JSON content type
-    // and leaves req.body = {}, so every field read below silently became
-    // "" — indistinguishable from a real empty value. Needs urlencoded.
     express.urlencoded({ extended: false })(req, res, next);
   } else {
     // 2mb, not the 100kb default. /api/public/voice-turn carries a whole
@@ -196,123 +191,10 @@ async function getTenantId(userId: string): Promise<string | null> {
   return data?.tenant_id || null;
 }
 
-// ════════════════════════════════════════════════
-// EXOTEL WEBHOOK — inbound call handler
-// Exotel calls this URL when someone dials your DID
-// ════════════════════════════════════════════════
-// ── Webhook auth helpers ──
-// Exotel doesn't sign webhooks like Stripe/Razorpay. Protection is a
-// shared-secret token in the URL: caller must hit
-//   /webhooks/exotel/inbound/<EXOTEL_WEBHOOK_TOKEN>
-// Token is configured in Exotel's webhook URL when you set up the DID.
-// Without this, anyone hitting the public endpoint can trigger AI calls
-// (and burn Sarvam/Gemini/LiveKit credits).
-const EXOTEL_TOKEN = process.env.EXOTEL_WEBHOOK_TOKEN || "";
-
-function checkExotelToken(req: any, res: any): boolean {
-  if (!EXOTEL_TOKEN) {
-    // Misconfiguration — fail closed
-    console.error("[Exotel] EXOTEL_WEBHOOK_TOKEN env not set — rejecting");
-    res.status(500).json({ error: "Webhook misconfigured" });
-    return false;
-  }
-  // constant-time compare to prevent timing attacks
-  const provided = req.params.token || "";
-  const ok = provided.length === EXOTEL_TOKEN.length &&
-             crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(EXOTEL_TOKEN));
-  if (!ok) {
-    console.warn(`[Exotel] Bad token from ${req.ip}`);
-    res.status(403).json({ error: "Forbidden" });
-    return false;
-  }
-  return true;
-}
-
-app.post("/webhooks/exotel/inbound/:token", async (req, res) => {
-  if (!checkExotelToken(req, res)) return;
-  try {
-    // Exotel sends form-encoded data
-    const body   = req.body as Record<string, string>;
-    const caller = body.From || body.CallFrom || "unknown";
-    const did    = body.To   || body.CallTo   || "";
-    const callSid = body.CallSid || "";
-
-    console.log(`[Exotel] Inbound: ${caller} → DID ${did}, SID: ${callSid}`);
-
-    // Forward to Python voice pipeline
-    const resp = await fetch(`${PIPELINE_URL}/api/v1/call/inbound`, {
-      method:  "POST",
-      headers: {
-        "Content-Type":     "application/json",
-        "X-Internal-Secret": INTERNAL_SECRET,
-      },
-      body: JSON.stringify({
-        caller_number: caller,
-        did_number:    did,
-        call_sid:      callSid,
-      }),
-    });
-
-    if (!resp.ok) {
-      console.error(`[Exotel] Pipeline rejected: ${resp.status}`);
-      // Return Exotel XML to play a fallback message
-      res.set("Content-Type", "text/xml");
-      return res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>క్షమించండి. Technical issue. తర్వాత మళ్ళీ call చేయండి.</Say>
-</Response>`);
-    }
-
-    const data = await resp.json() as { call_id: string };
-    // Exotel expects XML response to route the call
-    res.set("Content-Type", "text/xml");
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Connect>
-    <Stream url="wss://${PIPELINE_URL.replace("https://","").replace("http://","")}/ws/call/${data.call_id}" />
-  </Connect>
-</Response>`);
-
-  } catch (err: any) {
-    console.error("[Exotel webhook error]", err.message);
-    res.set("Content-Type", "text/xml");
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>క్షమించండి. Technical issue.</Say>
-</Response>`);
-  }
-});
-
-// Exotel call status callback
-app.post("/webhooks/exotel/status/:token", async (req, res) => {
-  if (!checkExotelToken(req, res)) return;
-
-  try {
-    const body = req.body as Record<string, string>;
-    const callSid = body.CallSid || "";
-    const status  = body.Status  || "";
-    const duration = parseInt(body.Duration || "0");
-    console.log(`[Exotel] Status: ${callSid} → ${status}, ${duration}s`);
-
-    if (status === "completed" && callSid) {
-      // Match the specific call by its Exotel SID. This previously filtered
-      // on .eq("status","active").limit(1) with no reference to callSid at
-      // all, so an Exotel status callback would close whichever active call
-      // the query happened to return — potentially another tenant's live
-      // call, stamped with a foreign duration. It was inert only because
-      // req.body was a Buffer and callSid was always "", which the guard
-      // above rejected; parsing the body correctly re-arms it.
-      const { error: exoErr } = await sb.from("calls")
-        .update({ status: "completed", duration_seconds: duration })
-        .eq("exotel_call_sid", callSid);
-      if (exoErr) console.error("[Exotel status] update failed:", exoErr.message);
-    }
-    res.json({ ok: true });
-  } catch (err: any) {
-    console.error("[Exotel status error]", err.message);
-    res.json({ ok: true });
-  }
-});
+// ── Public webhook auth ───────────────────────────────────────
+// A public form has no way to hold a shared secret, so lead capture
+// authenticates on a per-tenant token in the URL. Nothing else uses this
+// now that the Exotel webhooks are gone.
 
 // NOTE: /webhooks/lead-capture used to be defined INSIDE the body of the
 // exotel status handler above — it was nested after that handler's opening
@@ -4826,57 +4708,13 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       }
       fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
     } else {
-      // ── Exotel fallback ──────────────────────────────────────
-      // This branch was previously an empty stub with a console.log and
-      // a comment reading "(existing logic)". Flipping the Super Admin
-      // telephony toggle to Exotel therefore returned {ok:true,
-      // status:"dialing"}, wrote a click_to_call_log row and advanced
-      // the lead to "contacted" — while placing no call at all. A silent
-      // success is worse than a crash, because nobody goes looking.
-      const sid   = process.env.EXOTEL_SID   || "";
-      const key   = process.env.EXOTEL_API_KEY || "";
-      const token = process.env.EXOTEL_API_TOKEN || "";
-      const agentNumber = agent_phone || user.phone || (await agentPhoneFor(user.id)) || "";
-
-      if (!sid || !key || !token) {
-        return res.status(503).json({
-          error: "Exotel is selected as the telephony engine but its credentials are not configured.",
-        });
-      }
-      if (!agentNumber) {
-        return res.status(400).json({ error: "agent_phone required — no phone on your account" });
-      }
-
-      // Exotel connects two numbers: From = agent (rings first, same
-      // agent-first reasoning as the FreeSWITCH leg), To = customer,
-      // CallerId = the tenant's Exotel DID.
-      const form = new URLSearchParams({
-        From:     agentNumber,
-        To:       customer_number,
-        CallerId: maskedCli,
-        CallType: "trans",
-        TimeLimit: "1800",
+      // The Exotel branch is gone. It was the only other engine, and the
+      // platform has run on FreeSWITCH since the migration — an unreachable
+      // path holding live carrier credentials is a liability, not a fallback.
+      return res.status(503).json({
+        error: "Calling is not available right now. Please try again shortly.",
       });
-
-      const exoResp = await fetch(
-        `https://${key}:${token}@api.exotel.com/v1/Accounts/${sid}/Calls/connect.json`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: form.toString(),
-          signal: AbortSignal.timeout(15_000),
-        }
-      );
-
-      if (!exoResp.ok) {
-        const body = await exoResp.text().catch(() => "");
-        console.error("[CTC] Exotel connect failed:", exoResp.status, body.slice(0, 300));
-        return res.status(502).json({ error: "Exotel could not place the call" });
-      }
-
-      const exoData = await exoResp.json() as any;
-      fsUuid = exoData?.Call?.Sid || "";
-    }
+}
 
     // Log to click_to_call_log
     const { data: ctcLog } = await sb.from("click_to_call_log").insert({

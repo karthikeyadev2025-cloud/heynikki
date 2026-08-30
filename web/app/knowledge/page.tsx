@@ -3,7 +3,7 @@
 /**
  * Knowledge base — "tell Nikki about your business".
  *
- * The RAG engine (voice-pipeline/app/exotel/knowledge.py) has worked for a
+ * The RAG engine (voice-pipeline/app/knowledge.py) has worked for a
  * while: every call turn embeds the caller's question, searches
  * knowledge_base, and grounds the reply in whatever it finds. But there was
  * no way for a customer to PUT anything in that table — so the whole feature

@@ -192,7 +192,7 @@ export class FreeSwitchESL {
    * Dial a customer and hand the answered call to the AI.
    *
    * The existing /outbound path in the voice pipeline returns 503 unless
-   * Exotel is configured — it was written before the move to FreeSWITCH and
+   * the old carrier is configured — it was written before the move to FreeSWITCH and
    * never dialled on our own trunk. This does, using the same originate
    * syntax as clickToCall above (note the whitespace rules there; they
    * apply here too).

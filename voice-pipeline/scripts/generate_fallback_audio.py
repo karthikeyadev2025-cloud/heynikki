@@ -1,7 +1,7 @@
 """
 Pre-generate a "technical difficulty" fallback audio clip via Sarvam TTS,
 saved as raw 16-bit PCM @ 8kHz — the exact format Session.play_cached()
-expects (see app/exotel/bridge.py; NOT WAV, no header, matches
+expects (see app/widget.py; NOT WAV, no header, matches
 assets/cached_pcm/default.pcm's format exactly).
 
 This gets played when the Sarvam TTS circuit breaker is OPEN (see

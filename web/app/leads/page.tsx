@@ -3,7 +3,7 @@
 /**
  * Leads / CRM.
  *
- * Every inbound call produces a lead (see voice-pipeline/app/exotel/leads.py),
+ * Every inbound call produces a lead (see the FreeSWITCH call handler),
  * enriched by the same end-of-call Gemini pass that extracts appointments.
  * This page is where the business works that pipeline: see who called, what
  * they wanted, how promising they are, and move them through stages.

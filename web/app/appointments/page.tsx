@@ -4,7 +4,7 @@
  * Appointments dashboard.
  *
  * Shows bookings that Hey Nikki captured during calls. Until the extraction
- * module (app/exotel/appointments.py) shipped, the AI would tell callers
+ * module (the appointment handler) shipped, the AI would tell callers
  * "you're booked for 10:30 tomorrow" and save nothing — so this page had no
  * data to show and didn't exist. Now every call that contains a real
  * booking writes an appointments row, and this is where the business sees

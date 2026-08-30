@@ -14,7 +14,7 @@
  * we don't lock recipient rows during pickup; that's a future enhancement
  * via SELECT FOR UPDATE SKIP LOCKED.
  *
- * TRAI: DND scrubbing is currently a STUB. Wire a real provider (Exotel,
+ * TRAI: DND scrubbing is currently a STUB. Wire a real provider (
  * KMS, or TRAI direct feed) into scrubDnd() before launching to numbers
  * that DON'T have explicit consent.
  */
@@ -90,51 +90,9 @@ async function tenantCli(tenantId: string): Promise<string | null> {
   if (!cli) console.error(`[dispatcher] tenant ${tenantId} has no assigned DID — cannot dial out`);
   return cli;
 }
-
-async function dispatchCallLegacyExotel(recipient: any, campaign: any | null): Promise<string | null> {
-  const rawScript = campaign
-    ? campaign.script
-    // Default callback script for a self-submitted enquiry — short,
-    // because this is a callback the person is expecting, not a cold
-    // pitch. Businesses can override per-lead via metadata.script later.
-    : (recipient.metadata?.script ||
-       "Hi {{first_name}}, this is Hey Nikki calling about your enquiry. Do you have a moment?");
-  const script = rawScript
-    .replace(/\{\{first_name\}\}/g,    recipient.first_name || "there")
-    .replace(/\{\{business_name\}\}/g, campaign?.business_name || "");
-
-  try {
-    const r = await fetch(`${PIPELINE_URL}/outbound`, {
-      method: "POST",
-      headers: {
-        "Content-Type":      "application/json",
-        "x-internal-secret": INTERNAL_SEC,
-      },
-      body: JSON.stringify({
-        tenant_id:        recipient.tenant_id,
-        voice_profile_id: campaign?.voice_profile_id || recipient.voice_profile_id || null,
-        to_number:        recipient.phone,
-        script,
-        recipient_id:     recipient.id,
-      }),
-    });
-    if (!r.ok) {
-      console.error(`[dispatcher] pipeline ${r.status}:`, await r.text());
-      return null;
-    }
-    const j = await r.json() as { call_id?: string };
-    return j.call_id || null;
-  } catch (e) {
-    console.error("[dispatcher] dispatch exception:", e);
-    return null;
-  }
-}
-
 /**
  * Dial one recipient on our own Jio trunk.
  *
- * dispatchCallLegacyExotel above POSTs the pipeline's /outbound, which is
- * Exotel-backed and returns 503 here: Exotel was never enabled for outbound
  * on the account and is now disabled entirely. This originates through
  * FreeSWITCH instead, the same trunk every inbound call already uses.
  *
@@ -329,7 +287,7 @@ async function tick(): Promise<void> {
 // POST /webhooks/lead-capture/:token. These have no campaign_id, so
 // tick() above (which is scoped per-campaign) never sees them.
 // Capped at 20 dispatches per tick (every 30s) so a burst of form
-// submissions can't overwhelm Exotel or a single tenant's concurrency.
+// submissions can't overwhelm the trunk or a single tenant's concurrency.
 async function tickInstant(): Promise<void> {
   const { data: pending } = await sb.from("outbound_recipients")
     .select("*").eq("is_instant", true).eq("status", "pending").limit(20);

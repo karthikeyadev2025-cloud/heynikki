@@ -51,7 +51,7 @@ async def gemini_generate(system_prompt: str, history: list[dict], api_key: str 
             result = await _call_gemini(key, model, payload)
             if result:
                 # Strip vendor names before returning
-                for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "OpenAI", "supabase"]:
+                for vendor in ["Sarvam", "Gemini", "LiveKit", "FreeSWITCH", "Plivo", "OpenAI", "supabase"]:
                     result = result.replace(vendor, "our system")
                 return result
         except Exception as e:
