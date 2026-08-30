@@ -2299,6 +2299,87 @@ function VoiceLabPanel({ token }: { token: string }) {
   );
 }
 
+
+// Turn a client's assigned DID into their own WhatsApp sender.
+//
+// The reason this works for a SIP number that cannot receive SMS: Meta will
+// CALL the number and read the code out, that call lands on our trunk, Nikki
+// answers it, and every call is transcribed — so the digits show up in the
+// call's transcript on the Calls list. No handset needed.
+function ProvisionWhatsApp({ token, onDone }: { token: string; onDone: () => void }) {
+  const [tenants, setTenants] = useState<any[]>([]);
+  const [sel, setSel]   = useState("");
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [msg, setMsg]   = useState("");
+  const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/tenants`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(d => setTenants(d.tenants || [])).catch(() => {});
+  }, [token]);
+
+  const step = async (path: string, body: any, label: string) => {
+    setBusy(label); setMsg("");
+    try {
+      const r = await fetch(`${API}/api/admin/whatsapp/${sel}/${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      setMsg(r.ok ? (d.message || "Done.") : (d.error || "Failed"));
+      if (r.ok) onDone();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setBusy(""); }
+  };
+
+  return (
+    <Card>
+      <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 4 }}>
+        Give a client their own WhatsApp number
+      </div>
+      <div style={{ color: C.dim, fontSize: TYPE.xs, marginBottom: 10, lineHeight: 1.55 }}>
+        Registers the tenant&apos;s assigned HeyNikki number as a sender on our WABA.
+        Meta rings it with the code — Nikki answers, so the digits appear in that
+        call&apos;s transcript on the Calls list. Voice service on the number is unaffected.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, alignItems: "center" }}>
+        <select value={sel} onChange={e => setSel(e.target.value)}
+          style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+            borderRadius: 6, padding: "6px 9px", fontSize: TYPE.xs, minWidth: 170 }}>
+          <option value="">Select a business…</option>
+          {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <input value={name} onChange={e => setName(e.target.value)}
+          placeholder="Display name shown to customers"
+          style={{ padding: "6px 10px", borderRadius: 6, fontSize: TYPE.xs, minWidth: 210,
+            background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+        <button type="button" disabled={!sel || name.trim().length < 3 || !!busy}
+          onClick={() => step("add-number", { display_name: name.trim() }, "add")}
+          style={btn(C.gbr)}>{busy === "add" ? "Adding…" : "1. Add to WABA"}</button>
+        <button type="button" disabled={!sel || !!busy}
+          onClick={() => step("request-code", { method: "VOICE" }, "code")}
+          style={btn(C.gold)}>{busy === "code" ? "Calling…" : "2. Call with code"}</button>
+        <input value={code} onChange={e => setCode(e.target.value)} placeholder="6-digit code"
+          style={{ width: 110, padding: "6px 10px", borderRadius: 6, fontSize: TYPE.xs,
+            background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+        <button type="button" disabled={!sel || code.replace(/\D/g, "").length < 4 || !!busy}
+          onClick={() => step("verify-code", { code }, "verify")}
+          style={btn(C.grn)}>{busy === "verify" ? "Verifying…" : "3. Verify & go live"}</button>
+      </div>
+      {msg && <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 9, lineHeight: 1.5 }}>{msg}</div>}
+    </Card>
+  );
+}
+
+function btn(color: string) {
+  return {
+    padding: "6px 12px", borderRadius: 6, fontSize: 11.5, fontWeight: 800,
+    background: "transparent", color, border: `1px solid ${color}66`, cursor: "pointer",
+  } as const;
+}
+
 function WhatsAppNumbersPanel({ token }: { token: string }) {
   const [rows, setRows]         = useState<any[]>([]);
   const [fallback, setFallback] = useState<string | null>(null);
@@ -2340,6 +2421,8 @@ function WhatsAppNumbersPanel({ token }: { token: string }) {
 
   return (
     <div>
+      <ProvisionWhatsApp token={token} onDone={load} />
+      <div style={{ height: SPACE.sm }} />
       {err && <div style={{ color: C.red, fontSize: TYPE.sm, marginBottom: SPACE.sm }}>{err}</div>}
 
       <Card>

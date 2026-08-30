@@ -1624,6 +1624,135 @@ app.patch("/api/voice-profiles/:id", verifyJWT, async (req, res) => {
 // credentials, so the pipeline decrypts and we stream the result.
 // ── WhatsApp inbox ────────────────────────────────────────────
 // Replies, newest first, optionally filtered to one lead's thread.
+// ══════════════════════════════════════════════════════════════
+// TURNING AN ASSIGNED DID INTO THE CLIENT'S WHATSAPP SENDER
+//
+// The plan from the beginning was that a client's HeyNikki number is also
+// their WhatsApp number once KYC clears. Everything for it existed except
+// the part that talks to Meta: tenant_whatsapp holds phone_number_id,
+// resolveWaSender already prefers it over the platform sender, and
+// sendTemplateViaMeta already takes a senderId. These three endpoints are
+// the missing middle.
+//
+// Meta's flow is add -> request code -> verify -> register, and the reason
+// this works for a SIP DID that cannot receive SMS is the VOICE option:
+// Meta rings the number and reads the code out. That call lands on our own
+// trunk, our own pipeline answers it, and every call is already
+// transcribed — so the six digits arrive in the call transcript and the
+// operator reads them off the calls list. No handset required.
+//
+// A number registered to the Cloud API can no longer be used in the
+// WhatsApp consumer app, but its PSTN voice service is untouched: Nikki
+// keeps answering calls on it exactly as before.
+const WABA_ID  = () => process.env.META_WA_WABA_ID || "1082855697732160";
+const META_VER = () => process.env.META_WA_API_VERSION || "v21.0";
+
+async function metaGraph(path: string, body?: object): Promise<any> {
+  const token = process.env.META_WA_TOKEN;
+  if (!token) throw new Error("META_WA_TOKEN not set");
+  const r = await fetch(`https://graph.facebook.com/${META_VER()}/${path}`, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const j: any = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j?.error?.message || `Meta HTTP ${r.status}`);
+  return j;
+}
+
+// 1. Add the tenant's assigned DID to our WABA as a new sender.
+app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (req: any, res) => {
+  const tenantId = req.params.tenantId;
+  const displayName = String(req.body?.display_name || "").trim();
+  if (displayName.length < 3) {
+    return res.status(400).json({ error: "A display name of at least 3 characters is required" });
+  }
+
+  const [{ data: did }, { data: tenant }] = await Promise.all([
+    sb.from("dids").select("id, number").eq("tenant_id", tenantId)
+      .eq("status", "assigned").limit(1).maybeSingle(),
+    sb.from("tenants").select("name").eq("id", tenantId).maybeSingle(),
+  ]);
+  if (!did?.number) return res.status(409).json({ error: "This tenant has no assigned number yet" });
+
+  const local = String(did.number).replace(/\D/g, "").slice(-10);
+  try {
+    const created = await metaGraph(`${WABA_ID()}/phone_numbers`, {
+      cc: "91", phone_number: local, verified_name: displayName,
+    });
+    const { error } = await sb.from("tenant_whatsapp").upsert({
+      tenant_id: tenantId,
+      did_id: did.id,
+      phone_number: local,
+      waba_id: WABA_ID(),
+      phone_number_id: created.id,
+      display_name: displayName,
+      // NOT active yet — resolveWaSender only picks up 'active', so an
+      // unverified sender can never be used to send anything.
+      status: "pending_verification",
+    }, { onConflict: "tenant_id" });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, phone_number_id: created.id, number: local });
+  } catch (e: any) {
+    console.error("[wa-register] add", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// 2. Ask Meta to ring it and read the code out.
+app.post("/api/admin/whatsapp/:tenantId/request-code", verifySuperAdmin, async (req: any, res) => {
+  const method = String(req.body?.method || "VOICE").toUpperCase();
+  const { data: row } = await sb.from("tenant_whatsapp")
+    .select("phone_number_id, phone_number").eq("tenant_id", req.params.tenantId).maybeSingle();
+  if (!row?.phone_number_id) return res.status(409).json({ error: "Add the number to the WABA first" });
+  try {
+    await metaGraph(`${row.phone_number_id}/request_code`, {
+      code_method: method === "SMS" ? "SMS" : "VOICE",
+      language: "en_US",
+    });
+    res.json({
+      ok: true,
+      message: method === "SMS"
+        ? "Meta is sending an SMS to the number."
+        : `Meta is calling ${row.phone_number} now. Nikki answers it, so the six digits will appear in that call's transcript on the Calls list within a minute.`,
+    });
+  } catch (e: any) {
+    console.error("[wa-register] request_code", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// 3. Verify, then register for messaging. Both must succeed to go active.
+app.post("/api/admin/whatsapp/:tenantId/verify-code", verifySuperAdmin, async (req: any, res) => {
+  const code = String(req.body?.code || "").replace(/\D/g, "");
+  if (code.length < 4) return res.status(400).json({ error: "Enter the code Meta read out" });
+  const { data: row } = await sb.from("tenant_whatsapp")
+    .select("phone_number_id").eq("tenant_id", req.params.tenantId).maybeSingle();
+  if (!row?.phone_number_id) return res.status(409).json({ error: "Add the number to the WABA first" });
+
+  try {
+    await metaGraph(`${row.phone_number_id}/verify_code`, { code });
+    // Registration is a separate step, and a number that is verified but not
+    // registered still cannot send — marking it active on verify alone would
+    // route a tenant's messages into a sender that silently drops them.
+    await metaGraph(`${row.phone_number_id}/register`, {
+      messaging_product: "whatsapp",
+      pin: process.env.META_WA_2FA_PIN || "000000",
+    });
+    const { error } = await sb.from("tenant_whatsapp")
+      .update({ status: "active", verified_at: new Date().toISOString(), review_note: null })
+      .eq("tenant_id", req.params.tenantId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, message: "Number is live — this business now sends WhatsApp from its own number." });
+  } catch (e: any) {
+    console.error("[wa-register] verify", e.message);
+    await sb.from("tenant_whatsapp")
+      .update({ review_note: e.message.slice(0, 300) }).eq("tenant_id", req.params.tenantId);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.get("/api/whatsapp/inbox", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
