@@ -49,6 +49,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 }
 
 export default function SetupPage() {
+  const [neg, setNeg] = useState<any>({ enabled: false, floor_note: "", max_discount_pct: "", offers: "", close_line: "" });
   const [ownerPhone, setOwnerPhone] = useState("");
   const [phoneMsg, setPhoneMsg]     = useState("");
   const [tenantId, setTenantId]       = useState<string | null>(null);
@@ -126,6 +127,13 @@ export default function SetupPage() {
         .order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (vp) {
         setProfile(vp);
+        const n = (vp as any)?.negotiation || {};
+        if (Object.keys(n).length) setNeg({
+          enabled: !!n.enabled, floor_note: n.floor_note || "",
+          max_discount_pct: n.max_discount_pct ?? "",
+          offers: Array.isArray(n.offers) ? n.offers.join(", ") : "",
+          close_line: n.close_line || "",
+        });
         setForm({
           profile_sku:       vp.profile_sku,
           business_name:     vp.business_name,
@@ -183,6 +191,15 @@ export default function SetupPage() {
       // "your number is live: <their own mobile>" minutes after signup and
       // permanently consumed the send-once row for the real announcement.
       dialect_region:    form.dialect_region || "neutral",
+      // An empty object means "do not negotiate", which is what the agent
+      // falls back to — the safe default, chosen rather than inherited.
+      negotiation: neg.enabled ? {
+        enabled: true,
+        floor_note: neg.floor_note.trim() || null,
+        max_discount_pct: neg.max_discount_pct === "" ? null : Math.max(0, Math.min(100, Number(neg.max_discount_pct))),
+        offers: neg.offers.split(",").map((x: string) => x.trim()).filter(Boolean),
+        close_line: neg.close_line.trim() || null,
+      } : {},
       auto_whatsapp_new_leads: form.auto_whatsapp_new_leads,
       auto_call_new_leads:     form.auto_call_new_leads,
       skip_dnd_for_instant_leads: form.skip_dnd_for_instant_leads,
@@ -617,6 +634,63 @@ export default function SetupPage() {
               ring. The button used to be enabled with a phone missing, so
               pressing it returned 409 and printed a console error while the
               field that fixes it sat higher up the same page. */}
+          {/* What she may agree to. Without this she either refuses to
+              discuss price — which sounds like a form, not a receptionist —
+              or improvises a discount nobody authorised. */}
+          <div style={{ marginTop: 22, paddingTop: 18, borderTop: `1px solid ${C.bord}` }}>
+            <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3 }}>
+              Bargaining
+            </div>
+            <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+              Callers haggle. Tell Nikki exactly what she may agree to, and she will
+              never go past it — or leave this off and she will politely say the owner
+              decides pricing.
+            </div>
+
+            <label style={{ display: "flex", gap: 8, alignItems: "center",
+              fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
+              <input type="checkbox" checked={neg.enabled}
+                onChange={e => setNeg((n: any) => ({ ...n, enabled: e.target.checked }))} />
+              Let Nikki negotiate on price
+            </label>
+
+            {neg.enabled && (
+              <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                <div>
+                  <Label>The lowest you will ever accept</Label>
+                  <input value={neg.floor_note}
+                    onChange={e => setNeg((n: any) => ({ ...n, floor_note: e.target.value }))}
+                    placeholder="e.g. ₹3,500 for a root canal — never less" />
+                  <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                    In your own words. She never says this number aloud and never goes under it.
+                  </div>
+                </div>
+                <div>
+                  <Label>Most she may come down (%)</Label>
+                  <input type="number" min={0} max={100} value={neg.max_discount_pct}
+                    onChange={e => setNeg((n: any) => ({ ...n, max_discount_pct: e.target.value }))}
+                    placeholder="10" style={{ maxWidth: 120 }} />
+                </div>
+                <div>
+                  <Label>What she can offer instead of a discount</Label>
+                  <input value={neg.offers}
+                    onChange={e => setNeg((n: any) => ({ ...n, offers: e.target.value }))}
+                    placeholder="free first consultation, home delivery, 3-month EMI" />
+                  <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                    Comma separated. Most bargaining settles on one of these rather than money.
+                  </div>
+                </div>
+                <div>
+                  <Label>What she says when they agree</Label>
+                  <input value={neg.close_line}
+                    onChange={e => setNeg((n: any) => ({ ...n, close_line: e.target.value }))}
+                    placeholder="అలాగే సార్, అదే rate కి fix చేస్తున్నాను." />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ height: 16 }} />
           <button type="button" onClick={handleTestCall}
             disabled={testCalling || !profile || !ownerPhone.trim()} style={{
             padding: "12px 20px", background: "transparent", color: C.gbr,

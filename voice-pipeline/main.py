@@ -417,8 +417,57 @@ Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
 Today: {now} ({weekday})
-{_knowledge_block(knowledge)}
+{_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}
 """ + TELUGU_PHONE_PERSONA + _PRICING_CACHE.get("text", "")
+
+
+def _negotiation_block(policy: dict | None) -> str:
+    """What this business has authorised her to agree to.
+
+    Callers to an Indian small business haggle; it is the normal shape of the
+    conversation. With no policy she used to either refuse to engage — which
+    sounds like a form, not a receptionist — or improvise a discount nobody
+    authorised, which the owner then discovers at the counter.
+
+    So: nothing here is invented. Every number comes from what the business
+    typed, and the absence of a policy produces an explicit refusal rather
+    than silence, because a model with no instruction will negotiate anyway.
+    """
+    p = policy or {}
+    if not p.get("enabled"):
+        return (
+            "\n[ON PRICE]\n"
+            "You may state prices you have been told and nothing else. If the "
+            "caller pushes for a discount, do not invent one and do not hint that "
+            "one exists: say warmly that the owner decides pricing, offer to note "
+            "their number for a callback, and move the conversation on.\n"
+        )
+
+    lines = [
+        "\n[NEGOTIATING — what this business lets you agree to]",
+        "The caller may haggle. That is normal; engage with it like a person, "
+        "not a policy document. Hear the number they want before you answer.",
+    ]
+    if p.get("floor_note"):
+        lines.append(f"- The lowest you may ever agree to: {p['floor_note']}. "
+                     "Never go below it, never imply you could if they pushed harder, "
+                     "and never say what your limit is.")
+    if p.get("max_discount_pct"):
+        lines.append(f"- You may come down at most {p['max_discount_pct']}% from the "
+                     "stated price, and only if they ask. Do not open with it.")
+    offers = [o for o in (p.get("offers") or []) if str(o).strip()]
+    if offers:
+        lines.append("- Prefer offering these over cutting the price — most "
+                     "negotiations settle on one: " + "; ".join(str(o) for o in offers) + ".")
+    lines += [
+        "- Concede ONCE. If they push again after your best offer, hold it kindly "
+        "and suggest speaking to the owner rather than sliding further.",
+        "- Never invent a discount, a scheme or a deadline that was not given to you.",
+        "- If they agree, say the final figure back plainly so there is no doubt.",
+    ]
+    if p.get("close_line"):
+        lines.append(f"- When they accept, say: {p['close_line']}")
+    return "\n".join(lines) + "\n"
 
 
 def _knowledge_block(knowledge: list[str] | None) -> str:

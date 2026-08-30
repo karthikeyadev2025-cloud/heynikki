@@ -4976,6 +4976,36 @@ async function buildBusinessContext(targetTenantId: string | null) {
 }
 
 // ── Shared: ask Gemini a question against the gathered business context ──
+// A fact the owner spoke, saved so Nikki repeats it to callers.
+//
+// The browser assistant was read-only: it could answer questions about calls
+// and leads and could not record one thing it was told. An owner saying
+// "we're shut next Monday" reasonably expects that to be remembered, and it
+// simply evaporated. knowledge_base already exists and the phone agent now
+// reads it on every call, so remembering is a write, not a new subsystem.
+async function rememberSpokenFact(tenantId: string, answer: string): Promise<string> {
+  const m = answer.match(/^\s*REMEMBER:\s*(.+)$/im);
+  if (!m) return answer;
+  const fact = m[1].trim().slice(0, 500);
+  const clean = answer.replace(m[0], "").trim();
+  if (fact.length < 8) return clean || answer;
+
+  const { data: vp } = await sb.from("voice_profiles")
+    .select("id").eq("tenant_id", tenantId).limit(1).maybeSingle();
+  if (!vp) return clean || answer;
+
+  const { error } = await sb.from("knowledge_base").insert({
+    tenant_id: tenantId,
+    voice_profile_id: vp.id,      // NULL here would make it unreadable on calls
+    content: fact,
+    source_type: "manual",
+    source_name: "owner_voice",   // so the Knowledge page can show where it came from
+  });
+  if (error) { console.error("[remember] insert failed:", error.message); return clean || answer; }
+  console.log(`[remember] tenant ${tenantId.slice(0, 8)}: ${fact.slice(0, 80)}`);
+  return clean || `అలాగే, గుర్తు పెట్టుకున్నాను.`;
+}
+
 async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
   const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
@@ -4990,6 +5020,15 @@ Keep responses under 3 sentences — designed to be read aloud via TTS.
 When listing items, use natural language (not bullet points).
 Always be positive, professional, and specific with numbers.
 If the data provided doesn't actually contain the answer, say so honestly — never guess a number or invent a fact that isn't in the data below.
+
+The owner may also TELL you something about their business rather than ask
+you a question — "we're shut next Monday", "root canal is now four thousand",
+"we do free delivery within five kilometres". When that happens, reply
+"REMEMBER: <the fact in one clean sentence>" on its own first line, then your
+spoken confirmation on the next. Nikki repeats these facts to callers, so
+write the fact as the business would want a customer to hear it. Only do this
+for durable facts about the business — never for a question, an instruction
+to you, or a one-off comment.
 ${isSuperAdmin ? "" : "Respond in Telugu, naturally and warmly, matching how a helpful assistant would speak to a business owner they know well."}
 
 CURRENT BUSINESS DATA:
@@ -5047,7 +5086,10 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
 
   try {
     const { contextJson, queries, activeChannels } = await buildBusinessContext(targetTenantId);
-    const answer = await askGemini(question, contextJson, isSuperAdmin);
+    let answer = await askGemini(question, contextJson, isSuperAdmin);
+    // A super admin is looking at someone else's data; only the business's
+    // own people may add to that business's knowledge.
+    if (!isSuperAdmin && targetTenantId) answer = await rememberSpokenFact(targetTenantId, answer);
 
     res.json({
       answer,
