@@ -44,13 +44,15 @@ const notoTelugu = Noto_Sans_Telugu({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://heynikki.in"),
+  // www, not the apex. The apex 308-redirects here, so a canonical
+  // pointing at it hands Google a URL that is not the one it can fetch.
+  metadataBase: new URL("https://www.heynikki.in"),
   title: "HeyNikki — Telugu AI Receptionist for Indian Businesses",
-  description: "Your business never misses a call. HeyNikki answers in Telugu, Hindi and English — switching language mid-call, 24/7.",
-  keywords: "Telugu AI, voice agent, AI receptionist, India, SMB, call answering, HeyNikki",
+  description: "Your business never misses a call. HeyNikki is a Telugu AI receptionist and telecaller for Indian small businesses — it answers your phone in Telugu, Hindi or English 24/7, books appointments, captures leads and follows up on WhatsApp. A call answering service without the call centre.",
+  keywords: "Telugu AI receptionist, Telugu call answering service, AI telecaller, virtual receptionist Hyderabad, Telugu voice AI, missed call service, AI call centre India, appointment booking bot Telugu, telecaller software, HeyNikki, heynikki.in",
   authors: [{ name: "Nikki Technologies" }],
   alternates: {
-    canonical: "https://heynikki.in",
+    canonical: "https://www.heynikki.in",
   },
   openGraph: {
     title: "HeyNikki — Telugu AI Receptionist",
@@ -130,27 +132,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         inLanguage: ["te", "hi", "en"],
         publisher: { "@id": "https://heynikki.in/#org" },
         offers: [
-          {
-            "@type": "Offer",
-            name: "AI Telecaller",
-            price: "5999",
-            priceCurrency: "INR",
-            url: "https://heynikki.in/#pricing",
-          },
-          {
-            "@type": "Offer",
-            name: "Human CRM Seat",
-            price: "1999",
-            priceCurrency: "INR",
-            url: "https://heynikki.in/#pricing",
-          },
-          {
-            "@type": "Offer",
-            name: "Dedicated Business Number",
-            price: "1999",
-            priceCurrency: "INR",
-            url: "https://heynikki.in/#pricing",
-          },
+          // The real plans, from the plans table. This block previously listed
+          // an "AI Telecaller" at 5999 and two 1999 modules that no longer
+          // exist — Google was being handed a price list we do not charge.
+          { "@type": "Offer", name: "Starter", price: "1999", priceCurrency: "INR",
+            description: "200 minutes, one business number, appointments and leads" },
+          { "@type": "Offer", name: "Growth", price: "4999", priceCurrency: "INR",
+            description: "600 minutes, three numbers, outbound campaigns" },
+          { "@type": "Offer", name: "Scale", price: "9999", priceCurrency: "INR",
+            description: "1500 minutes, ten numbers, API access" },
         ],
       },
       {
@@ -186,6 +176,77 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           },
         ],
       },
+      {
+        // FAQPage is the highest-yield structured data for a product like
+        // this: Google renders the questions directly under the result, so a
+        // search for "does the AI speak real Telugu" can be answered on the
+        // results page by our own words. The answers are the ones already on
+        // the landing page — structured data that disagrees with the page it
+        // describes is a manual action waiting to happen.
+        "@type": "FAQPage",
+        "@id": "https://www.heynikki.in/#faq",
+        mainEntity: [
+          {
+            "@type": "Question",
+            name: "Is it really Telugu, or English with a Telugu accent?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "Really Telugu. The speech model is trained on Telugu rather than English spelled out phonetically, and it mixes in the English words Hyderabad actually uses." },
+          },
+          {
+            "@type": "Question",
+            name: "Do I have to change my business number?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "No. Forward your existing number to Nikki or port it fully — both work. Your board, your cards and your listings stay exactly as they are." },
+          },
+          {
+            "@type": "Question",
+            name: "Do my callers know they are speaking to an AI?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "Yes. TRAI requires disclosure at the start of every automated call and Nikki gives it. If a caller asks directly, she always says she is an AI assistant." },
+          },
+          {
+            "@type": "Question",
+            name: "What happens when Nikki does not understand a caller?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "She asks once, plainly. If it is still unclear, or the caller asks for a person, the call transfers to your staff — she never pretends to have understood." },
+          },
+          {
+            "@type": "Question",
+            name: "How much does a Telugu AI receptionist cost?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "Plans start at Rs 1,999 a month for 200 minutes, and every new account gets 100 free minutes with no card required. A human receptionist costs around Rs 15,000 a month and goes home at seven." },
+          },
+          {
+            "@type": "Question",
+            name: "Can it call customers back, not just answer?",
+            acceptedAnswer: { "@type": "Answer", text:
+              "Yes. Upload a list and Nikki dials out — old customers, enquiries, festival offers — and reports who was interested. Outbound campaigns are on the Growth plan and above." },
+          },
+        ],
+      },
+      {
+        // A Service entry carries the words people actually type. Somebody
+        // looking for this product searches "Telugu call centre" or "AI
+        // telecaller", not "conversational voice agent".
+        "@type": "Service",
+        "@id": "https://www.heynikki.in/#service",
+        name: "Telugu AI call answering and telecalling service",
+        serviceType: "AI receptionist, virtual telecaller, call answering service",
+        provider: { "@id": "https://heynikki.in/#org" },
+        areaServed: [
+          { "@type": "State", name: "Telangana" },
+          { "@type": "State", name: "Andhra Pradesh" },
+          { "@type": "Country", name: "India" },
+        ],
+        audience: { "@type": "BusinessAudience", audienceType:
+          "clinics, real estate offices, jewellery shops, salons and other small businesses" },
+        description:
+          "A Telugu-speaking AI receptionist and telecaller for Indian small businesses. "
+          + "Answers every business call in Telugu, Hindi or English, books appointments, "
+          + "captures leads, follows up on WhatsApp, and calls customers back — replacing "
+          + "a missed-call log or a small call centre team, 24 hours a day.",
+      },
+
     ],
   };
 
