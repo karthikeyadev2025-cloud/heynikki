@@ -2294,6 +2294,63 @@ app.get("/api/admin/campaigns", verifySuperAdmin, async (_req, res) => {
 });
 
 /** Recent agent edits across tenants — what changed, when, and by whom. */
+// Put a profile back to an earlier snapshot.
+//
+// The Agent Versions panel has had a Restore button whose confirm text
+// promises "the current state is snapshotted first, so this is undoable" —
+// and the route it posts to did not exist, so every press was a 404 and the
+// promise was never kept. It is the one dead control in the console.
+//
+// The snapshot IS taken first, because a restore that cannot itself be
+// undone is a worse tool than no restore: an operator reaching for this is
+// already in a bad moment and should not be able to make it permanent.
+app.post("/api/admin/voice-profiles/:profileId/restore/:versionId", verifySuperAdmin, async (req: any, res) => {
+  const adminId = req.user.id;
+  const { data: version } = await sb.from("voice_profile_versions")
+    .select("id, profile_id, tenant_id, snapshot")
+    .eq("id", req.params.versionId)
+    // Both ids come from the UI; requiring them to agree stops a version
+    // from one profile being pasted onto another.
+    .eq("profile_id", req.params.profileId).maybeSingle();
+  if (!version?.snapshot) return res.status(404).json({ error: "Version not found for that profile" });
+
+  const { data: current } = await sb.from("voice_profiles")
+    .select("*").eq("id", version.profile_id).maybeSingle();
+  if (!current) return res.status(404).json({ error: "That profile no longer exists" });
+
+  // Snapshot where we are before moving.
+  await sb.from("voice_profile_versions").insert({
+    profile_id: version.profile_id,
+    tenant_id:  version.tenant_id,
+    snapshot:   current,
+    changed_by: adminId,
+  });
+
+  // Identity and wiring are NOT restorable. did_number, tenant_id and the
+  // row id describe which number rings and whose business it is — rolling
+  // those back from an old snapshot would point a live number at the wrong
+  // tenant, which is the exact fault that had the main line answering as a
+  // jewellery shop.
+  const IMMUTABLE = new Set(["id", "tenant_id", "created_at", "updated_at",
+                             "did_number", "capture_token", "status"]);
+  const patch: Record<string, any> = {};
+  for (const [k, v] of Object.entries(version.snapshot as Record<string, any>)) {
+    if (!IMMUTABLE.has(k) && k in current) patch[k] = v;
+  }
+  if (!Object.keys(patch).length) {
+    return res.status(400).json({ error: "That version has nothing restorable in it" });
+  }
+
+  const { error } = await sb.from("voice_profiles").update(patch).eq("id", version.profile_id);
+  if (error) return res.status(500).json({ error: error.message });
+
+  await audit("agent_version_restored", {
+    tenantId: version.tenant_id, actorId: adminId,
+    metadata: { version_id: version.id, fields: Object.keys(patch) },
+  });
+  res.json({ ok: true, restored: Object.keys(patch) });
+});
+
 app.get("/api/admin/agent-versions", verifySuperAdmin, async (_req, res) => {
   try {
     const { data, error } = await sb.from("voice_profile_versions")
