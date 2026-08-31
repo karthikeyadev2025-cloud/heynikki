@@ -8,6 +8,7 @@
 // gracefully (dev / CI). Errors are captured automatically by the
 // expressErrorHandler at the BOTTOM of the middleware stack.
 import * as Sentry from "@sentry/node";
+import { makePush } from "./push.js";
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -47,6 +48,10 @@ const PIPELINE_URL    = process.env.PIPELINE_URL || "http://localhost:8000";
 
 // ── SUPABASE ADMIN CLIENT ─────────────────────────────────
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Push to the Flutter app. Silently inert until the Firebase service account
+// is configured, so nothing here can break a call path.
+const { pushToTenant, pushConfigured } = makePush(sb);
 
 // ── AUDIT LOG HELPER ──────────────────────────────────────
 // DPDP Act Section 8(7) requires data fiduciaries to maintain records
@@ -1331,6 +1336,11 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
   // true, and nothing ever set it — the reminder job writes its own flag but
   // this handler never did, so the badge could not appear for any booking.
   if (ok && appointment_id) {
+    pushToTenant(tenant_id, {
+      title: "New appointment",
+      body:  `${caller_number} booked${slot_date ? ` for ${slot_date}` : ""}${slot_time ? ` at ${slot_time}` : ""}.`,
+      data:  { type: "appointment", appointment_id },
+    }).catch(() => {});
     await sb.from("appointments").update({ wa_confirmed: true }).eq("id", appointment_id)
       .then(r => r.error && console.error("[confirm] wa_confirmed:", r.error.message));
   }
@@ -3977,6 +3987,10 @@ app.get("/health", (_req, res) => {
   res.json({
     status:     "ok",
     service:    "nikki-api-server",
+    // Push is inert until the Firebase service account is set, and an
+    // operator should be able to see that rather than wonder why the app
+    // is quiet.
+    push_configured: pushConfigured(),
     uptime_ms:  Date.now() - STARTED_AT,
     pid:        process.pid,
     timestamp:  new Date().toISOString(),
@@ -4784,6 +4798,12 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // Log missed call in Supabase
       if (callRow) {
         await sb.from("calls").update({ status: "missed", wa_sent: true }).eq("id", callRow.id);
+        // The owner wants to know now, not when they next open the dashboard.
+        pushToTenant(callRow.tenant_id, {
+          title: "Missed call",
+          body:  `${caller_number} rang and Nikki took a message.`,
+          data:  { type: "missed_call", call_id: callRow.id },
+        }).catch(() => {});
       }
     }
 
