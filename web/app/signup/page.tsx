@@ -92,7 +92,7 @@ export default function SignupPage() {
           <h1 style={{
             fontSize: 22, fontWeight: 800, color: J.chandra,
             margin: "0 0 6px", letterSpacing: -0.5,
-          }}>Start your free trial</h1>
+          }}>Start free — 100 minutes</h1>
           <div style={{ color: J.textMid, fontSize: 14 }}>
             100 minutes free · No credit card required
           </div>
@@ -180,7 +180,7 @@ export default function SignupPage() {
               color: loading ? J.textMid : J.bg, border: "none", borderRadius: 10,
               cursor: loading ? "wait" : "pointer", marginBottom: 10,
             }}>
-              {loading ? "Creating account..." : "Start Free Trial →"}
+              {loading ? "Creating account..." : "Start free →"}
             </button>
 
             <p style={{ fontSize: 11, color: J.textDim, textAlign: "center", margin: 0 }}>

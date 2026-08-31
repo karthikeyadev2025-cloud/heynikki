@@ -320,7 +320,7 @@ export default function LoginPage() {
         <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: C.textMid }}>
           New to HeyNikki?{" "}
           <Link href="/signup" style={{ color: C.emerald, fontWeight: 700, textDecoration: "none" }}>
-            Start free trial →
+            Start free — 100 minutes →
           </Link>
         </div>
       </div>

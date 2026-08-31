@@ -3458,8 +3458,8 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
       html: `<p>Your Nikki payment failed. Please update your payment method within 3 days to keep your service active.</p>`,
     },
     trial_expiry: {
-      subject: `Your Nikki trial expires in ${data.days} days`,
-      html: `<p>Hi ${tenant.name}, your free trial ends in ${data.days} days. Upgrade now to keep your Telugu AI receptionist active.</p>`,
+      subject: `Your free Nikki minutes are running low`,
+      html: `<p>Hi ${tenant.name}, your free minutes are running low — about ${data.days} left. Calls stop when they reach zero. <a href="https://heynikki.in/billing">Choose a plan</a> to keep Nikki answering.</p>`,
     },
   };
 

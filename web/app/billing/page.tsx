@@ -255,7 +255,7 @@ export default function BillingPage() {
                   <span style={{ background: C.gold + "22", color: C.gold,
                     border: "1px solid " + C.gold + "44", borderRadius: 4,
                     padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>
-                    TRIAL — {daysLeft} days left
+                    FREE — {Math.max(0, Math.round(Number(tenant?.credit_minutes ?? 0)))} minutes left
                   </span>
                 )}
               </div>

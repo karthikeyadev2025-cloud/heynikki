@@ -52,10 +52,10 @@ export default function Pricing() {
         <li>Automatic carrier failover</li>
       </ul>
 
-      <h2>Free trial</h2>
+      <h2>Free minutes</h2>
       <p>
         Every new account gets <strong>100 free minutes</strong> — no card required, and no time limit. After
-        the trial, choose a plan or your account becomes read-only. Nothing is deleted.
+        they run out, choose a plan or your account becomes read-only. Nothing is deleted.
       </p>
 
       <h2>Cancellation</h2>

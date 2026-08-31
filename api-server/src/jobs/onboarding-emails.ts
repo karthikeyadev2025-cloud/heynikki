@@ -33,7 +33,8 @@ const STEPS: OnboardingStep[] = [
     subject:   () => "Welcome to Nikki — let's get your AI receptionist live",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Welcome to Nikki. Your 14-day free trial just started — no card required.
+Welcome to Nikki. You start with 100 free minutes of answered calls —
+no card required, and no clock running.
 
 Three things to do in the next 5 minutes:
 
@@ -69,34 +70,34 @@ Any questions, just reply.
   {
     id:        "day10_trial_ending",
     daysAfter: 10,
-    subject:   () => "Your Nikki trial ends in 4 days",
+    subject:   () => "How your free minutes are going",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Heads up — your 14-day Nikki trial ends in 4 days.
+Your free minutes get used as Nikki answers calls — there is no deadline,
+but they do run out, and calls stop when they do.
 
-To keep your AI receptionist running without interruption, pick a plan:
+To keep her answering without a gap, pick a plan when you're ready:
   → ${dashboardUrl}/billing
 
 Plans start at ₹1,999/month (Starter — 200 mins). The first month is
 fully refundable within 7 days if Nikki doesn't fit.
 
-If you'd rather not continue, no action needed — your account becomes
-read-only and is deleted after 30 days. All your call data is exportable
-from the dashboard until then.
+If you'd rather not continue, no action needed. Your account stays
+read-only and everything is exportable from the dashboard.
 
 — Karthikeya`,
   },
   {
     id:        "day14_trial_ended",
     daysAfter: 14,
-    subject:   () => "Your trial ended — what now?",
+    subject:   () => "Two weeks in — what Nikki has done so far",
     body: ({ firstName, dashboardUrl }) => `Hi ${firstName},
 
-Your 14-day Nikki trial ended today. Your AI receptionist has stopped
-accepting calls, but your data is safe and exportable for 30 days at
+It's been two weeks since you set Nikki up. Everything she has answered —
+calls, transcripts, leads and bookings — is on your dashboard at
 ${dashboardUrl}.
 
-To pick up where you left off:
+When your free minutes run out, calls stop until you choose a plan:
   → ${dashboardUrl}/billing
 
 If Nikki wasn't a fit, I'd love to know why — just reply with a

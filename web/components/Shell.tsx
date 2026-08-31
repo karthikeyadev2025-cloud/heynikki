@@ -59,8 +59,11 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
     });
   }, []);
 
-  const daysLeft = tenant?.trial_ends_at
-    ? Math.max(0, Math.ceil((new Date(tenant.trial_ends_at).getTime() - Date.now()) / 86400000))
+  // Was a countdown on trial_ends_at — a date nothing in the product
+  // enforces. What actually stops calls is the free-minute balance, so the
+  // badge shows that instead of a clock that never strikes.
+  const minsLeft = tenant?.credit_minutes != null
+    ? Math.max(0, Math.round(Number(tenant.credit_minutes)))
     : null;
 
   const Sidebar = () => (
@@ -108,10 +111,10 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       {/* Trial / Plan badge */}
       {tenant && (
         <div style={{ padding: "12px 12px 16px", borderTop: "1px solid " + C.bord }}>
-          {tenant.status === "trial" && daysLeft !== null ? (
+          {tenant.status === "trial" && minsLeft !== null ? (
             <div style={{ background: C.gold + "22", border: "1px solid " + C.gold + "44",
               borderRadius: 8, padding: "8px 10px" }}>
-              <div style={{ color: C.gold, fontSize: 11, fontWeight: 800 }}>Trial — {daysLeft} days left</div>
+              <div style={{ color: C.gold, fontSize: 11, fontWeight: 800 }}>{minsLeft} free minutes left</div>
               <a href="/billing" style={{ color: C.glow, fontSize: 11, display: "block", marginTop: 3 }}>
                 Upgrade now →
               </a>

@@ -541,7 +541,7 @@ function TenantsPanel({ token }: { token: string }) {
         {loading ? <div style={{ color: C.mid, textAlign: "center", padding: 40 }}>Loading...</div> : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr>{["Business","Plan","Status","Trial Ends","Actions"].map(h => (
+              <tr>{["Business","Plan","Status","Free minutes","Actions"].map(h => (
                 <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
                   textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
                   borderBottom: "1px solid " + C.bord }}>{h}</th>
@@ -563,7 +563,10 @@ function TenantsPanel({ token }: { token: string }) {
                       color={t.status === "active" ? C.grn : t.status === "trial" ? C.gold : C.red} />
                   </td>
                   <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
-                    {t.trial_ends_at ? new Date(t.trial_ends_at).toLocaleDateString("en-IN") : "—"}
+                    {/* Was the trial_ends_at date, which nothing enforces. The
+                        number an operator actually needs when a customer rings
+                        saying "my calls stopped" is the balance that stopped them. */}
+                    {t.credit_minutes != null ? `${Math.round(Number(t.credit_minutes))} min` : "—"}
                   </td>
                   <td style={{ padding: "10px" }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, alignItems: "center" }}>
@@ -2012,8 +2015,8 @@ function BillingPanel({ token }: { token: string }) {
             gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
             {[["Balance", `${Math.round(d.tenant.credit_minutes ?? 0)} min`, C.grn],
               ["Plan", `${d.tenant.plan} · ${d.tenant.status}`, C.txt],
-              ["Trial ends", d.tenant.trial_ends_at
-                 ? new Date(d.tenant.trial_ends_at).toLocaleDateString() : "—", C.gold],
+              ["Free minutes", d.tenant.credit_minutes != null
+                 ? `${Math.round(Number(d.tenant.credit_minutes))} min` : "—", C.gold],
              ].map(([l, v, c]) => (
               <Card key={String(l)}>
                 <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase" as const,

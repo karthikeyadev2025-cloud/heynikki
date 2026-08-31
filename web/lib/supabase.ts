@@ -70,6 +70,8 @@ export type Tenant = {
   plan: string;
   status: string;
   trial_ends_at: string;
+  // The balance that actually gates a free account.
+  credit_minutes?: number | null;
   wallet_balance: number;
 };
 
