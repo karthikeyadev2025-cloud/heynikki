@@ -124,11 +124,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         publisher: { "@id": "https://heynikki.in/#org" },
       },
       {
+        // An AI asked about heynikki.in described it as "Nikki AI, operated by
+        // CodeMax IT Solutions", with a primary interface at heynikki.ai. None
+        // of that is us. It was not malice — the site published no legal name,
+        // no phone, no contact point and no sameAs, so there was nothing
+        // authoritative to anchor to and the gap got filled with a different
+        // company. These fields are that anchor.
         "@type": "Organization",
         "@id": "https://heynikki.in/#org",
         name: "HeyNikki",
-        url: "https://heynikki.in",
+        legalName: "Nikki Technologies",
+        alternateName: ["Hey Nikki", "HeyNikki by Nikki Technologies"],
+        url: "https://www.heynikki.in",
         logo: "https://heynikki.in/icon-512.png",
+        email: "support@heynikki.in",
+        telephone: "+91-8633502031",
+        slogan: "Your business never misses a call",
+        knowsLanguage: ["te", "hi", "en"],
+        contactPoint: [{
+          "@type": "ContactPoint",
+          telephone: "+91-8633502031",
+          email: "support@heynikki.in",
+          contactType: "customer support",
+          areaServed: "IN",
+          availableLanguage: ["Telugu", "Hindi", "English"],
+        }],
         areaServed: { "@type": "Country", name: "India" },
         address: {
           "@type": "PostalAddress",
