@@ -53,6 +53,9 @@ export const metadata: Metadata = {
   authors: [{ name: "Nikki Technologies" }],
   alternates: {
     canonical: "https://www.heynikki.in",
+    // The site is written for India in English and Telugu and declared
+    // neither. languages tells Google which audience each URL is for.
+    languages: { "en-IN": "https://www.heynikki.in", "te-IN": "https://www.heynikki.in" },
   },
   openGraph: {
     title: "HeyNikki — Telugu AI Receptionist",
@@ -107,6 +110,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
+      {
+        // WebSite with alternateName is what a brand query leans on: someone
+        // typing "hey nikki" or "heynikki.in" should resolve to the same
+        // entity as "HeyNikki". It also carries the language targeting, which
+        // nothing on the site declared.
+        "@type": "WebSite",
+        "@id": "https://www.heynikki.in/#website",
+        url: "https://www.heynikki.in",
+        name: "HeyNikki",
+        alternateName: ["Hey Nikki", "heynikki", "heynikki.in", "Nikki Technologies"],
+        inLanguage: ["en-IN", "te-IN"],
+        publisher: { "@id": "https://heynikki.in/#org" },
+      },
       {
         "@type": "Organization",
         "@id": "https://heynikki.in/#org",

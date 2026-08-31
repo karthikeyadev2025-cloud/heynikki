@@ -52,12 +52,25 @@ export default function ContentPage({
 
         <article className="prose">{children}</article>
 
+      {/* Breadcrumbs turn a bare URL in the result into a readable path, and
+          tell Google these pages hang off the homepage rather than floating
+          on their own. */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "HeyNikki", item: "https://www.heynikki.in" },
+          { "@type": "ListItem", position: 2, name: h1 },
+        ],
+      })}} />
+
         <nav style={{ marginTop: 56, paddingTop: 26, borderTop: `1px solid ${C.bord}`,
           display: "flex", gap: 18, flexWrap: "wrap", fontSize: 14.5 }}>
           <Link href="/telugu-ai-receptionist" style={{ color: C.teal }}>Telugu AI receptionist</Link>
           <Link href="/ai-telecaller" style={{ color: C.teal }}>AI telecaller</Link>
           <Link href="/for/clinics" style={{ color: C.teal }}>For clinics</Link>
           <Link href="/for/real-estate" style={{ color: C.teal }}>For real estate</Link>
+          <Link href="/alternatives" style={{ color: C.teal }}>Compare options</Link>
           <Link href="/pricing" style={{ color: C.teal }}>Pricing</Link>
         </nav>
       </div>

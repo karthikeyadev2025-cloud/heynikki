@@ -150,7 +150,11 @@ export default function Home() {
             </span>
 
             <h1>
-              <span className="v2-line">Every missed call was</span>
+              {/* The trailing space matters. These render as two lines to a
+                  reader, but a crawler concatenates the text nodes — and the
+                  h1, the single most weighted string on the site, was being
+                  read as "Every missed call wassomeone ready to buy." */}
+              <span className="v2-line">Every missed call was </span>
               <span className="v2-line">someone <em>ready to buy.</em></span>
             </h1>
 
