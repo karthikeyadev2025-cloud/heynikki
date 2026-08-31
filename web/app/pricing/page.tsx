@@ -1,62 +1,107 @@
 import LegalLayout from "../../components/LegalLayout";
 
-export const metadata = { title: "Pricing — Hey Nikki" };
+export const metadata = {
+  title: "Pricing — Hey Nikki",
+  description:
+    "Hey Nikki pricing: Starter ₹1,999, Growth ₹4,999, Scale ₹9,999 per month. "
+    + "Every plan includes the Telugu AI receptionist, dashboard, recordings and "
+    + "WhatsApp confirmations. 100 free minutes to start.",
+};
 
-// ── Kept in step with the homepage on purpose ─────────────────
-// This page previously described a completely different product: a
-// minute-based ladder (Starter ₹1,999 / Growth ₹4,999 / Scale ₹9,999)
-// with a dedicated number at ₹200/month, dated 29 June. The homepage,
-// the Super Admin plans table and the v4.0 plan all use the current
-// module pricing, with a dedicated number at ₹1,999 — nearly 10× the
-// figure quoted here. Anyone clicking "Pricing" in the nav saw a
-// contradiction, and the lower number is the one they'd hold us to.
-// Aligned to the current model. If pricing changes, change it in both
-// places or move both to read from the plans table.
+// ── This page must agree with three other things ──────────────────────
+// /api/platform/pricing (which now builds its tiers from the `plans` table),
+// the homepage cards, and what /api/billing/create-subscription will accept.
+//
+// It did not. It sold a modular catalogue — "AI Telecaller ₹5,999/month,
+// unlimited inbound" plus per-seat and per-number modules — while billing has
+// only ever accepted starter/growth/scale, metered by minutes. The homepage
+// carried that same ₹5,999 card once and it was removed with a note saying a
+// prospect had been quoted it on the phone and would have seen metered tiers
+// at signup. The homepage got fixed; the page in the nav labelled "Pricing"
+// did not, so the contradiction simply moved.
+//
+// Figures are literals because this page is prerendered on Vercel and cannot
+// reach the on-prem API at build time. They are a MIRROR of the plans table,
+// never a source: change the plans row first, then this, then the homepage.
+const TIERS = [
+  {
+    name: "Starter", price: "1,999", annual: "1,599",
+    line: "200 minutes · 1 number · 1 person · 2 calls at once",
+    points: [
+      "Telugu, Hindi and English, switched mid-call",
+      "Inbound reception on your own number",
+      "Appointments written straight to your dashboard",
+      "WhatsApp confirmation on every booking",
+      "Call recordings and transcripts, kept 3 months",
+    ],
+  },
+  {
+    name: "Growth", price: "4,999", annual: "3,999",
+    line: "600 minutes · 3 numbers · 3 people · 5 calls at once",
+    points: [
+      "Everything in Starter",
+      "Outbound campaigns and missed-call follow-up",
+      "Call quality scoring on every call",
+      "3 voice profiles — one per branch or service",
+      "Recordings kept 1 year",
+    ],
+  },
+  {
+    name: "Scale", price: "9,999", annual: "7,999",
+    line: "1,500 minutes · 10 numbers · 10 people · 10 calls at once",
+    points: [
+      "Everything in Growth",
+      "API access and webhooks",
+      "10 voice profiles",
+      "Recordings kept 2 years",
+      "Priority support",
+    ],
+  },
+];
+
 export default function Pricing() {
   return (
-    <LegalLayout title="Pricing" lastUpdated="20 August 2026">
+    <LegalLayout title="Pricing" lastUpdated="31 August 2026">
       <p>
         Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
-        AI receptionist, the dashboard, the mobile app, and TRAI-compliant call
-        disclosure. GST (18%) is added at checkout.
+        AI receptionist, the dashboard, and TRAI-compliant call disclosure. GST (18%)
+        is added at checkout. Annual billing saves 20%.
       </p>
 
-      <p>
-        Pricing is modular — most businesses start with the AI Telecaller alone and
-        add the others when they need them.
-      </p>
-
-      <h2>AI Telecaller — ₹5,999/month</h2>
-      <ul>
-        <li>Unlimited inbound calls on one number</li>
-        <li>Telugu, Hindi and English, switched mid-call</li>
-        <li>Appointments written straight to your dashboard</li>
-        <li>WhatsApp confirmation on every booking</li>
-        <li>Call recordings and full transcripts</li>
-        <li>Missed-call follow-up, sent automatically</li>
-      </ul>
-
-      <h2>Human CRM Seat — ₹1,999/month per seat</h2>
-      <ul>
-        <li>Click-to-call from your lead list</li>
-        <li>Caller history on screen before your telecaller picks up</li>
-        <li>Call disposition tagging and notes</li>
-        <li>Shared pipeline across your team</li>
-      </ul>
-
-      <h2>Dedicated Business Number — ₹1,999/month per number</h2>
-      <ul>
-        <li>A new business number, yours to keep</li>
-        <li>Or port the number you already use</li>
-        <li>Masked outbound caller ID</li>
-        <li>Automatic carrier failover</li>
-      </ul>
+      {TIERS.map(t => (
+        <section key={t.name}>
+          <h2>
+            {t.name} — ₹{t.price}/month
+          </h2>
+          <p>
+            <em>{t.line}</em> · ₹{t.annual}/month billed annually
+          </p>
+          <ul>
+            {t.points.map(p => <li key={p}>{p}</li>)}
+          </ul>
+        </section>
+      ))}
 
       <h2>Free minutes</h2>
       <p>
-        Every new account gets <strong>100 free minutes</strong> — no card required, and no time limit. After
-        they run out, choose a plan or your account becomes read-only. Nothing is deleted.
+        Every new account gets <strong>100 free minutes</strong> — no card required, and
+        no time limit. After they run out, choose a plan or your account becomes
+        read-only. Nothing is deleted.
       </p>
+
+      <h2>If you go over your minutes</h2>
+      <p>
+        Extra minutes are <strong>₹15 per minute</strong>, charged only for what you use.
+        Calls do not stop when a plan&apos;s included minutes run out.
+      </p>
+
+      <h2>Add-ons</h2>
+      <ul>
+        <li><strong>Extra business number</strong> — ₹1,999/month per number, beyond
+          those included in your plan. Port a number you already use, or take a new one.</li>
+        <li><strong>Extra team seat</strong> — ₹1,999/month per seat, beyond those
+          included in your plan.</li>
+      </ul>
 
       <h2>Cancellation</h2>
       <p>

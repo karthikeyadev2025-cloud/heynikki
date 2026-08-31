@@ -30,21 +30,21 @@ const PLANS_FALLBACK = [
      customer who pressed it. Offer it again when it exists end to end. */
   {
     id: "starter", name: "Starter", price: 1999, annual: 1599,
-    minutes: 200, profiles: 1, numbers: 1, concurrent: 2,
+    minutes: 200, profiles: 1, seats: 1, numbers: 1, concurrent: 2,
     color: C.mid,
     features: ["Telugu + Tanglish AI","Inbound reception","Recordings 90 days","WhatsApp automation","Appointment booking"],
   },
   {
     id: "growth", name: "Growth", price: 4999, annual: 3999,
-    minutes: 600, profiles: 3, numbers: 3, concurrent: 5,
+    minutes: 600, profiles: 3, seats: 3, numbers: 3, concurrent: 5,
     color: C.gbr, popular: true,
     features: ["Everything in Starter","3 voice profiles","Outbound campaigns","Advanced analytics","Recordings 1 year"],
   },
   {
     id: "scale", name: "Scale", price: 9999, annual: 7999,
-    minutes: 1500, profiles: 10, numbers: 10, concurrent: 10,
+    minutes: 1500, profiles: 10, seats: 10, numbers: 10, concurrent: 10,
     color: C.gold,
-    features: ["Everything in Growth","10 voice profiles","API access + webhooks","Team members (5 seats)","Custom integrations"],
+    features: ["Everything in Growth","10 voice profiles","API access + webhooks","Team members (10 seats)","Custom integrations"],
   },
 ];
 
@@ -100,12 +100,27 @@ export default function BillingPage() {
         const tiers = d.tiers.map((t: any, i: number) => ({
           id: t.id, name: t.name,
           price:  rupees(t.monthly_paise),
-          annual: Math.round(rupees(t.monthly_paise) * 0.8),   // -20%, as advertised
-          minutes: t.minutes, profiles: t.seats || 1,
+          // The real annual figure from the plans table. This used to be
+          // monthly x 0.8, which quietly disagreed with the row a customer
+          // is actually charged from whenever the two were not exactly -20%.
+          annual: t.annual_paise ? Math.round(rupees(t.annual_paise) / 12) : Math.round(rupees(t.monthly_paise) * 0.8),
+          minutes: t.minutes,
+          // profiles: t.seats was a straight mix-up of two different caps.
+          // Growth has 3 voice profiles and 3 seats; Scale has 10 and 10.
+          // Reading seats into profiles made this page tell a Scale customer
+          // they got 5 of something, which was true of neither.
+          profiles: t.profiles ?? 1,
+          seats: t.seats ?? 1,
           numbers: t.numbers, concurrent: t.concurrent,
           color: [C.mid, C.gbr, C.gold][i] || C.mid,
           popular: i === 1,
-          features: PLANS_FALLBACK.find((p: any) => p.id === t.id)?.features || [],
+          features: (PLANS_FALLBACK.find((p: any) => p.id === t.id)?.features || [])
+            // Any hardcoded seat line is replaced with the number this tier
+            // actually grants, so the page cannot drift from the plans table
+            // again the moment someone edits a seat cap.
+            .map((f: string) => /seat/i.test(f)
+              ? `Team members (${t.seats ?? 1} seat${(t.seats ?? 1) === 1 ? "" : "s"})`
+              : f),
         }));
         setPlans(tiers);
       })

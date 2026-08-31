@@ -560,7 +560,11 @@ async function sendViaMeta(to: string, message: string, senderId?: string): Prom
 // Read from platform_config so the limits enforced here and the limits
 // advertised on the page cannot drift apart. A tenant on no recognised plan
 // gets the trial shape: one number, one call at a time, and credits.
-const TRIAL_LIMITS = { minutes: 0, numbers: 1, seats: 0, concurrent: 1 };
+// seats:1 = the owner alone, which is what plans.max_seats says for trial and
+// what the invite flow enforces. It read 0 here, so the two answers to "how
+// many people may this account have" disagreed for the one plan every new
+// signup starts on.
+const TRIAL_LIMITS = { minutes: 0, numbers: 1, seats: 1, profiles: 1, concurrent: 1 };
 
 // ── WHAT A TIER ACTUALLY BUYS ────────────────────────────────
 // The plans table has carried max_voice_profiles, outbound_campaigns and
@@ -597,22 +601,28 @@ async function planAllows(tenantId: string, feature: PlanFeature): Promise<{ ok:
 async function planLimitsFor(plan?: string | null) {
   const key = String(plan || "").toLowerCase();
   if (!["starter", "growth", "scale"].includes(key)) return { ...TRIAL_LIMITS, tier: "trial" };
+  // The plans table, not platform_config. The comment thirty lines above
+  // said feature gates must read "the table the operator actually edits",
+  // and then this function went on reading the other one — so seats were
+  // enforced as 1/3/10 from plans.max_seats while the pricing page
+  // advertised 0/1/5 from plan_tier_*, and a Scale customer was promised
+  // five team members and given ten.
+  const { data: row } = await sb.from("plans")
+    .select("minutes_per_month, max_phone_numbers, max_seats, max_concurrent_calls, max_voice_profiles")
+    .eq("id", key).maybeSingle();
+  if (!row) return { ...TRIAL_LIMITS, tier: key };
+  // Concurrency can never exceed what the trunk physically carries, whatever
+  // a plan row claims.
   const cfg = await getPlatformConfig();
-  for (const k of ["plan_tier_1", "plan_tier_2", "plan_tier_3"]) {
-    try {
-      const t = JSON.parse(cfg[k] || "{}");
-      if (String(t.id).toLowerCase() === key) {
-        return {
-          minutes:    Number(t.minutes) || 0,
-          numbers:    Number(t.numbers) || 1,
-          seats:      Number(t.seats) || 0,
-          concurrent: Number(t.concurrent) || 1,
-          tier: key,
-        };
-      }
-    } catch { /* a malformed tier must not take calls down */ }
-  }
-  return { ...TRIAL_LIMITS, tier: key };
+  const maxCh = Number(cfg["trunk_max_channels"] ?? 10) || 10;
+  return {
+    minutes:    Number(row.minutes_per_month) || 0,
+    numbers:    Number(row.max_phone_numbers) || 1,
+    seats:      Number(row.max_seats) || 1,
+    profiles:   Number(row.max_voice_profiles) || 1,
+    concurrent: Math.min(Number(row.max_concurrent_calls) || 1, maxCh),
+    tier: key,
+  };
 }
 
 // ── WEB-DEMO TTS CACHE ───────────────────────────────────────────────
@@ -2467,24 +2477,47 @@ app.get("/api/platform/pricing", async (_req, res) => {
     const cfg = await getPlatformConfig();
     const paise = (k: string, d: number) => Number(cfg[k] ?? d) || d;
 
-    const tiers = ["plan_tier_1", "plan_tier_2", "plan_tier_3"]
-      .map(k => { try { return cfg[k] ? JSON.parse(cfg[k]) : null; } catch { return null; } })
-      .filter(Boolean);
+    // Built from the plans table so the catalogue, the limits enforced at
+    // call time and the seat cap the invite flow checks are all one row.
+    // plan_tier_1/2/3 in platform_config predates the plans table having
+    // max_seats and max_voice_profiles, and it never gained them — which is
+    // how /billing came to render a tier's SEAT count in its PROFILE slot.
+    const { data: planRows } = await sb.from("plans")
+      .select("id, display_name, price_monthly_paise, price_annual_paise, minutes_per_month, max_phone_numbers, max_seats, max_voice_profiles, max_concurrent_calls, recording_days, api_access, outbound_campaigns")
+      .neq("id", "trial")
+      .order("price_monthly_paise", { ascending: true });
 
     // Concurrency can never exceed what the trunk physically carries, whatever
-    // a tier claims. Clamped here so a mis-typed config cannot sell capacity
-    // that does not exist — Scale previously advertised 15 against 10 channels.
+    // a plan row claims. Clamped here so a mis-typed value cannot sell
+    // capacity that does not exist.
     const maxCh = paise("trunk_max_channels", 10);
-    for (const t of tiers) t.concurrent = Math.min(Number(t.concurrent) || 1, maxCh);
+    const tiers = (planRows || []).map((p: any) => ({
+      id:            p.id,
+      name:          p.display_name || p.id,
+      monthly_paise: p.price_monthly_paise,
+      annual_paise:  p.price_annual_paise,
+      minutes:       p.minutes_per_month,
+      numbers:       p.max_phone_numbers,
+      seats:         p.max_seats,
+      profiles:      p.max_voice_profiles,
+      concurrent:    Math.min(Number(p.max_concurrent_calls) || 1, maxCh),
+      recording_days:     p.recording_days,
+      api_access:         p.api_access,
+      outbound_campaigns: p.outbound_campaigns,
+    }));
 
     res.json({
       currency: "INR",
       per_minute_paise: paise("price_per_minute_paise", 350),
       overage_paise:    paise("plan_overage_paise", 1500),
+      // ai_telecaller_paise (Rs 5,999 "unlimited inbound") is deliberately
+      // gone. No such plan exists in billing — /api/billing/create-subscription
+      // rejects anything but starter/growth/scale — and quoting a price the
+      // checkout cannot take is how a caller gets promised one thing and
+      // shown another at signup. These two are real per-unit add-ons.
       addons: {
-        ai_telecaller_paise: paise("price_ai_telecaller_paise", 599900),
-        crm_seat_paise:      paise("price_human_crm_seat_paise", 199900),
-        number_paise:        paise("price_jio_did_paise", 199900),
+        crm_seat_paise: paise("price_human_crm_seat_paise", 199900),
+        number_paise:   paise("price_jio_did_paise", 199900),
       },
       tiers,
       trunk_max_channels: maxCh,
