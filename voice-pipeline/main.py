@@ -765,6 +765,10 @@ class SarvamStreamingSTT:
 
 
 # ── SARVAM TTS ───────────────────────────────────────────
+# Last synthesis time, so a turn can report what the caller waited for.
+_SarvamTTS_LAST: dict = {"ms": 0.0}
+
+
 class SarvamTTS:
     """Sarvam Bulbul V3 TTS — 8kHz telephony, Mulaw output."""
 
@@ -796,11 +800,14 @@ class SarvamTTS:
         try:
             if os.path.exists(key) and os.path.getsize(key) > 1000:
                 with open(key, "rb") as f:
+                    _SarvamTTS_LAST["ms"] = 0.0     # a cache hit costs nothing
                     return f.read()
         except OSError:
             pass
 
+        _t = time.monotonic()
         audio = await self._synthesize_uncached(text, speaker, rate)
+        _SarvamTTS_LAST["ms"] = (time.monotonic() - _t) * 1000
 
         if audio and len(audio) > 1000:
             try:
@@ -834,7 +841,7 @@ class SarvamTTS:
         ) as ws:
             await ws.send(json.dumps({"type": "config", "data": {
                 "target_language_code": "te-IN", "speaker": speaker,
-                "pace": 1.1, "speech_sample_rate": rate,
+                "pace": 1.0, "speech_sample_rate": rate,
                 "enable_preprocessing": True, "output_audio_codec": "wav",
                 "min_buffer_size": 30, "max_chunk_length": 120,
             }}))
@@ -892,7 +899,7 @@ class SarvamTTS:
                     "target_language_code": "te-IN",
                     "speaker": speaker,
                     "model": "bulbul:v3",
-                    "pace": 1.1,
+                    "pace": 1.0,
                     # 8000 for the phone, where the trunk is narrowband
                     # anyway; 22050 for a browser. The landing-page agent
                     # was synthesising at 8k and playing it through laptop
@@ -1814,9 +1821,14 @@ class NikkiAgent:
             # LiveKit's turn-detector covers 14 languages, none of them
             # Telugu, so this signal comes from our own side of the dialogue
             # instead: her question tells us what shape the answer will be.
+            # tts_ms was missing, which meant the only stage the caller
+            # actually waits through — her voice being made and played — was
+            # the one nobody measured. Two of these numbers described work
+            # the caller never experiences.
             self.turn_timings.append({
                 "stt_ms": round(_t_stt * 1000),
                 "llm_ms": round(_t_llm * 1000),
+                "tts_ms": round(_SarvamTTS_LAST["ms"]),
             })
             _TURN_STATS.append((round(_t_stt * 1000), round(_t_llm * 1000)))
 
@@ -2758,7 +2770,7 @@ async def test_tts(req: TTSTestRequest):
                     "target_language_code": "te-IN",
                     "speaker": req.speaker,
                     "model": "bulbul:v3",
-                    "pace": 1.1,
+                    "pace": 1.0,
                     "speech_sample_rate": 8000,
                     "enable_preprocessing": True,
                     "eng_interpolation_wt": 100,
@@ -3172,6 +3184,35 @@ def _stage_fillers() -> list:
 
 
 _FILLERS = _stage_fillers()
+
+
+# The openers she reaches for on almost every turn. Synthesising one costs
+# ~840ms; serving it from cache costs nothing measurable. The cache lives on
+# tmpfs and dies with the container, so the first caller after every deploy
+# used to pay full price for "సరేనండి" — warm them once at boot instead.
+_WARM_OPENERS = [
+    "సరేనండి.", "అవునండి.", "అర్థమైంది అండి.", "చెప్పండి.",
+    "అయ్యో, క్షమించండి అండి.", "ఒక్క నిమిషం అండి.", "అలాగే అండి.",
+    "ఖచ్చితంగా అండి.", "ఒక్కసారి మళ్ళీ చెప్తారా?",
+]
+
+
+async def _warm_tts_cache() -> None:
+    """Pre-synthesise the openers, in the background, after boot."""
+    try:
+        tts = SarvamTTS()
+        done = 0
+        for text in _WARM_OPENERS:
+            for speaker in ("priya", "shreya", "pooja"):
+                try:
+                    if await tts.synthesize(text, speaker, 8000):
+                        done += 1
+                except Exception:  # noqa: BLE001
+                    pass
+                await asyncio.sleep(0.05)   # never crowd a live call
+        log.info(f"[tts] warmed {done} opener clips")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[tts] cache warm failed: {e}")
 
 # ── B8: listener backchannels ───────────────────────────────────────
 # Indian phone pragmatics backchannel every 5-10 seconds; a silent listener
@@ -3883,7 +3924,15 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # cached-TTS answer used to collide with the filler mid-word — an
         # audible glitch, since uuid_broadcast interrupts. A filler is cover
         # for a genuinely slow turn, not furniture.
-        filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=1.1))
+        # 450ms, not 1100. A person answers in about a quarter of a second,
+        # and silence past roughly seven hundred milliseconds reads as a
+        # dropped line — which is exactly what a caller did on 31 August,
+        # saying "Hello? Hello?" into a gap while she was still synthesising.
+        # Measured: endpoint 400ms + first clause from the model ~900ms + TTS
+        # ~1100ms, so the caller waits about two and a half seconds. The
+        # filler is what stands in that gap; firing it at 1.1s left the first
+        # second bare.
+        filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=0.45))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
 
         # ── First-clause fast path ──────────────────────────────────────
@@ -3896,8 +3945,11 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         def _on_first_clause(prefix: str) -> None:
             log.info(f"[b2] first clause ({len(prefix)} chars) -> TTS early: {prefix[:60]!r}")
             clause["text"] = prefix
-            if not filler_task.done():
-                filler_task.cancel()          # real speech is starting
+            # NOT cancelled here. Text arriving is not speech starting — the
+            # clause still has to be synthesised, which measures ~1.1s. This
+            # used to pull the cover away at the exact moment it was still
+            # needed, leaving the caller in silence right up to the answer.
+            # It is cancelled below, immediately before the audio plays.
 
             async def _speak_prefix():
                 audio = await agent.tts.synthesize(
@@ -3905,6 +3957,10 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                         (agent.profile or {}).get("pronunciation_map")),
                     agent.voice)
                 if audio:
+                    # Now the cover comes off: real speech is a moment away,
+                    # and uuid_broadcast interrupts whatever is playing.
+                    if not filler_task.done():
+                        filler_task.cancel()
                     dur = _wav_duration_secs(audio)
                     speaking["until"] = time.monotonic() + dur
                     clause["until"] = speaking["until"]
@@ -5067,3 +5123,10 @@ async def fs_hangup(req: FSHangupRequest, x_internal_secret: str = Header(None))
     log.info(f"[FS REST] Hangup: uuid={req.fs_uuid} call_id={req.call_id}")
     return {"ok": True}
 
+
+
+@app.on_event("startup")
+async def _warm_on_boot() -> None:
+    # Fire and forget: a slow vendor must never delay the service accepting
+    # calls, so this runs behind the port opening rather than before it.
+    asyncio.create_task(_warm_tts_cache())
