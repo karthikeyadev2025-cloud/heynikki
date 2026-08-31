@@ -68,7 +68,7 @@ export default function SignupPage() {
             <span style={{ color: J.mercury, fontWeight: 700 }}>{email}</span>
           </p>
           <p style={{ color: J.textDim, fontSize: 12, marginBottom: 24 }}>
-            Click the link to verify your account and start your 14-day free trial.
+            Click the link to verify your account and start with 100 free minutes.
           </p>
           <Link href="/login" style={{
             display: "inline-block", background: J.grad, color: J.bg,
@@ -94,7 +94,7 @@ export default function SignupPage() {
             margin: "0 0 6px", letterSpacing: -0.5,
           }}>Start your free trial</h1>
           <div style={{ color: J.textMid, fontSize: 14 }}>
-            14 days free · No credit card required
+            100 minutes free · No credit card required
           </div>
         </div>
 

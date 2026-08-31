@@ -54,7 +54,7 @@ export default function Pricing() {
 
       <h2>Free trial</h2>
       <p>
-        Every new account gets <strong>14 days free</strong> — no card required. After
+        Every new account gets <strong>100 free minutes</strong> — no card required, and no time limit. After
         the trial, choose a plan or your account becomes read-only. Nothing is deleted.
       </p>
 

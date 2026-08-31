@@ -10,11 +10,13 @@ export default function Refund() {
         for subscription fees and related charges.
       </p>
 
-      <h2>1. 14-day free trial</h2>
+      <h2>1. Free minutes for new accounts</h2>
       <p>
-        All new accounts get a 14-day free trial of any plan. No card is required. If you
-        don't subscribe at the end of the trial, your account becomes read-only and is
-        permanently deleted after 30 days. Nothing is charged — nothing to refund.
+        Every new account starts with <strong>100 free minutes</strong> of answered calls.
+        No card is required and there is no time limit — the minutes are used as calls are
+        answered, and when they run out your calls stop until you choose a plan. Nothing is
+        charged for these minutes, so there is nothing to refund. If you never subscribe,
+        your account becomes read-only and is permanently deleted after 30 days.
       </p>
 
       <h2>2. Monthly subscriptions</h2>

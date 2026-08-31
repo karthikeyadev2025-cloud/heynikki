@@ -40,7 +40,7 @@ export default function Terms() {
       <h2>4. Billing</h2>
       <ul>
         <li>Plans are billed monthly via Razorpay. GST (18%) is added at checkout.</li>
-        <li>The 14-day free trial requires no card. If you don't subscribe after the trial, your account becomes read-only and is deleted after 30 days.</li>
+        <li>Every new account gets 100 free minutes of calls and requires no card. Minutes are used as calls are answered; when they run out, calls stop until you choose a plan. There is no time limit on the free minutes. If you don't subscribe, your account becomes read-only and is deleted after 30 days.</li>
         <li>We may change pricing with 30 days' notice. Existing subscriptions are honoured at the old price until renewal.</li>
         <li>Failed payments lead to a 7-day grace period; service is paused after that until payment is settled.</li>
         <li>Refund eligibility is governed by our <a href="/refund-policy">Refund Policy</a>.</li>

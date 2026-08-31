@@ -354,7 +354,7 @@ export default function BillingPage() {
           </div>
 
           <div style={{ textAlign: "center", marginTop: 14, color: C.dim, fontSize: 11 }}>
-            All plans include 14-day free trial · Overage: ₹15/extra minute · Cancel anytime
+            New accounts start with 100 free minutes · Overage: ₹15/extra minute · Cancel anytime
           </div>
         </>
       )}
