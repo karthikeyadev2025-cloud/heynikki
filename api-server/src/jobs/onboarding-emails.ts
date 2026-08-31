@@ -16,6 +16,10 @@
 import { createClient } from "@supabase/supabase-js";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
+
+// Set when Resend rejects for an unverified domain, so one run does not make
+// the same doomed call once per pending email.
+let domainBlocked = false;
 const FROM_EMAIL     = process.env.FROM_EMAIL     || "hello@heynikki.in";
 const SITE_URL       = process.env.SITE_URL       || "https://heynikki.in";
 
@@ -124,7 +128,19 @@ async function sendEmail(to: string, subject: string, body: string): Promise<str
     }),
   });
   if (!r.ok) {
-    console.error(`[onboarding] Resend ${r.status}:`, await r.text());
+    const body = await r.text();
+    console.error(`[onboarding] Resend ${r.status}:`, body);
+    // A domain that is not verified will reject EVERY send, for every tenant,
+    // on every fifteen-minute cycle. That is not a per-email failure and
+    // retrying it is pointless — say so once and stand down for this run.
+    if (/domain is not verified|not verified/i.test(body)) {
+      domainBlocked = true;
+      console.error(
+        "[onboarding] SENDING DOMAIN NOT VERIFIED — no onboarding email can go out. " +
+        "Add and verify the domain at resend.com/domains. Nothing is lost: the " +
+        "send-once record is only written after a successful send.",
+      );
+    }
     return null;
   }
   const j = await r.json() as { id?: string };
@@ -134,6 +150,7 @@ async function sendEmail(to: string, subject: string, body: string): Promise<str
 export async function runOnboardingEmails(): Promise<{ sent: number; skipped: number; errors: number }> {
   const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);
   let sent = 0, skipped = 0, errors = 0;
+  domainBlocked = false;
 
   for (const step of STEPS) {
     // Window: users created between (daysAfter+1) and daysAfter days ago.
@@ -165,7 +182,7 @@ export async function runOnboardingEmails(): Promise<{ sent: number; skipped: nu
       const body      = step.body({ firstName, dashboardUrl: `${SITE_URL}/dashboard` });
 
       const resendId = await sendEmail(u.email!, subject, body);
-      if (!resendId) { errors++; continue; }
+      if (!resendId) { errors++; if (domainBlocked) break; continue; }
 
       // Record AFTER successful send so a Resend outage gets retried tomorrow
       await sb.from("onboarding_emails_sent").insert({
