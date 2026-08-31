@@ -435,13 +435,11 @@ def _negotiation_block(policy: dict | None) -> str:
     """
     p = policy or {}
     if not p.get("enabled"):
-        return (
-            "\n[ON PRICE]\n"
-            "You may state prices you have been told and nothing else. If the "
-            "caller pushes for a discount, do not invent one and do not hint that "
-            "one exists: say warmly that the owner decides pricing, offer to note "
-            "their number for a callback, and move the conversation on.\n"
-        )
+        # One line, not a paragraph. Every character here is prefill on the
+        # caller's critical path and this is the case that applies to almost
+        # every business.
+        return ("\n[ON PRICE] State only prices you were given. If pushed for a "
+                "discount, say the owner decides pricing and offer a callback.\n")
 
     lines = [
         "\n[NEGOTIATING — what this business lets you agree to]",
@@ -492,12 +490,8 @@ def _knowledge_block(knowledge: list[str] | None) -> str:
     if len(facts) > len(kept):
         log.info(f"[knowledge] {len(facts)} facts, using first {len(kept)}")
     lines = "\n".join(f"- {f[:300]}" for f in kept)
-    return (
-        "\n[WHAT THIS BUSINESS HAS TAUGHT YOU]\n"
-        "These are the business's own words. Use them when they answer the\n"
-        "caller's question. Never invent a fact that is not here.\n"
-        f"{lines}\n"
-    )
+    return ("\n[THIS BUSINESS TOLD YOU]\n"
+            f"{lines}\n")
 
 # ── SHARED HTTP POOL for the caller's critical path ─────────────────
 # STT, Gemini and TTS each opened a fresh AsyncClient per request, paying a
@@ -1167,7 +1161,14 @@ class GeminiLLM:
                 # This does not make her verbose — brevity is enforced by
                 # the prompt, which is the right place for it. The token
                 # cap is a safety limit, not a style control.
-                "maxOutputTokens": 300,
+                # 300 let her answer "what do you do?" with 353 characters —
+                # nine and a half seconds of the caller listening, and 4.4
+                # seconds of synthesis before any of it started. The persona
+                # says one sentence; nothing enforced it. 150 is comfortably
+                # more than a real one-sentence Telugu reply needs (a booking
+                # confirmation measures ~40 tokens) and makes a monologue
+                # impossible rather than merely discouraged.
+                "maxOutputTokens": 150,
                 # 0.15 default; callers may pin it. The web product persona
                 # passes 0.0 so identical questions from different visitors
                 # produce identical replies — which is what lets the
@@ -1690,8 +1691,16 @@ class NikkiAgent:
                      if t.get("role") == "assistant"), "")
                 asked_name = bool(re.search(r"పేరు|name", last_bot or "", re.I))
                 words = (text or "").strip().split()
-                if asked_name and 1 <= len(words) <= 3 and not any(c.isdigit() for c in text):
-                    name = " ".join(words)
+                if asked_name and 1 <= len(words) <= 4 and not any(c.isdigit() for c in text):
+                    # Drop a leading pronoun or filler. A caller answering
+                    # "your name?" says "మీరు Karthikeya" or "నేను కార్తికేయ"
+                    # as often as the bare name, and the lead for a real call
+                    # was filed as "మీరు Karthikeya" — "you Karthikeya".
+                    while words and words[0].lower().strip(".,") in (
+                        "మీరు", "నేను", "నా", "అది", "ఇది", "my", "i", "am", "me", "this", "is", "it"):
+                        words = words[1:]
+                    if 1 <= len(words) <= 3:
+                        name = " ".join(words)
             if name:
                 name = self._NAME_TAIL.sub("", name).strip(" .,!?")
                 # Guard against capturing a refusal or a question back.
@@ -3737,6 +3746,16 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         score = max(0, min(100, int(d.get("score") or 0)))
         _VALID_STAGES = ("new", "contacted", "qualified", "won", "lost")
         stage = d.get("stage") if d.get("stage") in _VALID_STAGES else "contacted"
+        # A real call scored 85 — a hot lead — and was filed as "lost", which
+        # would have buried it under a follow-up list ordered by stage. The
+        # model judges tone and score separately and they can disagree; when
+        # they do, the score is the sturdier signal, so refuse the
+        # contradiction rather than storing it.
+        if stage == "lost" and score >= 60:
+            log.info(f"[lead] model said lost at score {score} — keeping it contacted")
+            stage = "contacted"
+        elif stage == "won" and score <= 30:
+            stage = "contacted"
 
         # The leads page renders a friendly label per intent, and the model was
         # free to invent the key — it wrote "service_inquiry" where the UI knows
