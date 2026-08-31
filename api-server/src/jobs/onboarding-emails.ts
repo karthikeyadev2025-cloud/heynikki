@@ -153,10 +153,25 @@ export async function runOnboardingEmails(): Promise<{ sent: number; skipped: nu
   domainBlocked = false;
 
   for (const step of STEPS) {
-    // Window: users created between (daysAfter+1) and daysAfter days ago.
-    // i.e. for daysAfter=3, users created 3-4 days ago (24h window).
+    // Window: users created between (daysAfter+1) and daysAfter days ago —
+    // a 24h band, so each step fires once on its day.
+    //
+    // The welcome is the exception, and it has to be. A 24h band means
+    // anyone who signed up while sending was broken never gets one at all:
+    // their day passed, and no later run looks back. That is exactly what
+    // happened here — the domain was unverified for two days, and a real
+    // customer's welcome was lost rather than delayed. Wrong claim on my
+    // part, and this is the correction. The welcome now reaches anyone
+    // confirmed in the last seven days who has not had it, exactly once,
+    // because onboarding_emails_sent still guarantees that.
+    const backfill = step.id === "welcome";
     const upper = new Date(Date.now() - step.daysAfter      * 86400000);
-    const lower = new Date(Date.now() - (step.daysAfter + 1) * 86400000);
+    // Seven days, not thirty. A welcome that arrives three weeks after
+    // someone signed up does not read as a welcome, it reads as a system
+    // that has just noticed them.
+    const lower = backfill
+      ? new Date(Date.now() - 7 * 86400000)
+      : new Date(Date.now() - (step.daysAfter + 1) * 86400000);
 
     // List users via Supabase Admin API
     const { data: usersList, error } = await sb.auth.admin.listUsers({
