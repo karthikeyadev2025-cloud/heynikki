@@ -1641,7 +1641,7 @@ class NikkiAgent:
     # Trailing politeness that is not part of the name.
     _NAME_TAIL = re.compile(r"\s*(?:గారు|అండి|అండీ|garu|andi)\s*$", re.I)
 
-    def _harvest_slots(self, text: str) -> None:
+    def _harvest_slots(self, text: str, from_caller: bool = True) -> None:
         """Pull durable facts out of a turn so they outlive the history window.
 
         This extracted ONLY the phone number, while claiming to preserve
@@ -1662,7 +1662,14 @@ class NikkiAgent:
                 self.slots["phone"] = m.group(0)
                 log.info(f"slot: phone={m.group(0)}")
 
-        if not self.slots.get("name"):
+        # A NAME may only come from the caller. Harvesting it from Nikki's own
+        # reply captured her words instead of theirs: when she said
+        # "సత్యసన గారు, మీ పేరు నోట్ చేసుకున్నానండి", the pattern matched
+        # పేరు followed by "నోట్ చేసుకున్నానండి" and filed *that* as the
+        # caller's name — which is what the lead for a real call now reads.
+        # The phone is different and the assistant side is genuinely useful
+        # there, because the model turns spoken digits into a real number.
+        if from_caller and not self.slots.get("name"):
             name = None
             m = self._NAME_RE.search(text or "")
             if m:
@@ -1794,7 +1801,7 @@ class NikkiAgent:
             log.info(f"LLM: {response}")
             # The model often normalises spoken digits ("ట్రిపుల్ ఎయిట్...")
             # into a real number in its reply, so harvest that side too.
-            self._harvest_slots(response)
+            self._harvest_slots(response, from_caller=False)
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
@@ -1864,7 +1871,7 @@ class NikkiAgent:
                         # loop this whole block exists to break.
                         self.history[-1]["content"] = response
                         self.transcript[-1]["content"] = response
-                        self._harvest_slots(response)
+                        self._harvest_slots(response, from_caller=False)
                     else:
                         log.warning("anti-loop: regenerate returned nothing — "
                                     "keeping the original reply")
