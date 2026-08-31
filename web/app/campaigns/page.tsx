@@ -11,7 +11,7 @@
  *
  * SECURITY NOTE -- why this talks to Supabase directly instead of the API:
  * the existing dashboard pages authenticate to api-server by sending
- * NEXT_PUBLIC_INTERNAL_SECRET from the browser. Anything prefixed
+ * a server secret from the browser. Anything prefixed
  * NEXT_PUBLIC_ is compiled into the client bundle, so that "secret" is
  * readable by anyone who views source -- meaning those endpoints are
  * effectively open. The outbound_* tables already have proper row-level

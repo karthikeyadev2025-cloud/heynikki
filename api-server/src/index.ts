@@ -557,6 +557,38 @@ async function sendViaMeta(to: string, message: string, senderId?: string): Prom
 // gets the trial shape: one number, one call at a time, and credits.
 const TRIAL_LIMITS = { minutes: 0, numbers: 1, seats: 0, concurrent: 1 };
 
+// ── WHAT A TIER ACTUALLY BUYS ────────────────────────────────
+// The plans table has carried max_voice_profiles, outbound_campaigns and
+// api_access since it was created, and NOTHING read them. So a Starter
+// tenant could run outbound campaigns and mint API keys — both sold as
+// Growth and Scale features — and the only thing separating the tiers in
+// practice was the number printed on the pricing page.
+//
+// planLimitsFor reads platform_config, which the admin Pricing panel does
+// NOT write; the panel edits the plans table. Two sources of truth for the
+// same question is how a limit ends up enforced in one place and ignored in
+// another, so feature gates read the table the operator actually edits.
+type PlanFeature = "outbound_campaigns" | "api_access";
+
+async function tenantPlanRow(tenantId: string): Promise<any | null> {
+  const { data: t } = await sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle();
+  const { data: p } = await sb.from("plans")
+    .select("id, display_name, outbound_campaigns, api_access, max_voice_profiles, max_phone_numbers")
+    .eq("id", String(t?.plan || "trial")).maybeSingle();
+  return p || null;
+}
+
+async function planAllows(tenantId: string, feature: PlanFeature): Promise<{ ok: boolean; msg: string }> {
+  const row = await tenantPlanRow(tenantId);
+  // A missing plan row must not silently grant a paid feature.
+  if (!row) return { ok: false, msg: "Your plan could not be read — contact us and we'll sort it." };
+  if (row[feature]) return { ok: true, msg: "" };
+  const need = feature === "outbound_campaigns"
+    ? "Outbound calling is on the Growth plan and above."
+    : "API access is on the Scale plan.";
+  return { ok: false, msg: `${need} You're on ${row.display_name || row.id}.` };
+}
+
 async function planLimitsFor(plan?: string | null) {
   const key = String(plan || "").toLowerCase();
   if (!["starter", "growth", "scale"].includes(key)) return { ...TRIAL_LIMITS, tier: "trial" };
@@ -3464,7 +3496,7 @@ import { mountCampaignImport } from "./campaign-import";
 // secret must not ship to one. Registering these first means the dashboard
 // reaches the JWT, tenant-scoped versions; the internal copies stay
 // available to anything server-side that still calls them.
-mountCampaignImport(app, sb, verifyJWT, getTenantId, audit);
+mountCampaignImport(app, sb, verifyJWT, getTenantId, audit, planAllows);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 mountAssetRoutes(app, verifyJWT, getTenantId);
@@ -3650,6 +3682,54 @@ app.get("/api/v1/usage",
 // POST /api/keys — issue a new key for a tenant
 // Body: { tenant_id, name, scopes?, expires_at? }
 // Returns { id, key } — the key plaintext is shown ONCE and never again.
+// ── API keys, for the customer ────────────────────────────────
+// The keys page posted to the internal route above with
+// NEXT_PUBLIC_INTERNAL_SECRET as the header — a server-to-server secret
+// compiled into browser JavaScript. It was never set, so the header was
+// empty, the request 401'd and the page has never worked. That is the lucky
+// outcome: had anyone set that variable to make the page work, every visitor
+// would have been handed the secret that authenticates internal endpoints.
+//
+// These take the tenant from the session, never from the body, and gate on
+// the plan — API access is sold as a Scale feature and was never checked.
+app.post("/api/keys/mine", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const gate = await planAllows(tenantId, "api_access");
+  if (!gate.ok) return res.status(402).json({ error: gate.msg });
+
+  const name = String(req.body?.name || "").trim();
+  if (name.length < 3) return res.status(400).json({ error: "Give the key a name (3+ characters)" });
+
+  const scopes = Array.isArray(req.body?.scopes)
+    ? req.body.scopes.filter((x: any) => typeof x === "string").slice(0, 12) : [];
+
+  const key      = generateApiKey("live");
+  const prefix   = key.slice(0, 12);
+  const key_hash = await bcrypt.hash(key, 10);
+  const { error } = await sb.from("api_keys").insert({
+    tenant_id: tenantId, name, prefix, key_hash, scopes,
+    created_by: req.user.id,
+  });
+  if (error) return res.status(500).json({ error: error.message });
+
+  await audit("api_key_created", { tenantId, actorId: req.user.id, metadata: { name, prefix } });
+  // The only time the full key is ever returned. It is stored hashed.
+  res.json({ ok: true, key, prefix });
+});
+
+app.post("/api/keys/mine/:id/revoke", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { error } = await sb.from("api_keys")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", req.params.id).eq("tenant_id", tenantId).is("revoked_at", null);
+  if (error) return res.status(500).json({ error: error.message });
+  await audit("api_key_revoked", { tenantId, actorId: req.user.id, metadata: { id: req.params.id } });
+  res.json({ ok: true });
+});
+
 app.post("/api/keys", verifyInternal, async (req, res) => {
   const { tenant_id, name, scopes = [], expires_at, created_by } = req.body;
   if (!tenant_id || !name) return res.status(400).json({ error: "tenant_id and name required" });

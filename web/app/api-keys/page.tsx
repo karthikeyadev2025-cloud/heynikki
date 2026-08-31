@@ -86,14 +86,17 @@ export default function ApiKeysPage() {
     }
 
     try {
-      const r = await fetch(`${API_URL}/api/keys`, {
+      // Session auth, not a shared secret. The old header shipped
+      // NEXT_PUBLIC_INTERNAL_SECRET — a server-to-server secret compiled into
+      // browser JavaScript — and was empty, so this never worked at all.
+      const { data: { session } } = await sb.auth.getSession();
+      const r = await fetch(`${API_URL}/api/keys/mine`, {
         method: "POST",
         headers: {
-          "Content-Type":      "application/json",
-          "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_SECRET || "",
+          "Content-Type":  "application/json",
+          Authorization:   `Bearer ${session?.access_token}`,
         },
         body: JSON.stringify({
-          tenant_id:  tenantId,
           name:       name.trim(),
           scopes:     chosenScopes,
           expires_at,
@@ -125,13 +128,13 @@ export default function ApiKeysPage() {
     const sb = createClient();
     const { data: user } = await sb.auth.getUser();
 
-    const r = await fetch(`${API_URL}/api/keys/${id}/revoke`, {
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(`${API_URL}/api/keys/mine/${id}/revoke`, {
       method: "POST",
       headers: {
-        "Content-Type":      "application/json",
-        "x-internal-secret": process.env.NEXT_PUBLIC_INTERNAL_SECRET || "",
+        "Content-Type": "application/json",
+        Authorization:  `Bearer ${session?.access_token}`,
       },
-      body: JSON.stringify({ revoked_by: user.user?.id }),
     });
     if (r.ok) {
       setKeys(ks => ks.map(k => k.id === id ? { ...k, revoked_at: new Date().toISOString() } : k));

@@ -103,6 +103,8 @@ export function mountCampaignImport(
   verifyJWT: (req: Request, res: Response, next: NextFunction) => void,
   getTenantId: (userId: string) => Promise<string | null>,
   audit: (action: string, meta: any) => Promise<void>,
+  planAllows: (tenantId: string, feature: "outbound_campaigns" | "api_access")
+    => Promise<{ ok: boolean; msg: string }>,
 ) {
   /** Campaign must exist AND belong to the caller's tenant. */
   async function ownCampaign(req: any, res: Response): Promise<any | null> {
@@ -123,6 +125,14 @@ export function mountCampaignImport(
     try {
       const c = await ownCampaign(req, res);
       if (!c) return;
+
+      // Outbound is a Growth-and-above feature and was never checked, so a
+      // Starter tenant could import and dial a whole list. Gated at BOTH
+      // doors: a campaign that cannot start must not be able to import
+      // either, or the customer builds a list they will never be allowed
+      // to call.
+      const gate = await planAllows(c.tenant_id, "outbound_campaigns");
+      if (!gate.ok) return res.status(402).json({ error: gate.msg });
 
       const { csv, rows: rawRows, consent_declared } = req.body || {};
       if (!consent_declared) {
@@ -367,6 +377,8 @@ export function mountCampaignImport(
   app.post("/api/campaigns/:id/start", verifyJWT, async (req: any, res) => {
     const c = await ownCampaign(req, res);
     if (!c) return;
+    const gate = await planAllows(c.tenant_id, "outbound_campaigns");
+    if (!gate.ok) return res.status(402).json({ error: gate.msg });
     if (c.status === "running") return res.status(400).json({ error: "Already running" });
     if (!c.consent_declared) {
       return res.status(400).json({
