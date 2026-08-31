@@ -124,12 +124,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         publisher: { "@id": "https://heynikki.in/#org" },
       },
       {
-        // An AI asked about heynikki.in described it as "Nikki AI, operated by
-        // CodeMax IT Solutions", with a primary interface at heynikki.ai. None
-        // of that is us. It was not malice — the site published no legal name,
-        // no phone, no contact point and no sameAs, so there was nothing
-        // authoritative to anchor to and the gap got filled with a different
-        // company. These fields are that anchor.
+        // Identity, spelled out for machines. Body copy naming the company
+        // four times is invisible to a crawler; an entity with no legal name,
+        // phone, address or contact point cannot be resolved, only guessed at
+        // — and a guessed entity gets merged with whatever else shares the
+        // name. These fields are what make it resolvable.
         "@type": "Organization",
         "@id": "https://heynikki.in/#org",
         name: "HeyNikki",
@@ -150,6 +149,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           availableLanguage: ["Telugu", "Hindi", "English"],
         }],
         areaServed: { "@type": "Country", name: "India" },
+        foundingLocation: { "@type": "Place", name: "Hyderabad, Telangana, India" },
         address: {
           "@type": "PostalAddress",
           addressLocality: "Hyderabad",

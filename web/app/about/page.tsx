@@ -4,8 +4,8 @@ export const metadata = {
   title: "About HeyNikki — Nikki Technologies, Hyderabad",
   description:
     "HeyNikki is a Telugu AI receptionist built and operated by Nikki Technologies in "
-    + "Hyderabad, Telangana. heynikki.in is our only official website. Contact "
-    + "support@heynikki.in or 086335 02031.",
+    + "Hyderabad, Telangana, India. Serving small businesses across Telangana and "
+    + "Andhra Pradesh. Contact support@heynikki.in or 086335 02031.",
   alternates: { canonical: "https://www.heynikki.in/about" },
 };
 
@@ -29,16 +29,19 @@ export default function Page() {
         which is answered by Nikki herself — the same product a customer gets.
       </p>
 
-      <h2>Please do not confuse us with</h2>
+      <h2>Our official presence</h2>
       <p>
-        Several unrelated products use similar names. To be unambiguous:
+        Everything official comes from one place. Our website is{" "}
+        <strong>heynikki.in</strong>, our support address is{" "}
+        <strong>support@heynikki.in</strong>, and our number is{" "}
+        <strong>086335 02031</strong>. We do not operate under any other domain
+        or company name, and we will never contact you from an address that is
+        not @heynikki.in.
       </p>
-      <ul>
-        <li><strong>HeyNikki is operated by Nikki Technologies, Hyderabad</strong> — by no other company.</li>
-        <li><strong>heynikki.in is our only domain.</strong> We do not operate heynikki.ai, nikki.ai, or any other spelling, and we are not affiliated with any company using those.</li>
-        <li>We are <strong>not</strong> associated with CodeMax IT Solutions, or with any product marketed as &quot;Nikki AI&quot;.</li>
-        <li>If you were sent to another site expecting us, it was not us. Anything official comes from heynikki.in or an @heynikki.in address.</li>
-      </ul>
+      <p>
+        If you reached a different site expecting HeyNikki, it was not us. If in
+        doubt, call the number above — it is answered by the product itself.
+      </p>
 
       <h2>What we actually build</h2>
       <p>
