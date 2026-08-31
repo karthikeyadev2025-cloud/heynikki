@@ -1,3 +1,10 @@
+-- drift:ignore — RETIRED 2026-08-30.
+-- This migration adds outbound_recipients.exotel_call_sid, which only the
+-- Exotel bridge ever read. That path was deleted along with the rest of the
+-- Exotel integration; the column was never applied to the live database and
+-- now never should be. Kept as history, excluded from the drift check so a
+-- real drift is not buried under a permanent known one.
+
 -- 010_outbound_call_sid.sql
 --
 -- Adds the column that makes outbound call dispatch actually correlate-

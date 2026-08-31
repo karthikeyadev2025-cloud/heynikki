@@ -19,8 +19,14 @@ const DIR = new global.URL("../supabase/", import.meta.url).pathname;
 const declared = new Map();   // "table.column" | "table:" -> migration file
 
 for (const f of readdirSync(DIR).filter(n => n.endsWith(".sql")).sort()) {
+  // A file may declare itself retired. Migrations are history and must not be
+  // edited, but an object from a path we have since removed will otherwise
+  // sit in this report forever — and a report that is never empty is a report
+  // nobody reads, which defeats the purpose of having one.
+  const body = readFileSync(DIR + f, "utf8");
+  if (/--\s*drift:ignore/i.test(body)) continue;
   let cur = null;
-  for (const raw of readFileSync(DIR + f, "utf8").split("\n")) {
+  for (const raw of body.split("\n")) {
     const l = raw.trim().toLowerCase().replace(/"/g, "");
     if (l.startsWith("--")) continue;
     const t = l.match(/^alter table (?:if exists )?(?:public\.)?([a-z_]+)/);
