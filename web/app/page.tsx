@@ -477,19 +477,19 @@ export default function Home() {
             {
               name: "Starter", price: "1,999", note: "per month",
               points: ["200 minutes included", "1 number", "2 calls at once",
-                       "Appointments, leads and recordings"],
+                       "Appointments, leads · recordings kept 3 months"],
             },
             {
               name: "Growth", price: "4,999", note: "per month",
               highlight: true, badge: "Most businesses start here",
-              points: ["600 minutes included", "3 numbers · 1 CRM seat", "5 calls at once",
+              points: ["600 minutes included", "3 numbers · recordings kept 1 year", "5 calls at once",
                        "Outbound campaigns and WhatsApp follow-up",
                        "Call quality scoring on every call"],
             },
             {
               name: "Scale", price: "9,999", note: "per month",
-              points: ["1,500 minutes included", "10 numbers · 5 CRM seats", "10 calls at once",
-                       "Everything in Growth", "Priority support"],
+              points: ["1,500 minutes included", "10 numbers · recordings kept 2 years", "15 calls at once",
+                       "API access and webhooks", "Priority support"],
             },
           ].map((p) => (
             <div key={p.name} style={{
