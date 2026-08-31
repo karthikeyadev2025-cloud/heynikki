@@ -3682,6 +3682,194 @@ app.get("/api/v1/usage",
 // POST /api/keys — issue a new key for a tenant
 // Body: { tenant_id, name, scopes?, expires_at? }
 // Returns { id, key } — the key plaintext is shown ONCE and never again.
+// ══════════════════════════════════════════════════════════════
+// TEAM
+//
+// 039 made roles mean something — only an owner changes the greeting, the
+// price floor, or spends money on a campaign. That rule was about a person
+// the business had no way to add: attaching anyone to a tenant needed a
+// super admin, so every account was one operator and the seats line had to
+// come off the pricing page.
+//
+// The invite link carries a token rather than an email claim, because email
+// is not proof of anything and the person accepting may sign up with a
+// different address than the one they were invited at.
+// ══════════════════════════════════════════════════════════════
+
+app.get("/api/team", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const [{ data: members }, { data: invites }, { data: tenant }] = await Promise.all([
+    sb.from("tenant_users").select("id, user_id, role, phone").eq("tenant_id", tenantId),
+    sb.from("tenant_invites")
+      .select("id, email, role, created_at, expires_at")
+      .eq("tenant_id", tenantId).is("accepted_at", null)
+      .order("created_at", { ascending: false }),
+    sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle(),
+  ]);
+
+  const { data: plan } = await sb.from("plans")
+    .select("max_seats, display_name").eq("id", String(tenant?.plan || "trial")).maybeSingle();
+
+  // Emails live in auth, not in tenant_users, so resolve them for display.
+  const withEmail = [];
+  for (const m of members || []) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${m.user_id}`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+    const u: any = r.ok ? await r.json() : {};
+    withEmail.push({ ...m, email: u?.email || "—", is_you: m.user_id === req.user.id });
+  }
+
+  res.json({
+    members: withEmail,
+    invites: invites || [],
+    seats_used: (members || []).length + (invites || []).length,
+    seats_total: plan?.max_seats ?? 1,
+    plan: plan?.display_name || tenant?.plan || "trial",
+    you_are_owner: (members || []).some((m: any) => m.user_id === req.user.id
+                     && ["owner", "super_admin"].includes(m.role)),
+  });
+});
+
+app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const { data: me } = await sb.from("tenant_users")
+    .select("role").eq("user_id", req.user.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!["owner", "super_admin"].includes(String(me?.role))) {
+    return res.status(403).json({ error: "Only the account owner can add people." });
+  }
+
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid email address" });
+  }
+  const role = ["member", "support"].includes(String(req.body?.role)) ? req.body.role : "member";
+
+  // Seats are counted as people PLUS outstanding invites, or a business
+  // could issue ten links against one seat and discover the cap only when
+  // the tenth person tried to accept.
+  const { data: t } = await sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle();
+  const { data: plan } = await sb.from("plans")
+    .select("max_seats, display_name").eq("id", String(t?.plan || "trial")).maybeSingle();
+  const [{ count: memberCount }, { count: inviteCount }] = await Promise.all([
+    sb.from("tenant_users").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId),
+    sb.from("tenant_invites").select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId).is("accepted_at", null),
+  ]);
+  const used = (memberCount || 0) + (inviteCount || 0);
+  const total = plan?.max_seats ?? 1;
+  if (used >= total) {
+    return res.status(402).json({
+      error: `Your ${plan?.display_name || t?.plan} plan includes ${total} `
+           + `${total === 1 ? "person" : "people"}. Upgrade to add more.`,
+    });
+  }
+
+  // Re-inviting the same address replaces the old link rather than leaving
+  // two working credentials for one seat.
+  await sb.from("tenant_invites").delete()
+    .eq("tenant_id", tenantId).eq("email", email).is("accepted_at", null);
+
+  const { data: inv, error } = await sb.from("tenant_invites")
+    .insert({ tenant_id: tenantId, email, role, invited_by: req.user.id })
+    .select("token, expires_at").single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  const link = `${process.env.APP_URL || "https://www.heynikki.in"}/signup?invite=${inv.token}`;
+  await audit("team_invited", { tenantId, actorId: req.user.id, metadata: { email, role } });
+
+  // Email if Resend is configured; either way return the link, because a
+  // WhatsApp forward is how this actually reaches a colleague in practice.
+  res.json({ ok: true, link, expires_at: inv.expires_at });
+});
+
+app.post("/api/team/accept", verifyJWT, async (req: any, res) => {
+  const token = String(req.body?.token || "").trim();
+  if (!token) return res.status(400).json({ error: "Missing invite token" });
+
+  const { data: inv } = await sb.from("tenant_invites")
+    .select("id, tenant_id, role, accepted_at, expires_at").eq("token", token).maybeSingle();
+  if (!inv)                       return res.status(404).json({ error: "This invite link is not valid." });
+  if (inv.accepted_at)            return res.status(409).json({ error: "This invite has already been used." });
+  if (new Date(inv.expires_at) < new Date()) {
+    return res.status(410).json({ error: "This invite has expired — ask for a new one." });
+  }
+
+  // Signing up created them their OWN tenant. Joining means leaving that
+  // one. The row is deleted and re-inserted rather than updated, because
+  // migration 035 pins tenant_id on update for anyone who is not a super
+  // admin — which is exactly the protection that should stop a person
+  // moving themselves between businesses.
+  const { data: existing } = await sb.from("tenant_users")
+    .select("id, tenant_id, role").eq("user_id", req.user.id);
+  for (const row of existing || []) {
+    if (row.tenant_id === inv.tenant_id) {
+      return res.status(409).json({ error: "You're already on this team." });
+    }
+  }
+
+  const solo = (existing || []).filter(r => r.role === "owner");
+  await sb.from("tenant_users").delete().eq("user_id", req.user.id);
+  const { error: insErr } = await sb.from("tenant_users")
+    .insert({ tenant_id: inv.tenant_id, user_id: req.user.id, role: inv.role });
+  if (insErr) return res.status(500).json({ error: insErr.message });
+
+  await sb.from("tenant_invites")
+    .update({ accepted_at: new Date().toISOString(), accepted_by: req.user.id })
+    .eq("id", inv.id);
+
+  // Clean up the empty shell they were given at signup — but only if it is
+  // genuinely empty. A tenant with calls or a profile belongs to somebody.
+  for (const row of solo) {
+    const [{ count: others }, { count: calls }] = await Promise.all([
+      sb.from("tenant_users").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
+      sb.from("calls").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
+    ]);
+    if (!others && !calls) await sb.from("tenants").delete().eq("id", row.tenant_id);
+  }
+
+  await audit("team_joined", { tenantId: inv.tenant_id, actorId: req.user.id, metadata: { role: inv.role } });
+  res.json({ ok: true, role: inv.role });
+});
+
+app.post("/api/team/:id/remove", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { data: me } = await sb.from("tenant_users")
+    .select("role").eq("user_id", req.user.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!["owner", "super_admin"].includes(String(me?.role))) {
+    return res.status(403).json({ error: "Only the account owner can remove people." });
+  }
+
+  const { data: target } = await sb.from("tenant_users")
+    .select("id, user_id, role").eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!target) return res.status(404).json({ error: "Not found" });
+  // An account with nobody who can change anything is an account that needs
+  // a support ticket to recover.
+  if (target.user_id === req.user.id) {
+    return res.status(409).json({ error: "You can't remove yourself." });
+  }
+  if (["owner", "super_admin"].includes(String(target.role))) {
+    return res.status(409).json({ error: "Transfer ownership before removing an owner." });
+  }
+
+  await sb.from("tenant_users").delete().eq("id", target.id);
+  await audit("team_removed", { tenantId, actorId: req.user.id, metadata: { removed: target.user_id } });
+  res.json({ ok: true });
+});
+
+app.post("/api/team/invite/:id/revoke", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { error } = await sb.from("tenant_invites")
+    .delete().eq("id", req.params.id).eq("tenant_id", tenantId).is("accepted_at", null);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // ── API keys, for the customer ────────────────────────────────
 // The keys page posted to the internal route above with
 // NEXT_PUBLIC_INTERNAL_SECRET as the header — a server-to-server secret

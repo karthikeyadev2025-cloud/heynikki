@@ -1,5 +1,6 @@
 // app/setup/page.tsx — Voice Profile Setup
 "use client";
+import TeamCard from "../../components/TeamCard";
 import { useState, useEffect, useRef, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
@@ -710,6 +711,8 @@ export default function SetupPage() {
           </div>
         )}
       </form>
+      <TeamCard />
+
 
       {/* Below the form on purpose. Wording the greeting is a refinement of
           an agent that already knows the business — putting it first would

@@ -38,6 +38,63 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   const [pathname, setPathname] = useState("/dashboard");
   const [sideOpen, setSideOpen] = useState(false);
 
+  // Redeem a team invite as soon as there is a session to redeem it with.
+
+  // Runs here rather than on one page because the invited person may land
+
+  // anywhere — the verification link, a pasted link while already signed
+
+  // in, or a second tab. Clearing the stored token and the query string
+
+  // means a refresh cannot try twice.
+
+  useEffect(() => {
+
+    let token: string | null = null;
+
+    try {
+
+      token = new URLSearchParams(window.location.search).get("invite")
+
+           || localStorage.getItem("nikki_invite");
+
+    } catch {}
+
+    if (!token) return;
+
+    (async () => {
+
+      const sb = createClient();
+
+      const { data: { session } } = await sb.auth.getSession();
+
+      if (!session) return;
+
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/team/accept`, {
+
+        method: "POST",
+
+        headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+
+        body: JSON.stringify({ token }),
+
+      }).catch(() => {});
+
+      try { localStorage.removeItem("nikki_invite"); } catch {}
+
+      const u = new URL(window.location.href);
+
+      u.searchParams.delete("invite");
+
+      window.history.replaceState({}, "", u.toString());
+
+      window.location.reload();
+
+    })();
+
+  }, []);
+
+
   useEffect(() => {
     setPathname(window.location.pathname);
     const sb = createClient();

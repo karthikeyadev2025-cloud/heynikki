@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
@@ -14,6 +14,16 @@ const J = {
 };
 
 export default function SignupPage() {
+  // An invited colleague arrives at /signup?invite=<token>. Their account is
+  // created the normal way — the signup trigger even gives them their own
+  // empty tenant — and the token is redeemed straight afterwards, which
+  // moves them onto the team that invited them and clears the shell.
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("invite");
+    if (t) setInviteToken(t);
+  }, []);
+
   const [businessName, setBusinessName] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -40,10 +50,15 @@ export default function SignupPage() {
         // single onboarding message — the first thing a customer would hear
         // from HeyNikki is a message their own caller triggered.
         data: { business_name: businessName, owner_phone: ownerPhone },
-        emailRedirectTo: window.location.origin + "/dashboard",
+        // The invite rides through the verification link, because there is
+        // no session to redeem it with until the address is confirmed.
+        // Stored locally too, in case they verify in a different tab.
+        emailRedirectTo: window.location.origin + "/dashboard"
+          + (inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : ""),
       },
     });
     if (err) { setError(err.message); setLoading(false); return; }
+    if (inviteToken) { try { localStorage.setItem("nikki_invite", inviteToken); } catch {} }
     setDone(true);
     setLoading(false);
   };
