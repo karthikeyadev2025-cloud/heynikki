@@ -13,7 +13,7 @@ import type { MetadataRoute } from "next";
  * changeFrequency and priority are hints Google largely ignores, but Bing
  * still reads them and they cost nothing to state honestly.
  */
-const BASE = "https://heynikki.in";
+const BASE = "https://www.heynikki.in";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();

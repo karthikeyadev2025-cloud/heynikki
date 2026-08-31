@@ -32,7 +32,10 @@ export default function robots(): MetadataRoute.Robots {
         ],
       },
     ],
-    sitemap: "https://heynikki.in/sitemap.xml",
-    host: "https://heynikki.in",
+    // www, matching the canonical and the host that actually serves.
+    // The apex 308-redirects here, so pointing a crawler at it costs a
+    // hop and muddies which host is the real one.
+    sitemap: "https://www.heynikki.in/sitemap.xml",
+    host: "https://www.heynikki.in",
   };
 }
