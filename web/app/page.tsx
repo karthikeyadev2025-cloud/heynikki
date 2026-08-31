@@ -601,6 +601,13 @@ export default function Home() {
 
         <p style={{ marginTop: 26, fontSize: 13.5, color: C.textDim, fontFamily: M, lineHeight: 1.6 }}>
           Questions we get asked and answer plainly:{" "}
+          {/* Internal links to the pages built to be found. A page no link
+              points at is a page a crawler reaches only through the sitemap,
+              which it treats as a suggestion rather than a structure. */}
+          <a href="/telugu-ai-receptionist" style={{ color: C.textMid, textDecoration: "none" }}>Telugu AI receptionist</a>
+          <a href="/ai-telecaller" style={{ color: C.textMid, textDecoration: "none" }}>AI telecaller</a>
+          <a href="/for/clinics" style={{ color: C.textMid, textDecoration: "none" }}>For clinics</a>
+          <a href="/for/real-estate" style={{ color: C.textMid, textDecoration: "none" }}>For real estate</a>
           <a href="/privacy" style={{ color: C.teal }}>what we store and for how long</a>.
         </p>
       </Section>
