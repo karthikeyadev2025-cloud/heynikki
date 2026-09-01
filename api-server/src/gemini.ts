@@ -26,7 +26,49 @@ export interface GenResult {
 const fail = (status: number, detail: string, timedOut = false): GenResult =>
   ({ ok: false, data: null, timedOut, status, detail });
 
-const MODEL = () => process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+export const GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite";
+
+// GEMINI_MODEL is an operator setting and any value not listed here is used
+// as given. These are refused because each is a CALLER-VISIBLE FAULT rather
+// than a preference: the "thinking" tiers bill reasoning tokens against
+// maxOutputTokens, so replies arrive cut off mid-word, and the retired ids
+// simply error. Measured against this account on 2026-09-01 — the table is
+// in voice-pipeline/main.py GeminiLLM.base_url. Keep the two in step.
+const GEMINI_REFUSED: Record<string, string> = {
+  "gemini-flash-latest":     "thinks before answering — replies truncated mid-word; 1.91s p50 TTFT vs 0.86s",
+  "gemini-3.5-flash":        "same truncation; 2.43s p50 TTFT",
+  "gemini-3.6-flash":        "same truncation; 2.01s p50 TTFT",
+  "gemini-3.7-flash":        "leaked prompt text into a reply and returned nothing on another turn",
+  "gemini-2.5-flash":        "retired — the API answers 'no longer supported'",
+  "gemini-2.5-flash-lite":   "retired",
+  "gemini-2.0-flash-exp":    "retired — 404",
+  "gemini-1.5-flash":        "retired",
+  "gemini-1.5-flash-latest": "retired",
+};
+
+let warnedModel = "";
+
+/** The model to call, with a known-broken GEMINI_MODEL refused. */
+export function resolveGeminiModel(): string {
+  const want = (process.env.GEMINI_MODEL || "").trim();
+  if (!want) return GEMINI_DEFAULT_MODEL;
+  const why = GEMINI_REFUSED[want];
+  if (why) {
+    // Once per distinct value: this is called per request in places, and a
+    // line on every turn would bury everything else in the log.
+    if (warnedModel !== want) {
+      warnedModel = want;
+      console.error(
+        `[gemini] GEMINI_MODEL=${want} REFUSED: ${why}. ` +
+        `Falling back to ${GEMINI_DEFAULT_MODEL}. ` +
+        `Unset or correct the environment variable to silence this.`);
+    }
+    return GEMINI_DEFAULT_MODEL;
+  }
+  return want;
+}
+
+const MODEL = () => resolveGeminiModel();
 
 export async function geminiGenerate(
   body: object,

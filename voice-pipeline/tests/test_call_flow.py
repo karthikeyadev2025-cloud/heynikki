@@ -20,7 +20,11 @@ Anything needing the network is marked `live` and skipped by default:
 import sys, os, asyncio, wave, io, struct
 import pytest
 
+# /app is where the container mounts the pipeline; the parent of tests/ is
+# where it lives in the repo. Both, so the suite runs under docker exec AND
+# under CI / a local checkout.
 sys.path.insert(0, "/app")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import main  # noqa: E402
 
 
@@ -119,6 +123,146 @@ def test_greeting_recognises_a_returning_caller():
     again = main._greeting_text(prof, {"previous_calls": 3})
     assert first != again, "a caller who rang before must not be greeted as new"
     assert "మళ్ళీ" in again
+
+
+# ── spoken Telugu: what the caller's EAR gets ─────────────────────────────
+# normalize_for_tts is the last thing between the model and bulbul. Every
+# case below was a real defect: raw numerals read aloud, a mobile number
+# said as one enormous number, and — worst — a wrong FACT, because the
+# AM/PM marker was matched by the regex but never captured, so the day part
+# was derived from a 12-hour number read as if it were 24-hour.
+
+def test_pm_times_are_not_spoken_as_morning():
+    # "9:00 PM" used to come out పొద్దున — telling a caller "morning" for
+    # nine at night, stated as confidently as any correct fact.
+    assert "రాత్రి" in main.normalize_for_tts("9:00 PM కి రండి")
+    assert "పొద్దున" not in main.normalize_for_tts("9:00 PM కి రండి")
+    # and 4:30 PM used to fall through every band to రాత్రి
+    assert "సాయంత్రం" in main.normalize_for_tts("టైం 4:30 PM")
+    # noon and midnight are the two the 12-hour conversion gets wrong if the
+    # h==12 special cases are dropped
+    assert "మధ్యాహ్నం" in main.normalize_for_tts("12:00 PM కి")
+    assert "రాత్రి" in main.normalize_for_tts("12:30 AM కి")
+
+
+def test_bare_times_still_read_as_before():
+    # No meridiem: unchanged behaviour, a 24-hour reading.
+    assert "పదిన్నర" in main.normalize_for_tts("రేపు 10:30 కి")
+
+
+def test_no_numerals_survive_to_tts():
+    for raw in ("రేపు 10:30 కి", "మీ నంబర్ 9848012345", "ఫీజు Rs 300"):
+        out = main.normalize_for_tts(raw)
+        assert not any(ch.isdigit() for ch in out), f"numeral reached TTS: {out}"
+
+
+def test_phone_numbers_are_spoken_digit_by_digit():
+    out = main.normalize_for_tts("మీ నంబర్ 9848012345")
+    assert "సున్నా" in out, "zero must be సున్నా, not a digit"
+    assert "," in out, "5-5 grouping needs a pause between the halves"
+
+
+def test_money_is_not_doubled():
+    # "మూడొందలు" already means three hundred; appending రూపాయలు produced
+    # "మూడొందలు రూపాయలు", which needs the genitive to be grammatical.
+    out = main.normalize_for_tts("ఫీజు Rs 300 అండి")
+    assert "మూడొందలు" in out
+    assert "మూడొందలు రూపాయలు" not in out
+
+
+def test_long_numbers_get_separators():
+    # bulbul's docs: >4 digits without separators may fail. The old rule
+    # needed SEVEN digits, so every five- and six-digit price slipped past.
+    assert "125,000" in main.normalize_for_tts("మొత్తం 125000 రూపాయలు")
+
+
+# ── the hold sentinel ─────────────────────────────────────────────────────
+# A caller who says "ఒక్క నిమిషం" wants silence. The model answers with the
+# bare token SILENT; if that ever reaches TTS she says the English word
+# "SILENT" at them, which is worse than the chatter it replaced.
+
+@pytest.mark.parametrize("said", ["SILENT", "silent", " SILENT ", "SILENT.", "**SILENT**"])
+def test_hold_sentinel_is_recognised(said):
+    assert main._is_hold_sentinel(said)
+
+
+@pytest.mark.parametrize("said", ["సరేనండి", "", "SILENT అండి", "ఒక్క నిమిషం ఆగండి"])
+def test_real_replies_are_not_mistaken_for_the_sentinel(said):
+    assert not main._is_hold_sentinel(said)
+
+
+# ── the persona ───────────────────────────────────────────────────────────
+
+def test_persona_carries_the_register_pack():
+    p = main.TELUGU_PHONE_PERSONA
+    assert "[EXAMPLES" in p, "few-shots encode register better than rules"
+    assert "SILENT" in p, "the hold sentinel must be taught, not assumed"
+    # The examples must stay fact-free: this persona is shared by every
+    # tenant, and a concrete price or opening hour here resurfaces in some
+    # other business's call as a confidently wrong fact.
+    start = p.index("[EXAMPLES")
+    # Just the examples block — the sections after it legitimately mention a
+    # "10-digit number".
+    nxt = p.find("\n\n[", start)
+    ex = p[start:nxt if nxt != -1 else len(p)]
+    assert not any(ch.isdigit() for ch in ex), f"no numbers in the shared examples: {ex}"
+
+
+def test_call_centre_phrase_is_banned_everywhere():
+    # Scoped to openers, the ban was obeyed literally: the newer models just
+    # moved the phrase to the END of the reply instead.
+    p = main.TELUGU_PHONE_PERSONA
+    i = p.index("మీకు ఎలా సహాయం చేయగలను")
+    assert "BANNED everywhere" in p[max(0, i - 200):i + 200]
+
+
+# ── the GEMINI_MODEL guard ────────────────────────────────────────────────
+# The env var lives in Railway, outranks the code default, and outlived the
+# model it named: production was pinned to gemini-flash-latest, which thinks
+# before answering and therefore returns replies cut off mid-word at our
+# 300-token budget. A caller-visible fault set by an env var should not
+# survive a deploy silently.
+
+def test_broken_models_are_refused(monkeypatch):
+    for bad in ("gemini-flash-latest", "gemini-3.5-flash", "gemini-3.6-flash",
+                "gemini-2.5-flash", "gemini-2.0-flash-exp"):
+        monkeypatch.setenv("GEMINI_MODEL", bad)
+        assert main.resolve_gemini_model() == main.GEMINI_DEFAULT_MODEL, bad
+
+
+def test_unset_uses_the_measured_default(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    assert main.resolve_gemini_model() == main.GEMINI_DEFAULT_MODEL
+
+
+def test_unknown_models_are_still_honoured(monkeypatch):
+    # The guard refuses a known-broken list, it does not whitelist. A model
+    # released after this code was written must still be settable without a
+    # deploy — otherwise the guard becomes the next thing blocking an upgrade.
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-9-flash-lite")
+    assert main.resolve_gemini_model() == "gemini-9-flash-lite"
+
+
+def test_the_refusal_is_logged_once_not_every_turn(monkeypatch, caplog=None):
+    # resolve_gemini_model() runs on every LLM call. Logging CRITICAL per
+    # caller utterance would bury the incidents that level exists for.
+    import logging as _logging
+    monkeypatch.setattr(main, "_gemini_warned_for", "")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-flash-latest")
+    seen = []
+    handler = _logging.Handler()
+    handler.emit = lambda rec: seen.append(rec) if rec.levelno >= _logging.CRITICAL else None
+    main.log.addHandler(handler)
+    try:
+        for _ in range(5):
+            main.resolve_gemini_model()
+    finally:
+        main.log.removeHandler(handler)
+    assert len(seen) == 1, f"expected one CRITICAL for five calls, got {len(seen)}"
+
+
+def test_the_chosen_model_passes_its_own_guard():
+    assert main.GEMINI_DEFAULT_MODEL not in main._GEMINI_REFUSED
 
 
 # ── live: needs the network ───────────────────────────────────────────────
