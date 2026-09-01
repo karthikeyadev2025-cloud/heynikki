@@ -26,7 +26,7 @@ export interface GenResult {
 const fail = (status: number, detail: string, timedOut = false): GenResult =>
   ({ ok: false, data: null, timedOut, status, detail });
 
-const MODEL = () => process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const MODEL = () => process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 export async function geminiGenerate(
   body: object,

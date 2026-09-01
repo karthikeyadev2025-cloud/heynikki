@@ -781,9 +781,16 @@ async function sendTemplateViaMeta(
   return { ok: false, error: `Meta template ${template}: ${body?.error?.message || `HTTP ${resp.status}`}` };
 }
 
+// voiceProfileId is nullable: a lead-capture ack and a manual reply have no
+// voice profile behind them, and callers already passed null/undefined for
+// those. It was typed as a required string, so those call sites were errors
+// hidden only by tsconfig's strict:false — one of them papered over with an
+// `as string` cast. It is used solely as a nullable DB column below.
 async function sendWhatsApp(to: string, message: string, tenantId: string,
-  voiceProfileId: string, messageType: string, callId?: string, apptId?: string,
-  businessName?: string, templateParams?: string[]) {
+  voiceProfileId: string | null | undefined, messageType: string,
+  callId?: string, apptId?: string,
+  // Also nullable: business_name comes straight off a DB row.
+  businessName?: string | null, templateParams?: string[]) {
   const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
   const tpl = WA_TEMPLATES[messageType];
   const sender = await resolveWaSender(tenantId);
@@ -1106,6 +1113,8 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
 
     // ── 2. Real LLM turn (pipeline owns session history) ─────────
     let reply = "";
+    let spokenReply = "";
+    let isHold = false;
     let bookingConfirmed = false;
     let bookingSummary   = "";
 
@@ -1127,6 +1136,12 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (!chatResp.ok) throw new Error(`pipeline chat ${chatResp.status}`);
       const chatData = await chatResp.json() as any;
       reply            = (chatData.response || "").trim();
+      // The pipeline normalises Telugu for the ear — times to పదిన్నర, mobile
+      // numbers digit by digit, prices to round Telugu forms, tenant names to
+      // their pronunciation map. Speak THAT and show `reply`. Falls back to
+      // `reply` so an older pipeline build still speaks, just unnormalised.
+      spokenReply      = (chatData.spoken_text || "").trim();
+      isHold           = !!chatData.hold;
       bookingConfirmed = !!chatData.booking_confirmed;
       bookingSummary   = chatData.booking_summary || "";
     } catch (e: any) {
@@ -1139,7 +1154,19 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       });
     }
 
+    // A hold request is answered with silence, exactly as it is on a phone
+    // call — so this must be checked BEFORE the empty-reply stand-in, which
+    // would otherwise turn "stay quiet" back into chatter.
+    if (isHold) {
+      return res.json({
+        transcript, reply: "", audio_base64: null, audio_mime: "audio/wav",
+        hold: true, booking_confirmed: false, booking_summary: "",
+        turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+      });
+    }
+
     if (!reply) reply = "Cheppandi andi, vintunnanu.";
+    if (!spokenReply) spokenReply = reply;
 
     // ── 3. Speak it (real Telugu neural TTS) ─────────────────────
     // Sarvam caps a single synthesis request; long replies get split
@@ -1167,10 +1194,10 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       // hears anything, and the transcript is already on screen carrying the
       // rest. One spoken sentence lands in ~1.2s and reads as responsiveness;
       // fourteen seconds of read-aloud reads as a screen reader.
-      const firstStop = reply.search(/[.!?।?]\s/);
+      const firstStop = spokenReply.search(/[.!?।?]\s/);
       const speakText = (firstStop > 20 && firstStop < 260)
-        ? reply.slice(0, firstStop + 1)
-        : (reply.length > 260 ? reply.slice(0, 260) : reply);
+        ? spokenReply.slice(0, firstStop + 1)
+        : (spokenReply.length > 260 ? spokenReply.slice(0, 260) : spokenReply);
 
       const cacheKey = `${ttsLang}|${speakText}`;
       const cached = webTtsGet(cacheKey);
@@ -5084,7 +5111,7 @@ app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) 
         const msg = `నమస్కారం${lead.name ? " " + lead.name : ""}! ${bn} గురించి ` +
           `మీ ఆసక్తికి ధన్యవాదాలు. మీరు అడిగిన details ఇక్కడ ఉన్నాయి. ` +
           `ఏవైనా సందేహాలుంటే ఇక్కడే reply చేయండి. 🙏`;
-        await sendWhatsApp(lead.phone, msg, tenantId, vp?.id as string,
+        await sendWhatsApp(lead.phone, msg, tenantId, vp?.id,
           "brochure", undefined, undefined, bn);
       }
     }
@@ -5288,7 +5315,8 @@ async function rememberSpokenFact(tenantId: string, answer: string): Promise<str
 async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
   const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
-  const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   const payload = {
     system_instruction: {

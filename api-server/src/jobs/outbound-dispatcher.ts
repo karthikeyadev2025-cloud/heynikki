@@ -6,7 +6,7 @@
  *   2. Pulls up to (max_concurrent - in_progress_count) recipients
  *      that are status='queued' or status='pending' (pending => scrub first)
  *   3. For 'pending': runs DND scrubbing, marks blocked_dnd or queued
- *   4. For 'queued': dispatches to the voice-pipeline /outbound endpoint
+ *   4. For 'queued': originates through FreeSWITCH over ESL (fsl.originateOutbound)
  *   5. Marks completed when all recipients are settled
  *
  * Run as a systemd service (nikki-outbound-dispatcher.service) — single

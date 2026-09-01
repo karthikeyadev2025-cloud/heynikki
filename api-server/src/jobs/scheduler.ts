@@ -273,7 +273,7 @@ export async function runDailySummaries(): Promise<number> {
  */
 const QUALITY_BATCH   = 15;    // per run — keeps one tick well short of a minute
 const MIN_TURNS       = 4;     // below this there is no conversation to score
-const CHAT_MODEL      = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const CHAT_MODEL      = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 type Turn = { role?: string; content?: string };
 

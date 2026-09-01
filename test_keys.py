@@ -11,6 +11,7 @@ import os
 
 SARVAM_KEY = "sk_xrjuvesm_PzpTtnRStrGBdnP7aoIWbRQI"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "REPLACE_ME")  # Set this after getting from AI Studio
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.5-flash-lite"  # same default as the services
 LIVEKIT_KEY = "APIKXJGadU3uAqS"
 SUPABASE_URL = "https://wnawozdmmxuziucavngw.supabase.co"
 SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduYXdvemRtbXh1eml1Y2F2bmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0OTQ2MzEsImV4cCI6MjA5ODA3MDYzMX0.x9MqSJzRRkZqM1KadQg1m3C64xyRcUu_bkc5uXEZfns"
@@ -98,7 +99,7 @@ async def test_gemini():
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_KEY}",
                 json={"contents": [{"parts": [{"text": "Say 'నమస్కారం' only, nothing else."}]}],
                       "generationConfig": {"maxOutputTokens": 20}}
             )

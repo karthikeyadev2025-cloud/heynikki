@@ -52,7 +52,8 @@ try:
 except ImportError:
     _HAS_CRYPTO = False
 
-from fastapi import FastAPI, HTTPException, Header, Request, Response
+from fastapi import (FastAPI, HTTPException, Header, Request, Response,
+                     WebSocket as _WebSocket)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -284,8 +285,9 @@ TELUGU_PHONE_PERSONA = (
     "\n- Say these in English, as everyone does: appointment, doctor, time,"
     " number, WhatsApp, confirm, booking, address, cancel."
     "\n- Spoken Telugu, never officialese: చెప్పండి, not తెలియజేయండి. Open with"
-    " \'చెప్పండి\' — never \'మీకు ఎలా సహాయం చేయగలను\', which is how a call centre"
-    " script sounds, not a person."
+    " \'చెప్పండి\'. \'మీకు ఎలా సహాయం చేయగలను\' is BANNED everywhere — not as an"
+    " opener, not tacked onto the end of an answer, not anywhere. It is how a"
+    " call centre script sounds, not a person."
     "\n- గారు after a name, in Telugu script. Use their name now and then,"
     " not in every sentence."
     "\n- At most two options aloud. No lists, markdown, emoji or asterisks."
@@ -325,6 +327,33 @@ TELUGU_PHONE_PERSONA = (
     " goodbye."
     "\n- Times in words with the day part: పొద్దున పదిన్నరకి, సాయంత్రం నాలుగున్నరకి"
     " — never \'10:30\' or \'PM\'."
+    "\n- A phone number is read digit by digit in two groups, సున్నా for zero,"
+    " డబల్ for a repeated digit — never as one long number."
+    "\n- Money in round Telugu forms: రెండొందలు, మూడొందలు, వెయ్యి — not \'Rs 300\'."
+    "\n- Dates as \'సెప్టెంబర్ రెండో తారీఖు\'."
+    "\n- Match their energy. Someone in a hurry gets a shorter answer and no"
+    " opener; someone confused or elderly gets one fact per turn, confirmed"
+    " before the next."
+    # Retell's NO_RESPONSE_NEEDED pattern. Without this she answers "ఒక్క
+    # నిమిషం" with chatter, which is the one thing a caller asking for
+    # silence does not want. Handled in on_speech and browser_chat: the
+    # sentinel is swallowed, never synthesised.
+    "\n\n[IF THEY ASK YOU TO HOLD]"
+    "\nఆగండి / ఒక్క నిమిషం / hold on — reply with exactly SILENT and nothing"
+    " else. It is a signal to stop talking, not a word to say aloud."
+    # Vapi's guidance: three transcripts encode register more reliably than
+    # any number of abstract rules. Happy path, deflection, recovery.
+    # These teach REGISTER only. They deliberately state no hours, prices or
+    # business name: this persona is shared by every tenant, and a few-shot
+    # is copied readily enough that a concrete fact here would surface in
+    # some other business's call as a confidently wrong one.
+    "\n\n[EXAMPLES — how she sounds, not scripts to reuse verbatim]"
+    "\nC: డాక్టర్ గారు రేపు ఉంటారా? అపాయింట్మెంట్ కావాలి."
+    "\nN: అవునండి, ఉంటారండి. మీ పేరు చెప్తారా సర్?"
+    "\nC: దీనికి ఎంత అవుతుందండి?"
+    "\nN: అదండీ... డాక్టర్ గారు ఒకసారి చూశాకే కరెక్ట్‌గా చెప్పగలరండి. అపాయింట్‌మెంట్ పెట్టమంటారా?"
+    "\nC: హలో, సురేష్ ట్రావెల్స్ ఆ?"
+    "\nN: కాదండి, నంబర్ తప్పు పడినట్టుందండి."
     "\n\n[WHAT YOU ARE COLLECTING]"
     "\nHelping comes first; this is secondary. Their name and a 10-digit"
     " number, plus whatever this business needs. Take everything they"
@@ -1041,14 +1070,40 @@ class GeminiLLM:
         self.api_key = GEMINI_KEY
         self.base_url = (
             # GEMINI_MODEL holds a MODEL NAME, not a URL — compose the URL
-            # from it. gemini-2.0-flash-exp is retired and 404s;
-            # gemini-2.5-flash / -flash-lite are closed to new keys. Of what
-            # this key can reach, gemini-3.6-flash is a reasoning model and
-            # took 17.6s for one short reply (measured) — unusable mid-call,
-            # and it rejects thinkingBudget:0 so thinking cannot be disabled.
-            # gemini-flash-lite-latest answers the same prompt in 0.85s.
+            # from it.
+            #
+            # Re-measured 2026-09-01 against this key, streaming, with the
+            # real persona and this payload (300 tokens, no thinkingConfig),
+            # 20 Telugu turns per model. TTFT p50 / p95:
+            #
+            #   gemini-3.5-flash-lite      0.86s / 1.04s   <- chosen
+            #   gemini-3.5-flash-lite   0.86s / 1.13s
+            #   gemini-3.1-flash-lite      1.04s / 1.56s
+            #   gemini-flash-latest        1.91s / 2.44s   truncates (below)
+            #   gemini-3.5-flash           2.43s / 2.83s   truncates (below)
+            #   gemini-3.6-flash           2.01s / 2.52s   truncates (below)
+            #
+            # 3.5-flash-lite ties on p50 and wins the tail, which is the
+            # number that matters — variance is what reads as robotic, not
+            # the median. It also held register better: flash-lite-latest
+            # emitted "అరటిపండులా మాట్లాడటం లేదండి" (…like a banana) on a
+            # confused-caller turn, and the 3.1 tier still drifts into the
+            # banned "మీకు ఎలా సహాయం చేయగలను".
+            #
+            # Do NOT "upgrade" to a full flash tier. They think before
+            # answering, thinking tokens are billed against maxOutputTokens,
+            # and at our 300 they burn the budget and return a reply cut off
+            # mid-word — the exact broken-model symptom the 300 was raised to
+            # fix. They are also 2-3x slower to first token.
+            #
+            # Corrections to what this comment used to say, both verified
+            # against the live API: gemini-2.5-flash is not "closed to new
+            # keys", it is retired outright ("no longer supported"); and
+            # thinkingBudget:0 is rejected by flash-lite-latest and
+            # 3.5-flash-lite too, not only by 3.6-flash. We send no
+            # thinkingConfig at all, so that rejection never fires here.
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{os.getenv('GEMINI_MODEL') or 'gemini-flash-lite-latest'}"
+            f"{os.getenv('GEMINI_MODEL') or 'gemini-3.5-flash-lite'}"
             ":generateContent"
         )
 
@@ -2157,48 +2212,19 @@ class SpeechRequest(BaseModel):
     did_number: str
     caller_number: str
 
-class OutboundDispatchRequest(BaseModel):
-    tenant_id: str
-    voice_profile_id: Optional[str] = None
-    to_number: str
-    script: Optional[str] = None
-    recipient_id: str
-
-@app.post("/outbound")
-async def handle_outbound_dispatch(req: OutboundDispatchRequest,
-                                    x_internal_secret: str = Header(None)):
-    """Places one outbound call and connects it to the same Voicebot
-    Applet flow inbound calls use. This is the endpoint
-    api-server/src/jobs/outbound-dispatcher.ts has always called — it
-    simply didn't exist on this side yet, so every dispatch attempt was
-    failing at the network layer before ever reaching Exotel.
-
-    Used by BOTH campaign dispatch (recipient_id -> a campaign row) and
-    instant lead-capture dispatch (recipient_id -> an is_instant row) —
-    the request shape and this handler don't need to know which.
-
-    Genuinely still blocked until Exotel enables outbound on the account
-    and EXOTEL_OUTBOUND_APP_ID is set — see app/exotel/outbound.py
-    config_status(). Until then this returns a clear 503 explaining
-    exactly what's missing, rather than a confusing generic failure.
-    """
-    if x_internal_secret != INTERNAL_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    status = ob.config_status()
-    if not status["ready"]:
-        missing = [k for k, v in status["fields"].items() if not v]
-        raise HTTPException(status_code=503,
-            detail=f"Outbound calling not configured yet. Missing: {', '.join(missing)}")
-
-    result = await ob.place_outbound_call(req.to_number)
-
-    if result["success"]:
-        await ob.mark_recipient_dispatched(req.recipient_id, result["call_sid"])
-        return {"call_id": result["call_sid"]}
-    else:
-        await ob.mark_recipient_failed(req.recipient_id, result["error"] or "unknown")
-        raise HTTPException(status_code=502, detail=result["error"] or "dispatch failed")
+# ── /outbound is GONE ────────────────────────────────────────────────────
+# It was the Exotel-era dispatch endpoint and could never have served a
+# request: it called ob.config_status(), ob.place_outbound_call(),
+# ob.mark_recipient_dispatched() and ob.mark_recipient_failed(), but `ob`
+# (app/exotel/outbound.py) was deleted with the rest of the Exotel bridge
+# and was never imported here. Every call raised NameError -> 500.
+#
+# Nothing called it. Outbound origination moved to the API server, which
+# goes straight to FreeSWITCH over ESL: jobs/outbound-dispatcher.ts
+# dispatchCall() -> fsl.originateOutbound() (esl.ts), landing on the
+# camp_ / onb_ extensions in infra/freeswitch/conf/dialplan/heynikki.xml.
+# Its docstring claiming outbound-dispatcher.ts "has always called" this
+# endpoint stopped being true when that move happened.
 
 
 class RecordingPurgeRequest(BaseModel):
@@ -2373,6 +2399,19 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE,
 )
 
+# The [IF THEY ASK YOU TO HOLD] sentinel. A caller who says "ఒక్క నిమిషం"
+# wants the line to go quiet, and answering that with chatter is the one
+# response they explicitly did not ask for. The model is told to emit the
+# bare token; both the phone path and the website path swallow it here
+# rather than synthesising the literal word "SILENT" at the caller.
+# Tolerant of the punctuation and stray casing models wrap sentinels in.
+_SILENT_RE = re.compile(r"^\W*silent\W*$", re.I)
+
+
+def _is_hold_sentinel(text: str) -> bool:
+    return bool(text) and bool(_SILENT_RE.match(text.strip()))
+
+
 def _clean_for_speech(text: str) -> str:
     """
     Strip anything a TTS engine would vocalise as junk.
@@ -2520,11 +2559,42 @@ async def browser_chat(req: BrowserChatRequest):
         if not response_text:
             response_text = "మీ appointment confirm అయింది. ధన్యవాదాలు!"
 
+    # A visitor on the website can ask her to hold exactly like a caller can,
+    # and the sentinel must not be read out as the literal word "SILENT".
+    if _is_hold_sentinel(response_text):
+        # `hold` is explicit rather than implied by an empty response: the API
+        # server substitutes a stand-in line for an empty reply, which would
+        # turn "stay quiet" back into chatter.
+        return {"response": "", "spoken_text": "", "hold": True,
+                "audio_b64": None, "booking_confirmed": False,
+                "booking_summary": "", "intent": agent.intent,
+                "turn": len(agent.history) // 2}
+
     # Belt-and-braces cleanup before this reaches a text-to-speech engine.
     # The prompt forbids emoji and markdown, but models drift, and every
     # stray asterisk or bullet gets pronounced out loud as literal noise —
     # which is precisely the "reading a document" sound we're removing.
     response_text = _clean_for_speech(response_text)
+
+    # The spoken form of the reply, always computed — never only when this
+    # endpoint synthesises. The website's real audio is made by the API
+    # server, which calls this with tts:false and then sends `response`
+    # straight to bulbul; returning `spoken_text` is what lets that path
+    # speak the same normalised Telugu the phone line speaks, without a
+    # second Telugu number-words implementation in TypeScript drifting
+    # against this one.
+    #
+    # This path used to hand raw model output to TTS while the phone path ran
+    # it through normalize_for_tts first, so the website said "10:30", read a
+    # ten-digit mobile as one long number, and pronounced the business name
+    # however the model happened to spell it — the three defects the phone
+    # path had already fixed.
+    #
+    # `response` stays the READABLE form: it is rendered as a chat bubble on
+    # the page, and digit-by-digit phone numbers are right for the ear and
+    # wrong for the eye.
+    spoken_text = normalize_for_tts(
+        response_text, (profile or {}).get("pronunciation_map"))
 
     # Optional TTS via Sarvam (for richer voice experience)
     audio_b64 = None
@@ -2534,7 +2604,7 @@ async def browser_chat(req: BrowserChatRequest):
             # 22050, not the telephony default: this plays through a laptop or a
             # handset speaker, not down a narrowband trunk. At 8k it is thin and
             # metallic — it reads as eerie rather than as a person.
-            audio_bytes = await tts.synthesize(response_text, agent.voice, 22050)
+            audio_bytes = await tts.synthesize(spoken_text, agent.voice, 22050)
             import base64 as _b64
             audio_b64 = _b64.b64encode(audio_bytes).decode() if audio_bytes else None
         except Exception as e:
@@ -2542,6 +2612,7 @@ async def browser_chat(req: BrowserChatRequest):
 
     return {
         "response": response_text,
+        "spoken_text": spoken_text,
         "audio_b64": audio_b64,
         "booking_confirmed": booking_confirmed,
         "booking_summary": booking_summary,
@@ -2834,7 +2905,7 @@ async def test_llm(req: LLMTestRequest):
         return {
             "response": response,
             # Label only — llm.generate() decides the real model.
-            "model": os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest"),
+            "model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
             "user_message": req.user_message,
         }
     except Exception as e:
@@ -3067,15 +3138,22 @@ if __name__ == "__main__":
 
 
 # ─── Website voice widget ─────────────────────────────────
-# The carrier bridge is gone; the website widget it shared a file with is not.
-from app.widget import handle_widget_ws
-from fastapi import WebSocket as _WebSocket
-
-
-
-@app.websocket("/ws/widget")
-async def widget_ws(ws: _WebSocket):
-    await handle_widget_ws(ws)
+# NOTE: the `WebSocket as _WebSocket` import that used to sit in this block
+# moved to the fastapi import at the top of the file — freeswitch_ws below
+# annotates its socket with it, so deleting it here would have failed at
+# import time and taken down every phone call, not just the widget.
+#
+# /ws/widget is GONE, along with handle_widget_ws. It could never have
+# served a request: the handler referenced twelve names that do not exist
+# in app/widget.py (Session, SYSTEM_PROMPT, DEFAULT_VOICE, _handle_utterance,
+# GEMINI_KEY, SARVAM_KEY, cb, io, wave, PIPE_SR, MAX_HISTORY_TURNS,
+# WebSocketDisconnect) — leftovers from app/exotel/bridge.py, which the
+# widget was lifted out of without its dependencies. Any browser reaching
+# it got a NameError on the first audio frame.
+#
+# Nothing referenced it: no route in web/ or super-admin/ connects to
+# /ws/widget. The website's live voice path is the API server's
+# /api/public/voice-turn, which calls /api/v1/browser/chat below.
 
 
 # ════════════════════════════════════════════════════════════════
@@ -3452,6 +3530,15 @@ def _spoken_phone(m: "re.Match") -> str:
 
 def _spoken_time(m: "re.Match") -> str:
     h, mi = int(m.group(1)), int(m.group(2))
+    # Group 3 is the AM/PM marker, and it has to be READ, not just matched.
+    # It used to be a non-capturing group, so "4:30 PM" reached this line as
+    # h=4 and fell through every daytime band to రాత్రి — and "9:00 PM"
+    # became పొద్దున, telling a caller "morning" for nine at night.
+    mer = (m.group(3) or "").upper()
+    if mer == "P" and h != 12:
+        h += 12
+    elif mer == "A" and h == 12:
+        h = 0
     h12 = h % 12 or 12
     part = "పొద్దున" if 5 <= h < 12 else "మధ్యాహ్నం" if 12 <= h < 16 \
         else "సాయంత్రం" if 16 <= h < 20 else "రాత్రి"
@@ -3480,7 +3567,7 @@ def _spoken_rupees(m: "re.Match") -> str:
     n = int(m.group(1).replace(",", ""))
     special = {100: "వంద", 200: "రెండొందలు", 300: "మూడొందలు", 400: "నాలుగొందలు",
                500: "ఐదొందలు", 1000: "వెయ్యి", 2000: "రెండు వేలు", 5000: "ఐదు వేలు"}
-    if n in special: return special[n] + " రూపాయలు"
+    if n in special: return special[n]
     if n % 1000 == 0 and n < 100000:
         return f"{_TE_HOUR.get(n // 1000, str(n // 1000))} వేల రూపాయలు"
     if n % 500 == 0 and 1000 < n < 10000:
@@ -3502,11 +3589,13 @@ def normalize_for_tts(text: str, pmap: dict | None = None) -> str:
             if k and isinstance(v, str) and v:
                 t = t.replace(k, v)
     t = re.sub(r"\b[6-9]\d{9}\b", _spoken_phone, t)   # mobile numbers first (longest)
-    t = re.sub(r"\b(\d{1,2}):(\d{2})\s*(?:AM|PM|am|pm)?\b", _spoken_time, t)
+    t = re.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([APap])\.?[Mm]\.?)?\b", _spoken_time, t)
     t = re.sub(r"(?:Rs\.?|₹)\s*([\d,]+)", _spoken_rupees, t)
     # Commas into any surviving long number so bulbul does not choke
-    # (its docs: >4 digits without separators may fail).
-    t = re.sub(r"\b(\d)(\d{3})(\d{3,})\b", r"\1,\2,\3", t)
+    # (its docs: >4 digits without separators may fail). This used to require
+    # seven digits to match, which let every five- and six-digit number — the
+    # common case for a price — through untouched.
+    t = re.sub(r"\b\d{5,}\b", lambda m: f"{int(m.group()):,}", t)
     # Collapse a case marker doubled by substitution ("పదిన్నర కి కి").
     t = re.sub(r"(కి|కు|లో)\s+\1\b", r"\1", t)
     return t
@@ -3634,7 +3723,7 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         f"TRANSCRIPT:\n{dialogue}"
     )
     try:
-        model = os.getenv("GEMINI_MODEL") or "gemini-flash-lite-latest"
+        model = os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"
         async with httpx.AsyncClient(timeout=20.0) as c:
             r = await c.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}",
@@ -3962,6 +4051,12 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         clause = {"text": None, "until": 0.0, "task": None}
 
         def _on_first_clause(prefix: str) -> None:
+            # A hold sentinel must never reach TTS, and it arrives here first:
+            # the streaming fast path would speak the literal word "SILENT"
+            # to the caller a full second before the guard below ever runs.
+            if _is_hold_sentinel(prefix):
+                log.info(f"[b2] hold sentinel in first clause — staying quiet")
+                return
             log.info(f"[b2] first clause ({len(prefix)} chars) -> TTS early: {prefix[:60]!r}")
             clause["text"] = prefix
             # NOT cancelled here. Text arriving is not speech starting — the
@@ -3993,6 +4088,11 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         if not filler_task.done():
             filler_task.cancel()
         if not reply_text:
+            return
+        if _is_hold_sentinel(reply_text):
+            # Caller asked for a moment. Say nothing; the silent-caller
+            # re-engagement timer is what brings her back if they go quiet.
+            log.info(f"[FS] {fs_uuid}: caller asked to hold — no reply spoken")
             return
         # The log showed STT and an LLM reply landing AFTER "Call ended" —
         # work billed against a channel nobody is on any more.
@@ -4143,11 +4243,17 @@ async def _save_onboarding_draft(tenant_id: str, agent, db) -> None:
         for t in agent.history
     )[:12000]
 
-    raw = await gemini_generate(
+    # agent.llm, not gemini_generate. gemini_generate lives in
+    # app/../gemini_client.py and was never imported here, so this line raised
+    # NameError on EVERY onboarding call — swallowed by the caller's except,
+    # which is why the draft silently never appeared. The agent already holds
+    # a configured GeminiLLM, so it is also the one place the model name,
+    # auth header and circuit breaker stay consistent.
+    raw = await agent.llm.generate(
         "Return only JSON. Extract nothing that was not said.",
         [{"role": "user", "content": ONBOARDING_EXTRACT.format(transcript=transcript)}],
     )
-    # gemini_generate returns prose; the model is asked for JSON but a stray
+    # generate() returns prose; the model is asked for JSON but a stray
     # code fence would make json.loads fail and lose the whole interview.
     text = raw.strip()
     if text.startswith("```"):

@@ -28,7 +28,7 @@ const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_
   { auth: { persistSession: false } });
 
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 // Deliberately short. These are leaflets and photos, not video, and an
 // unbounded upload endpoint on a service with a service-role key is a

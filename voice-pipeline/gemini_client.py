@@ -1,6 +1,16 @@
-"""
-Gemini client updated for AQ. Auth key format (post June 19 2026)
-AQ. keys use Bearer token auth, not ?key= query param
+"""DEAD MODULE — nothing imports it. Kept only because CI compiles it.
+
+Its one caller, main.py's _save_onboarding_draft, now goes through
+agent.llm (a configured GeminiLLM) instead, so the model name, auth header
+and circuit breaker stay in one place.
+
+Two things in here are WRONG and must not be copied. The Bearer-auth claim
+below is false: verified against the live API on 2026-09-01, an AQ. key
+sent as `Authorization: Bearer` returns 401 API_KEY_SERVICE_BLOCKED, while
+`?key=` and `x-goog-api-key` both return 200. main.py:1188 documents the
+same finding and uses x-goog-api-key for both key formats. The model
+fallback chain is also unverified against the measured numbers in
+main.py's GeminiLLM.
 """
 import os
 import httpx
@@ -15,10 +25,15 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 def _is_auth_key(key: str) -> bool:
     return key.startswith("AQ.") or key.startswith("IQ.") or key.startswith("EQ.")
 
+# Reachable and measured (see main.py GeminiLLM for the full table).
+# gemini-flash-latest and gemini-3.6-flash are deliberately NOT fallbacks:
+# both think before answering, and thinking tokens come out of
+# maxOutputTokens, so at a small budget they return replies cut off
+# mid-word.
 MODELS = [
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
+    os.environ.get("GEMINI_MODEL") or "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
 ]
 
 async def gemini_generate(system_prompt: str, history: list[dict], api_key: str = "") -> str:

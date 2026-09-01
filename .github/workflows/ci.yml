@@ -14,7 +14,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [dashboard, web, super-admin, api-server]
+        # `dashboard` was removed from the repo but left in this matrix, so
+        # that job failed on every run (no dashboard/package-lock.json to
+        # cache, no working directory to build in). A permanently-red job
+        # trains everyone to ignore the red.
+        app: [web, super-admin, api-server]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,17 +59,35 @@ jobs:
         working-directory: voice-pipeline
         run: python -m compileall -q main.py gemini_client.py scripts/
 
-      - name: Import check (no API keys needed)
+      # These are the SIX names main.py actually reads with os.environ[...] at
+      # module level. This step used to set SUPABASE_KEY (main.py wants
+      # SUPABASE_SERVICE_KEY) and no R2 vars at all, so it raised KeyError on
+      # every run and the job was never really import-checking anything —
+      # which is how several NameErrors reached main and stayed there.
+      # The LIVEKIT_* vars went with the LiveKit removal on 2026-07-25.
+      - name: Import check (no real API keys needed)
         working-directory: voice-pipeline
         env:
-          SUPABASE_URL:    "https://placeholder.supabase.co"
-          SUPABASE_KEY:    "placeholder"
-          SARVAM_API_KEY:  "placeholder"
-          GEMINI_API_KEY:  "placeholder"
-          LIVEKIT_URL:     "wss://placeholder"
-          LIVEKIT_API_KEY: "placeholder"
-          LIVEKIT_API_SECRET: "placeholder"
+          SUPABASE_URL:          "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_KEY:  "placeholder"
+          SARVAM_API_KEY:        "placeholder"
+          GEMINI_API_KEY:        "placeholder"
+          R2_ACCESS_KEY_ID:      "placeholder"
+          R2_SECRET_ACCESS_KEY:  "placeholder"
         run: python -c "import main; print('OK: main.py imports cleanly')"
+
+      # The offline half of the call-flow suite. Everything needing the
+      # network is marked `live` and excluded, so this needs no real keys.
+      - name: Call-flow tests
+        working-directory: voice-pipeline
+        env:
+          SUPABASE_URL:          "https://placeholder.supabase.co"
+          SUPABASE_SERVICE_KEY:  "placeholder"
+          SARVAM_API_KEY:        "placeholder"
+          GEMINI_API_KEY:        "placeholder"
+          R2_ACCESS_KEY_ID:      "placeholder"
+          R2_SECRET_ACCESS_KEY:  "placeholder"
+        run: python -m pytest tests -q -m "not live"
 
   # ─── Quick secret scan ───
   secrets:
