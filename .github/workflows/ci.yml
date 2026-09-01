@@ -74,7 +74,15 @@ jobs:
           GEMINI_API_KEY:        "placeholder"
           R2_ACCESS_KEY_ID:      "placeholder"
           R2_SECRET_ACCESS_KEY:  "placeholder"
-        run: python -c "import main; print('OK: main.py imports cleanly')"
+        # Block scalar, NOT a plain one. A plain YAML scalar may not contain
+        # ": " (colon-space), and this command has one inside print('OK: ...').
+        # That single character sequence made the whole workflow file
+        # unparseable, so every run since it was added finished as "failure"
+        # with ZERO jobs — nothing was ever built, typechecked, imported or
+        # tested. A CI that fails before it starts looks identical to a CI
+        # that ran and found a problem, which is why it went unnoticed.
+        run: |
+          python -c "import main; print('OK: main.py imports cleanly')"
 
       # The offline half of the call-flow suite. Everything needing the
       # network is marked `live` and excluded, so this needs no real keys.
