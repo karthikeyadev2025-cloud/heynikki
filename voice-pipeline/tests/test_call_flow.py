@@ -243,6 +243,24 @@ def test_unknown_models_are_still_honoured(monkeypatch):
     assert main.resolve_gemini_model() == "gemini-9-flash-lite"
 
 
+def test_the_refusal_is_logged_once_not_every_turn(monkeypatch, caplog=None):
+    # resolve_gemini_model() runs on every LLM call. Logging CRITICAL per
+    # caller utterance would bury the incidents that level exists for.
+    import logging as _logging
+    monkeypatch.setattr(main, "_gemini_warned_for", "")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-flash-latest")
+    seen = []
+    handler = _logging.Handler()
+    handler.emit = lambda rec: seen.append(rec) if rec.levelno >= _logging.CRITICAL else None
+    main.log.addHandler(handler)
+    try:
+        for _ in range(5):
+            main.resolve_gemini_model()
+    finally:
+        main.log.removeHandler(handler)
+    assert len(seen) == 1, f"expected one CRITICAL for five calls, got {len(seen)}"
+
+
 def test_the_chosen_model_passes_its_own_guard():
     assert main.GEMINI_DEFAULT_MODEL not in main._GEMINI_REFUSED
 

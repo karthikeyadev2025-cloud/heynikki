@@ -107,6 +107,9 @@ _GEMINI_REFUSED = {
 }
 
 
+_gemini_warned_for: str = ""
+
+
 def resolve_gemini_model() -> str:
     """The model to call, with a known-broken GEMINI_MODEL refused."""
     want = (os.getenv("GEMINI_MODEL") or "").strip()
@@ -114,11 +117,18 @@ def resolve_gemini_model() -> str:
         return GEMINI_DEFAULT_MODEL
     why = _GEMINI_REFUSED.get(want)
     if why:
-        log.critical(
-            f"GEMINI_MODEL={want} REFUSED: {why}. "
-            f"Falling back to {GEMINI_DEFAULT_MODEL}. "
-            f"Unset or correct the environment variable to silence this."
-        )
+        # Once per distinct value, not once per turn. This is called on every
+        # LLM call, and a CRITICAL line per caller utterance would bury the
+        # actual incidents this log level exists for — the misconfiguration
+        # is one fact about the deployment, not news on every turn.
+        global _gemini_warned_for
+        if _gemini_warned_for != want:
+            _gemini_warned_for = want
+            log.critical(
+                f"GEMINI_MODEL={want} REFUSED: {why}. "
+                f"Falling back to {GEMINI_DEFAULT_MODEL}. "
+                f"Unset or correct the environment variable to silence this."
+            )
         return GEMINI_DEFAULT_MODEL
     return want
 
