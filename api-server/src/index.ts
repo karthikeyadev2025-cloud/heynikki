@@ -1189,15 +1189,38 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     const ttsLang = hasTelugu ? "te-IN" : hasDevanagari ? "hi-IN" : "en-IN";
 
     try {
-      // Speak the FIRST SENTENCE; show the full text. Synthesis time scales
-      // with audio length — a 200-char reply costs ~3.5s before the visitor
-      // hears anything, and the transcript is already on screen carrying the
-      // rest. One spoken sentence lands in ~1.2s and reads as responsiveness;
-      // fourteen seconds of read-aloud reads as a screen reader.
-      const firstStop = spokenReply.search(/[.!?।?]\s/);
-      const speakText = (firstStop > 20 && firstStop < 260)
-        ? spokenReply.slice(0, firstStop + 1)
-        : (spokenReply.length > 260 ? spokenReply.slice(0, 260) : spokenReply);
+      // Speak the WHOLE reply.
+      //
+      // This used to speak only the FIRST SENTENCE and leave the rest as
+      // on-screen text, to save synthesis time. What that actually dropped
+      // was the question. The persona asks for "one sentence, a second only
+      // if it is a question", so a reply is typically a statement plus the
+      // question that moves the conversation on — and it was reliably the
+      // question that went unvoiced:
+      //
+      //   spoken:  సరేనండి, రేపటికి అపాయింట్‌మెంట్ బుక్ చేద్దాం.
+      //   dropped: మీ పేరు మరియు ఫోన్ నంబర్ చెప్తారా?
+      //
+      // A visitor who is listening rather than reading hears Nikki stop
+      // dead and then wait for an answer to a question she never asked.
+      // Half a second of extra synthesis is cheaper than that.
+      //
+      // The length bound stays, but it cuts on a BOUNDARY. A fixed slice at
+      // 260 split a Telugu grapheme in testing — "వీటిపై" became "వ" plus an
+      // orphaned vowel sign "ీ" — and that got much easier to hit once
+      // spoken_text started expanding digits into words ("9848012345" is ten
+      // characters as text and about sixty as speech).
+      const MAX_SPEAK = 600;   // bulbul accepts 2500; this is a sanity bound
+      let speakText = spokenReply;
+      if (speakText.length > MAX_SPEAK) {
+        const head = speakText.slice(0, MAX_SPEAK);
+        // Prefer the last sentence end; fall back to the last space. Never
+        // mid-word, and never mid-grapheme.
+        const lastStop = Math.max(head.lastIndexOf(". "), head.lastIndexOf("। "),
+                                  head.lastIndexOf("? "), head.lastIndexOf("! "));
+        const cut = lastStop > 100 ? lastStop + 1 : head.lastIndexOf(" ");
+        speakText = (cut > 0 ? head.slice(0, cut) : head).trim();
+      }
 
       const cacheKey = `${ttsLang}|${speakText}`;
       const cached = webTtsGet(cacheKey);
