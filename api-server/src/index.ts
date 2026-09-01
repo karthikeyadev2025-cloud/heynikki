@@ -3613,7 +3613,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 // ═══════════════════════════════════════════════════════════
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
-import { geminiGenerate } from "./gemini.js";
+import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
 
@@ -5315,7 +5315,7 @@ async function rememberSpokenFact(tenantId: string, answer: string): Promise<str
 async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
   const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
-  const geminiModel = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+  const geminiModel = resolveGeminiModel();
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   const payload = {

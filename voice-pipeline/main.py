@@ -79,6 +79,49 @@ API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nikki")
 
+
+GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite"
+
+# GEMINI_MODEL is an operator setting and any value not listed here is used
+# as given. These specific ones are refused because each produces a
+# CALLER-VISIBLE FAULT rather than a slower or costlier preference, and a
+# deployment that sets one is not expressing a trade-off, it is broken:
+#
+#   - the "thinking" tiers bill reasoning tokens against maxOutputTokens, so
+#     at our 300 the visible reply arrives cut off mid-word;
+#   - the retired ids simply error, which costs the caller the whole turn.
+#
+# All measured against this account on 2026-09-01 (see GeminiLLM.base_url).
+# Refusing loudly beats a production line quietly answering in half
+# sentences because an env var outlived the model it named.
+_GEMINI_REFUSED = {
+    "gemini-flash-latest":      "thinks before answering — replies arrive truncated mid-word; 1.91s p50 TTFT vs 0.86s",
+    "gemini-3.5-flash":         "same truncation; 2.43s p50 TTFT",
+    "gemini-3.6-flash":         "same truncation; 2.01s p50 TTFT",
+    "gemini-3.7-flash":         "leaked prompt text into a reply and returned nothing on another turn",
+    "gemini-2.5-flash":         "retired — the API answers 'no longer supported'",
+    "gemini-2.5-flash-lite":    "retired",
+    "gemini-2.0-flash-exp":     "retired — 404",
+    "gemini-1.5-flash":         "retired",
+    "gemini-1.5-flash-latest":  "retired",
+}
+
+
+def resolve_gemini_model() -> str:
+    """The model to call, with a known-broken GEMINI_MODEL refused."""
+    want = (os.getenv("GEMINI_MODEL") or "").strip()
+    if not want:
+        return GEMINI_DEFAULT_MODEL
+    why = _GEMINI_REFUSED.get(want)
+    if why:
+        log.critical(
+            f"GEMINI_MODEL={want} REFUSED: {why}. "
+            f"Falling back to {GEMINI_DEFAULT_MODEL}. "
+            f"Unset or correct the environment variable to silence this."
+        )
+        return GEMINI_DEFAULT_MODEL
+    return want
+
 # Also log to a file on a mounted volume. Docker keeps container logs inside
 # the container, so `docker compose up -d` after a rebuild DESTROYS them —
 # twice now a real call's transcript was lost to a deploy minutes later,
@@ -1077,7 +1120,7 @@ class GeminiLLM:
             # 20 Telugu turns per model. TTFT p50 / p95:
             #
             #   gemini-3.5-flash-lite      0.86s / 1.04s   <- chosen
-            #   gemini-3.5-flash-lite   0.86s / 1.13s
+            #   gemini-flash-lite-latest   0.86s / 1.13s
             #   gemini-3.1-flash-lite      1.04s / 1.56s
             #   gemini-flash-latest        1.91s / 2.44s   truncates (below)
             #   gemini-3.5-flash           2.43s / 2.83s   truncates (below)
@@ -1103,7 +1146,7 @@ class GeminiLLM:
             # 3.5-flash-lite too, not only by 3.6-flash. We send no
             # thinkingConfig at all, so that rejection never fires here.
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{os.getenv('GEMINI_MODEL') or 'gemini-3.5-flash-lite'}"
+            f"{resolve_gemini_model()}"
             ":generateContent"
         )
 
@@ -2905,7 +2948,7 @@ async def test_llm(req: LLMTestRequest):
         return {
             "response": response,
             # Label only — llm.generate() decides the real model.
-            "model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+            "model": resolve_gemini_model(),
             "user_message": req.user_message,
         }
     except Exception as e:
@@ -3723,7 +3766,7 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         f"TRANSCRIPT:\n{dialogue}"
     )
     try:
-        model = os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"
+        model = resolve_gemini_model()
         async with httpx.AsyncClient(timeout=20.0) as c:
             r = await c.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}",

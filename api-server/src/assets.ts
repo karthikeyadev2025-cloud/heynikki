@@ -19,7 +19,7 @@
 // instruction: applying "Mon-Sat 9-9" silently would let a stale PDF
 // change when a business answers its phone.
 // ────────────────────────────────────────────────────────────────
-import { geminiGenerate } from "./gemini.js";
+import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import type { Express, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
@@ -28,7 +28,7 @@ const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_
   { auth: { persistSession: false } });
 
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+const GEMINI_MODEL = resolveGeminiModel();
 
 // Deliberately short. These are leaflets and photos, not video, and an
 // unbounded upload endpoint on a service with a service-role key is a

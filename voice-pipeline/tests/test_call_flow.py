@@ -216,6 +216,37 @@ def test_call_centre_phrase_is_banned_everywhere():
     assert "BANNED everywhere" in p[max(0, i - 200):i + 200]
 
 
+# ── the GEMINI_MODEL guard ────────────────────────────────────────────────
+# The env var lives in Railway, outranks the code default, and outlived the
+# model it named: production was pinned to gemini-flash-latest, which thinks
+# before answering and therefore returns replies cut off mid-word at our
+# 300-token budget. A caller-visible fault set by an env var should not
+# survive a deploy silently.
+
+def test_broken_models_are_refused(monkeypatch):
+    for bad in ("gemini-flash-latest", "gemini-3.5-flash", "gemini-3.6-flash",
+                "gemini-2.5-flash", "gemini-2.0-flash-exp"):
+        monkeypatch.setenv("GEMINI_MODEL", bad)
+        assert main.resolve_gemini_model() == main.GEMINI_DEFAULT_MODEL, bad
+
+
+def test_unset_uses_the_measured_default(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    assert main.resolve_gemini_model() == main.GEMINI_DEFAULT_MODEL
+
+
+def test_unknown_models_are_still_honoured(monkeypatch):
+    # The guard refuses a known-broken list, it does not whitelist. A model
+    # released after this code was written must still be settable without a
+    # deploy — otherwise the guard becomes the next thing blocking an upgrade.
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-9-flash-lite")
+    assert main.resolve_gemini_model() == "gemini-9-flash-lite"
+
+
+def test_the_chosen_model_passes_its_own_guard():
+    assert main.GEMINI_DEFAULT_MODEL not in main._GEMINI_REFUSED
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():

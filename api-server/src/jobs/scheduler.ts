@@ -36,6 +36,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
+import { resolveGeminiModel } from "../gemini.js";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -273,7 +274,7 @@ export async function runDailySummaries(): Promise<number> {
  */
 const QUALITY_BATCH   = 15;    // per run — keeps one tick well short of a minute
 const MIN_TURNS       = 4;     // below this there is no conversation to score
-const CHAT_MODEL      = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+const CHAT_MODEL      = resolveGeminiModel();
 
 type Turn = { role?: string; content?: string };
 
