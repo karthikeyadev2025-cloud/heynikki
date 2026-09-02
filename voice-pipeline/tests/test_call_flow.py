@@ -323,6 +323,61 @@ def test_persona_forbids_talking_about_a_system():
     assert "system or" in p and "software" in p
 
 
+# ── per-tenant language ───────────────────────────────────────────────────
+# MUSKAN CLINIC is in Uttar Dinajpur, West Bengal, and was answered in
+# Telugu. The model knew: it opened call d3b61bf3 with "নమస్కారం", a Bengali
+# ন on a Telugu word, which bulbul cannot say.
+
+def test_language_defaults_to_telugu_before_the_migration():
+    # The column does not exist yet on a live DB, so every profile arrives
+    # without the key. Nothing may change until it does.
+    assert main._tenant_lang({}) == "te-IN"
+    assert main._tenant_lang(None) == "te-IN"
+    assert main._tenant_lang({"language": ""}) == "te-IN"
+
+
+def test_unknown_language_falls_back_rather_than_breaking_a_call():
+    assert main._tenant_lang({"language": "fr-FR"}) == "te-IN"
+
+
+def test_telugu_keeps_the_researched_register_pack():
+    assert main._persona_for("te-IN") is main.TELUGU_PHONE_PERSONA
+
+
+def test_other_languages_do_not_get_the_telugu_pack():
+    # Serving Telugu honorifics and Telugu number words to a Bengali caller
+    # is worse than the neutral persona, not better.
+    for lang in ("bn-IN", "hi-IN", "en-IN"):
+        p = main._persona_for(lang)
+        assert p is not main.TELUGU_PHONE_PERSONA
+        assert main.LANG_NAMES[lang] in p
+        assert "గారు" not in p, f"{lang} must not carry Telugu honorifics"
+
+
+def test_greeting_is_in_the_tenants_language():
+    # The greeting is spoken verbatim and never passes through the model, so
+    # a Telugu string would reach a Bengali voice unchanged.
+    prof = {"business_name": "MUSKAN CLINIC"}
+    assert "নমস্কার" in main._greeting_text({**prof, "language": "bn-IN"}, {})
+    assert "नमस्ते"  in main._greeting_text({**prof, "language": "hi-IN"}, {})
+    assert "Hello"   in main._greeting_text({**prof, "language": "en-IN"}, {})
+    assert "హలో"     in main._greeting_text(prof, {})
+
+
+def test_telugu_number_words_never_reach_another_language():
+    # normalize_for_tts writes పదిన్నర / మూడొందలు / సున్నా. Splicing those into
+    # a Bengali sentence produces something no speaker can parse.
+    tel = main.normalize_for_tts("రేపు 10:30 కి, ఫీజు Rs 300", lang="te-IN")
+    assert "పదిన్నర" in tel and "మూడొందలు" in tel
+    ben = main.normalize_for_tts("কাল 10:30 এ, ফি Rs 300", lang="bn-IN")
+    assert "పదిన్నర" not in ben and "మూడొందలు" not in ben
+
+
+def test_long_numbers_still_get_separators_in_every_language():
+    for lang in ("te-IN", "bn-IN", "hi-IN", "en-IN"):
+        assert "125,000" in main.normalize_for_tts("total 125000", lang=lang)
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():

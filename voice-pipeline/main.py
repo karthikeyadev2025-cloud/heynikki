@@ -437,6 +437,83 @@ TELUGU_PHONE_PERSONA = (
 )
 
 
+LANG_NAMES = {"te-IN": "Telugu", "hi-IN": "Hindi",
+              "bn-IN": "Bengali", "en-IN": "Indian English"}
+
+
+def _neutral_persona(lang: str) -> str:
+    """The behaviour rules, without the Telugu register pack.
+
+    Deliberately NOT a translation of TELUGU_PHONE_PERSONA. That document is
+    a register pack — honorific particles, banned officialese, spoken number
+    forms, three sample dialogues — built from research into how Telugu
+    receptionists actually speak. Machine-translating it into Bengali would
+    produce confident nonsense about a language nobody here has tested, and
+    the failure mode would be a tenant's callers hearing subtly wrong
+    politeness for months.
+
+    So this carries only what is language-independent — length, honesty,
+    not repeating, not inventing, the hold sentinel — and asks the model to
+    be a natural receptionist in the target language. It is a floor, not a
+    match for the Telugu one. Any language that gets real volume deserves
+    its own pack written the same way Telugu's was.
+    """
+    name = LANG_NAMES.get(lang, "the caller's language")
+    return (
+        f"\n\n[HOW YOU SPEAK]"
+        f"\nThis is a live phone call and everything you write is spoken"
+        f" aloud. Speak {name}, the way a receptionist at this business"
+        f" actually speaks it — not the way a form reads."
+        f"\n- One sentence. A second only if it is a question."
+        f"\n- Lead with the answer, then ask."
+        f"\n- React to what they said before you ask anything."
+        f"\n- Use the polite register and the honorifics a receptionist would"
+        f" use with a stranger on the phone. English loan words that people"
+        f" genuinely use — appointment, doctor, time, number, WhatsApp,"
+        f" confirm, booking, address, cancel — stay in English."
+        f"\n- Follow the caller if they switch language; answer in whatever"
+        f" they used."
+        f"\n- Say times, prices and phone numbers as WORDS, never as digits,"
+        f" and give a time its part of day."
+        f"\n- At most two options aloud. No lists, markdown, emoji or asterisks."
+        "\n\n[WHAT YOU KNOW FOR CERTAIN]"
+        "\nThe business name, working hours, open days and services below are"
+        " FACTS. State them plainly, never say you do not know them. If a day"
+        " is not in the open days the business is shut that day: say so and"
+        " offer the next open one. Today's date is below — work out what"
+        " 'tomorrow' is before agreeing to it. Write the business name exactly"
+        " as given."
+        "\n\n[WHAT YOU NEVER DO]"
+        "\n- Never invent a price, a doctor's availability, or any fact NOT"
+        " listed below. Say you will find out, and offer a callback."
+        "\n- Never ask for the same thing twice in a row."
+        "\n- Never send a reply they have already heard."
+        "\n- Never claim to be a person. Asked outright, say you are an"
+        " assistant, and carry on."
+        "\n- Never promise to SEND something this system cannot send. You can:"
+        " book an appointment, send a WhatsApp confirmation of one, send the"
+        " brochure, take a callback, and pass a caller to a person. You CANNOT"
+        " send a location pin, a photo, a map, a document, a prescription, a"
+        " price list or an email — and do not offer to send them 'on WhatsApp'"
+        " either. Refuse plainly, the way a receptionist would, and never in"
+        " terms of a system or software."
+        "\n- Asked for the address: read it out from the facts below if it is"
+        " there. Never say you will send it yourself."
+        "\n\n[IF THEY ASK YOU TO HOLD]"
+        "\nIf they ask you to wait or hold on, reply with exactly SILENT and"
+        " nothing else. It is a signal to stop talking, not a word to say."
+        "\n\n[WHAT YOU ARE COLLECTING]"
+        "\nHelping comes first; this is secondary. Their name and a 10-digit"
+        " number, plus whatever this business needs. Take everything they"
+        " volunteer at once and never ask for it again."
+    )
+
+
+def _persona_for(lang: str) -> str:
+    """Telugu gets the researched register pack; everything else the floor."""
+    return TELUGU_PHONE_PERSONA if lang == "te-IN" else _neutral_persona(lang)
+
+
 _PRICING_CACHE: dict = {"at": 0.0, "text": ""}
 
 
@@ -496,6 +573,25 @@ async def _refresh_pricing() -> None:
 # IST, read the same "రేపు" as the 4th and wrote slot_date 2026-09-04. She
 # said one date out loud and booked another, then WhatsApped the second one.
 # A patient arrives on the wrong day and the clinic is not expecting them.
+# ── Tenant language ───────────────────────────────────────────────────────
+# MUSKAN CLINIC is in Uttar Dinajpur, West Bengal. Its patients were being
+# answered in Telugu, because TELUGU_PHONE_PERSONA was applied to every
+# tenant unconditionally and te-IN was hardcoded into both STT and TTS. The
+# model knew: on call d3b61bf3 it opened with "নమస్కారం" — a Bengali ন welded
+# onto a Telugu word, which bulbul cannot say.
+#
+# Defaults to te-IN, and reads the column defensively, so this ships safely
+# BEFORE supabase/041_tenant_language.sql is applied: until the column
+# exists every profile simply has no `language` key and nothing changes.
+LANG_DEFAULT = "te-IN"
+SUPPORTED_LANGS = {"te-IN", "hi-IN", "bn-IN", "en-IN"}
+
+
+def _tenant_lang(profile: dict | None) -> str:
+    lang = ((profile or {}).get("language") or "").strip()
+    return lang if lang in SUPPORTED_LANGS else LANG_DEFAULT
+
+
 def _now_ist() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
@@ -535,7 +631,7 @@ Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
 Today: {now} ({weekday})
 {_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}
-""" + TELUGU_PHONE_PERSONA + _PRICING_CACHE.get("text", "")
+""" + _persona_for(_tenant_lang(profile)) + _PRICING_CACHE.get("text", "")
 
 
 def _negotiation_block(policy: dict | None) -> str:
@@ -632,10 +728,11 @@ _TTS_VENDOR: str = "sarvam"   # which vendor last spoke; /health shows it
 
 # ── SARVAM STT ───────────────────────────────────────────
 class SarvamSTT:
-    """Sarvam Saaras V3 STT — Telugu Tanglish optimised."""
+    """Sarvam Saaras V3 STT. Language comes from the tenant, not a constant."""
 
-    def __init__(self):
+    def __init__(self, lang: str = LANG_DEFAULT):
         self.api_key = SARVAM_KEY
+        self.lang = lang
         self.base_url = "https://api.sarvam.ai/speech-to-text"
 
     async def transcribe(self, audio_bytes: bytes) -> str:
@@ -652,7 +749,7 @@ class SarvamSTT:
                     # the OTHER failure — with "unknown", short fragments
                     # came back transcribed as Hindi, Punjabi and Kannada in
                     # one synthetic call, a per-segment language lottery.
-                    "language_code": "te-IN",
+                    "language_code": self.lang,
                     "mode": "codemix",
                     "with_timestamps": "false",
                 },
@@ -734,13 +831,19 @@ class SarvamSTT:
 # back to SarvamSTT.transcribe with the buffered utterance. A streaming
 # outage must never cost a caller their call.
 class SarvamStreamingSTT:
-    URL = ("wss://api.sarvam.ai/speech-to-text/ws"
-           "?model=saaras:v3&language_code=te-IN&mode=codemix&sample_rate=8000"
-           "&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=false")
+    # Built per instance, not as a class attribute: the language is the
+    # tenant's, and a class attribute is evaluated once at import with no
+    # tenant in scope.
+    @staticmethod
+    def _url(lang: str) -> str:
+        return ("wss://api.sarvam.ai/speech-to-text/ws"
+                f"?model=saaras:v3&language_code={lang}&mode=codemix&sample_rate=8000"
+                "&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=false")
 
     _FLUSH = object()          # queue sentinel: flush ordered after prior audio
 
-    def __init__(self):
+    def __init__(self, lang: str = LANG_DEFAULT):
+        self.lang = lang
         self._ws = None
         self._segments: list = []
         self._recv_task = None
@@ -759,7 +862,7 @@ class SarvamStreamingSTT:
             log.info("[sttws] connecting...")
             self._ws = await asyncio.wait_for(
                 websockets.connect(
-                    self.URL,
+                    self._url(self.lang),
                     additional_headers={"Api-Subscription-Key": SARVAM_KEY},
                     max_size=2 ** 22,
                 ),
@@ -883,8 +986,9 @@ _SarvamTTS_LAST: dict = {"ms": 0.0}
 class SarvamTTS:
     """Sarvam Bulbul V3 TTS — 8kHz telephony, Mulaw output."""
 
-    def __init__(self):
+    def __init__(self, lang: str = LANG_DEFAULT):
         self.api_key = SARVAM_KEY
+        self.lang = lang
 
     _CACHE_DIR = "/tmp/recordings/ttscache"
     _CACHE_MAX = 400          # ~400 short clips, tmpfs-friendly
@@ -951,7 +1055,7 @@ class SarvamTTS:
             open_timeout=3.0, max_size=2 ** 22,
         ) as ws:
             await ws.send(json.dumps({"type": "config", "data": {
-                "target_language_code": "te-IN", "speaker": speaker,
+                "target_language_code": self.lang, "speaker": speaker,
                 "pace": 1.0, "speech_sample_rate": rate,
                 "enable_preprocessing": True, "output_audio_codec": "wav",
                 "min_buffer_size": 30, "max_chunk_length": 120,
@@ -1007,7 +1111,7 @@ class SarvamTTS:
                 },
                 json={
                     "inputs": [text],
-                    "target_language_code": "te-IN",
+                    "target_language_code": self.lang,
                     "speaker": speaker,
                     "model": "bulbul:v3",
                     "pace": 1.0,
@@ -1681,8 +1785,11 @@ class NikkiAgent:
                  knowledge: list[str] | None = None):
         self.profile     = profile
         self.caller_num  = caller_number
-        self.stt         = SarvamSTT()
-        self.tts         = SarvamTTS()
+        # The tenant's language, resolved once. Falls back to te-IN until
+        # supabase/041_tenant_language.sql adds the column.
+        self.lang        = _tenant_lang(profile)
+        self.stt         = SarvamSTT(self.lang)
+        self.tts         = SarvamTTS(self.lang)
         self.llm         = GeminiLLM()
         self.db          = SupabaseClient()
         self.history     : list[dict] = []
@@ -2198,8 +2305,37 @@ class NikkiAgent:
                 "call_id":          self.call_id,
                 "caller_number":    self.caller_num,
                 "caller_name":      self.slots.get("name"),
-                "status":           "confirmed",
+                # PENDING, not confirmed. This row is opened the moment
+                # booking intent appears — before any date or time exists,
+                # because extracting them here would sit on the caller's
+                # critical path. Nithin's row (call d3b61bf3) was written
+                # "confirmed" with slot_time NULL and stayed that way: the
+                # clinic saw a confirmed appointment with no time on it, and
+                # no way to tell it apart from a real one. _enrich_appointment
+                # promotes it once a date or time is actually known.
+                "status":           "pending",
             })
+
+            # 'pending' needs supabase/041_tenant_language.sql, which widens
+            # the appointments status check constraint. save_appointment
+            # swallows a constraint violation and returns None, so on a box
+            # where the code is deployed and the migration is not, every
+            # booking would vanish silently — the worst possible failure for
+            # the one thing this product exists to do. Fall back to the old
+            # value and say so loudly.
+            if not appt_id:
+                log.critical(
+                    "appointment insert rejected with status='pending' — "
+                    "apply supabase/041_tenant_language.sql. Falling back to "
+                    "'confirmed' so the booking is not lost.")
+                appt_id = await self.db.save_appointment({
+                    "tenant_id":        self.profile["tenant_id"],
+                    "voice_profile_id": self.profile["id"],
+                    "call_id":          self.call_id,
+                    "caller_number":    self.caller_num,
+                    "caller_name":      self.slots.get("name"),
+                    "status":           "confirmed",
+                })
             self.appointment_id = appt_id
 
             # Send WhatsApp confirmation.
@@ -2682,7 +2818,8 @@ async def browser_chat(req: BrowserChatRequest):
     # the page, and digit-by-digit phone numbers are right for the ear and
     # wrong for the eye.
     spoken_text = normalize_for_tts(
-        response_text, (profile or {}).get("pronunciation_map"))
+        response_text, (profile or {}).get("pronunciation_map"),
+        _tenant_lang(profile))
 
     # Optional TTS via Sarvam (for richer voice experience)
     audio_b64 = None
@@ -3501,7 +3638,25 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     # failure. The first three seconds are the whole first impression.
     #
     # No "నమస్కారం" — the TRAI disclosure just said it; twice reads scripted.
-    if (history or {}).get("previous_calls"):
+    returning = bool((history or {}).get("previous_calls"))
+    lang = _tenant_lang(profile)
+
+    # The greeting is SPOKEN VERBATIM — it never goes through the model — so
+    # it has to exist in the tenant's own language. Sending Telugu to a
+    # Bengali bulbul voice produces the accented mumble that reads as "the
+    # line is broken" in the first three seconds, which is the whole first
+    # impression. A tenant with greeting_script set never reaches here.
+    if lang == "hi-IN":
+        return (f"नमस्ते, {biz} से बोल रहे हैं — दोबारा कॉल करने के लिए धन्यवाद! बताइए।"
+                if returning else f"नमस्ते, {biz} से बोल रहे हैं। मैं {name}। बताइए!")
+    if lang == "bn-IN":
+        return (f"নমস্কার, {biz} থেকে বলছি — আবার ফোন করার জন্য ধন্যবাদ! বলুন।"
+                if returning else f"নমস্কার, {biz} থেকে বলছি। আমি {name}। বলুন!")
+    if lang == "en-IN":
+        return (f"Hello, {biz} here — thanks for calling us again! Tell me."
+                if returning else f"Hello, {biz} here. This is {name}. Tell me!")
+
+    if returning:
         # Recognition, not a script. A caller who rang before should not be
         # greeted as a stranger — that is the single most machine-like thing
         # a receptionist can do.
@@ -3663,8 +3818,22 @@ def _spoken_rupees(m: "re.Match") -> str:
         return f"{_TE_HALF[n // 1000]} వేల రూపాయలు"
     return f"{n} రూపాయలు"   # bulbul handles plain smaller numbers acceptably
 
-def normalize_for_tts(text: str, pmap: dict | None = None) -> str:
+def normalize_for_tts(text: str, pmap: dict | None = None,
+                      lang: str = LANG_DEFAULT) -> str:
     t = _clean_for_speech(text)                       # markdown, emoji, vendor names
+    # Everything past the pronunciation map writes TELUGU words — పదిన్నర,
+    # మూడొందలు, సున్నా. Splicing those into a Bengali or Hindi reply produces a
+    # sentence no speaker of either language can parse, and bulbul would try
+    # to pronounce Telugu script with a Bengali voice. Markdown stripping and
+    # the tenant's own pronunciation map are language-neutral and stay.
+    if lang != "te-IN":
+        if pmap:
+            for k in sorted(pmap, key=len, reverse=True):
+                v = pmap.get(k)
+                if k and isinstance(v, str) and v:
+                    t = t.replace(k, v)
+        # Long digit runs still need separators whatever the language.
+        return re.sub(r"\b\d{5,}\b", lambda m: f"{int(m.group()):,}", t)
     # The tenant's own words first — their business name, their doctors,
     # their products, spelled the way bulbul actually says them right. This
     # fixes both failure modes at once: the LLM re-spelling a name it was
@@ -3703,7 +3872,8 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
         log.error("_speak_chunked got bytes, expected text — dropping turn")
         return
     chunks = _speech_chunks(normalize_for_tts(
-        text, (getattr(agent, "profile", None) or {}).get("pronunciation_map")))
+        text, (getattr(agent, "profile", None) or {}).get("pronunciation_map"),
+        getattr(agent, "lang", LANG_DEFAULT)))
     if not chunks:
         return
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
@@ -3841,6 +4011,12 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
             patch["caller_name"] = str(name)[:120]
         if not patch:
             return
+
+        # A slot is what makes it a real appointment. Without one it stays
+        # pending — visible to the business as something to chase, rather
+        # than sitting in the diary looking settled.
+        if patch.get("slot_date") and patch.get("slot_time"):
+            patch["status"] = "confirmed"
 
         async with httpx.AsyncClient(timeout=8.0) as c:
             await c.patch(f"{agent.db.url}/rest/v1/appointments",
@@ -4177,7 +4353,8 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             async def _speak_prefix():
                 audio = await agent.tts.synthesize(
                     normalize_for_tts(prefix,
-                        (agent.profile or {}).get("pronunciation_map")),
+                        (agent.profile or {}).get("pronunciation_map"),
+                        getattr(agent, "lang", LANG_DEFAULT)),
                     agent.voice)
                 if audio:
                     # Now the cover comes off: real speech is a moment away,
