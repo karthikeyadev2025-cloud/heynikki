@@ -2146,6 +2146,15 @@ class NikkiAgent:
             # Strip before anything records or speaks it: the sentinel must
             # not reach the transcript the owner reads, the history the model
             # sees next turn, or bulbul.
+            # Enforce the register BEFORE anything records or speaks it, so
+            # the corrected line is what the caller hears, what the owner
+            # reads in the transcript, and what the model sees as its own
+            # previous turn — which stops it re-using the banned phrasing.
+            response, _reg_hits = _enforce_register(response, self.lang)
+            if _reg_hits:
+                log.warning("register filter rewrote %d banned phrase(s): %s",
+                            len(_reg_hits), _reg_hits)
+
             response, wants_end = _split_end_sentinel(response)
             if wants_end:
                 # The model does not get to decide this on its own. Ending a
@@ -2740,6 +2749,67 @@ def _is_hold_sentinel(text: str) -> bool:
 # English right after their appointment is booked.
 _END_CALL_RE = re.compile(
     r"[\s\[\]<>(){}*_.,!?-]*END[\s_-]?CALL[\s\[\]<>(){}*_.,!?-]*$", re.I)
+
+
+# ── Register enforcement ──────────────────────────────────────────────────
+# The persona has banned స్వాగతం and "మీకు ఎలా సహాయం చేయగలను" since before this
+# file was rewritten. On call 00ed83a6 the greeting was:
+#
+#   "Bismillah Clinic కి స్వాగతం. చెప్పండి, మీకు ఎలా సహాయం చేయగలను?"
+#
+# Both banned phrases, in one sentence, from a prompt that forbids each of
+# them explicitly and repeatedly. A prompt rule is a tendency; this is the
+# guarantee. Rewriting is deterministic and costs nothing — regenerating
+# would put a second LLM round trip on the caller's critical path, which is
+# a worse trade than a substitution we control.
+#
+# TELUGU ONLY. These are Telugu strings; running them over a Bengali or
+# Hindi reply would corrupt it.
+_REGISTER_FIXES: list[tuple[re.Pattern, str]] = [
+    # "<business> కి స్వాగతం" is the whole banned greeting shape. Keep the
+    # business name, drop the banner language: "X అండి" is what a real
+    # receptionist says.
+    (re.compile(r"\s*కి\s*స్వాగతం"), " అండి"),
+    (re.compile(r"\s*కు\s*స్వాగతం"), " అండి"),
+    (re.compile(r"స్వాగతం"), ""),
+    # The call-centre line, in the shapes it actually appears in.
+    (re.compile(r"మీకు\s*ఎలా\s*(సహాయం|హెల్ప్)\s*చే\S*\s*\??"), "చెప్పండి"),
+    (re.compile(r"నేను\s*మీకు\s*ఎలా\s*\S*\s*చే\S*\s*\??"), "చెప్పండి"),
+    # Written/official register the register pack bans outright.
+    (re.compile(r"ధన్యవాదములు"), "థాంక్యూ"),
+    (re.compile(r"నియామకం"), "అపాయింట్‌మెంట్"),
+    (re.compile(r"వైద్యుడు"), "డాక్టర్ గారు"),
+    (re.compile(r"వీడ్కోలు"), ""),
+    (re.compile(r"తెలియజేయండి"), "చెప్పండి"),
+    (re.compile(r"తెలియజేయగలరు"), "చెప్పగలరు"),
+    (re.compile(r"దయచేసి\s*వేచి\s*(ఉండండి|యుండగలరు)"), "ఒక్క నిమిషం ఉండండి"),
+    (re.compile(r"సందర్శించండి"), "రండి"),
+]
+
+
+def _enforce_register(text: str, lang: str = LANG_DEFAULT) -> tuple[str, list[str]]:
+    """Rewrite banned phrases. Returns (text, what was replaced)."""
+    if not text or lang != "te-IN":
+        return text, []
+    hits: list[str] = []
+    out = text
+    for pat, repl in _REGISTER_FIXES:
+        new = pat.sub(repl, out)
+        if new != out:
+            hits.append(pat.pattern)
+            out = new
+    if hits:
+        # Tidy the seams a substitution leaves. These are not cosmetic: a
+        # replacement lands next to text that already said the same thing.
+        #   "చెప్పండి, మీకు ఎలా సహాయం చేయగలను?"  ->  "చెప్పండి, చెప్పండి"
+        #   "వైద్యుడు గారు"                      ->  "డాక్టర్ గారు గారు"
+        # Collapsing an immediately repeated word fixes both, and bulbul
+        # would otherwise say each of them twice.
+        out = re.sub(r"(\S+)[,\s]+\1(?=[\s,.।!?]|$)", r"\1", out)
+        out = re.sub(r"\s{2,}", " ", out)
+        out = re.sub(r"\s+([।.,!?])", r"\1", out)
+        out = re.sub(r"^[\s,.।]+", "", out).strip()
+    return out, hits
 
 
 def _split_end_sentinel(text: str) -> tuple[str, bool]:

@@ -466,6 +466,59 @@ def test_both_personas_forbid_asking_and_forbid_question_plus_close():
         assert "same reply as your closing line" in p
 
 
+# ── register enforcement ──────────────────────────────────────────────────
+# The persona banned స్వాగతం and "మీకు ఎలా సహాయం చేయగలను" long before call
+# 00ed83a6, whose greeting used BOTH in one sentence. A prompt rule is a
+# tendency. These tests are the guarantee.
+
+def test_the_exact_greeting_that_broke_the_rules():
+    said = "అలాగే నమస్తే అండి, Bismillah Clinic కి స్వాగతం. చెప్పండి, మీకు ఎలా సహాయం చేయగలను?"
+    out, hits = main._enforce_register(said)
+    assert "స్వాగతం" not in out
+    assert "ఎలా సహాయం" not in out
+    assert "Bismillah Clinic" in out, "the business name must survive"
+    assert len(hits) == 2
+
+
+def test_substitution_seams_do_not_stutter():
+    # A replacement lands beside text that already said the same thing.
+    # bulbul would read each of these twice.
+    out, _ = main._enforce_register("చెప్పండి, మీకు ఎలా సహాయం చేయగలను?")
+    assert out.count("చెప్పండి") == 1
+    out2, _ = main._enforce_register("వైద్యుడు గారు ఉంటారు.")
+    assert "గారు గారు" not in out2
+
+
+@pytest.mark.parametrize("bad,gone", [
+    ("ధన్యవాదములు అండి", "ధన్యవాదములు"),
+    ("మీ నియామకం", "నియామకం"),
+    ("దయచేసి వేచి ఉండండి", "దయచేసి"),
+    ("తెలియజేయండి", "తెలియజేయండి"),
+    ("సందర్శించండి", "సందర్శించండి"),
+])
+def test_official_register_is_removed(bad, gone):
+    out, hits = main._enforce_register(bad)
+    assert gone not in out and hits
+
+
+@pytest.mark.parametrize("ok", [
+    "సరేనండి, రేపు అపాయింట్‌మెంట్ పెట్టానండి. మీ పేరు చెప్తారా?",
+    "నమస్కారం, డాక్టర్ గారు ఉన్నారండి.",
+    "అదండీ... డాక్టర్ గారు చూశాకే చెప్పగలరండి.",
+])
+def test_good_replies_are_left_alone(ok):
+    out, hits = main._enforce_register(ok)
+    assert out == ok and not hits
+
+
+def test_filter_is_telugu_only():
+    # These are Telugu strings; running them over Bengali or Hindi would
+    # corrupt a reply in a language they have nothing to do with.
+    for lang in ("bn-IN", "hi-IN", "en-IN"):
+        out, hits = main._enforce_register("আপনাকে স্বাগতম", lang)
+        assert out == "আপনাকে স্বাগতম" and not hits
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
