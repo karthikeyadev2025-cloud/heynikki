@@ -46,7 +46,12 @@ active_calls() {
     return 1
   fi
   local out
-  out=$(docker exec heynikki-freeswitch fs_cli -p "$pw" -x "show channels count" 2>/dev/null || true)
+  # `show channels`, NOT `show channels count`. The count subcommand returns
+  # an EMPTY body over -x on this build — measured, five consecutive calls,
+  # all blank — while `show channels` reliably ends with "N total.". An empty
+  # answer is indistinguishable from "no calls", which is the one wrong guess
+  # this whole script exists to prevent.
+  out=$(docker exec heynikki-freeswitch fs_cli -p "$pw" -x "show channels" 2>/dev/null | tr -d '\r' || true)
   # "N total." — anything unparseable is treated as busy, never as idle.
   if [[ "$out" =~ ([0-9]+)\ total ]]; then
     echo "${BASH_REMATCH[1]}"
