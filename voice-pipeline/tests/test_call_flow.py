@@ -297,6 +297,32 @@ def test_one_definition_of_today():
     assert "datetime.now()" not in src, "naive now() is container-local, i.e. UTC"
 
 
+# ── promises she cannot keep ──────────────────────────────────────────────
+# On call d3b61bf3 a caller asked "location share చేస్తారా?" and she answered
+# "ఖచ్చితంగా మీ నంబర్‌కి వాట్సాప్‌లో లొకేషన్ పంపిస్తానండి" — definitely, I will
+# send it. Nothing can send a location: the only templates are appointment
+# confirmation, missed-call follow-up and the brochure. He is still waiting.
+
+def test_persona_lists_what_she_cannot_send():
+    p = main.TELUGU_PHONE_PERSONA
+    assert "cannot send" in p.lower() or "CANNOT" in p
+    for thing in ("location pin", "photo", "email"):
+        assert thing in p, f"{thing} must be named — a vague ban is ignored"
+
+
+def test_persona_blocks_the_whatsapp_loophole():
+    # Told only "do not promise to send", the model offered to send the same
+    # things "on WhatsApp" instead, which is not a capability either.
+    assert "on WhatsApp" in main.TELUGU_PHONE_PERSONA
+
+
+def test_persona_forbids_talking_about_a_system():
+    # "ఈ సిస్టమ్ ద్వారా కుదరదు" is a machine explaining itself, not a
+    # receptionist declining. It breaks the illusion at the worst moment.
+    p = main.TELUGU_PHONE_PERSONA
+    assert "system or" in p and "software" in p
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
