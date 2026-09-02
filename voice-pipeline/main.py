@@ -415,6 +415,11 @@ TELUGU_PHONE_PERSONA = (
     # Without this a booked caller and a booked Nikki sit on an open line
     # waiting for the other to give up. Gated in code on a real appointment
     # row, so emitting it early costs nothing but a log line.
+    "\n\n[THEIR PHONE NUMBER]"
+    "\nYou already have it — they are calling from it, and it is listed in"
+    " the facts below. NEVER ask them to read it out. Confirm it instead:"
+    " \'మీరు కాల్ చేస్తున్న ఈ నంబర్‌కే వాట్సాప్ పంపమంటారా?\' Ask for a number only"
+    " if they tell you to use a different one."
     "\n\n[ENDING THE CALL]"
     "\nOnce the appointment is CONFIRMED and they have nothing else, say your"
     " closing line — \'సరేనండి, థాంక్యూ అండి, మంచిది\' — and then, on the same"
@@ -422,6 +427,10 @@ TELUGU_PHONE_PERSONA = (
     " hang up after your goodbye finishes."
     "\nOnly then. Not while anything is still being agreed, not if they have"
     " just asked something, and never merely because they said ok."
+    "\nNever ask a question in the same reply as your closing line. If you are"
+    " asking, you are not closing — wait for their answer first. Confirming"
+    " their number and saying goodbye in one breath leaves them answering a"
+    " question to a dead line."
     "\n\n[IF THEY ASK YOU TO HOLD]"
     "\nఆగండి / ఒక్క నిమిషం / hold on — reply with exactly SILENT and nothing"
     " else. It is a signal to stop talking, not a word to say aloud."
@@ -509,12 +518,19 @@ def _neutral_persona(lang: str) -> str:
         " terms of a system or software."
         "\n- Asked for the address: read it out from the facts below if it is"
         " there. Never say you will send it yourself."
+        "\n\n[THEIR PHONE NUMBER]"
+        "\nYou already have it — they are calling from it, and it is listed in"
+        " the facts below. NEVER ask them to read it out. Confirm it instead:"
+        " ask whether WhatsApp should go to the number they are calling from."
+        " Ask for a number only if they tell you to use a different one."
         "\n\n[ENDING THE CALL]"
         "\nOnce the appointment is CONFIRMED and they have nothing else, say"
         " your closing line and then, on the same line, add the token"
         " END_CALL. It is never spoken; it tells the line to hang up after"
         " your goodbye finishes. Only then — not while anything is still"
         " being agreed, and never merely because they said ok."
+        "\nNever ask a question in the same reply as your closing line. If you"
+        " are asking, you are not closing — wait for their answer first."
         "\n\n[IF THEY ASK YOU TO HOLD]"
         "\nIf they ask you to wait or hold on, reply with exactly SILENT and"
         " nothing else. It is a signal to stop talking, not a word to say."
@@ -606,6 +622,22 @@ SUPPORTED_LANGS = {"te-IN", "hi-IN", "bn-IN", "en-IN"}
 def _tenant_lang(profile: dict | None) -> str:
     lang = ((profile or {}).get("language") or "").strip()
     return lang if lang in SUPPORTED_LANGS else LANG_DEFAULT
+
+
+def _valid_mobile(num: str | None) -> str | None:
+    """The last 10 digits, if they look like an Indian mobile.
+
+    Caller ID arrives in several shapes — 9848012345, 09848012345,
+    +919848012345 — and can be absent or withheld entirely, in which case
+    everything here must fall back to the old ask-them behaviour rather than
+    confirming a number nobody has.
+    """
+    digits = re.sub(r"\D", "", str(num or ""))
+    if len(digits) >= 10:
+        digits = digits[-10:]
+        if digits[0] in "6789":
+            return digits
+    return None
 
 
 def _now_ist() -> datetime:
@@ -1801,6 +1833,13 @@ class NikkiAgent:
                  knowledge: list[str] | None = None):
         self.profile     = profile
         self.caller_num  = caller_number
+        # The caller's own number is the best number we will ever have on
+        # this call: the network gave it to us, so it cannot be misheard.
+        # Asking for it anyway is how call 00ed83a6 spent two of its three
+        # minutes — she asked, STT mangled "6303076432" into "30 3076432",
+        # she read back a hallucinated "8328199 62", and after five more
+        # attempts gave up and transferred to a human. The number was in the
+        # call record the entire time.
         # The tenant's language, resolved once. Falls back to te-IN until
         # supabase/041_tenant_language.sql adds the column.
         self.lang        = _tenant_lang(profile)
@@ -1823,6 +1862,12 @@ class NikkiAgent:
         self.end_call_requested: bool = False
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
+        # Seed the phone from caller ID. The booking, the WhatsApp and the
+        # lead all read this slot, so seeding it means a caller who never
+        # mentions a number still gets a complete record — and
+        # _known_facts_block then lists it under "never ask for these
+        # again", which is what actually stops her asking.
+        self.slots["phone"] = _valid_mobile(caller_number)
         self.call_id     : Optional[str] = None
         # Set when a booking is written mid-call; enriched at call end.
         self.appointment_id: Optional[str] = None
@@ -1993,6 +2038,18 @@ class NikkiAgent:
                 "\nAcknowledge it once, naturally, early — then move on. Do not "
                 "recite their history back at them, and never claim to remember "
                 "a detail you were not given below."
+            )
+        # Caller ID, stated as a fact and as an instruction. A withheld or
+        # malformed CLI falls through to asking, which is the old behaviour.
+        cli = _valid_mobile(self.caller_num)
+        if cli:
+            lines.append(
+                f"\n\n[THEY ARE CALLING FROM {cli}]"
+                "\nThis is their number — the network gave it to us and it cannot"
+                " be misheard. NEVER ask them to read out their phone number."
+                " When you need it, confirm this one instead: say the last four"
+                " digits and ask if WhatsApp should go to this number."
+                " Only if they say to use a DIFFERENT number do you ask for one."
             )
         lines.append("\n\n[FACTS ALREADY COLLECTED — never ask for these again]")
         for k, v in known.items():

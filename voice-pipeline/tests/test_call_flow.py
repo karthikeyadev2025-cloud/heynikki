@@ -414,6 +414,58 @@ def test_both_personas_teach_the_sentinel():
         assert "CONFIRMED" in p, f"{lang} must gate it on a confirmed booking"
 
 
+# ── the caller's number is already known ──────────────────────────────────
+# Call 00ed83a6 came from 6303076432 and she asked for the number anyway.
+# STT heard "30 3076432", she read back a hallucinated "8328199 62", and
+# after five more attempts she transferred to a human. Two of three minutes,
+# on a number the network had handed us before she said hello.
+
+@pytest.mark.parametrize("raw,want", [
+    ("6303076432", "6303076432"), ("06303076432", "6303076432"),
+    ("+916303076432", "6303076432"), ("919492013766", "9492013766"),
+])
+def test_caller_id_is_normalised(raw, want):
+    assert main._valid_mobile(raw) == want
+
+
+@pytest.mark.parametrize("raw", [None, "", "12345", "anonymous", "5551234567"])
+def test_withheld_or_bogus_caller_id_falls_back(raw):
+    # No number means the old behaviour: ask. Confirming a number nobody has
+    # is worse than asking for one. 555... fails the Indian mobile 6-9 rule.
+    assert main._valid_mobile(raw) is None
+
+
+def test_phone_slot_is_seeded_from_caller_id():
+    a = main.NikkiAgent({"business_name": "X", "tenant_id": "t", "id": "i"}, "6303076432")
+    assert a.slots["phone"] == "6303076432"
+
+
+def test_phone_slot_stays_empty_for_a_withheld_number():
+    a = main.NikkiAgent({"business_name": "X", "tenant_id": "t", "id": "i"}, "anonymous")
+    assert a.slots["phone"] is None
+
+
+def test_facts_block_tells_her_not_to_ask():
+    a = main.NikkiAgent({"business_name": "X", "tenant_id": "t", "id": "i"}, "6303076432")
+    f = a._known_facts_block()
+    assert "6303076432" in f
+    assert "NEVER ask" in f
+
+
+def test_facts_block_says_nothing_when_the_number_is_withheld():
+    a = main.NikkiAgent({"business_name": "X", "tenant_id": "t", "id": "i"}, "")
+    assert "CALLING FROM" not in a._known_facts_block()
+
+
+def test_both_personas_forbid_asking_and_forbid_question_plus_close():
+    for lang in ("te-IN", "bn-IN"):
+        p = main._persona_for(lang)
+        assert "NEVER ask them to read it out" in p
+        # Asking and hanging up in one breath leaves a caller answering a
+        # dead line — seen in testing before this rule existed.
+        assert "same reply as your closing line" in p
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
