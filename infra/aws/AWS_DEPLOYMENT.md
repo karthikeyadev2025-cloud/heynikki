@@ -115,6 +115,11 @@ sudo supervisorctl reread && sudo supervisorctl update
 
 Install systemd units:
 
+> **NOTE:** `infra/systemd/` is not in this repo — these two unit files exist
+> only on the server. If you are rebuilding a box from scratch, copy them off
+> the running instance (`/etc/systemd/system/nikki-*.service`) first, or
+> recreate them. This step cannot work from a clean checkout as written.
+
 ```bash
 sudo cp infra/systemd/nikki-pipeline.service /etc/systemd/system/
 sudo cp infra/systemd/nikki-api.service      /etc/systemd/system/
@@ -191,10 +196,26 @@ sudo tail -f /var/log/nikki-api.out.log /var/log/nikki-pipeline.err.log
 ```bash
 cd /home/ubuntu/heynikki
 git pull
-cd api-server     && npm install --omit=dev
+
+# api-server: BUILD, then restart. `npm start` runs dist/index.js, and dist/
+# is gitignored — it is never in the pull. Without this step a deploy pulls
+# new source and keeps running the old compiled JS, so nothing changes and
+# the service looks fine. `--omit=dev` is deliberately NOT used here:
+# TypeScript is a devDependency and the build needs it.
+cd api-server
+npm install
+npm run build
+
 cd ../voice-pipeline && source venv/bin/activate && pip install -r requirements.txt && deactivate
+
 sudo systemctl restart nikki-pipeline nikki-api
+
+# Confirm the restart actually took — uptime_ms should be near zero.
+sleep 3 && curl -s localhost:4000/health | head -c 200; echo
 ```
+
+If `uptime_ms` is still large, the units did not restart and the running
+process is the old one.
 
 ### Rolling back
 
