@@ -1227,6 +1227,32 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (cached) {
         audioBase64 = cached;
       } else {
+      // WebSocket first, REST as the fallback — same vendor, same bulbul:v3,
+      // same voice, different transport. REST has a ~700ms floor per request
+      // regardless of length; the pipeline measured 75ms to first audio over
+      // the socket after a 195ms connect. That floor is what the old
+      // first-sentence-only truncation was buying its way out of, so this is
+      // the other half of that fix.
+      //
+      // Any failure here falls through to the REST block below untouched. A
+      // slower voice is a fine outcome; a silent demo is not, and this path
+      // is what a prospect judges the product on.
+      try {
+        const wsWav = await synthesizeWs({
+          apiKey: SARVAM_KEY,
+          text: speakText,
+          languageCode: ttsLang,
+          speaker: "priya",
+          sampleRate: 22050,
+          pace: 1.06,
+        });
+        audioBase64 = wsWav.toString("base64");
+        webTtsPut(cacheKey, audioBase64);
+      } catch (e: any) {
+        console.warn("[voice-turn] sarvam ws tts failed, falling back to REST:", e.message);
+      }
+
+      if (!audioBase64) {
       const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
         method: "POST",
         headers: {
@@ -1270,6 +1296,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       const ttsData = await ttsResp.json() as any;
       audioBase64 = ttsData.audios?.[0] || null;
       if (audioBase64) webTtsPut(cacheKey, audioBase64);
+      }
       }
     } catch (e: any) {
       // Text still returns — the console falls back to browser speech
@@ -3637,6 +3664,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
 import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
+import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
 
