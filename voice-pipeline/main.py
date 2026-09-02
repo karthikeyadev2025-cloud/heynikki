@@ -465,6 +465,20 @@ async def _refresh_pricing() -> None:
         log.debug(f"pricing refresh skipped: {e}")
 
 
+# IST, always, regardless of the container's clock. The pipeline image sets
+# no TZ, so datetime.now() is UTC — and between 18:30 and 24:00 UTC (which is
+# 00:00-05:30 IST) that is YESTERDAY'S date to everyone on the call.
+#
+# This was not theoretical. On the 02:26 IST call from 8885490495, the prompt
+# said "Today: 2026-09-02" so Nikki told the caller "రేపు సెప్టెంబర్ మూడో తారీఖు"
+# — tomorrow, the 3rd. _enrich_appointment, which already resolved dates in
+# IST, read the same "రేపు" as the 4th and wrote slot_date 2026-09-04. She
+# said one date out loud and booked another, then WhatsApped the second one.
+# A patient arrives on the wrong day and the clinic is not expecting them.
+def _now_ist() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+
+
 def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> str:
     """Inject business context into the frozen prompt template."""
     sku = profile.get("profile_sku", "standard")
@@ -481,11 +495,11 @@ def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> st
         sku = "retail"
     frozen = PROFILE_PROMPTS.get(sku, PROFILE_PROMPTS["standard"])
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = _now_ist().strftime("%Y-%m-%d %H:%M")
     # The weekday, spelled out. Without it the model cannot tell whether
     # "tomorrow" falls on a day the business is shut — it told a caller with
     # toothache to come tomorrow, which was a Sunday, on a Mon-Sat clinic.
-    weekday = datetime.now().strftime("%A")
+    weekday = _now_ist().strftime("%A")
     open_t  = profile.get("open_time", "09:00")
     close_t = profile.get("close_time", "21:00")
     open_days = ", ".join(profile.get("open_days", ["Mon","Tue","Wed","Thu","Fri","Sat"]))
@@ -3761,7 +3775,9 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         for t in turns)[:8000]
     # Relative dates are the norm on a call — "రేపు", "next Monday" — and
     # resolving them needs the day the call happened, in IST.
-    today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    # Same helper build_system_prompt uses. These two disagreeing by a day is
+    # exactly the bug above; one definition means they cannot drift again.
+    today = _now_ist().strftime("%Y-%m-%d")
 
     prompt = (
         "Extract the appointment from this phone call. Return ONLY minified JSON:\n"
@@ -3819,6 +3835,7 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         # the customer receives actually confirms their appointment instead
         # of reading "Date: soon, Time: TBD".
         if patch.get("slot_date") or patch.get("slot_time"):
+            sent = False
             try:
                 async with httpx.AsyncClient(timeout=8.0) as c:
                     r = await c.post(
@@ -3836,8 +3853,26 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
                             "appointment_id":   appt_id,
                         })
                     log.info(f"[FS] {fs_uuid}: confirmation sent after enrichment ({r.status_code})")
+                    sent = r.status_code == 200
             except Exception as e:  # noqa: BLE001
                 log.warning(f"[FS] {fs_uuid}: post-enrichment confirmation failed: {e}")
+
+            # Mark the CALL as having produced a booking. Only the early path
+            # in _book_appointment did this, and it returns before reaching
+            # that line whenever the slot is not known yet — which is the
+            # normal case, because the caller usually names a time after the
+            # booking row is opened. So a booking made this way was invisible
+            # to every count that reads calls.appointment_created:
+            # /api/admin analytics, the owner dashboard, month_appointments.
+            # The 20:56 call had a confirmed appointment row and a delivered
+            # WhatsApp while the call still read appointment_created = false.
+            try:
+                await agent.db.update_call(agent.call_id, {
+                    "appointment_created": True,
+                    "wa_sent": sent,
+                })
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[FS] {fs_uuid}: could not flag call as booked: {e}")
     except Exception as e:  # noqa: BLE001 - never break cleanup
         log.warning(f"[FS] {fs_uuid}: appointment enrich failed: {e}")
 

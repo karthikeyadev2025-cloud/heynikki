@@ -265,6 +265,38 @@ def test_the_chosen_model_passes_its_own_guard():
     assert main.GEMINI_DEFAULT_MODEL not in main._GEMINI_REFUSED
 
 
+# ── the date Nikki says vs the date she books ─────────────────────────────
+# The pipeline image sets no TZ, so datetime.now() is UTC. Between 18:30 and
+# 24:00 UTC — 00:00 to 05:30 IST — that is yesterday's date in India. The
+# prompt used naive now() while the appointment extractor used UTC+5:30, so a
+# call in that window had Nikki say "tomorrow, the 3rd" and book the 4th.
+# Real occurrence: the 02:26 IST call from 8885490495 on 2026-09-02.
+
+def test_prompt_date_is_ist_not_container_local():
+    from datetime import datetime, timezone, timedelta
+    expected = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
+    p = main.build_system_prompt({"business_name": "X", "tenant_id": "t", "id": "i"})
+    assert expected in p, f"prompt must carry the IST date {expected}"
+
+
+def test_prompt_weekday_matches_the_ist_date():
+    # A weekday from a different day than the date is how a caller gets told
+    # the clinic is open on a day it is shut.
+    from datetime import datetime, timezone, timedelta
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    p = main.build_system_prompt({"business_name": "X", "tenant_id": "t", "id": "i"})
+    assert ist.strftime("%A") in p
+
+
+def test_one_definition_of_today():
+    # Both callers go through _now_ist(); a second naive datetime.now() for a
+    # caller-facing date is how the two drifted apart in the first place.
+    import inspect
+    src = inspect.getsource(main.build_system_prompt)
+    assert "_now_ist()" in src
+    assert "datetime.now()" not in src, "naive now() is container-local, i.e. UTC"
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
