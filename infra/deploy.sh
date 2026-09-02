@@ -90,8 +90,18 @@ echo "── building ──"
 docker compose build api-server voice-pipeline
 
 echo "── restarting (FreeSWITCH untouched) ──"
-docker compose up -d api-server voice-pipeline scheduler
-docker compose --profile outbound up -d outbound-dispatcher
+# --no-deps is load-bearing, not tidiness. freeswitch has `env_file: .env`,
+# so ANY edit to infra/.env changes its config hash, and `up -d` recreates a
+# depends_on service whose config changed even when you did not name it.
+# Editing GEMINI_MODEL in .env restarted the PBX and dropped telephony for
+# about a minute — a deploy that touches no telephony code must never do
+# that. With --no-deps compose only ever recreates what is listed here.
+#
+# The trade: if freeswitch is down, these start without waiting for it.
+# That is the right way round. They reconnect on their own; restarting a
+# live PBX to satisfy a dependency check does not undo a dropped call.
+docker compose up -d --no-deps api-server voice-pipeline scheduler
+docker compose --profile outbound up -d --no-deps outbound-dispatcher
 
 echo "── health ──"
 sleep 8
