@@ -51,12 +51,21 @@ export interface WsTtsOpts {
   sampleRate?: number;
   pace?: number;
   timeoutMs?: number;
+  /**
+   * Called with each chunk as it arrives, already wrapped as a standalone
+   * WAV so a browser can decodeAudioData it on its own. This is the whole
+   * point of the socket: first chunk lands ~354ms in, the complete file
+   * ~1932ms in, so anything that waits for the return value has thrown the
+   * difference away.
+   */
+  onChunk?: (wav: Buffer, seq: number) => void;
 }
 
 export function synthesizeWs(opts: WsTtsOpts): Promise<Buffer> {
   const {
     apiKey, text, languageCode,
     speaker = "priya", sampleRate = 22050, pace = 1.06, timeoutMs = 12_000,
+    onChunk,
   } = opts;
 
   return new Promise<Buffer>((resolve, reject) => {
@@ -102,7 +111,14 @@ export function synthesizeWs(opts: WsTtsOpts): Promise<Buffer> {
       if (m?.type === "audio" && m?.data?.audio) {
         const b = Buffer.from(m.data.audio, "base64");
         // Each chunk is its own RIFF file; keep only the PCM payload.
-        chunks.push(b.subarray(0, 4).toString() === "RIFF" ? b.subarray(44) : b);
+        const pcmChunk = b.subarray(0, 4).toString() === "RIFF" ? b.subarray(44) : b;
+        chunks.push(pcmChunk);
+        if (onChunk) {
+          // Re-wrap per chunk. A caller forwarding these onward needs each
+          // one to stand alone; a bare PCM fragment is not decodable.
+          try { onChunk(pcm16ToWav(pcmChunk, sampleRate), chunks.length - 1); }
+          catch { /* a failing consumer must not abort synthesis */ }
+        }
         return;
       }
       if (m?.type === "error") {
