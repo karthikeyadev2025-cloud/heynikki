@@ -412,6 +412,16 @@ TELUGU_PHONE_PERSONA = (
     # నిమిషం" with chatter, which is the one thing a caller asking for
     # silence does not want. Handled in on_speech and browser_chat: the
     # sentinel is swallowed, never synthesised.
+    # Without this a booked caller and a booked Nikki sit on an open line
+    # waiting for the other to give up. Gated in code on a real appointment
+    # row, so emitting it early costs nothing but a log line.
+    "\n\n[ENDING THE CALL]"
+    "\nOnce the appointment is CONFIRMED and they have nothing else, say your"
+    " closing line — \'సరేనండి, థాంక్యూ అండి, మంచిది\' — and then, on the same"
+    " line, add the token END_CALL. It is never spoken; it tells the line to"
+    " hang up after your goodbye finishes."
+    "\nOnly then. Not while anything is still being agreed, not if they have"
+    " just asked something, and never merely because they said ok."
     "\n\n[IF THEY ASK YOU TO HOLD]"
     "\nఆగండి / ఒక్క నిమిషం / hold on — reply with exactly SILENT and nothing"
     " else. It is a signal to stop talking, not a word to say aloud."
@@ -499,6 +509,12 @@ def _neutral_persona(lang: str) -> str:
         " terms of a system or software."
         "\n- Asked for the address: read it out from the facts below if it is"
         " there. Never say you will send it yourself."
+        "\n\n[ENDING THE CALL]"
+        "\nOnce the appointment is CONFIRMED and they have nothing else, say"
+        " your closing line and then, on the same line, add the token"
+        " END_CALL. It is never spoken; it tells the line to hang up after"
+        " your goodbye finishes. Only then — not while anything is still"
+        " being agreed, and never merely because they said ok."
         "\n\n[IF THEY ASK YOU TO HOLD]"
         "\nIf they ask you to wait or hold on, reply with exactly SILENT and"
         " nothing else. It is a signal to stop talking, not a word to say."
@@ -1804,6 +1820,7 @@ class NikkiAgent:
         self.ring_group  : str = ""      # who to ring on a human request
         self.guard_seconds: int = 20
         self.transfer_requested: bool = False
+        self.end_call_requested: bool = False
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         self.call_id     : Optional[str] = None
@@ -2068,6 +2085,23 @@ class NikkiAgent:
             # The model often normalises spoken digits ("ట్రిపుల్ ఎయిట్...")
             # into a real number in its reply, so harvest that side too.
             self._harvest_slots(response, from_caller=False)
+
+            # Strip before anything records or speaks it: the sentinel must
+            # not reach the transcript the owner reads, the history the model
+            # sees next turn, or bulbul.
+            response, wants_end = _split_end_sentinel(response)
+            if wants_end:
+                # The model does not get to decide this on its own. Ending a
+                # call is irreversible and the cost of doing it early — a
+                # caller cut off mid-question — is far higher than the cost of
+                # a few seconds of extra line time. Honoured only once a
+                # booking actually exists in the database.
+                if self.appointment_id:
+                    self.end_call_requested = True
+                    log.info("end-call sentinel accepted — appointment %s is booked",
+                             str(self.appointment_id)[:8])
+                else:
+                    log.info("end-call sentinel IGNORED — no appointment on this call yet")
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
@@ -2634,6 +2668,33 @@ _SILENT_RE = re.compile(r"^\W*silent\W*$", re.I)
 
 def _is_hold_sentinel(text: str) -> bool:
     return bool(text) and bool(_SILENT_RE.match(text.strip()))
+
+
+# The end-of-call sentinel. A caller whose appointment is booked and who has
+# nothing else to ask should not be left holding an open line waiting for one
+# side to give up — that dead air is the last thing they remember of the call.
+#
+# Written as a token the model appends AFTER its closing line, so the closing
+# line is still spoken normally. Tolerant of the punctuation and casing models
+# wrap markers in, and of the model helpfully translating the brackets away.
+# END_CALL, END CALL, END-CALL, [END_CALL], <end call>. Models are
+# inconsistent about the separator and about wrapping markers in brackets,
+# and every variant we fail to match gets pronounced at the caller in
+# English right after their appointment is booked.
+_END_CALL_RE = re.compile(
+    r"[\s\[\]<>(){}*_.,!?-]*END[\s_-]?CALL[\s\[\]<>(){}*_.,!?-]*$", re.I)
+
+
+def _split_end_sentinel(text: str) -> tuple[str, bool]:
+    """Return (speakable text, caller-should-be-hung-up).
+
+    The sentinel is REMOVED, never spoken. bulbul would happily pronounce
+    "END CALL" in English at someone who just booked an appointment.
+    """
+    if not text:
+        return text, False
+    stripped = _END_CALL_RE.sub("", text)
+    return (stripped.strip(), True) if stripped != text else (text, False)
 
 
 def _clean_for_speech(text: str) -> str:
@@ -4409,6 +4470,38 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                 await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
             await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking,
                                  sub_offset=1 if clause["text"] else 0)
+
+        # ── End the call, once the goodbye has actually been heard ──────
+        # Ordered BEFORE the transfer check: a caller who booked and then
+        # asked for a human still gets the human. This only fires when the
+        # model asked to end AND a booking exists (gated in on_speech).
+        if getattr(agent, "end_call_requested", False):
+            agent.end_call_requested = False
+            # speaking["until"] is when the last chunk's audio finishes.
+            # uuid_kill before that truncates her goodbye mid-word, which is
+            # a worse ending than the dead air this feature removes.
+            remaining = max(0.0, speaking.get("until", 0.0) - time.monotonic())
+            # Then a beat. Hanging up the instant the last syllable lands
+            # reads as the line dropping, not as a call ending — and it gives
+            # a caller with one more question room to start asking it.
+            turns_before = len(agent.transcript)
+            await asyncio.sleep(remaining + 1.2)
+
+            # If a turn landed while we waited, the caller was not finished.
+            # Reading the transcript is better than a flag someone has to
+            # remember to set: it is the same state every other part of the
+            # call already trusts.
+            if len(agent.transcript) > turns_before:
+                log.info(f"[FS] {fs_uuid}: caller spoke after the closing line — staying on")
+            else:
+                log.info(f"[FS] {fs_uuid}: appointment booked and closed — hanging up")
+                try:
+                    await _esl_api(f"uuid_kill {fs_uuid}")
+                except Exception as e:  # noqa: BLE001
+                    # Never fatal. The caller simply hangs up themselves, and
+                    # the 120s idle timeout is still behind this.
+                    log.warning(f"[FS] {fs_uuid}: uuid_kill after booking failed: {e}")
+            return
 
         if getattr(agent, "transfer_requested", False):
             agent.transfer_requested = False

@@ -378,6 +378,42 @@ def test_long_numbers_still_get_separators_in_every_language():
         assert "125,000" in main.normalize_for_tts("total 125000", lang=lang)
 
 
+# ── ending the call after a booking ───────────────────────────────────────
+# A caller whose appointment is booked, and Nikki, were both sitting on an
+# open line waiting for the other to give up. The model now marks the end;
+# the code decides whether to honour it.
+
+@pytest.mark.parametrize("said", [
+    "సరేనండి, మంచిది END_CALL", "సరేనండి, మంచిది [END_CALL]",
+    "ఉంటానండి. <END_CALL>",     "సరేనండి, END CALL",
+    "సరేనండి, end-call",        "సరేనండి **END_CALL**",
+])
+def test_end_sentinel_is_recognised_and_stripped(said):
+    text, end = main._split_end_sentinel(said)
+    assert end
+    # It must never survive into speech: bulbul would say "END CALL" in
+    # English to someone who just booked an appointment.
+    assert "END" not in text.upper()
+    assert text.strip(), "the closing line itself must still be spoken"
+
+
+@pytest.mark.parametrize("said", [
+    "మీ పేరు చెప్తారా?", "సరేనండి, థాంక్యూ అండి", "",
+    "END_CALL అయ్యాక చెప్తాను",   # mid-sentence, not a sentinel
+])
+def test_ordinary_replies_do_not_end_the_call(said):
+    text, end = main._split_end_sentinel(said)
+    assert not end
+    assert text == said
+
+
+def test_both_personas_teach_the_sentinel():
+    for lang in ("te-IN", "bn-IN"):
+        p = main._persona_for(lang)
+        assert "END_CALL" in p, f"{lang} persona must teach it"
+        assert "CONFIRMED" in p, f"{lang} must gate it on a confirmed booking"
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
