@@ -962,8 +962,53 @@ function bumpDemoTurn(sessionId: string): number {
   return n;
 }
 
+/**
+ * One Sarvam REST synthesis. Extracted so the streaming and non-streaming
+ * turn paths share exactly one copy — they had started to diverge, and the
+ * comments below are the expensive kind that were learned from a silent demo.
+ */
+async function sarvamRestTts(text: string, langCode: string, apiKey: string): Promise<string | null> {
+  const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
+    method: "POST",
+    headers: {
+      "api-subscription-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: [text],
+      // Speak back in the language the visitor actually used. Pinned to
+      // te-IN, an English reply was rendered with Telugu phonetics and
+      // came out as an accented mumble — which reads as "the voice is
+      // broken" to someone evaluating the product in English.
+      target_language_code: langCode,
+      // Same voice the phone product uses (main.py synthesize default),
+      // so what a visitor hears on the site is what their callers will
+      // actually get. Do not change it to a livelier-sounding name
+      // without checking compatibility first: bulbul:v3 accepts only a
+      // subset of Sarvam's speakers and rejects the rest with a 400,
+      // which the caller's try/catch turns into no audio at all — a
+      // silently voiceless demo.
+      speaker: "priya",
+      model: "bulbul:v3",
+      // Slightly quicker than default. A receptionist answering a business
+      // line speaks faster than a read-aloud tool, and flat pace is much of
+      // what makes synthetic speech sound like recital.
+      //
+      // NOTE: do NOT add pitch or loudness here. Bulbul V3 rejects both with
+      // a 400 ("currently not supported for the Bulbul V3 model").
+      pace: 1.06,
+      speech_sample_rate: 22050,
+      enable_preprocessing: true,
+    }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!ttsResp.ok) throw new Error(`Sarvam TTS ${ttsResp.status}`);
+  const ttsData = await ttsResp.json() as any;
+  return ttsData.audios?.[0] || null;
+}
+
 app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
-  const { audio_base64, mime_type, text, session_id, persona } = req.body as {
+  const { audio_base64, mime_type, text, session_id, persona, stream } = req.body as {
     audio_base64?: string;
     mime_type?:    string;
     text?:         string;
@@ -971,6 +1016,9 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     // "product" = landing-page assistant describing Hey Nikki itself.
     // Omitted = the simulated inbound-call demo.
     persona?:      string;
+    // Opt in to the NDJSON streaming response. Absent or false = the
+    // single JSON body this endpoint has always returned.
+    stream?:       boolean;
   };
 
   const sessionId = (session_id || "").trim();
@@ -1222,54 +1270,93 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         speakText = (cut > 0 ? head.slice(0, cut) : head).trim();
       }
 
+      // ── Streaming path ────────────────────────────────────────
+      // Opt-in, because the browser and this server deploy separately (the
+      // site is on Vercel, this runs under systemd on EC2) and they WILL be
+      // out of step. A client that does not ask for it gets the same single
+      // JSON body as before, and a new client talking to an old server sees
+      // a normal JSON content-type and falls back. Neither half can break
+      // the other by shipping first.
+      //
+      // Why it exists: measured against Sarvam, one 80-char Telugu reply
+      // yields its first audio chunk at 354ms and its last at 1932ms. The
+      // non-streaming path waits for all twenty chunks and returns one blob,
+      // so the visitor hears nothing for ~2s. Forwarding each chunk as it
+      // lands is the entire 5.5x.
+      if (stream === true) {
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        // Cloudflare and nginx will otherwise buffer the whole response and
+        // hand it over in one piece, which silently undoes all of this.
+        res.setHeader("X-Accel-Buffering", "no");
+        const write = (o: any) => res.write(JSON.stringify(o) + "\n");
+
+        // Text first, so the transcript and the reply render while the
+        // voice is still being made.
+        write({
+          type: "meta", transcript, reply,
+          booking_confirmed: bookingConfirmed, booking_summary: bookingSummary,
+          turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+        });
+
+        let sent = 0;
+        try {
+          await synthesizeWs({
+            apiKey: SARVAM_KEY, text: speakText, languageCode: ttsLang,
+            speaker: "priya", sampleRate: 22050, pace: 1.06,
+            onChunk: (wav, seq) => { sent++; write({ type: "audio", seq, b64: wav.toString("base64") }); },
+          });
+        } catch (e: any) {
+          console.warn("[voice-turn] streaming tts failed:", e.message);
+          // Only worth retrying over REST if the visitor has heard nothing.
+          // Re-sending after partial audio would repeat what they just heard.
+          if (sent === 0) {
+            try {
+              const b64 = await sarvamRestTts(speakText, ttsLang, SARVAM_KEY);
+              if (b64) { write({ type: "audio", seq: 0, b64 }); sent++; }
+            } catch (e2: any) {
+              console.warn("[voice-turn] REST fallback also failed:", e2.message);
+            }
+          }
+        }
+        write({ type: "done", chunks: sent });
+        return res.end();
+      }
+
       const cacheKey = `${ttsLang}|${speakText}`;
       const cached = webTtsGet(cacheKey);
       if (cached) {
         audioBase64 = cached;
       } else {
-      const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
-        method: "POST",
-        headers: {
-          "api-subscription-key": SARVAM_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputs: [speakText],
-          // Speak back in the language the visitor actually used. Pinned to
-          // te-IN, an English reply was rendered with Telugu phonetics and
-          // came out as an accented mumble — which reads as "the voice is
-          // broken" to someone evaluating the product in English.
-          target_language_code: ttsLang,
-          // Same voice the phone product uses (main.py synthesize default),
-          // so what a visitor hears on the site is what their callers will
-          // actually get. Do not change it to a livelier-sounding name
-          // without checking compatibility first: bulbul:v3 accepts only a
-          // subset of Sarvam's speakers and rejects the rest with a 400,
-          // which this try/catch turns into audio_base64: null — a silently
-          // voiceless demo.
+      // WebSocket first, REST as the fallback — same vendor, same bulbul:v3,
+      // same voice, different transport. REST has a ~700ms floor per request
+      // regardless of length; the pipeline measured 75ms to first audio over
+      // the socket after a 195ms connect. That floor is what the old
+      // first-sentence-only truncation was buying its way out of, so this is
+      // the other half of that fix.
+      //
+      // Any failure here falls through to the REST block below untouched. A
+      // slower voice is a fine outcome; a silent demo is not, and this path
+      // is what a prospect judges the product on.
+      try {
+        const wsWav = await synthesizeWs({
+          apiKey: SARVAM_KEY,
+          text: speakText,
+          languageCode: ttsLang,
           speaker: "priya",
-          model: "bulbul:v3",
-          // Slightly quicker than default. A receptionist answering a
-          // business line speaks faster than a read-aloud tool, and flat
-          // pace is much of what makes synthetic speech sound like
-          // recital.
-          //
-          // NOTE: do NOT add pitch or loudness here. Bulbul V3 rejects
-          // both with a 400 ("currently not supported for the Bulbul V3
-          // model"), and because the TTS call is wrapped in a try/catch
-          // that only warns, the failure surfaces as audio_base64: null
-          // — Nikki replies in text with no voice at all, which looks
-          // like a broken audio pipeline rather than a bad parameter.
+          sampleRate: 22050,
           pace: 1.06,
-          speech_sample_rate: 22050,
-          enable_preprocessing: true,
-        }),
-        signal: AbortSignal.timeout(12_000),
-      });
-      if (!ttsResp.ok) throw new Error(`Sarvam TTS ${ttsResp.status}`);
-      const ttsData = await ttsResp.json() as any;
-      audioBase64 = ttsData.audios?.[0] || null;
-      if (audioBase64) webTtsPut(cacheKey, audioBase64);
+        });
+        audioBase64 = wsWav.toString("base64");
+        webTtsPut(cacheKey, audioBase64);
+      } catch (e: any) {
+        console.warn("[voice-turn] sarvam ws tts failed, falling back to REST:", e.message);
+      }
+
+      if (!audioBase64) {
+        audioBase64 = await sarvamRestTts(speakText, ttsLang, SARVAM_KEY);
+        if (audioBase64) webTtsPut(cacheKey, audioBase64);
+      }
       }
     } catch (e: any) {
       // Text still returns — the console falls back to browser speech
@@ -3637,6 +3724,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
 import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
+import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
 

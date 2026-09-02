@@ -141,6 +141,25 @@ export default function CallConsole() {
   }, [lines, reduced]);
 
   // ── Teardown ────────────────────────────────────────────────
+  // Streaming playback schedules MANY sources back-to-back, so "the thing
+  // that is playing" is no longer a single node. Every one of them has to be
+  // stoppable, or a barge-in silences the current chunk and the next one
+  // starts a moment later on its own — Nikki talking over the visitor.
+  const bookedRef     = useRef(false);
+  const srcsRef       = useRef<AudioBufferSourceNode[]>([]);
+  const nextStartRef  = useRef(0);
+
+  const stopAllPlayback = useCallback(() => {
+    for (const s of srcsRef.current) { try { s.stop(); } catch { /* already ended */ } }
+    srcsRef.current = [];
+    nextStartRef.current = 0;
+    // The classic single-buffer path stores its node here and does NOT put
+    // it in srcsRef. Clearing the ref without stopping it would leave a
+    // barge-in unable to silence a non-streaming reply.
+    try { srcRef.current?.stop(); } catch { /* already ended */ }
+    srcRef.current = null;
+  }, []);
+
   const teardown = useCallback(() => {
     endedRef.current = true;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -148,6 +167,8 @@ export default function CallConsole() {
     rafRef.current = null;
     autoStopRef.current = null;
     try { recorderRef.current?.state === "recording" && recorderRef.current.stop(); } catch {}
+    for (const s of srcsRef.current) { try { s.stop(); } catch {} }
+    srcsRef.current = [];
     try { srcRef.current?.stop(); } catch {}
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -232,7 +253,8 @@ export default function CallConsole() {
     // Kill any reply still playing. Without this a fast follow-up turn
     // started a SECOND BufferSource over the first — two Nikkis talking at
     // once, which is exactly how "the agent is mad" presents to a visitor.
-    try { srcRef.current?.stop(); } catch { /* already ended */ }
+    // Must cover streamed chunks too, not just a previous single buffer.
+    stopAllPlayback();
 
     try {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -259,11 +281,108 @@ export default function CallConsole() {
     } catch {
       onDone();
     }
+  }, [stopAllPlayback]);
+
+  // ── Streaming playback ──────────────────────────────────────
+  // Schedules each chunk to begin exactly where the previous one ends, so a
+  // reply split into ~18 pieces is heard as one continuous sentence. Sarvam
+  // hands us the first chunk at ~308ms and the last at ~1492ms; waiting for
+  // the whole file, as the classic path does, means silence for the full
+  // 1.5s. Same audio either way — this only changes when it starts.
+  const pushChunk = useCallback(async (b64: string) => {
+    const ctx = ctxRef.current;
+    if (!ctx || endedRef.current) return;
+
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const buf   = await ctx.decodeAudioData(bytes.buffer.slice(0) as ArrayBuffer);
+
+    // One analyser for the whole reply, so the waveform does not reset per
+    // chunk. Created on the first chunk and reused by the rest.
+    let analyser = playAnalyRef.current;
+    if (!analyser) {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 128;
+      analyser.smoothingTimeConstant = 0.72;
+      analyser.connect(ctx.destination);
+      playAnalyRef.current = analyser;
+    }
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(analyser);
+
+    // A small cushion on the first chunk: decoding the next one takes real
+    // time, and starting at exactly currentTime leaves no slack, which is
+    // audible as a click between the first two pieces.
+    const now   = ctx.currentTime;
+    const start = nextStartRef.current > now ? nextStartRef.current : now + 0.06;
+    src.start(start);
+    nextStartRef.current = start + buf.duration;
+    srcsRef.current.push(src);
   }, []);
 
+  const streamReply = useCallback(async (
+    res: Response,
+    onMeta: (m: any) => void,
+    onDone: () => void,
+  ) => {
+    stopAllPlayback();
+    setVoice("speaking");
+
+    const reader = res.body!.getReader();
+    const dec    = new TextDecoder();
+    let buf = "", sawAudio = false;
+    const pending: Promise<void>[] = [];
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        // NDJSON: one complete JSON object per line. A partial tail stays in
+        // the buffer until its newline arrives.
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i); buf = buf.slice(i + 1);
+          if (!line.trim()) continue;
+          let m: any;
+          try { m = JSON.parse(line); } catch { continue; }
+
+          if (m.type === "meta")  onMeta(m);
+          else if (m.type === "audio" && m.b64) {
+            sawAudio = true;
+            // Decode off the read loop so a slow decode never stalls the
+            // socket, but keep the handles: playback is not finished until
+            // they all resolve.
+            pending.push(pushChunk(m.b64).catch(() => { /* skip a bad chunk */ }));
+          }
+        }
+      }
+      await Promise.all(pending);
+    } catch {
+      /* fall through to onDone — a dropped stream must not strand the UI */
+    }
+
+    if (!sawAudio || endedRef.current) { onDone(); return; }
+
+    // Hand control back when the LAST scheduled chunk actually finishes,
+    // not when the network stream ends — those differ by whatever is still
+    // queued ahead of the playhead.
+    const ctx  = ctxRef.current;
+    const last = srcsRef.current[srcsRef.current.length - 1];
+    if (!ctx || !last) { onDone(); return; }
+    const remainMs = Math.max(0, (nextStartRef.current - ctx.currentTime) * 1000);
+    let settled = false;
+    const finish = () => { if (settled) return; settled = true; onDone(); };
+    last.onended = finish;
+    // Belt and braces: onended does not fire if the node was stopped early.
+    setTimeout(finish, remainMs + 250);
+  }, [pushChunk, stopAllPlayback]);
+
   const interruptNikki = useCallback(() => {
-    try { srcRef.current?.stop(); } catch {}
-    srcRef.current = null;
+    // Every scheduled chunk, not just the audible one. With streaming there
+    // are up to ~20 queued ahead of the playhead.
+    stopAllPlayback();
     playAnalyRef.current = null;
     // onended fires from stop(), which hands control to beginListening.
   }, []);
@@ -284,7 +403,13 @@ export default function CallConsole() {
         // tried to book a hospital visit for a visitor who came to find out
         // what HeyNikki is. Same Nikki as the wake-word widget now: she talks
         // about this product, and books a demo or a callback.
-        body: JSON.stringify({ ...payload, session_id: sessionRef.current, persona: "product" }),
+        // stream:true asks for the NDJSON response that sends audio chunks as
+        // Sarvam produces them. An older api-server ignores the flag and
+        // returns the same single JSON body it always has, which the
+        // content-type check below falls back to — the site (Vercel) and the
+        // api-server (systemd on EC2) deploy separately and are routinely out
+        // of step, so neither half may assume the other has shipped.
+        body: JSON.stringify({ ...payload, session_id: sessionRef.current, persona: "product", stream: true }),
         // A turn does STT + Gemini + TTS server-side and normally lands
         // in under 4s. Without a ceiling, a stalled mobile connection
         // leaves the caller watching the thinking dots forever with no
@@ -292,6 +417,31 @@ export default function CallConsole() {
         // 45s is generous for a slow 3G upload and still recovers.
         signal: AbortSignal.timeout(45_000),
       });
+      // ── Streaming response ────────────────────────────────────
+      const ctype = r.headers.get("content-type") || "";
+      if (r.ok && ctype.includes("ndjson")) {
+        await streamReply(
+          r,
+          (m) => {
+            if (m.transcript) setLines((l) => [...l, { who: "caller", text: m.transcript }]);
+            if (typeof m.turns_left === "number") setTurnsLeft(m.turns_left);
+            if (m.booking_confirmed && m.booking_summary) setBooking(m.booking_summary);
+            if (m.reply) setLines((l) => [...l, { who: "nikki", text: m.reply }]);
+            bookedRef.current = !!m.booking_confirmed;
+          },
+          () => {
+            if (endedRef.current) return;
+            if (bookedRef.current) {
+              setVoice("idle");
+              setTimeout(() => setCallState("ended"), 1100);
+            } else {
+              beginListening();
+            }
+          },
+        );
+        return;
+      }
+
       const data = await r.json();
 
       if (data.transcript) setLines((l) => [...l, { who: "caller", text: data.transcript }]);
@@ -311,7 +461,9 @@ export default function CallConsole() {
       if (typeof data.turns_left === "number") setTurnsLeft(data.turns_left);
       if (data.booking_confirmed && data.booking_summary) setBooking(data.booking_summary);
 
-      setLines((l) => [...l, { who: "nikki", text: data.reply }]);
+      // A hold turn answers with silence and an empty reply; adding a line
+      // for it puts a blank speech bubble in the transcript.
+      if (data.reply) setLines((l) => [...l, { who: "nikki", text: data.reply }]);
 
       playReply(data.audio_base64, () => {
         if (endedRef.current) return;
@@ -334,7 +486,7 @@ export default function CallConsole() {
       if (!endedRef.current) beginListening();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playReply]);
+  }, [playReply, streamReply]);
 
   // ── Recording ───────────────────────────────────────────────
   const stopAndSend = useCallback(() => {
