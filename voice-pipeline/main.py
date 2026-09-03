@@ -355,6 +355,15 @@ TELUGU_PHONE_PERSONA = (
     "\n\n[WHAT YOU NEVER DO]"
     "\n- Never invent a price, a doctor\'s availability, or any fact NOT"
     " listed below. Say you will find out, and offer a callback."
+    "\n- The address and the town are facts like any other. If they are not"
+    " listed below, say you will confirm the address and send it — do NOT"
+    " name a place. On one call she gave two different towns for the same"
+    " clinic in the same conversation, which is worse than not knowing."
+    "\n- If you did not understand what they said, ASK. Never agree with a"
+    " sentence you cannot make sense of. A caller once said something the"
+    " speech recogniser mangled and got \'అవునండి\' plus a promise to do it"
+    " — agreeing to nonsense sounds far worse than \'అర్థం కాలేదండి, ఒక్కసారి"
+    " చెప్తారా?\'."
     "\n- Never ask for the same thing twice in a row. If they did not answer,"
     " move on — much later, or not at all."
     "\n- Never send a reply they have already heard. A caller repeating"
@@ -2159,6 +2168,13 @@ class NikkiAgent:
                 log.warning("register filter rewrote %d banned phrase(s): %s",
                             len(_reg_hits), _reg_hits)
 
+            _prev_bot = next(
+                (t["content"] for t in reversed(self.transcript)
+                 if t.get("role") == "assistant"), "")
+            response, _dropped_q = _drop_repeated_question(response, _prev_bot)
+            if _dropped_q:
+                log.info("dropped a closing question that repeated the last turn")
+
             response, wants_end = _split_end_sentinel(response)
             if wants_end:
                 # The model does not get to decide this on its own. Ending a
@@ -2814,6 +2830,80 @@ def _enforce_register(text: str, lang: str = LANG_DEFAULT) -> tuple[str, list[st
         out = re.sub(r"\s+([।.,!?])", r"\1", out)
         out = re.sub(r"^[\s,.।]+", "", out).strip()
     return out, hits
+
+
+# Asking the same closing question after every single answer is what makes a
+# voice agent read as a machine. On call 39e7055b she ended seven consecutive
+# turns with a variant of "shall I fix the appointment?" — appended to the
+# clinic address, to the services list, to the lab-price answer. The caller
+# had already said no twice.
+#
+# The prompt asks her not to. This makes it so, the same way _enforce_register
+# does: strip a trailing question that repeats the previous turn's trailing
+# question, and keep the part that actually answered them. She still asks it
+# once; she just stops asking it every time.
+_QUESTION_END = re.compile(r"[?？]\s*$")
+# Particles and politeness carry no topic, so they must not make two different
+# questions look alike.
+_Q_STOPWORDS = {
+    "అండి", "గారు", "మీకు", "మీరు", "నేను", "ఒక", "ఏమైనా", "ఏదైనా", "ఇంకా",
+    "సరే", "అలాగే", "కదా", "నా", "ఆ", "ఈ", "కి", "కు", "లో", "తో",
+    "shall", "would", "you", "your", "the", "a", "an", "do", "i", "we", "is",
+}
+
+
+def _question_topic(q: str) -> frozenset:
+    """The content words of a question, as a comparable set."""
+    words = re.findall(r"[\w\u0C00-\u0C7F\u0900-\u097F\u0980-\u09FF]+", (q or "").lower())
+    return frozenset(w for w in words if len(w) >= 3 and w not in _Q_STOPWORDS)
+
+
+def _split_trailing_question(text: str) -> tuple[str, str]:
+    """Split a reply into (everything before the final question, that question)."""
+    t = (text or "").strip()
+    if not _QUESTION_END.search(t):
+        return t, ""
+    # Sentence boundaries in the scripts we speak, plus the Latin full stop.
+    parts = re.split(r"(?<=[.।!?])\s+", t)
+    if len(parts) < 2:
+        return t, ""
+    return " ".join(parts[:-1]).strip(), parts[-1].strip()
+
+
+def _drop_repeated_question(text: str, prev_assistant: str) -> tuple[str, bool]:
+    """Remove a closing question that just repeats the previous turn's.
+
+    Only when something else was actually said this turn — a reply that is
+    nothing but the question still needs to ask it, or she says nothing at
+    all. Returns (text, dropped).
+    """
+    body, question = _split_trailing_question(text)
+    if not question or len(body) < 15:
+        return text, False
+    _, prev_question = _split_trailing_question(prev_assistant or "")
+    if not prev_question:
+        return text, False
+    now, before = _question_topic(question), _question_topic(prev_question)
+    if not now or not before:
+        return text, False
+    if len(now & before) / len(now | before) >= 0.5:
+        return body, True
+    # Jaccard alone misses the exact shape that went wrong, because she varies
+    # the verb and the time words while asking the identical thing:
+    #   "రేపు పొద్దున తొమ్మిది గంటలకి అపాయింట్‌మెంట్ పెట్టమంటారా?"
+    #   "అపాయింట్‌మెంట్ ఫిక్స్ చేయమంటారా?"
+    # Same subject, same "shall I …?" form, two shared words out of eight. So
+    # also treat it as a repeat when the two questions share a content noun
+    # AND are both the -ంటారా "shall I" offer. Deliberately narrow: a
+    # wh-question ("ఏ రోజుకి …?") or a different request ("మీ పేరు చెప్తారా?")
+    # does not end that way, so asking for the date or the name still gets
+    # through even though it also mentions the appointment.
+    shared_nouns = {w for w in (now & before) if len(w) >= 6}
+    both_offers  = question.rstrip("?？ ").endswith("ంటారా") and \
+                   prev_question.rstrip("?？ ").endswith("ంటారా")
+    if shared_nouns and both_offers:
+        return body, True
+    return text, False
 
 
 def _split_end_sentinel(text: str) -> tuple[str, bool]:
