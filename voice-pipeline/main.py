@@ -5729,7 +5729,29 @@ async def freeswitch_ws(
                 if time.monotonic() >= speaking["until"]:
                     noise_win.append(energy)
                     if len(noise_win) >= 50:            # ~1s of samples
-                        floor = sorted(noise_win)[int(len(noise_win) * 0.85)]
+                        # 20th percentile, not 85th. The window is the last
+                        # ~7 seconds of the CALLER'S line, and a caller who is
+                        # talking is most of it — so the 85th percentile was
+                        # not a noise floor at all, it was their speech level.
+                        # Multiplying that by 1.5 put the threshold ABOVE the
+                        # voice it was supposed to detect, and the more they
+                        # said the deafer she got.
+                        #
+                        # Measured on call 3a69225a: the caller said "నమస్కారం
+                        # మేడం, నా పేరు నిధిన్ మేడం" at RMS 1990-8949 while the
+                        # threshold sat at 8272-9139. Every frame of it was
+                        # classified as silence, nothing reached STT, and she
+                        # answered "అర్థం కాలేదండి" to a man who had just
+                        # given her his name. Replaying that call: 0 of 14
+                        # frames heard at the 85th percentile, 14 of 14 at the
+                        # 20th.
+                        #
+                        # A low percentile is what makes the adaptation work
+                        # as intended — on a line idling at RMS 300 the floor
+                        # is 300 and the threshold 450, which is still far
+                        # under speech, so the noisy-line case this was built
+                        # for is handled better, not worse.
+                        floor = sorted(noise_win)[int(len(noise_win) * 0.20)]
                         vad_threshold = max(_SILENCE_THRESHOLD, floor * 1.5)
                 is_speech = energy > vad_threshold
 
