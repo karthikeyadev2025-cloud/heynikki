@@ -2016,9 +2016,13 @@ class NikkiAgent:
             if name:
                 name = self._NAME_TAIL.sub("", name).strip(" .,!?")
                 # Guard against capturing a refusal or a question back.
-                if 2 <= len(name) <= 60 and not re.search(r"\?|చెప్పను|తెలియదు", name):
+                if (2 <= len(name) <= 60
+                        and not re.search(r"\?|చెప్పను|తెలియదు", name)
+                        and not _is_junk_name(name)):
                     self.slots["name"] = name
                     log.info(f"slot: name={name}")
+                elif name:
+                    log.info(f"slot: name rejected as junk: {name!r}")
 
     def _known_facts_block(self) -> str:
         """Re-state confirmed facts every turn, and forbid inventing a booking.
@@ -3590,6 +3594,100 @@ import tempfile
 import time
 
 # Silence detection: ~320ms of silence (320 bytes @ 8kHz 8-bit or 640 bytes @ 16-bit)
+# The missed-call message the dialplan plays when a human transfer rings
+# out or, as now, cannot even be attempted. It used to be spoken by flite —
+# a robotic English voice — to callers on Telugu-configured lines, straight
+# after five minutes of natural Sarvam speech. These are rendered in the
+# tenant's own language in Nikki's voice and handed to FreeSWITCH as a file.
+_FALLBACK_DEFAULT_EN = ("Thank you for calling. All our representatives are "
+                        "busy. We will call you back shortly.")
+_FALLBACK_BY_LANG = {
+    "te-IN": "క్షమించండి, ప్రస్తుతం మా staff అందుబాటులో లేరు. "
+             "మేము త్వరలో మీకు తిరిగి call చేస్తాము. ధన్యవాదాలు.",
+    "hi-IN": "क्षमा करें, अभी हमारा स्टाफ़ उपलब्ध नहीं है। "
+             "हम आपको जल्द ही वापस कॉल करेंगे। धन्यवाद।",
+    "bn-IN": "দুঃখিত, এই মুহূর্তে আমাদের স্টাফ পাওয়া যাচ্ছে না। "
+             "আমরা শীঘ্রই আপনাকে ফিরে কল করব। ধন্যবাদ।",
+    "en-IN": _FALLBACK_DEFAULT_EN,
+}
+
+
+async def _prepare_missed_call_audio(agent, fs_uuid: str, profile: dict) -> None:
+    """Render the missed-call message and point the dialplan at it.
+
+    Fire and forget, at call start rather than at transfer time: by the time
+    a transfer rings out the websocket is already gone, so nothing in the
+    pipeline is left to speak. Setting the channel variable here means the
+    file is ready long before it can be needed, and the dialplan falls back
+    to its old flite line whenever the variable is empty.
+    """
+    if not fs_uuid:
+        return
+    try:
+        lang   = (profile.get("language") or "te-IN").strip()
+        custom = (profile.get("fallback_message") or "").strip()
+        # Respect a message the business actually wrote; ignore the English
+        # placeholder every profile ships with.
+        text = custom if custom and custom != _FALLBACK_DEFAULT_EN else \
+            _FALLBACK_BY_LANG.get(lang, _FALLBACK_BY_LANG["te-IN"])
+        audio = await agent.tts.synthesize(text, agent.voice)
+        if not audio:
+            return
+        os.makedirs(_TTS_SPOOL, exist_ok=True)
+        path = os.path.join(_TTS_SPOOL, f"fallback_{fs_uuid}.wav")
+        with open(path, "wb") as f:
+            f.write(audio)
+            f.flush()
+            os.fsync(f.fileno())
+        await _esl_api(f"uuid_setvar {fs_uuid} nikki_fallback_audio {path}")
+        log.info(f"[FS] {fs_uuid}: missed-call audio ready ({lang})")
+    except Exception as e:  # noqa: BLE001 - cosmetic; flite still covers us
+        log.warning(f"[FS] {fs_uuid}: missed-call audio not prepared: {e}")
+
+
+# Words a caller says AT the question rather than in answer to it. Without
+# this, "మీ పేరు చెప్పండి?" -> "cut" booked an appointment for "కట్ గారు"
+# (Mr. Cut) on the 12:52 call, and an earlier call filed "ఏం పేరు Madam" —
+# the caller repeating the question back — as somebody's name.
+_JUNK_NAME_WORDS = {
+    # English fillers, commands and STT artefacts
+    "cut", "stop", "wait", "hold", "hello", "hi", "hey", "yes", "no", "ok",
+    "okay", "hmm", "hm", "what", "sorry", "please", "thanks", "thank", "call",
+    "phone", "number", "sir", "madam", "mam", "doctor", "dr", "appointment",
+    "test", "time", "today", "tomorrow", "name", "my name", "your name",
+    "clinic", "hospital", "book", "booking", "cancel", "help", "again",
+    # Telugu equivalents
+    "పేరు", "ఏం పేరు", "హలో", "ఆగండి", "ఆపండి", "సరే", "సరేనండి", "అవును",
+    "కాదు", "లేదు", "డాక్టర్", "అపాయింట్‌మెంట్", "ఏమిటి", "ఏంటి", "చెప్పండి",
+    "నాకు", "మీరు", "నేను", "ఇది", "అది", "ఏమి", "ఎవరు",
+}
+
+
+def _is_junk_name(name: str) -> bool:
+    """Is this a caller answering the question, or repeating it back?
+
+    A name has to survive three checks: it cannot BE a stop-word, it cannot
+    CONTAIN the word "name" in either language (that is the question echoed
+    back), and it cannot be a single very short token, which in practice is
+    always an STT fragment rather than a person.
+    """
+    low = " ".join(str(name or "").lower().split())
+    if not low:
+        return True
+    if low in _JUNK_NAME_WORDS:
+        return True
+    if re.search(r"పేరు|\bname\b", low):
+        return True
+    tokens = low.split()
+    if all(t.strip(".,!?") in _JUNK_NAME_WORDS for t in tokens):
+        return True
+    # "cut", "ok", "aa" — a lone ASCII token this short is never a real name
+    # given Sarvam returns Telugu names in Telugu script.
+    if len(tokens) == 1 and low.isascii() and len(low) <= 4:
+        return True
+    return False
+
+
 _SILENCE_THRESHOLD  = 200        # RMS energy threshold for silence
 _SILENCE_FRAMES     = 16         # consecutive silent 20ms frames before STT fires
 _MIN_SPEECH_FRAMES  = 3          # minimum speech frames to attempt STT
@@ -4109,6 +4207,17 @@ async def _spool_janitor() -> None:
             for f in spool.glob("tts_*.wav"):
                 try:
                     if f.stat().st_mtime < cutoff:
+                        f.unlink(); removed += 1
+                except OSError:
+                    pass
+            # Missed-call clips are written once at call start and read only
+            # if a transfer rings out, so they must outlive the call itself —
+            # the 15-minute cutoff above would delete them out from under a
+            # long conversation and leave the caller in silence.
+            fb_cutoff = time.time() - 7200      # 2 hours
+            for f in spool.glob("fallback_*.wav"):
+                try:
+                    if f.stat().st_mtime < fb_cutoff:
                         f.unlink(); removed += 1
                 except OSError:
                     pass
@@ -4634,6 +4743,16 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             agent.transfer_requested = False
             log.info(f"[FS] {fs_uuid}: caller asked for a human — transferring")
             try:
+                # Detach mod_audio_stream FIRST. Closing our end of the
+                # websocket does not stop the stream on the channel — it
+                # simply reconnects, the pipeline treats the reconnection as
+                # a brand new call, and Nikki comes back to life on a leg
+                # that is supposed to be a human. On the 12:52 call that
+                # produced a second calls row (18s, no transcript, intent
+                # unknown) sharing one FreeSWITCH uuid with the first, and
+                # the caller heard the bot restart after being told she was
+                # connecting them to staff.
+                await _esl_api(f"uuid_audio_stream {fs_uuid} stop")
                 async with httpx.AsyncClient(timeout=4.0) as client:
                     await client.post(
                         f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
@@ -5236,6 +5355,10 @@ async def freeswitch_ws(
         log.info(f"[FS] IVR menu active: {len(_opts)} options")
     agent.guard_seconds = routing.get("missed_call_seconds", 20)
 
+    # Prepare the missed-call message now, while there is still a pipeline
+    # attached to this call. See _prepare_missed_call_audio.
+    asyncio.create_task(_prepare_missed_call_audio(agent, fs_uuid, profile))
+
     # Hand the call to human agents when the DID says so. The API server
     # has already checked there is somebody to ring; if there wasn't, it
     # returns "ai" instead so the caller never lands in silence.
@@ -5309,6 +5432,9 @@ async def freeswitch_ws(
     speaking       = {"until": 0.0}
     frame_secs     = None         # measured from the first frame received
     silence_needed = _SILENCE_FRAMES
+    # Set once the real frame duration is known, alongside silence_needed.
+    burst_frames       = 0
+    long_speech_frames = 0
     barge_frames   = 0            # consecutive voiced frames while Nikki speaks
     last_backchannel = 0.0        # B8 cooldown
     pending_text = ""             # B7: merged mid-reply interjections
@@ -5402,10 +5528,15 @@ async def freeswitch_ws(
                     # stops — whereas a long pause is dead air on every turn.
                     silence_needed = max(1, round(0.40 / frame_secs))
                     speech_needed  = max(1, round(0.06 / frame_secs))
+                    # See the endpointing note further down: short bursts get
+                    # a longer silence window than complete utterances.
+                    burst_frames       = max(1, round(0.85 / frame_secs))
+                    long_speech_frames = max(1, round(1.20 / frame_secs))
                     log.info(
                         f"[FS] {fs_uuid}: frame={len(frame)}B "
                         f"({frame_secs*1000:.0f}ms) silence_needed={silence_needed} "
-                        f"speech_needed={speech_needed}"
+                        f"speech_needed={speech_needed} "
+                        f"burst={burst_frames} long_speech={long_speech_frames}"
                     )
 
                 # Accumulate full recording
@@ -5507,6 +5638,20 @@ async def freeswitch_ws(
                 # instead of ~400ms) — correct endpointing behaviour EXTENDS
                 # under dictation rather than shaving the base window.
                 _need = silence_needed * (3 if getattr(agent, "expect_dictation", False) else 1)
+                # A brief burst of speech is usually somebody drawing breath
+                # mid-sentence, not the end of a turn. The flat 400ms window
+                # cut one caller's single sentence into five separate STT
+                # calls — 'దాకా చేసిన', 'lab test-లు', 'jain', 'doctor తో',
+                # 'నేను చెప్తున్నాను' — which reached the transcript as
+                # gibberish and the model as nonsense.
+                #
+                # So the window depends on how much they have said: a long
+                # utterance ending is unambiguous and keeps the snappy 400ms,
+                # while anything under ~1.2s of speech waits ~850ms before we
+                # accept it as a complete turn. Normal conversation is not
+                # slowed; only the fragments that were never turns are.
+                if burst_frames and long_speech_frames and speech_count < long_speech_frames:
+                    _need = max(_need, burst_frames)
                 if silence_count >= _need and speech_count >= speech_needed:
                     utterance_pcm = bytes(speech_buf)
                     speech_buf    = bytearray()

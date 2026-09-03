@@ -210,11 +210,25 @@
            the transfer target is bare "missed_". With (.+) that failed to
            match and the call fell through to catch_all, which answers 404 on
            an already-answered channel. The webhook handles an empty caller. -->
-      <condition field="destination_number" expression="^missed_(.*)$">
+      <condition field="destination_number" expression="^missed_(.*)$"/>
+      <!-- The apology used to be spoken by flite: a robotic English voice,
+           to callers on a Telugu-configured line, immediately after minutes
+           of natural Sarvam speech. The pipeline now renders this line in
+           the tenant's own language and Nikki's voice at CALL START and
+           leaves the path in nikki_fallback_audio, because by the time a
+           transfer rings out the websocket is gone and nothing is left to
+           speak. When the variable is empty — a routing_mode=human DID,
+           where no pipeline ever attached — the anti-actions below keep
+           exactly the old behaviour rather than leaving dead air. -->
+      <condition field="${nikki_fallback_audio}" expression="^.+$">
         <action application="answer"/>
-        <action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
+        <action application="playback" data="${nikki_fallback_audio}"/>
         <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
         <action application="hangup"/>
+        <anti-action application="answer"/>
+        <anti-action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
+        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
+        <anti-action application="hangup"/>
       </condition>
     </extension>
 
