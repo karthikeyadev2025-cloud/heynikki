@@ -166,11 +166,30 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
   const tenantId = recipient.tenant_id || campaign?.tenant_id;
   if (!tenantId) return;
 
-  const { data: vp } = await sb.from("voice_profiles")
-    .select("business_name, whatsapp_number, fallback_wa_enabled")
-    .eq("id", campaign?.voice_profile_id || recipient.voice_profile_id)
-    .maybeSingle();
+  // A campaign row may carry no voice_profile_id at all — the create form
+  // leaves it null and nothing backfills it. The old lookup passed that null
+  // straight into .eq("id", ...), matched nothing, and fell through to the
+  // defaults below: the message introduced the business as "our team" and,
+  // worse, put recipient.phone in the whatsapp_number slot, telling the
+  // person to contact their own number. Fall back to the tenant's own
+  // profile, which is the business they were actually called by.
+  const profileId = campaign?.voice_profile_id || recipient.voice_profile_id;
+  const { data: vp } = profileId
+    ? await sb.from("voice_profiles")
+        .select("business_name, whatsapp_number, fallback_wa_enabled")
+        .eq("id", profileId).maybeSingle()
+    : await sb.from("voice_profiles")
+        .select("business_name, whatsapp_number, fallback_wa_enabled")
+        .eq("tenant_id", tenantId).limit(1).maybeSingle();
   if (vp?.fallback_wa_enabled === false) return;
+
+  // Without a business identity there is no honest message to send. Staying
+  // silent is better than a WhatsApp from "our team" quoting the recipient's
+  // own number back at them.
+  if (!vp?.business_name) {
+    console.error(`[dispatcher] no voice profile for tenant ${tenantId} — skipping no-answer follow-up to ${recipient.phone}`);
+    return;
+  }
 
   try {
     // Same event the inbound missed-call path fires, so both share one n8n
@@ -182,8 +201,8 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
         caller_number:   recipient.phone,
         tenant_id:       tenantId,
         call_id:         recipient.call_id ?? null,
-        business_name:   vp?.business_name || "our team",
-        whatsapp_number: vp?.whatsapp_number || recipient.phone,
+        business_name:   vp.business_name,
+        whatsapp_number: vp.whatsapp_number || null,
       }),
       signal: AbortSignal.timeout(5000),
     });
