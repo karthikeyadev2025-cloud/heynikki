@@ -2088,7 +2088,14 @@ app.post("/api/whatsapp/inbox/read", verifyJWT, async (req: any, res) => {
   res.json({ ok: true, marked: ids.length });
 });
 
-app.get("/api/calls/:id/recording", verifyJWT, async (req: any, res) => {
+// One route, not two. A second handler for this exact path was registered
+// ~2600 lines below and returned a presigned URL as JSON, while this one
+// streams the decrypted bytes — Express matches the first, so the JSON
+// version had never run, and the shapes are incompatible: the player does
+// URL.createObjectURL(await r.blob()) and would have choked on JSON. It
+// carried apiLimiter, which this one lacked, so call audio was the one
+// unthrottled large download in the API; that limiter moves here.
+app.get("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
@@ -4727,39 +4734,6 @@ app.get("/api/appointments/:id/invite-link", verifyJWT, async (req: any, res) =>
 // originally assumed. It also means every customer's recorded phone call
 // sits at an unauthenticated URL that never expires, written into the
 // database and rendered into dashboards. Not a trade worth making.
-app.get("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res) => {
-  try {
-    const tenantId = await getTenantId(req.user.id);
-    if (!tenantId) return res.status(403).json({ error: "No tenant" });
-
-    const { data: call } = await sb.from("calls")
-      .select("id, tenant_id, r2_object_key, recording_url")
-      .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
-    // Same 404 whether the call does not exist or belongs to someone else —
-    // distinguishing them tells a stranger which call ids are real.
-    if (!call) return res.status(404).json({ error: "Call not found" });
-
-    // Older rows, and deployments with a public bucket, carry a plain URL.
-    if (call.recording_url) return res.json({ url: call.recording_url, expires_in: 0 });
-    if (!call.r2_object_key) return res.status(404).json({ error: "No recording for this call" });
-
-    const r = await fetch(`${PIPELINE_URL}/api/v1/recording/presign`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
-      body: JSON.stringify({ object_key: call.r2_object_key, expires_in: 900 }),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) {
-      console.error("[recording] presign failed:", r.status, await r.text().catch(() => ""));
-      return res.status(502).json({ error: "Could not prepare the recording" });
-    }
-    res.json(await r.json());
-  } catch (err: any) {
-    console.error("[recording]", err.message);
-    res.status(500).json({ error: "Internal error" });
-  }
-});
-
 // ── Meta WhatsApp Cloud API webhook ───────────────────────────
 // Callback URL to register in Meta: https://api.heynikki.in/webhooks/whatsapp
 //
