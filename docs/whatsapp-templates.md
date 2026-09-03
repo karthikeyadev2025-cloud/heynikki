@@ -119,16 +119,39 @@ onboarding_kyc_verified, onboarding_number_active, onboarding_setup_reminder.
 
 ---
 
-## 6. `booking_incomplete_callback` · te · UTILITY
-{{1}} = business name
+## 6. `booking_incomplete_callback` · te · UTILITY — NOT YET SUBMITTED
 
 Sent two hours after a call where Nikki opened an appointment and never got a
 date and time. The caller phoned us, which does **not** open the 24-hour
 service window, so this only ever works as an approved template.
+
+Meta Business Manager → WhatsApp Manager → Message templates → Create template.
+Paste these exactly:
+
+| Field | Value |
+|---|---|
+| Name | `booking_incomplete_callback` |
+| Category | **Utility** (not Marketing — it is a reply to their own request) |
+| Language | Telugu (`te`) |
+| Header | none |
+| Footer | none |
+| Buttons | none |
+
+Body — one variable, `{{1}}` = business name:
 
 ```
 నమస్కారం! మీరు {{1}} కి appointment కోసం call చేశారు, కానీ మనం date మరియు time confirm చేయలేదు.
 
 మీకు అనుకూలమైన సమయం చెప్పడానికి మళ్ళీ call చేయండి. ధన్యవాదాలు! 🙏
 ```
-Sample: `Ravi Clinic`
+
+Sample value for `{{1}}`: `Ravi Clinic`
+
+Nothing in the code changes when it is approved — `WA_TEMPLATES.booking_incomplete`
+already points at this exact name and language, and the scheduler passes the
+business name as the single parameter. Confirm it went live with:
+
+```
+curl -s "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_ID/message_templates?fields=name,status&limit=100" \
+  -H "Authorization: Bearer $META_WA_TOKEN" | grep -o 'booking_incomplete_callback[^}]*'
+```
