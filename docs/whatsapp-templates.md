@@ -95,15 +95,27 @@ Sample: `Ravi Clinic`
 
 ## Still missing, and worth adding
 
-- **`appointment_reminder`** — the 24-hour reminder job sends free text today,
-  so it only lands if the customer happens to have replied within the window.
-  A reminder is by definition sent a day after the call, so the window is shut
-  for essentially every recipient. This is the highest-value submission on the
-  page: the job runs, `wa_dispatch_log` records "sent", and nobody receives it.
-- **`lead_capture_ack`** — the website-form acknowledgement, same problem.
-- **`booking_incomplete_callback`** — below. Same problem, same reason.
+- **`booking_incomplete_callback`** — below. Not yet submitted. Until it is
+  approved the two-hour abandoned-booking chase reports success and delivers
+  nothing, because a caller phoning us does not open the 24-hour window.
 
-All three currently report success and deliver nothing outside the window.
+### Do not trust this section without checking
+
+`appointment_reminder` and `lead_capture_ack` were listed here as missing
+long after Meta had approved both. Acting on that stale note, a reminder
+failure was diagnosed that did not exist. The WABA is the source of truth,
+not this file:
+
+```
+curl -s "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_ID/message_templates?fields=name,status,language,category&limit=100" \
+  -H "Authorization: Bearer $META_WA_TOKEN"
+```
+
+Verified against WABA 1082855697732160 on 2026-09-03: 13 templates, all
+APPROVED — appointment_confirmed, appointment_reminder, daily_business_summary,
+hello_world, interested_lead_brochure, lead_brochure_details, lead_capture_ack,
+missed_call_followup, onboarding_account_ready, onboarding_credits_low,
+onboarding_kyc_verified, onboarding_number_active, onboarding_setup_reminder.
 
 ---
 
