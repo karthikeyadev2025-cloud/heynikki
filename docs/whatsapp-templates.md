@@ -97,6 +97,26 @@ Sample: `Ravi Clinic`
 
 - **`appointment_reminder`** — the 24-hour reminder job sends free text today,
   so it only lands if the customer happens to have replied within the window.
+  A reminder is by definition sent a day after the call, so the window is shut
+  for essentially every recipient. This is the highest-value submission on the
+  page: the job runs, `wa_dispatch_log` records "sent", and nobody receives it.
 - **`lead_capture_ack`** — the website-form acknowledgement, same problem.
+- **`booking_incomplete_callback`** — below. Same problem, same reason.
 
-Both currently report success and deliver nothing outside the window.
+All three currently report success and deliver nothing outside the window.
+
+---
+
+## 6. `booking_incomplete_callback` · te · UTILITY
+{{1}} = business name
+
+Sent two hours after a call where Nikki opened an appointment and never got a
+date and time. The caller phoned us, which does **not** open the 24-hour
+service window, so this only ever works as an approved template.
+
+```
+నమస్కారం! మీరు {{1}} కి appointment కోసం call చేశారు, కానీ మనం date మరియు time confirm చేయలేదు.
+
+మీకు అనుకూలమైన సమయం చెప్పడానికి మళ్ళీ call చేయండి. ధన్యవాదాలు! 🙏
+```
+Sample: `Ravi Clinic`

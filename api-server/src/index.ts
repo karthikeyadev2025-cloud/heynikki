@@ -734,6 +734,11 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   // text, which Meta accepts and then drops outside the window — so neither
   // has ever been delivered to anyone who had not messaged us first.
   reminder:         { name: "appointment_reminder", lang: "te" },
+  // A booking that was started and never finished. Goes out two hours after
+  // the call, so the 24-hour service window is almost always shut by then —
+  // the caller phoned us, which does not open it. Without this template
+  // approved the message is accepted by the API and dropped at delivery.
+  booking_incomplete: { name: "booking_incomplete_callback", lang: "te" },
   lead_capture_ack: { name: "lead_capture_ack",     lang: "te" },
 };
 
@@ -1519,6 +1524,24 @@ app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
   if (ok) {
     await sb.from("appointments").update({ wa_reminder_sent: true }).eq("id", appointment_id);
   }
+  res.json({ ok });
+});
+
+// Booking started but never finished — sent 2h after the call by the
+// scheduler. Deliberately does NOT claim we will call back: whether the
+// callback actually happens depends on the trunk, and promising a call we
+// might not place is how a clinic loses a patient's trust twice.
+app.post("/api/whatsapp/booking-incomplete", verifyInternal, async (req, res) => {
+  const { caller_number, caller_name, business_name, service,
+    tenant_id, voice_profile_id, appointment_id, call_id } = req.body;
+  const who = caller_name ? `${caller_name} గారు, ` : "";
+  const message = `${who}నమస్కారం! మీరు ${business_name} కి appointment కోసం call చేశారు, ` +
+    `కానీ మనం date మరియు time confirm చేయలేదు.\n\n` +
+    (service ? `🏷️ ${service}\n` : "") +
+    `\nమీకు అనుకూలమైన సమయం చెప్పడానికి మళ్ళీ call చేయండి. ధన్యవాదాలు! 🙏`;
+  const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
+    "booking_incomplete", call_id, appointment_id, business_name,
+    [business_name || "us"]);
   res.json({ ok });
 });
 

@@ -388,7 +388,13 @@ async function tickInstant(): Promise<void> {
     const { data: profile } = await sb.from("voice_profiles")
       .select("skip_dnd_for_instant_leads")
       .eq("tenant_id", r.tenant_id).limit(1).maybeSingle();
-    const consented = !!profile?.skip_dnd_for_instant_leads;
+    // consent_call_id is the stronger of the two signals and the reason the
+    // column exists: this number phoned the business and asked for something,
+    // and the recording of that call is the consent record. A web form behind
+    // skip_dnd_for_instant_leads is a weaker claim than that, so a row
+    // carrying real call consent does not also need the tenant flag —
+    // otherwise a caller who asked to be rung back is blocked as unscrubbed.
+    const consented = !!r.consent_call_id || !!profile?.skip_dnd_for_instant_leads;
 
     await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
     const { blocked, reason } = await scrubDnd(r.phone, consented);

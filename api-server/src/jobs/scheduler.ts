@@ -170,6 +170,147 @@ export async function runAppointmentReminders(): Promise<number> {
   return sent;
 }
 
+/* ── Incomplete bookings ────────────────────────────────────── */
+
+/**
+ * Someone who started booking an appointment and never got a slot.
+ *
+ * Nikki opens an appointments row the moment a caller asks to book, and
+ * fills slot_date/slot_time when they agree one. A call that ends before
+ * that leaves a 'pending' row with no time on it — and nothing in this
+ * system has ever looked at those rows again. They are not failed calls in
+ * any log; they are people who rang a clinic to book and then never heard
+ * from anyone.
+ *
+ * Two hours is the abandonment line: long enough that the call is
+ * definitively over and they are not mid-conversation, short enough to
+ * still reach them the same day.
+ *
+ * One follow-up per NUMBER per day, not per row. Six abandoned rows from
+ * one person is one person who had a bad time, not six people to message —
+ * and six identical "we could not finish your booking" messages is the
+ * harassment pattern the campaign retry rules already exist to prevent.
+ */
+const INCOMPLETE_AFTER_MS   = 2 * 3600 * 1000;
+// Anything older than this is history, not a lead. Without the floor the
+// first run of this job would wake up every abandoned booking ever taken.
+const INCOMPLETE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
+export async function runIncompleteBookings(): Promise<number> {
+  const now = Date.now();
+  const { data, error } = await sb
+    .from("appointments")
+    .select("id, tenant_id, voice_profile_id, call_id, caller_number, caller_name, service, created_at")
+    .eq("status", "pending")
+    .is("slot_time", null)
+    .lt("created_at", new Date(now - INCOMPLETE_AFTER_MS).toISOString())
+    .gt("created_at", new Date(now - INCOMPLETE_MAX_AGE_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) { log("incomplete-booking fetch failed:", error.message); return 0; }
+  if (!data?.length) return 0;
+
+  // Newest row per number — the ordering above means the first one seen is
+  // the most recent attempt, which is the one worth referring to.
+  const byNumber = new Map<string, any>();
+  for (const a of data) {
+    if (!a.caller_number) continue;
+    if (!byNumber.has(a.caller_number)) byNumber.set(a.caller_number, a);
+  }
+
+  const dayAgo = new Date(now - 24 * 3600 * 1000).toISOString();
+  let sent = 0;
+
+  for (const a of byNumber.values()) {
+    // Already chased this number today?
+    const { data: recent } = await sb.from("wa_dispatch_log")
+      .select("id")
+      .eq("to_number", a.caller_number)
+      .eq("message_type", "booking_incomplete")
+      .gt("sent_at", dayAgo)
+      .limit(1);
+    if (recent?.length) continue;
+
+    // Did they get through in the end? An abandoned row is not evidence of
+    // an unserved caller if the same person has a booking on the books —
+    // they rang back, or Nikki opened a second row and finished that one.
+    // Telling someone who is booked for this afternoon that we could not
+    // confirm their date is worse than saying nothing at all.
+    const { data: booked } = await sb.from("appointments")
+      .select("id")
+      .eq("caller_number", a.caller_number)
+      .eq("tenant_id", a.tenant_id)
+      .eq("status", "confirmed")
+      .gte("slot_date", istDateString(0))
+      .limit(1);
+    if (booked?.length) continue;
+
+    const [{ data: vp }, { data: t }] = await Promise.all([
+      sb.from("voice_profiles").select("business_name")
+        .eq("tenant_id", a.tenant_id).limit(1).maybeSingle(),
+      sb.from("tenants").select("name").eq("id", a.tenant_id).maybeSingle(),
+    ]);
+    const businessName = vp?.business_name || t?.name || "";
+    // Same rule as the campaign follow-up: without a business identity there
+    // is no honest message to send.
+    if (!businessName) continue;
+
+    try {
+      const r = await fetch(`${API_URL}/api/whatsapp/booking-incomplete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-secret": INTERNAL_SECRET,
+        },
+        body: JSON.stringify({
+          caller_number:    a.caller_number,
+          caller_name:      a.caller_name,
+          business_name:    businessName,
+          service:          a.service,
+          tenant_id:        a.tenant_id,
+          voice_profile_id: a.voice_profile_id,
+          appointment_id:   a.id,
+          call_id:          a.call_id,
+        }),
+      });
+      if (!r.ok) continue;
+      sent++;
+    } catch (e) {
+      log("incomplete-booking WhatsApp failed:", e);
+      continue;
+    }
+
+    // And queue the callback. It sits harmlessly in the queue while the
+    // trunk is down and dials the moment outbound works.
+    //
+    // consent_call_id is the point: this number is not a marketing target,
+    // it is someone who phoned this business and asked for an appointment,
+    // and the recording of that call is the consent record. The dispatcher
+    // reads it as consent so the callback is not blocked as unscrubbed.
+    const { data: already } = await sb.from("outbound_recipients")
+      .select("id").eq("phone", a.caller_number).eq("is_instant", true)
+      .in("status", ["pending", "scrubbing", "queued", "in_progress"])
+      .limit(1);
+    if (already?.length) continue;
+
+    const { error: insErr } = await sb.from("outbound_recipients").insert({
+      tenant_id:       a.tenant_id,
+      campaign_id:     null,
+      is_instant:      true,
+      phone:           a.caller_number,
+      first_name:      a.caller_name,
+      status:          "pending",
+      consent_call_id: a.call_id || null,
+      metadata:        { source: "incomplete_booking", appointment_id: a.id,
+                         voice_profile_id: a.voice_profile_id },
+    });
+    if (insErr) log("incomplete-booking callback queue failed:", insErr.message);
+  }
+
+  if (sent) log(`chased ${sent} incomplete booking(s)`);
+  return sent;
+}
+
 /* ── 3. Daily summary to the business owner ─────────────────── */
 
 export async function runDailySummaries(): Promise<number> {
@@ -475,6 +616,7 @@ export async function runScheduler() {
   // time keeps log output readable and avoids hammering Gemini/Supabase.
   await runEmbedKnowledge();
   await runAppointmentReminders();
+  await runIncompleteBookings();
   await runDailySummaries();
   await runCallQuality();
   await runCloseAbandonedCalls();
