@@ -4304,6 +4304,16 @@ async def _spool_janitor() -> None:
             # if a transfer rings out, so they must outlive the call itself —
             # the 15-minute cutoff above would delete them out from under a
             # long conversation and leave the caller in silence.
+            # Safety net for the both-sides recordings. _mixed_recording_bytes
+            # deletes each one as soon as R2 has it; this only catches a call
+            # whose cleanup died mid-way, and never a live call — 2 hours is
+            # far longer than any conversation.
+            for f in spool.glob("call_*.wav"):
+                try:
+                    if f.stat().st_mtime < time.time() - 7200:
+                        f.unlink(); removed += 1
+                except OSError:
+                    pass
             fb_cutoff = time.time() - 7200      # 2 hours
             for f in spool.glob("fallback_*.wav"):
                 try:
@@ -4938,6 +4948,64 @@ async def _send_audio_to_freeswitch(ws, audio: bytes, fs_uuid: str, seq: int = 0
             except OSError:
                 pass
         asyncio.create_task(_cleanup(path))
+
+
+async def _mixed_recording_bytes(fs_uuid: str) -> bytes:
+    """The both-sides recording FreeSWITCH made, if it made one.
+
+    Why this exists: the websocket carries ONE direction. The dialplan starts
+    mod_audio_stream with `mono`, which is the caller's leg, and the pipeline
+    was uploading exactly those frames — so every recording held the caller
+    and nothing else. Nikki's replies never travel that path at all; she is
+    played into the channel with uuid_broadcast, which the media bug does not
+    see. Proven by feeding a call pure digital silence while she spoke: the
+    uploaded file came back with a peak amplitude of zero.
+
+    Switching the stream to `mixed` would fix the recording and break the
+    call — that same stream feeds VAD and STT, so she would hear herself and
+    transcribe her own speech. So FreeSWITCH records both legs itself with
+    record_session, and this reads that file.
+
+    Returns b"" whenever anything is off, and the caller-only PCM is used
+    instead — a one-sided recording beats no recording.
+    """
+    path = os.path.join(_TTS_SPOOL, f"call_{fs_uuid}.wav")
+    try:
+        # The channel may still be closing the file. Stopping is idempotent
+        # and returns an error we do not care about once it already stopped.
+        try:
+            await _esl_api(f"uuid_record {fs_uuid} stop {path}")
+        except Exception:  # noqa: BLE001
+            pass
+        # Wait for the size to settle rather than a fixed sleep — a long call
+        # takes longer to flush than a short one.
+        last = -1
+        for _ in range(12):                     # up to ~1.8s
+            if not os.path.exists(path):
+                await asyncio.sleep(0.15)
+                continue
+            size = os.path.getsize(path)
+            if size == last and size > 44:      # 44 = bare WAV header
+                break
+            last = size
+            await asyncio.sleep(0.15)
+        if not os.path.exists(path) or os.path.getsize(path) <= 44:
+            return b""
+        with open(path, "rb") as f:
+            data = f.read()
+        return data
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: mixed recording unavailable: {e}")
+        return b""
+    finally:
+        # /tmp is tmpfs against a 5.6GB ceiling, and an earlier version of
+        # record_session on this leg filled the disk and took FreeSWITCH, the
+        # pipeline and the API server down together because nothing ever
+        # deleted the files. R2 has it now; this must not linger.
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
@@ -5873,10 +5941,17 @@ async def freeswitch_ws(
         duration = int(time.time() - call_start_ts)
         log.info(f"[FS] {fs_uuid}: Call ended, duration={duration}s, pcm={len(recording_pcm)}B")
 
-        # Upload recording to R2 (async, don't block close)
+        # Upload recording to R2 (async, don't block close). Prefer the file
+        # FreeSWITCH mixed from BOTH legs; fall back to the caller-only PCM
+        # this websocket received, which is all there used to be.
         r2_url = ""
-        if recording_pcm:
+        wav_bytes = await _mixed_recording_bytes(fs_uuid)
+        if wav_bytes:
+            log.info(f"[FS] {fs_uuid}: uploading both-sides recording ({len(wav_bytes)}B)")
+        elif recording_pcm:
+            log.warning(f"[FS] {fs_uuid}: no mixed recording — falling back to caller-only audio")
             wav_bytes = _pcm16_to_wav_bytes(bytes(recording_pcm))
+        if wav_bytes:
             r2_url = await _upload_to_r2(wav_bytes, agent.call_id or fs_uuid, profile["tenant_id"])
 
         # Finalize call record

@@ -121,15 +121,34 @@
         <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/>
         -->
 
-        <!-- NOTE: deliberately no record_session on this leg.
-             The voice pipeline accumulates the same inbound PCM in
-             memory and uploads it to Cloudflare R2 on hangup. Recording
-             here as well wrote a SECOND copy of every call to
-             /tmp/recordings, and nothing ever deleted it — so the EC2
-             disk filled over time and took FreeSWITCH, the pipeline and
-             the API server down together. R2 is the single source of
-             truth for AI-handled calls. Human-mode calls DO record
-             here, since no pipeline sits in that path. -->
+        <!-- RECORDING. This leg records again, and the reason it was
+             switched off has been dealt with rather than ignored.
+
+             It was removed because it wrote a SECOND copy of every call
+             to /tmp/recordings that nothing ever deleted, filling the
+             disk and taking FreeSWITCH, the pipeline and the API server
+             down together. The pipeline was left as the single source of
+             truth — but the pipeline can only save what the websocket
+             gives it, and mod_audio_stream is started `mono`, which is
+             the CALLER'S leg. So every recording held the caller and
+             nothing else: Nikki is played into the channel with
+             uuid_broadcast, which the media bug never sees. Feeding a
+             call pure digital silence while she spoke produced a file
+             with a peak amplitude of zero.
+
+             `mixed` on the stream would fix the recording and break the
+             call — that stream feeds VAD and STT, so she would hear
+             herself. FreeSWITCH mixes both legs correctly, so it records
+             here, and the pipeline uploads THAT file to R2 and deletes
+             it (see _mixed_recording_bytes). One copy, removed as soon
+             as R2 has it, so the disk cannot fill the way it did. If the
+             file is missing for any reason the pipeline falls back to the
+             caller-only audio, which is what it had before.
+
+             RECORD_STEREO stays false: one mixed mono track is what a
+             business plays back, and it is half the bytes. -->
+        <action application="set" data="RECORD_STEREO=false"/>
+        <action application="record_session" data="/tmp/recordings/call_${uuid}.wav"/>
 
         <action application="set" data="STREAM_MESSAGE_DEFLECTION=false"/>
         <!-- 100ms, not 320. The VAD can only decide on frame boundaries, so the
@@ -274,6 +293,11 @@
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="answer"/>
+        <!-- Both legs, same as inbound — the stream is `mono` here too, so
+             without this the recording would hold the customer and none of
+             Nikki's pitch. -->
+        <action application="set" data="RECORD_STEREO=false"/>
+        <action application="record_session" data="/tmp/recordings/call_${uuid}.wav"/>
         <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
         <!-- Same API-not-application fix as inbound_sip_ai above. -->
         <!-- Streams to the SAME handler inbound calls use, not a separate
