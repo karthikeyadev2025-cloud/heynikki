@@ -332,7 +332,19 @@ export default function CallConsole() {
     const reader = res.body!.getReader();
     const dec    = new TextDecoder();
     let buf = "", sawAudio = false;
-    const pending: Promise<void>[] = [];
+    // ONE chain, not an array of concurrent promises.
+    //
+    // pushChunk awaits decodeAudioData and only THEN reads and writes
+    // nextStartRef. Firing every chunk concurrently meant ~15 decodes racing
+    // that read-modify-write: several resolved before any of them had
+    // written, so they computed the same start time and were scheduled on
+    // top of each other, in whatever order decodeAudioData happened to
+    // finish. The reply came out overlapping and out of order — audible as
+    // Nikki talking over herself.
+    //
+    // Chaining keeps decode off the read loop, so the socket still drains at
+    // full speed, while guaranteeing chunks are scheduled in arrival order.
+    let chain: Promise<void> = Promise.resolve();
 
     try {
       for (;;) {
@@ -351,14 +363,14 @@ export default function CallConsole() {
           if (m.type === "meta")  onMeta(m);
           else if (m.type === "audio" && m.b64) {
             sawAudio = true;
-            // Decode off the read loop so a slow decode never stalls the
-            // socket, but keep the handles: playback is not finished until
-            // they all resolve.
-            pending.push(pushChunk(m.b64).catch(() => { /* skip a bad chunk */ }));
+            const b64 = m.b64;
+            chain = chain
+              .then(() => pushChunk(b64))
+              .catch(() => { /* a bad chunk must not break the ones after it */ });
           }
         }
       }
-      await Promise.all(pending);
+      await chain;
     } catch {
       /* fall through to onDone — a dropped stream must not strand the UI */
     }
