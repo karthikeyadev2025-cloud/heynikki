@@ -114,6 +114,48 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
 }
 
 /**
+ * Did the call actually reach the recipient's phone?
+ *
+ * Only a call that RANG counts as a missed call. When the trunk refuses the
+ * INVITE, nobody's phone ever lit up — and the old code treated every thrown
+ * error alike, so a trunk outage sent each recipient a "sorry we missed you"
+ * WhatsApp about a call they never got AND spent one of their three lifetime
+ * attempts on our fault. That is exactly what happened to the eye-camp
+ * campaign: Jio answered 29 of 29 outbound INVITEs with 403 Forbidden, and
+ * all three recipients ended up messaged and one attempt down without a
+ * single phone ringing.
+ *
+ * These are FreeSWITCH hangup causes, matched as substrings because the
+ * reason string is "originate failed: CAUSE".
+ */
+const TRUNK_FAULTS = [
+  "CALL_REJECTED",             // Jio's SBC answers 403 Forbidden as this
+  "NORMAL_TEMPORARY_FAILURE",  // and 500 "Classification Failure" as this
+  "NORMAL_CIRCUIT_CONGESTION",
+  "SWITCH_CONGESTION",
+  "NETWORK_OUT_OF_ORDER",
+  "DESTINATION_OUT_OF_ORDER",
+  "SERVICE_UNAVAILABLE",
+  "GATEWAY_DOWN",
+  "RECOVERY_ON_TIMER_EXPIRE",
+  // Our own preflight refusals — also nothing the recipient did.
+  "no assigned DID to dial out as",
+  "recipient has no tenant",
+];
+
+function isTrunkFault(reason: string): boolean {
+  return TRUNK_FAULTS.some(c => reason.includes(c));
+}
+
+// A trunk fault retries on a short timer instead of tomorrow, since it is
+// expected to clear on its own. Capped so a permanently dead trunk settles
+// instead of redialling the same list every 15 minutes forever — 8 tries is
+// about two hours, long enough to ride out congestion and short enough that
+// a real outage shows up as failed rows an operator can see.
+const TRUNK_RETRY_MS  = 15 * 60 * 1000;
+const TRUNK_MAX_TRIES = 8;
+
+/**
  * One WhatsApp per person, on the FIRST no-answer — not once per attempt.
  * A recipient is retried twice after that, so without the wa_followup_sent
  * guard somebody who was simply away from their phone gets three identical
@@ -258,6 +300,34 @@ async function tick(): Promise<void> {
         if (linkErr) console.error(`[dispatcher] link ${r.id} failed:`, linkErr.message);
       } catch (e: any) {
         const reason = String(e?.message || e).slice(0, 120);
+
+        if (isTrunkFault(reason)) {
+          // The phone never rang, so this is not a missed call: no WhatsApp,
+          // and the attempt is rolled back to what it was before we tried.
+          const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + 1;
+          const giveUp     = trunkTries >= TRUNK_MAX_TRIES;
+
+          // The dispatcher used to swallow this entirely — the only line it
+          // ever printed was "[dispatcher] started", so a campaign that
+          // dialled nothing for a day looked identical to one with no
+          // recipients. Name the cause where `docker logs` will show it.
+          console.error(
+            `[dispatcher] TRUNK FAULT dialling ${r.phone} (campaign ${c.id}): ${reason} ` +
+            `— attempt not counted, ${giveUp ? "giving up" : `retrying in ${TRUNK_RETRY_MS / 60000}m`} ` +
+            `(${trunkTries}/${TRUNK_MAX_TRIES})`
+          );
+
+          await sb.from("outbound_recipients").update({
+            status:          giveUp ? "failed" : "queued",
+            outcome:         reason,
+            attempts:        r.attempts || 0,
+            next_attempt_at: giveUp
+              ? null
+              : new Date(Date.now() + TRUNK_RETRY_MS).toISOString(),
+            metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
+          }).eq("id", r.id);
+          continue;
+        }
 
         // The WhatsApp goes out on the FIRST no-answer, while the intent is
         // still warm, and the phone retries continue behind it.
