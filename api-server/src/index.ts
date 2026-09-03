@@ -5104,9 +5104,27 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     // Get tenant's DID for masked CLI
     const { data: did } = await sb.from("dids")
-      .select("number").eq("tenant_id", tenantId).eq("status", "assigned").single();
+      .select("number").eq("tenant_id", tenantId).eq("status", "assigned")
+      .limit(1).maybeSingle();
 
-    const maskedCli = did?.number || customer_number;
+    // NEVER fall back to the customer's own number. This read
+    // `did?.number || customer_number`, so a tenant with no assigned DID —
+    // or, with .single(), any tenant holding more than one, since .single()
+    // errors on multiple rows — presented the CUSTOMER'S mobile to Jio as
+    // our calling party.
+    //
+    // That is CLI spoofing. Carriers suspend trunks for it, and an SBC that
+    // classifies on the calling party rejects it outright: a bare 10-digit
+    // From already draws "500 Classification Failure" from this circuit.
+    // Refusing to dial beats dialling as someone else.
+    const maskedCli = did?.number;
+    if (!maskedCli) {
+      return res.status(409).json({
+        error: "no_outbound_cli",
+        detail: "This tenant has no assigned DID to present as caller ID. "
+              + "Assign one before placing outbound calls.",
+      });
+    }
 
     let fsUuid = "";
     if (engine === "freeswitch") {
