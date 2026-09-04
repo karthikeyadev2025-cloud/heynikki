@@ -317,6 +317,16 @@
              Nikki's pitch. -->
         <action application="set" data="RECORD_STEREO=false"/>
         <action application="record_session" data="/tmp/recordings/call_${uuid}.wav"/>
+        <!-- Same hangup report inbound_sip_ai sends, with the customer as
+             caller_number. This was missing: the api-server's hangup handler
+             is the ONLY thing that moves an outbound_recipients row from
+             in_progress to completed, so without it every dialled recipient
+             stayed in_progress forever — the campaign's concurrency slots
+             filled up after max_concurrent calls and it never dialled again
+             or reached completed (both 5 Sep 00:15 IST calls sat that way). -->
+        <action application="set" data="process_cdr=true"/>
+        <action application="set" data="session_in_hangup_hook=true"/>
+        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${outbound_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
         <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
         <!-- Same API-not-application fix as inbound_sip_ai above. -->
         <!-- Streams to the SAME handler inbound calls use, not a separate

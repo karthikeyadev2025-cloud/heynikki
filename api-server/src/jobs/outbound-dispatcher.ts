@@ -270,7 +270,51 @@ function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 }
 
+// A recipient that has been in_progress longer than any real call lasts.
+// The hangup webhook is what normally closes the row; when it never arrives
+// (the campaign dialplan shipped without api_reporting_hook for months, and
+// a curl can still be lost on an api-server restart) the row sat in_progress
+// forever, held a concurrency slot, and kept the campaign from completing.
+// Long enough that a genuine 20-minute conversation is never cut short by
+// bookkeeping — this only touches rows, never live channels.
+const STALE_IN_PROGRESS_MS = 30 * 60_000;
+
+async function reapStaleInProgress(): Promise<void> {
+  const cutoff = new Date(Date.now() - STALE_IN_PROGRESS_MS).toISOString();
+  const { data: stale, error } = await sb.from("outbound_recipients")
+    .select("id, phone, campaign_id, metadata, last_attempt_at")
+    .eq("status", "in_progress")
+    .lt("last_attempt_at", cutoff)
+    .limit(50);
+  if (error) { console.error("[dispatcher] stale scan failed:", error.message); return; }
+
+  for (const r of (stale || [])) {
+    const fsUuid = (r.metadata as any)?.fs_uuid as string | undefined;
+    // Prefer the truth the pipeline already wrote: the calls row carries the
+    // real duration, so the outcome matches what the hangup webhook would
+    // have recorded, and call_id gets linked the same way.
+    let outcome = "no_conversation_stale";
+    let call_id: string | null = null;
+    if (fsUuid) {
+      const { data: call } = await sb.from("calls")
+        .select("id, duration_seconds")
+        .eq("livekit_room_id", fsUuid).maybeSingle();
+      if (call) {
+        call_id = call.id;
+        outcome = (call.duration_seconds || 0) >= 5 ? "answered" : "no_conversation_stale";
+      }
+    }
+    await sb.from("outbound_recipients")
+      .update({ status: "completed", outcome, call_id })
+      .eq("id", r.id).eq("status", "in_progress");
+    console.warn(`[dispatcher] reaped stale in_progress recipient ${r.id} (${r.phone}) → ${outcome}` +
+      ` — dialled ${r.last_attempt_at}, no hangup report received`);
+  }
+}
+
 async function tick(): Promise<void> {
+  await reapStaleInProgress();
+
   const { data: campaigns } = await sb.from("outbound_campaigns")
     .select("*").eq("status", "running");
 

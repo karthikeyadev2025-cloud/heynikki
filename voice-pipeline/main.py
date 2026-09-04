@@ -1958,6 +1958,8 @@ class NikkiAgent:
         self.guard_seconds: int = 20
         self.transfer_requested: bool = False
         self.end_call_requested: bool = False
+        self._bot_byes: int = 0           # consecutive replies that were goodbyes
+        self._emergency_said: bool = False
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         # Seed the phone from caller ID. The booking, the WhatsApp and the
@@ -2114,9 +2116,13 @@ class NikkiAgent:
                     if 1 <= len(words) <= 3:
                         name = " ".join(words)
             if name:
+                # Read before the trailing "?" is stripped below — the 5 Sep
+                # campaign call filed "అపాయింట్మెంట్ ఫిక్స్ అయిపోద్దా?" as the
+                # caller's name because the strip ran first.
+                asked_back = "?" in name
                 name = self._NAME_TAIL.sub("", name).strip(" .,!?")
                 # Guard against capturing a refusal or a question back.
-                if (2 <= len(name) <= 60
+                if (2 <= len(name) <= 60 and not asked_back
                         and not re.search(r"\?|చెప్పను|తెలియదు", name)
                         and not _is_junk_name(name)):
                     self.slots["name"] = name
@@ -2136,7 +2142,11 @@ class NikkiAgent:
         known = {k: v for k, v in self.slots.items() if v}
         lines = []
         h = self.caller_history or {}
-        if h.get("previous_calls"):
+        # Not on an outbound leg. The history counts every call between this
+        # number and the business, including the ones WE placed — on the 5 Sep
+        # campaign call Nikki opened with "manam call cheyadam idi sixth time
+        # anukondi!" to someone who had never rung the clinic.
+        if h.get("previous_calls") and not getattr(self, "is_outbound", False):
             lines.append(
                 f"\n\n[THIS CALLER HAS RUNG BEFORE — {h['previous_calls']} time(s)]"
                 "\nAcknowledge it once, naturally, early — then move on. Do not "
@@ -2244,7 +2254,9 @@ class NikkiAgent:
             # model call: the number to ring, then the transfer. The 4 Sep
             # caller's own words: a man with a heart attack would die while
             # she asked which day he wanted an appointment.
-            if self.intent == "emergency" and self._is_medical():
+            if (self.intent == "emergency" and self._is_medical()
+                    and self._emergency_is_real(user_text)):
+                self._emergency_said = True
                 msg = ("వెంటనే 108 కి కాల్ చేయండి అండి, అంబులెన్స్ వస్తుంది. "
                        "మిమ్మల్ని ఇప్పుడే మా స్టాఫ్ కి కనెక్ట్ చేస్తున్నాను.")
                 self.intent = "transfer"
@@ -2359,6 +2371,29 @@ class NikkiAgent:
                     log.info("end-call sentinel IGNORED — no appointment on this call yet")
             else:
                 self._end_votes = 0
+                # The model did not ask to end. Decide it here when the words
+                # already have: on the 5 Sep campaign call Nikki said "Bye"
+                # twelve times, the customer said "Bye", "Bye Madam", "cut
+                # చేయండి", she answered "call cut chesthunanu" — and stayed on
+                # the line until the customer gave up nine minutes later. The
+                # campaign prompt never mentioned END_CALL, and a sentinel the
+                # model forgets is no way to end a call.
+                # A goodbye that ends in a question is not a goodbye — she is
+                # still waiting on an answer, and the prompt forbids the mix.
+                bot_bye = (bool(_BOT_FAREWELL_RE.search(response or ""))
+                           and not (response or "").rstrip().endswith("?"))
+                self._bot_byes = (self._bot_byes + 1) if bot_bye else 0
+                hangup_asked = bool(_HANGUP_REQUEST_RE.search(user_text or ""))
+                caller_bye = bool(_CALLER_BYE_RE.search(user_text or ""))
+                if hangup_asked:
+                    self.end_call_requested = True
+                    log.info("ending call — caller asked to hang up")
+                elif caller_bye and bot_bye:
+                    self.end_call_requested = True
+                    log.info("ending call — both sides said goodbye")
+                elif self._bot_byes >= 3:
+                    self.end_call_requested = True
+                    log.info("ending call — Nikki has said goodbye %d turns running", self._bot_byes)
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
@@ -2517,6 +2552,34 @@ class NikkiAgent:
             log.info(f"Call ended: {self.call_id}, duration: {duration_seconds}s")
         except Exception as e:
             log.error(f"on_call_end error: {e}")
+
+    def _emergency_is_real(self, text: str) -> bool:
+        """Should the fixed 108 line fire for this turn?
+
+        On the 5 Sep campaign call Sarvam heard "accident" for "appointment"
+        and the line fired four times in a row — twice on the caller's own
+        denials ("Emergency accident కాదు", "ambulance కాదు") — and each time
+        a promised staff connect that never happened. The keyword match is
+        kept; this narrows when it is believed:
+          - never twice on one call: the first line said what there is to
+            say, and the prompt's own emergency rule covers the rest;
+          - not with a negation in the same breath;
+          - not when the same sentence is about an appointment, OP or
+            WhatsApp — that is a mishearing, not a crisis;
+          - not on a call WE placed: nobody answers a campaign call to
+            report a heart attack, and a false 108 order there is the
+            worst impression a business can make.
+        """
+        if getattr(self, "_emergency_said", False):
+            return False
+        if getattr(self, "is_outbound", False):
+            return False
+        low = (text or "").lower()
+        if re.search(r"కాదు|లేదు|\bnot\b|\bno\b|\bnothing\b|కాద", low):
+            return False
+        if re.search(r"అపాయింట్|appointment|whatsapp|వాట్సాప్|\bop\b|ఓపీ|booking|బుక్", low):
+            return False
+        return True
 
     def _detect_intent(self, text: str) -> str:
         text_lower = text.lower()
@@ -3359,6 +3422,24 @@ _CALLER_FAREWELL_RE = re.compile(
     r"disconnect|not interested|no need|\bthanks?\b|thank you|good ?bye", re.I)
 
 
+# The deterministic end-of-call signals, narrower than _CALLER_FAREWELL_RE
+# above (which also admits "thanks" and "వద్దు" — fine as corroboration for a
+# sentinel the model produced, far too loose to hang up on by themselves).
+# The caller telling her to put the phone down, in any of the ways heard on
+# real calls: "cut చేయండి", "call cut chesi", "పెట్టేయండి", "hang up".
+_HANGUP_REQUEST_RE = re.compile(
+    r"cut\s*చే|cut\s*చెయ|call\s*cut|కట్\s*చే|కట్\s*చెయ|పెట్టేయ|పెట్టెయ|పెట్టేస్|"
+    r"cut the call|hang ?up|disconnect", re.I)
+# The caller's own goodbye.
+_CALLER_BYE_RE = re.compile(
+    r"\bbye\b|బై|good ?night|గుడ్ ?నైట్|ఉంటాను|ఉంటానండి|ఉంటా(?![\u0C00-\u0C7F])|వెళ్తాను|వెళ్తా(?![\u0C00-\u0C7F])|"
+    r"see you|కలుద్దాం", re.I)
+# Nikki's own goodbye, in either script.
+_BOT_FAREWELL_RE = re.compile(
+    r"\bbye\b|బై|good ?night|గుడ్ ?నైట్|ఉంటాను|ఉంటానండి|ఉంటా(?![\u0C00-\u0C7F])|call cut ch|cut chest",
+    re.I)
+
+
 def _split_end_sentinel(text: str) -> tuple[str, bool]:
     """Return (speakable text, caller-should-be-hung-up).
 
@@ -3390,6 +3471,9 @@ def _clean_for_speech(text: str) -> str:
     s = re.sub(r"^\s*\d+[.)]\s+", "", s, flags=re.M)    # numbered list leaders
     s = re.sub(r"\n{2,}", "\n", s)
     s = re.sub(r"[ \t]{2,}", " ", s)
+    # Romanised-Telugu spellings the model produces that TTS reads literally:
+    # "Tanks andi" went out on the 5 Sep campaign call.
+    s = re.sub(r"\bTanks\b", "Thanks", s)
     return s.strip()
 
 
@@ -4220,6 +4304,17 @@ def _is_junk_name(name: str) -> bool:
     if low in _JUNK_NAME_WORDS:
         return True
     if re.search(r"పేరు|\bname\b", low):
+        return True
+    # Business vocabulary is never a person: "appointment fix aipoddha" and
+    # "OP WhatsApp lo pettu" are things callers say, not what they are called.
+    if re.search(r"అపాయింట్|appointment|whatsapp|వాట్సాప్|clinic|క్లినిక్|hospital|"
+                 r"doctor|డాక్టర్|camp|క్యాంప్|booking|బుక్|\bop\b|ఓపీ|hello|హలో|"
+                 r"number|నంబర్|time|date|free|ఫ్రీ|madam|మేడమ్|sir|సర్", low):
+        return True
+    # A Telugu verb ending — a question ("...ఉందా", "...అయిపోద్దా") or an
+    # imperative ("...పెట్టండి") — is a sentence, not a name.
+    if any(re.search(r"(ందా|ద్దా|తారా|తావా|తానా|ట్లేదు|లేదు|ండి)$", t.strip(".,!?"))
+           for t in low.split()):
         return True
     tokens = low.split()
     if all(t.strip(".,!?") in _JUNK_NAME_WORDS for t in tokens):

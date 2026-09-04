@@ -90,6 +90,21 @@ async function audit(
 // ── MIDDLEWARE ────────────────────────────────────────────
 app.use(cors({ origin: "*" }));
 
+// Never let a 502 or 504 leave this process. The API sits behind a
+// Cloudflare tunnel, and Cloudflare replaces an origin 502/504 with its own
+// "error code: 502" page — no JSON body, no Access-Control-Allow-Origin. So
+// the dashboard's WhatsApp "add number" step, which answered 502 with the
+// exact Meta permission fix the user needed, surfaced in the browser as a
+// CORS error and a blank failure. 424 Failed Dependency says the same thing
+// (an upstream we depend on refused) and passes through untouched, with the
+// message intact. The many `res.status(502)` sites stay as written; this
+// remaps them in one place.
+app.use((_req, res, next) => {
+  const orig = res.status.bind(res);
+  res.status = (code: number) => orig(code === 502 || code === 504 ? 424 : code);
+  next();
+});
+
 // Trust the first proxy hop — required for accurate req.ip behind Railway / Vercel.
 // Without this, rate-limit uses Railway's edge IP and 1 attacker can DoS everyone.
 app.set("trust proxy", 1);
