@@ -2,6 +2,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
+import WhatsAppSender from "../../components/WhatsAppSender";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Check, X, Send, MessageCircle, ClipboardList, ScrollText } from "lucide-react";
@@ -244,6 +245,10 @@ export default function WhatsAppPage() {
         <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading WhatsApp...</div>
       ) : (
         <>
+    {/* Which number the messages below actually go out from, and the
+        buttons to make it the business's own. */}
+    <WhatsAppSender />
+
     {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
         container log, and vanish — a business could send a follow-up and
         never learn the customer said yes. */}

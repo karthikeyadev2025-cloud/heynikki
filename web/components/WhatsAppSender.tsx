@@ -1,0 +1,241 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createClient } from "../lib/supabase";
+import { NIKKI } from "../lib/brand";
+import { Phone, PhoneCall, ShieldCheck, Check, AlertTriangle } from "lucide-react";
+
+const C = {
+  surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
+  grn: NIKKI.emerald, gold: NIKKI.gold, red: NIKKI.red, cyn: NIKKI.cyan,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
+};
+
+const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+type Sender = {
+  kyc_approved: boolean;
+  heynikki_number: string | null;
+  chosen: string | null;
+  display_name: string | null;
+  status: string | null;
+  review_note: string | null;
+  on_waba: boolean;
+  sending_as: string;
+  sending_as_own: boolean;
+  otp: { code: string; heard_at: string } | null;
+  meta: { number: string; name: string; verification: string; status: string;
+          quality: string; name_status: string } | null;
+};
+
+/**
+ * Which number this business's customers get WhatsApp from, and the
+ * self-serve path to make it their own HeyNikki number.
+ *
+ * Three steps against Meta: add the number to the WhatsApp account, have
+ * Meta ring it with a code, submit the code. The number is a SIP line nobody
+ * can pick up, so Nikki answers Meta's call herself; the pipeline reads the
+ * six digits out of what it heard and this page polls for them and fills
+ * the box. The client clicks three buttons and never touches a phone.
+ */
+export default function WhatsAppSender() {
+  const [s, setS]       = useState<Sender | null>(null);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [msg, setMsg]   = useState<{ text: string; bad?: boolean } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [calling, setCalling] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async () => {
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return;
+    const r = await fetch(`${API}/api/whatsapp/sender`,
+      { headers: { Authorization: `Bearer ${session.access_token}` } });
+    if (!r.ok) return;
+    const j: Sender = await r.json();
+    setS(j);
+    setName(n => n || j.display_name || "");
+    if (j.otp?.code) setCode(c => c || j.otp!.code);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // While Meta's call is in flight, look for the code every 5 s. Stops on
+  // its own once a code shows up or after four minutes.
+  useEffect(() => {
+    if (!calling) return;
+    const started = Date.now();
+    pollRef.current = setInterval(async () => {
+      await load();
+      if (Date.now() - started > 240_000) setCalling(false);
+    }, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [calling, load]);
+  useEffect(() => { if (s?.otp?.code) setCalling(false); }, [s?.otp?.code]);
+
+  const post = async (path: string, body: any, label: string) => {
+    setBusy(label); setMsg(null);
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const r = await fetch(`${API}/api/whatsapp/sender/${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      setMsg({ text: j.error || j.message || "Done", bad: !r.ok });
+      if (r.ok && path === "request-code") setCalling(true);
+      await load();
+      return r.ok;
+    } catch (e: any) {
+      setMsg({ text: e.message, bad: true });
+      return false;
+    } finally { setBusy(null); }
+  };
+
+  if (!s) return null;
+
+  const live = s.status === "active";
+  const step = live ? 4 : !s.on_waba ? 1 : !s.otp?.code && !code ? 2 : 3;
+  const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
+    background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
+  const btn = (on: boolean, color = C.grn) => ({
+    padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 800,
+    background: on ? color : C.hi, color: on ? "#04120a" : C.dim,
+    cursor: on ? "pointer" : "default", opacity: busy ? 0.7 : 1 } as const);
+
+  return (
+    <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
+      padding: 18, marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800 }}>Your WhatsApp number</div>
+          <div style={{ color: C.mid, fontSize: 12.5, marginTop: 3, lineHeight: 1.55 }}>
+            Customers are getting messages from{" "}
+            <strong style={{ color: live ? C.grn : C.gold }}>{s.sending_as}</strong>
+            {live ? ` as “${s.meta?.name || s.display_name}”.` : " — the shared HeyNikki number, until yours is live."}
+          </div>
+        </div>
+        {s.meta && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Tag label={`Meta: ${s.meta.status || "?"}`} color={s.meta.status === "CONNECTED" ? C.grn : C.gold} />
+            <Tag label={`Code: ${s.meta.verification || "?"}`} color={s.meta.verification === "VERIFIED" ? C.grn : C.gold} />
+            <Tag label={`Name: ${s.meta.name_status || "?"}`} color={s.meta.name_status === "APPROVED" ? C.grn : C.gold} />
+            {s.meta.quality && <Tag label={`Quality: ${s.meta.quality}`} color={s.meta.quality === "GREEN" ? C.grn : C.red} />}
+          </div>
+        )}
+      </div>
+
+      {live ? (
+        <div style={{ marginTop: 12, color: C.grn, fontSize: 13.5, fontWeight: 700,
+          display: "flex", alignItems: "center", gap: 8 }}>
+          <Check size={16} /> Live on {s.chosen}. Nothing else to do.
+        </div>
+      ) : !s.kyc_approved ? (
+        <div style={{ marginTop: 12, color: C.mid, fontSize: 13 }}>
+          We&apos;ll enable your own number as soon as your KYC is approved.
+        </div>
+      ) : !s.heynikki_number ? (
+        <div style={{ marginTop: 12, color: C.mid, fontSize: 13 }}>
+          Your HeyNikki number isn&apos;t assigned yet — we&apos;ll enable this once it is.
+        </div>
+      ) : (
+        <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+          {/* Step 1 */}
+          <Step n={1} done={step > 1} active={step === 1} icon={<Phone size={14} />}
+            title={`Make ${s.heynikki_number} your WhatsApp number`}>
+            <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+              Same number for calls and WhatsApp. Your personal WhatsApp is untouched.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input value={name} onChange={e => setName(e.target.value)} disabled={step !== 1}
+                placeholder="Name customers see, e.g. Bismillah Clinic" style={{ ...input, width: 260 }} />
+              <button type="button" disabled={step !== 1 || !!busy || name.trim().length < 3}
+                onClick={() => post("add", { display_name: name.trim() }, "add")}
+                style={btn(step === 1 && name.trim().length >= 3)}>
+                {busy === "add" ? "Adding…" : "Add to WhatsApp"}
+              </button>
+            </div>
+          </Step>
+
+          {/* Step 2 */}
+          <Step n={2} done={step > 2} active={step === 2} icon={<PhoneCall size={14} />}
+            title="Let WhatsApp call the number with a code">
+            <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+              WhatsApp rings {s.heynikki_number} and reads a 6-digit code out. You can&apos;t
+              pick that call up — <strong>Nikki answers it</strong>, hears the code, and it
+              appears here on its own. It also shows on your Calls list as <code>wa_otp_…</code>.
+            </div>
+            <button type="button" disabled={step < 2 || !!busy || step === 4}
+              onClick={() => post("request-code", {}, "call")} style={btn(step >= 2)}>
+              {busy === "call" ? "Asking WhatsApp…" : calling ? "Calling… listening for the code" : s.otp ? "Call again" : "Call me with the code"}
+            </button>
+            {calling && (
+              <div style={{ color: C.gold, fontSize: 12, marginTop: 6 }}>
+                Waiting for the call to finish — checking every 5 seconds.
+              </div>
+            )}
+          </Step>
+
+          {/* Step 3 */}
+          <Step n={3} done={false} active={step === 3} icon={<ShieldCheck size={14} />}
+            title="Confirm the code">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                disabled={step < 2} placeholder="6-digit code" inputMode="numeric"
+                style={{ ...input, width: 130, letterSpacing: 3, fontWeight: 800 }} />
+              <button type="button" disabled={step < 2 || !!busy || code.length !== 6}
+                onClick={() => post("verify", { code }, "verify")} style={btn(step >= 2 && code.length === 6)}>
+                {busy === "verify" ? "Confirming…" : "Go live"}
+              </button>
+              {s.otp && (
+                <span style={{ color: C.cyn, fontSize: 12 }}>
+                  Nikki heard <strong>{s.otp.code}</strong> at {new Date(s.otp.heard_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
+          </Step>
+        </div>
+      )}
+
+      {s.review_note && !live && (
+        <div style={{ marginTop: 10, color: C.red, fontSize: 12.5, display: "flex", gap: 6, alignItems: "flex-start" }}>
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>Last attempt: {s.review_note}</span>
+        </div>
+      )}
+      {msg && (
+        <div style={{ marginTop: 10, color: msg.bad ? C.red : C.mid, fontSize: 12.5, lineHeight: 1.5 }}>{msg.text}</div>
+      )}
+    </div>
+  );
+}
+
+function Tag({ label, color }: { label: string; color: string }) {
+  return (
+    <span style={{ background: color + "22", color, border: `1px solid ${color}44`,
+      borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>{label}</span>
+  );
+}
+
+function Step({ n, done, active, icon, title, children }: {
+  n: number; done: boolean; active: boolean; icon: React.ReactNode; title: string; children: React.ReactNode;
+}) {
+  const color = done ? C.grn : active ? C.gold : C.dim;
+  return (
+    <div style={{ display: "flex", gap: 12, opacity: done || active ? 1 : 0.55 }}>
+      <div style={{ width: 26, height: 26, borderRadius: 13, flexShrink: 0, display: "flex",
+        alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900,
+        background: color + "22", color, border: `1px solid ${color}55` }}>
+        {done ? <Check size={14} /> : n}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 800, marginBottom: 6,
+          display: "flex", alignItems: "center", gap: 7 }}>{icon} {title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
