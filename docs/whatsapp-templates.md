@@ -178,7 +178,7 @@ approves it, so nothing changes on approval day.
 Body — `{{1}}` business name, `{{2}}` date, `{{3}}` time:
 
 ```
-{{1}} లో మీ appointment confirm అయింది.
+నమస్కారం! {{1}} లో మీ appointment confirm అయింది.
 
 📅 {{2}}
 ⏰ {{3}}
