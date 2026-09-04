@@ -391,10 +391,25 @@ export default function CallsPage() {
         ) : filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: 48, color: C.dim }}>
             <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Phone size={28} /></div>
-            <div>No calls yet. Set up your voice profile to start receiving calls.</div>
-            <a href="/setup" style={{ color: C.glow, fontSize: 13, display: "block", marginTop: 8 }}>
-              Set up now →
-            </a>
+            {filter !== "all" || search ? (
+              // A filter with no matches is not an empty account — the
+              // "set up your voice profile" onboarding line showed here to a
+              // clinic with 32 calls whenever a category was empty.
+              <div>
+                No {filter !== "all" ? filter : ""} calls{search ? ` matching “${search}”` : ""} yet.
+                <button onClick={() => { setFilter("all"); setSearch(""); }} style={{
+                  background: "none", border: "none", color: C.glow, fontSize: 13, cursor: "pointer",
+                  display: "block", margin: "8px auto 0", fontFamily: "inherit",
+                }}>Show all calls →</button>
+              </div>
+            ) : (
+              <>
+                <div>No calls yet. Set up your voice profile to start receiving calls.</div>
+                <a href="/setup" style={{ color: C.glow, fontSize: 13, display: "block", marginTop: 8 }}>
+                  Set up now →
+                </a>
+              </>
+            )}
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>

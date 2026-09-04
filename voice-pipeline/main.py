@@ -2553,6 +2553,28 @@ class NikkiAgent:
             log.error(f"save_recording failed: {e}")
             return None
 
+    def final_intent(self) -> str:
+        """The intent filed on the calls row at hangup.
+
+        self.intent is re-detected on every turn, so by the end it is
+        whatever the LAST line matched — "enquiry" for a closing "సరే,
+        థాంక్స్". Four calls that ended with a confirmed appointment row
+        were filed as enquiries that way, and the dashboard's Appointment
+        filter showed 0 calls. What the call produced outranks its last
+        keyword: emergency, then a booking, then a transfer, then a
+        promised callback.
+        """
+        i = self.intent
+        if i == "emergency":
+            return i
+        if self.appointment_id:
+            return "appointment"
+        if i == "transfer":
+            return i
+        if getattr(self, "callback_promised", False):
+            return "callback"
+        return i
+
     async def on_call_end(self, duration_seconds: int, recording_bytes: Optional[bytes] = None):
         """Save full transcript, update call record, encrypt+store recording."""
         try:
@@ -2564,7 +2586,7 @@ class NikkiAgent:
                 "status":           "completed",
                 "duration_seconds": duration_seconds,
                 "transcript":       self.transcript,
-                "intent":           self.intent,
+                "intent":           self.final_intent(),
             }
             if recording_path:
                 update["recording_path"] = recording_path
@@ -6687,13 +6709,8 @@ async def freeswitch_ws(
         if wav_bytes:
             r2_url = await _upload_to_r2(wav_bytes, agent.call_id or fs_uuid, profile["tenant_id"])
 
-        # Finalize call record
-        # A promised callback outranks the keyword intent of the last turn
-        # (usually "enquiry" — the caller's closing "సరే" or "bye"), but not a
-        # booking or a transfer, which the dashboard already acts on.
-        final_intent = agent.intent
-        if getattr(agent, "callback_promised", False) and final_intent not in ("appointment", "transfer", "emergency"):
-            final_intent = "callback"
+        # Finalize call record — see NikkiAgent.final_intent for the ranking.
+        final_intent = agent.final_intent()
         updates = {
             "status":           "completed",
             "duration_seconds": duration,
