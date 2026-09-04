@@ -4439,7 +4439,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // Added for Hey Nikki v4.0 — FreeSWITCH ESL + Jio/Vi SIP
 // ════════════════════════════════════════════════════════════════
 
-import { fsl } from "./esl";
+import { fsl, wireCallee } from "./esl";
 
 // ── Aggregate platform health check ──────────────────────────
 // Sprint 3 requirement: "Add FreeSWITCH, n8n, Activepieces, R2 to
@@ -4696,7 +4696,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       }
       // Simultaneous ring across every agent with a phone on file.
       ringGroup = (agents || [])
-        .map((a: any) => `sofia/gateway/jio_primary/${String(a.phone).replace(/[^0-9+]/g, "")}`)
+        .map((a: any) => `sofia/gateway/jio_primary/${wireCallee(String(a.phone))}`)
         .filter((s: string) => s.length > 32)
         .join(",");
     }

@@ -128,6 +128,20 @@ export function wireCli(n: string): string {
   return d;
 }
 
+/**
+ * The form the trunk will accept as a CALLEE.
+ *
+ * Same SBC, same strictness, other side of the INVITE. A bare ten-digit
+ * Request-URI user was accepted for months and then, on 2026-09-04, every
+ * campaign call came back 484 Address Incomplete (INVALID_NUMBER_FORMAT to
+ * us) while the identical originate with +91 on the callee rang through.
+ * Every outbound dial string goes through here so the next tightening is a
+ * one-line fix instead of a hunt across three files and a dialplan.
+ */
+export function wireCallee(n: string): string {
+  return wireCli(n);
+}
+
 export class FreeSwitchESL {
 
   /**
@@ -181,8 +195,8 @@ export class FreeSwitchESL {
 
     // Leg 1 = agent, bridged to Leg 2 = customer.
     const cmd =
-      `api originate {${vars}}sofia/gateway/jio_primary/${agent} ` +
-      `&bridge({origination_caller_id_number=${wireCli(masked)}}sofia/gateway/jio_primary/${customer})`;
+      `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(agent)} ` +
+      `&bridge({origination_caller_id_number=${wireCli(masked)}}sofia/gateway/jio_primary/${wireCallee(customer)})`;
 
     const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
 
@@ -233,9 +247,8 @@ export class FreeSwitchESL {
     // bare ten-digit CLI with 500 "Classification Failure" — which surfaces
     // here as NORMAL_TEMPORARY_FAILURE and looks exactly like a dead trunk.
     // With the country code the same INVITE is accepted and the phone rings.
-    // Proven by dialling from fs_cli: 8633502032 fails, 918633502032 reaches
-    // NO_ANSWER, +91 is rejected as INVALID_NUMBER_FORMAT by FreeSWITCH
-    // itself, so 91-prefixed digits is the one form that works.
+    // See wireCli / wireCallee for the forms Jio accepts today — both sides
+    // of the INVITE now need +91.
     //
     // Only what goes ON THE WIRE changes. outbound_did stays ten digits
     // below, because the pipeline resolves the tenant's voice profile from
@@ -270,7 +283,7 @@ export class FreeSwitchESL {
     ].join(",");
 
     const cmd =
-      `api originate {${vars}}sofia/gateway/jio_primary/${digits} ` +
+      `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(digits)} ` +
       `camp_${digits} XML heynikki`;
 
     const response = await eslCommand(cmd, (timeoutSec + 10) * 1000);
@@ -320,7 +333,7 @@ export class FreeSwitchESL {
     ].join(",");
 
     const response = await eslCommand(
-      `api originate {${vars}}sofia/gateway/jio_primary/${digits} ` +
+      `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(digits)} ` +
       `onb_${digits} XML heynikki`,
       (timeoutSec + 10) * 1000,
     );

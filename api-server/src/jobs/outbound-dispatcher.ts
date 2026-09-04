@@ -166,6 +166,18 @@ function isTrunkFault(reason: string): boolean {
   return TRUNK_FAULTS.some(c => reason.includes(c));
 }
 
+/**
+ * The trunk understood us and said the NUMBER is wrong. Nobody's phone
+ * rang, so no missed-call WhatsApp — but nothing will change by tomorrow
+ * either, so no retry. On 2026-09-04 every campaign call hit this because
+ * Jio began demanding +91 on the callee; the recipients were each messaged
+ * "sorry we missed you" about a call that never left our box.
+ */
+const DEAD_NUMBER = ["INVALID_NUMBER_FORMAT", "UNALLOCATED_NUMBER", "NO_ROUTE_DESTINATION", "Bad customer number"];
+function isDeadNumber(reason: string): boolean {
+  return DEAD_NUMBER.some(c => reason.includes(c));
+}
+
 // A trunk fault retries on a short timer instead of tomorrow, since it is
 // expected to clear on its own. Capped so a permanently dead trunk settles
 // instead of redialling the same list every 15 minutes forever — 8 tries is
@@ -365,6 +377,14 @@ async function tick(): Promise<void> {
               ? null
               : new Date(Date.now() + TRUNK_RETRY_MS).toISOString(),
             metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
+          }).eq("id", r.id);
+          continue;
+        }
+
+        if (isDeadNumber(reason)) {
+          console.error(`[dispatcher] number refused dialling ${r.phone} (campaign ${c.id}): ${reason} — no follow-up, not retried`);
+          await sb.from("outbound_recipients").update({
+            status: "failed", outcome: reason, next_attempt_at: null,
           }).eq("id", r.id);
           continue;
         }

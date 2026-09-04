@@ -282,17 +282,16 @@
     </extension>
 
     <!-- ── OUTBOUND (Click-to-Call customer leg) ─────────────── -->
-    <!-- Accepts out_ with any prefix form and hands Jio a single
-         consistent format. Which format Jio WANTS on outbound is still
-         unconfirmed — if calls fail with 404 from their SBC, try
-         prefixing 0 or +91 in the bridge string below. -->
+    <!-- Accepts out_ with any prefix form and hands Jio the one form
+         its SBC takes on the callee: +91 and ten digits. Bare ten digits
+         came back 484 Address Incomplete on 2026-09-04. -->
     <extension name="outbound_to_customer" continue="false">
       <condition field="destination_number" expression="^out_(?:\+?91|0)?(\d{10})$">
         <action application="set" data="hangup_after_bridge=true"/>
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="set" data="effective_caller_id_name=HeyNikki"/>
         <action application="bridge"
-          data="sofia/gateway/jio_primary/$1|sofia/gateway/vi_failover/$1"/>
+          data="sofia/gateway/jio_primary/+91$1|sofia/gateway/vi_failover/+91$1"/>
       </condition>
     </extension>
 

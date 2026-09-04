@@ -2568,7 +2568,7 @@ class NikkiAgent:
                     break
             for phrase, digits in tmap.items():
                 if phrase and phrase in last:
-                    self.ring_group = f"sofia/gateway/jio_primary/{digits}"
+                    self.ring_group = f"sofia/gateway/jio_primary/+91{digits}"
                     break
         if not self.ring_group:
             # Never claim a transfer we cannot make.
@@ -6031,7 +6031,7 @@ async def freeswitch_ws(
         if _tmap:
             agent.ivr_transfer_map = _tmap
             first = next(iter(_tmap.values()))
-            agent.ring_group = f"sofia/gateway/jio_primary/{first}"
+            agent.ring_group = f"sofia/gateway/jio_primary/+91{first}"
         _lines = "\n".join(
             f"- If they want {o.get('label') or o['say']} (they may say "
             f"\"{o['say']}\"): " +
