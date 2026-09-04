@@ -2,7 +2,8 @@
  * Outbound campaign dispatcher.
  *
  * Polls every 30 seconds for running campaigns. For each, it:
- *   1. Checks current IST hour is inside the campaign's window
+ *   1. Checks today (IST) is inside the campaign's start/end dates and the
+ *      current IST time is inside its daily window
  *   2. Pulls up to (max_concurrent - in_progress_count) recipients
  *      that are status='queued' or status='pending' (pending => scrub first)
  *   3. For 'pending': runs DND scrubbing, marks blocked_dnd or queued
@@ -264,6 +265,11 @@ function withinWindow(start: string, end: string): boolean {
   return istMinutes >= startMin && istMinutes < endMin;
 }
 
+// IST calendar day as YYYY-MM-DD, comparable to the date columns as strings.
+function istToday(): string {
+  return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
 async function tick(): Promise<void> {
   const { data: campaigns } = await sb.from("outbound_campaigns")
     .select("*").eq("status", "running");
@@ -288,6 +294,16 @@ async function tick(): Promise<void> {
       continue;
     }
 
+    // Calendar first, clock second. A campaign whose end date has passed
+    // with contacts still outstanding is paused rather than left "running"
+    // forever — the client sees "paused" and can extend the date or leave it.
+    const today = istToday();
+    if (c.start_date && today < c.start_date) continue;
+    if (c.end_date && today > c.end_date) {
+      await sb.from("outbound_campaigns").update({ status: "paused" }).eq("id", c.id);
+      console.log(`[dispatcher] campaign ${c.id} paused — end date ${c.end_date} passed with ${outstanding} outstanding`);
+      continue;
+    }
     if (!withinWindow(c.window_start, c.window_end)) continue;
 
     // How many slots are free?

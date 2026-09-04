@@ -97,6 +97,11 @@ export function normalizePhone(raw: string): string | null {
   return `+91${ten}`;
 }
 
+// IST calendar day as YYYY-MM-DD — the same form the date columns come back in.
+function istToday(): string {
+  return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
 export function mountCampaignImport(
   app: Express,
   sb: SupabaseClient,
@@ -388,12 +393,64 @@ export function mountCampaignImport(
     const { count } = await sb.from("outbound_recipients")
       .select("id", { count: "exact", head: true }).eq("campaign_id", c.id);
     if (!count) return res.status(400).json({ error: "No recipients imported yet" });
+    if (c.end_date && c.end_date < istToday()) {
+      return res.status(400).json({
+        error: `This campaign's last calling day (${c.end_date}) has passed — move the end date first`,
+      });
+    }
 
     await sb.from("outbound_campaigns")
       .update({ status: "running", started_at: new Date().toISOString() }).eq("id", c.id);
     await audit("campaign_start", { tenantId: c.tenant_id, actorId: req.user.id,
                                     metadata: { campaign_id: c.id, recipients: count } });
-    res.json({ ok: true, status: "running", recipients: count });
+    res.json({ ok: true, status: "running", recipients: count,
+               scheduled_for: c.start_date && c.start_date > istToday() ? c.start_date : null });
+  });
+
+  // ── Schedule: which days and which hours the dialler may ring ──
+  // Dates are IST calendar days (YYYY-MM-DD), times are HH:MM IST. Any field
+  // may be omitted to leave it alone; send null for a date to clear it.
+  app.patch("/api/campaigns/:id/schedule", verifyJWT, async (req: any, res) => {
+    const c = await ownCampaign(req, res);
+    if (!c) return;
+    if (c.status === "completed" || c.status === "cancelled") {
+      return res.status(400).json({ error: `Cannot reschedule a ${c.status} campaign` });
+    }
+    const b = req.body || {};
+    const upd: Record<string, unknown> = {};
+    const DATE = /^\d{4}-\d{2}-\d{2}$/, TIME = /^\d{2}:\d{2}$/;
+    for (const k of ["start_date", "end_date"]) {
+      if (!(k in b)) continue;
+      if (b[k] === null || b[k] === "") { upd[k] = null; continue; }
+      if (typeof b[k] !== "string" || !DATE.test(b[k])) return res.status(400).json({ error: `${k} must be YYYY-MM-DD` });
+      upd[k] = b[k];
+    }
+    for (const k of ["window_start", "window_end"]) {
+      if (!(k in b)) continue;
+      if (typeof b[k] !== "string" || !TIME.test(b[k])) return res.status(400).json({ error: `${k} must be HH:MM` });
+      upd[k] = b[k];
+    }
+    if ("max_concurrent" in b) {
+      const n = Number(b.max_concurrent);
+      if (!Number.isInteger(n) || n < 1 || n > 25) return res.status(400).json({ error: "max_concurrent must be 1–25" });
+      upd.max_concurrent = n;
+    }
+    const next = { ...c, ...upd };
+    if (next.window_end <= next.window_start) return res.status(400).json({ error: "Call-until must be after call-from" });
+    if (next.start_date && next.end_date && next.end_date < next.start_date) {
+      return res.status(400).json({ error: "End date must be on or after the start date" });
+    }
+    if (next.end_date && next.end_date < istToday()) {
+      return res.status(400).json({ error: "End date is already in the past" });
+    }
+    if (!Object.keys(upd).length) return res.json({ ok: true, campaign: c });
+
+    const { data, error } = await sb.from("outbound_campaigns")
+      .update(upd).eq("id", c.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    await audit("campaign_reschedule", { tenantId: c.tenant_id, actorId: req.user.id,
+                                         metadata: { campaign_id: c.id, ...upd } });
+    res.json({ ok: true, campaign: data });
   });
 
   app.post("/api/campaigns/:id/pause", verifyJWT, async (req: any, res) => {

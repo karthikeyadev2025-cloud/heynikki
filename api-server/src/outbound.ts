@@ -23,7 +23,8 @@ export function mountOutboundRoutes(
 
   // POST /api/campaigns — create draft
   app.post("/api/campaigns", verifyInternal, async (req, res) => {
-    const { tenant_id, name, script, voice_profile_id, window_start, window_end, max_concurrent, created_by } = req.body;
+    const { tenant_id, name, script, voice_profile_id, window_start, window_end, max_concurrent, created_by,
+            start_date, end_date } = req.body;
     if (!tenant_id || !name || !script) {
       return res.status(400).json({ error: "tenant_id, name, script required" });
     }
@@ -33,6 +34,8 @@ export function mountOutboundRoutes(
       window_start:  window_start  || "10:00",
       window_end:    window_end    || "19:00",
       max_concurrent: Math.min(max_concurrent || 3, 25),
+      start_date: start_date || null,
+      end_date:   end_date   || null,
       created_by,
     }).select().single();
 

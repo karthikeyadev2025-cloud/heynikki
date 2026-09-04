@@ -60,9 +60,32 @@ type Campaign = {
   status: string;
   window_start: string;
   window_end: string;
+  start_date: string | null;
+  end_date: string | null;
   max_concurrent: number;
   created_at: string;
 };
+
+const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+/** IST calendar day as YYYY-MM-DD, matching the date columns. */
+function istToday(): string {
+  return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+}
+function fmtDay(d: string): string {
+  const [y, m, dd] = d.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, dd)).toLocaleDateString("en-IN",
+    { day: "numeric", month: "short", timeZone: "UTC" });
+}
+/** "5 Sep – 10 Sep" / "from 5 Sep" / "until 10 Sep" / "every day". */
+function fmtDays(c: { start_date: string | null; end_date: string | null }): string {
+  if (c.start_date && c.end_date) {
+    return c.start_date === c.end_date ? fmtDay(c.start_date) : `${fmtDay(c.start_date)} – ${fmtDay(c.end_date)}`;
+  }
+  if (c.start_date) return `from ${fmtDay(c.start_date)}`;
+  if (c.end_date)   return `until ${fmtDay(c.end_date)}`;
+  return "every day";
+}
 
 type Stats = {
   total: number; pending: number; queued: number; in_progress: number;
@@ -270,6 +293,62 @@ function OptOutList({ tenantId }: { tenantId: string | null }) {
   );
 }
 
+function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
+  campaign: Campaign; inputStyle: React.CSSProperties;
+  onSave: (patch: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const [f, setF] = useState({
+    start_date: c.start_date || "", end_date: c.end_date || "",
+    window_start: c.window_start.slice(0, 5), window_end: c.window_end.slice(0, 5),
+    max_concurrent: c.max_concurrent,
+  });
+  const [saving, setSaving] = useState(false);
+  const field = (label: React.ReactNode, el: React.ReactNode) => (
+    <div style={{ flex: "1 1 140px" }}>
+      <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>{label}</label>
+      {el}
+    </div>
+  );
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.bord}` }}>
+      <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
+        {field("First calling day",
+          <input type="date" style={inputStyle} value={f.start_date}
+            onChange={e => setF(v => ({ ...v, start_date: e.target.value }))} />)}
+        {field(<>Last calling day <span style={{ color: C.dim }}>(optional)</span></>,
+          <input type="date" style={inputStyle} value={f.end_date} min={f.start_date || istToday()}
+            onChange={e => setF(v => ({ ...v, end_date: e.target.value }))} />)}
+        {field("Call from",
+          <input type="time" style={inputStyle} value={f.window_start}
+            onChange={e => setF(v => ({ ...v, window_start: e.target.value }))} />)}
+        {field("Call until",
+          <input type="time" style={inputStyle} value={f.window_end}
+            onChange={e => setF(v => ({ ...v, window_end: e.target.value }))} />)}
+        {field("Simultaneous calls",
+          <input type="number" min={1} max={25} style={inputStyle} value={f.max_concurrent}
+            onChange={e => setF(v => ({ ...v, max_concurrent: parseInt(e.target.value) || 1 }))} />)}
+      </div>
+      <div style={{ display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
+        <button disabled={saving} onClick={async () => {
+          setSaving(true);
+          await onSave({
+            start_date: f.start_date || null, end_date: f.end_date || null,
+            window_start: f.window_start, window_end: f.window_end,
+            max_concurrent: Math.min(Math.max(f.max_concurrent || 1, 1), 25),
+          });
+          setSaving(false);
+        }} style={{
+          background: C.grn, color: "#fff", border: "none", borderRadius: 8,
+          padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: saving ? 0.7 : 1,
+        }}>{saving ? "Saving…" : "Save schedule"}</button>
+        <span style={{ fontSize: 12, color: C.dim }}>
+          Times are IST. Changes apply from the dispatcher&apos;s next check, within a minute.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function CampaignsPage() {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -280,8 +359,10 @@ export default function CampaignsPage() {
 
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
-    name: "", script: "", window_start: "10:00", window_end: "19:00", max_concurrent: 3,
+    name: "", script: "", start_date: "", end_date: "",
+    window_start: "10:00", window_end: "19:00", max_concurrent: 3,
   });
+  const [editing, setEditing] = useState<string | null>(null);
 
   const [uploadFor, setUploadFor] = useState<string | null>(null);
   const [uploadText, setUploadText] = useState("");
@@ -334,18 +415,30 @@ export default function CampaignsPage() {
       setError("Name and script are both required."); return;
     }
     if (!tenantId) return;
+    if (form.window_end <= form.window_start) { setError("Call-until must be after call-from."); return; }
+    if (form.start_date && form.end_date && form.end_date < form.start_date) {
+      setError("Last calling day must be on or after the first."); return;
+    }
+    if (form.end_date && form.end_date < istToday()) { setError("Last calling day is already in the past."); return; }
     const sb = createClient();
     const { error: e } = await sb.from("outbound_campaigns").insert({
       tenant_id: tenantId,
       name: form.name.trim(),
       script: form.script.trim(),
+      start_date: form.start_date || null,
+      end_date: form.end_date || null,
       window_start: form.window_start,
       window_end: form.window_end,
       max_concurrent: Math.min(form.max_concurrent || 3, 25),
     });
-    if (e) { setError(e.message); return; }
+    if (e) {
+      setError(/start_date|end_date/.test(e.message)
+        ? "Calling days aren't enabled on the database yet — apply supabase/042_campaign_schedule.sql, then try again."
+        : e.message);
+      return;
+    }
     setShowNew(false);
-    setForm({ name:"", script:"", window_start:"10:00", window_end:"19:00", max_concurrent:3 });
+    setForm({ name:"", script:"", start_date:"", end_date:"", window_start:"10:00", window_end:"19:00", max_concurrent:3 });
     setNotice("Campaign created.");
     load();
   }
@@ -409,7 +502,29 @@ export default function CampaignsPage() {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) setError(j.error || `Could not ${action} the campaign`);
-    else { setNotice(j.recipients ? `Campaign started — ${j.recipients} to dial.` : `Campaign ${action}d.`); load(); }
+    else {
+      setNotice(j.scheduled_for
+        ? `Campaign scheduled — ${j.recipients} to dial from ${fmtDay(j.scheduled_for)}.`
+        : j.recipients ? `Campaign started — ${j.recipients} to dial.` : `Campaign ${action}d.`);
+      load();
+    }
+  }
+
+  // Dates and hours are editable after creation — the old page had no way
+  // to change a window short of making a new campaign and re-uploading.
+  async function saveSchedule(id: string, patch: Record<string, unknown>) {
+    setError(""); setNotice("");
+    const sb = createClient();
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(`${API}/api/campaigns/${id}/schedule`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { setError(j.error || "Could not save the schedule"); return false; }
+    setNotice("Schedule saved."); setEditing(null); load();
+    return true;
   }
 
   const inputStyle: React.CSSProperties = {
@@ -483,6 +598,22 @@ export default function CampaignsPage() {
               placeholder="Introduce yourself, mention the Diwali offer of 20% off, and ask if they'd like to book an appointment this week."
               onChange={e => setForm(f => ({ ...f, script: e.target.value }))} />
 
+            <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
+              <div style={{ flex:"1 1 160px" }}>
+                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                  First calling day
+                </label>
+                <input type="date" style={inputStyle} value={form.start_date} min={istToday()}
+                  onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
+              </div>
+              <div style={{ flex:"1 1 160px" }}>
+                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                  Last calling day <span style={{ color: C.dim }}>(optional)</span>
+                </label>
+                <input type="date" style={inputStyle} value={form.end_date} min={form.start_date || istToday()}
+                  onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} />
+              </div>
+            </div>
             <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 16 }}>
               <div style={{ flex:"1 1 130px" }}>
                 <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
@@ -507,8 +638,9 @@ export default function CampaignsPage() {
               </div>
             </div>
             <p style={{ fontSize: 12, color: C.dim, marginTop: 0, marginBottom: 16 }}>
-              TRAI rules restrict telemarketing hours. 10:00–19:00 is the safe
-              default; calls outside your window are refused automatically.
+              Leave the days blank to dial from the moment you press Start until the
+              list is done. TRAI rules restrict telemarketing hours: 10:00–19:00 is the
+              safe default, and calls outside your window are refused automatically.
             </p>
             <button onClick={createCampaign} style={{
               background: C.grn, color: "#fff", border: "none", borderRadius: 8,
@@ -540,9 +672,25 @@ export default function CampaignsPage() {
                   <p style={{ color: C.mid, fontSize: 13, margin: "0 0 8px", lineHeight: 1.5 }}>
                     {c.script.length > 150 ? c.script.slice(0, 150) + "…" : c.script}
                   </p>
-                  <div style={{ fontSize: 12, color: C.dim, fontFamily: "monospace" }}>
-                    {c.window_start}–{c.window_end} IST · up to {c.max_concurrent} at once
+                  <div style={{ fontSize: 12, color: C.dim, fontFamily: "monospace", display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
+                    <span>{fmtDays(c)} · {c.window_start.slice(0,5)}–{c.window_end.slice(0,5)} IST · up to {c.max_concurrent} at once</span>
+                    {c.status !== "completed" && c.status !== "cancelled" && (
+                      <button onClick={() => setEditing(editing === c.id ? null : c.id)} style={{
+                        background: "none", border: "none", color: C.cyn, cursor: "pointer",
+                        fontSize: 12, padding: 0, fontFamily: "inherit", textDecoration: "underline",
+                      }}>{editing === c.id ? "close" : "change"}</button>
+                    )}
                   </div>
+                  {c.status === "running" && c.start_date && c.start_date > istToday() && (
+                    <div style={{ fontSize: 12, color: C.gold, marginTop: 6 }}>
+                      Scheduled — dialling begins {fmtDay(c.start_date)} at {c.window_start.slice(0,5)} IST.
+                    </div>
+                  )}
+                  {c.status === "paused" && c.end_date && c.end_date < istToday() && (
+                    <div style={{ fontSize: 12, color: C.gold, marginTop: 6 }}>
+                      Last calling day has passed — move the end date to continue.
+                    </div>
+                  )}
                 </div>
                 <div style={{ display:"flex", gap: 8, flexWrap:"wrap" }}>
                   <button onClick={() => { setUploadFor(uploadFor === c.id ? null : c.id); setUploadText(""); }}
@@ -566,20 +714,31 @@ export default function CampaignsPage() {
                 </div>
               </div>
 
+              {editing === c.id && (
+                <ScheduleEditor campaign={c} inputStyle={inputStyle}
+                  onSave={patch => saveSchedule(c.id, patch)} />
+              )}
+
               {s && s.total > 0 && (
-                <div style={{
-                  display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(88px, 1fr))",
-                  gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}`,
-                }}>
-                  {[
-                    { l:"Total",     v:s.total,       c:C.txt },
-                    { l:"Pending",   v:s.pending,     c:C.mid },
-                    { l:"Queued",    v:s.queued,      c:C.cyn },
-                    { l:"Called",    v:s.completed,   c:C.grn },
-                    { l:"Blocked",   v:s.blocked_dnd, c:C.gold },
-                    { l:"Opted out", v:s.opted_out,   c:C.red },
-                  ].map(x => (
-                    <div key={x.l}>
+                <>
+                  <div style={{
+                    display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(88px, 1fr))",
+                    gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}`,
+                  }}>
+                    {[
+                      { l:"Total",     v:s.total,       c:C.txt },
+                      { l:"Pending",   v:s.pending,     c:C.mid },
+                      { l:"Queued",    v:s.queued,      c:C.cyn },
+                      { l:"Called",    v:s.completed,   c:C.grn },
+                      { l:"Blocked",   v:s.blocked_dnd, c:C.gold },
+                      { l:"Opted out", v:s.opted_out,   c:C.red },
+                    ].map(x => (
+                      <div key={x.l}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
+                        <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* Blocked is not a failure — with no DND scrubbing provider
                       configured the dispatcher refuses every number that did not
@@ -591,12 +750,10 @@ export default function CampaignsPage() {
                       isn&apos;t switched on — so we don&apos;t dial them. Contacts who filled in
                       your form or asked for a callback are dialled normally.
                     </div>
-                  )}                      <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
+                  )}
 
-                  <RecipientList campaignId={c.id} />                      <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
-                    </div>
-                  ))}
-                </div>
+                  <RecipientList campaignId={c.id} />
+                </>
               )}
 
               {uploadFor === c.id && (
