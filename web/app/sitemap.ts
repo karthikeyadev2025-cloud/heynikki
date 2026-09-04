@@ -28,7 +28,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${BASE}/for/real-estate`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
     { url: `${BASE}/contact`,       lastModified: now, changeFrequency: "monthly", priority: 0.7 },
     { url: `${BASE}/signup`,        lastModified: now, changeFrequency: "monthly", priority: 0.6 },
-    { url: `${BASE}/login`,         lastModified: now, changeFrequency: "yearly",  priority: 0.3 },
+    // /login is deliberately absent: it is noindex (see lib/seo.ts) and
+    // disallowed in robots.ts, and a sitemap entry for a noindex URL is a
+    // contradiction Search Console flags.
     { url: `${BASE}/privacy`,       lastModified: now, changeFrequency: "yearly",  priority: 0.3 },
     { url: `${BASE}/terms`,         lastModified: now, changeFrequency: "yearly",  priority: 0.3 },
     { url: `${BASE}/refund-policy`, lastModified: now, changeFrequency: "yearly",  priority: 0.3 },

@@ -21,12 +21,15 @@ export default function robots(): MetadataRoute.Robots {
         allow: "/",
         disallow: [
           // Signed-in surfaces. Indexable today purely because the redirect
-          // is client-side.
+          // is client-side. Each of these directories also carries a
+          // layout.tsx exporting NOINDEX (lib/seo.ts) as a belt-and-braces
+          // meta tag — keep the two lists identical.
           "/dashboard", "/leads", "/calls", "/appointments", "/campaigns",
           "/analytics", "/whatsapp", "/knowledge", "/verification", "/setup",
           "/billing", "/api-keys", "/admin", "/quality",
-          // Password flows carry single-use tokens in the URL.
-          "/reset-password", "/forgot-password",
+          // Login and password flows (the latter carry single-use tokens in
+          // the URL). /signup stays indexable on purpose — people search for it.
+          "/login", "/reset-password", "/forgot-password",
           // Not a page anyone should land on from search.
           "/landing-preview.html",
         ],
