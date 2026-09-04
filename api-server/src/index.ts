@@ -2030,8 +2030,11 @@ async function metaGraph(path: string, body?: object): Promise<any> {
 // status the route should answer with.
 class WaStepError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
-async function waAddNumber(tenantId: string, displayName: string) {
+async function waAddNumber(tenantId: string, displayName: string, ownNumber?: string) {
   if (displayName.length < 3) throw new WaStepError(400, "A display name of at least 3 characters is required");
+  if (ownNumber !== undefined && !/^[6-9]\d{9}$/.test(ownNumber)) {
+    throw new WaStepError(400, "Enter a 10-digit Indian mobile number, e.g. 9876543210");
+  }
   const [{ data: did }, { data: choice }] = await Promise.all([
     sb.from("dids").select("id, number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
@@ -2045,8 +2048,11 @@ async function waAddNumber(tenantId: string, displayName: string) {
 
   // The client may have asked for their OWN number instead of the DID we
   // lease them. Honour that: registering the DID over their request would
-  // hand them an identity they explicitly declined.
-  const chosen = choice?.phone_number || did?.number;
+  // hand them an identity they explicitly declined. A number typed on this
+  // attempt beats whatever an earlier attempt left in the row — since 5 Sep
+  // Meta refuses every Jio DID in our range with a bare (#200), so a mobile
+  // the client owns is the only path that actually goes live.
+  const chosen = ownNumber || choice?.phone_number || did?.number;
   if (!chosen) throw new WaStepError(409, "No number to register — assign a DID, or have the client choose their own.");
   const usingDid = !choice?.phone_number || choice.phone_number === did?.number;
   const local = String(chosen).replace(/\D/g, "").slice(-10);
@@ -2077,7 +2083,9 @@ async function waAddNumber(tenantId: string, displayName: string) {
         assigned = users.some((u: any) => u.id === me && (u.tasks || []).includes("MANAGE"));
       } catch { /* fall through to the generic hint */ }
       hint = assigned
-        ? ` — WhatsApp will not accept ${chosen} as a sender. Our access is fine (real mobile numbers pass this check); Meta is rejecting this virtual number itself. Try adding it by hand in WhatsApp Manager › Phone numbers to see Meta's reason, or use a mobile number for WhatsApp.`
+        ? (usingDid
+            ? ` — WhatsApp will not accept ${chosen} as a sender: Meta is rejecting this virtual number itself, not our access. Tick “Use my own mobile number” below and enter a mobile that is not already on WhatsApp.`
+            : ` — WhatsApp will not accept ${chosen} as a sender. Check it is a working Indian mobile that is not already registered on WhatsApp.`)
         : " — Meta refused: the HeyNikki system user needs Full control of the WhatsApp account in Business Settings › System users › Add assets.";
     }
     throw new WaStepError(502, e.message + hint);
@@ -2099,7 +2107,7 @@ async function waAddNumber(tenantId: string, displayName: string) {
 
 async function waRequestCode(tenantId: string, method: string) {
   const { data: row } = await sb.from("tenant_whatsapp")
-    .select("phone_number_id, phone_number").eq("tenant_id", tenantId).maybeSingle();
+    .select("phone_number_id, phone_number, did_id").eq("tenant_id", tenantId).maybeSingle();
   if (!row?.phone_number_id) throw new WaStepError(409, "Add the number to the WABA first");
   try {
     await metaGraph(`${row.phone_number_id}/request_code`, {
@@ -2107,7 +2115,7 @@ async function waRequestCode(tenantId: string, method: string) {
       language: "en_US",
     });
   } catch (e: any) { throw new WaStepError(502, e.message); }
-  return row.phone_number;
+  return { number: row.phone_number, own: !row.did_id };
 }
 
 async function waVerifyCode(tenantId: string, code: string) {
@@ -2163,7 +2171,7 @@ app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (re
 app.post("/api/admin/whatsapp/:tenantId/request-code", verifySuperAdmin, async (req: any, res) => {
   const method = String(req.body?.method || "VOICE").toUpperCase();
   try {
-    const number = await waRequestCode(req.params.tenantId, method);
+    const { number } = await waRequestCode(req.params.tenantId, method);
     res.json({
       ok: true,
       message: method === "SMS"
@@ -2191,7 +2199,7 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
   const [{ data: row }, { data: did }, { data: kyc }, otp] = await Promise.all([
     sb.from("tenant_whatsapp")
-      .select("phone_number, display_name, status, verified_at, phone_number_id, review_note")
+      .select("phone_number, display_name, status, verified_at, phone_number_id, review_note, did_id")
       .eq("tenant_id", tenantId).maybeSingle(),
     sb.from("dids").select("number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
@@ -2219,6 +2227,7 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
     verified_at: row?.verified_at || null,
     review_note: row?.review_note || null,
     on_waba: !!row?.phone_number_id,
+    own: !!row?.phone_number_id && !row?.did_id,
     sending_as: row?.status === "active" ? row.phone_number : platform,
     sending_as_own: row?.status === "active",
     otp,
@@ -2233,7 +2242,9 @@ app.post("/api/whatsapp/sender/add", verifyJWT, async (req: any, res) => {
     .eq("tenant_id", tenantId).eq("status", "approved").limit(1).maybeSingle();
   if (!kyc) return res.status(409).json({ error: "We'll enable this as soon as your KYC is approved." });
   try {
-    const r = await waAddNumber(tenantId, String(req.body?.display_name || "").trim());
+    const own = req.body?.own_number === undefined || req.body.own_number === null
+      ? undefined : String(req.body.own_number).replace(/\D/g, "").slice(-10);
+    const r = await waAddNumber(tenantId, String(req.body?.display_name || "").trim(), own);
     res.json({ ok: true, ...r });
   } catch (e: any) { console.error("[wa-sender] add", e.message); waStepFail(res, e); }
 });
@@ -2242,8 +2253,17 @@ app.post("/api/whatsapp/sender/request-code", verifyJWT, async (req: any, res) =
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
   try {
-    const number = await waRequestCode(tenantId, "VOICE");
-    res.json({ ok: true, message: `WhatsApp is calling ${number} now. Nikki answers it and picks up the code — it appears below within a minute.` });
+    const method = req.body?.method === "SMS" ? "SMS" : "VOICE";
+    const { number, own } = await waRequestCode(tenantId, method);
+    // On the client's own mobile nobody but them can take the call or read
+    // the SMS, so the code has to be typed in by hand; on the DID Nikki
+    // answers and the page fills the box on its own.
+    const message = own
+      ? (method === "SMS"
+          ? `WhatsApp is texting a 6-digit code to ${number}. Type it in below.`
+          : `WhatsApp is calling ${number} with a 6-digit code. Pick up, then type the code below.`)
+      : `WhatsApp is calling ${number} now. Nikki answers it and picks up the code — it appears below within a minute.`;
+    res.json({ ok: true, own, message });
   } catch (e: any) { console.error("[wa-sender] request_code", e.message); waStepFail(res, e); }
 });
 

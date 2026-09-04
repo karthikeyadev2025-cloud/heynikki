@@ -21,6 +21,7 @@ type Sender = {
   status: string | null;
   review_note: string | null;
   on_waba: boolean;
+  own: boolean;
   sending_as: string;
   sending_as_own: boolean;
   otp: { code: string; heard_at: string } | null;
@@ -41,6 +42,8 @@ type Sender = {
 export default function WhatsAppSender() {
   const [s, setS]       = useState<Sender | null>(null);
   const [name, setName] = useState("");
+  const [useOwn, setUseOwn] = useState(false);
+  const [ownNum, setOwnNum] = useState("");
   const [code, setCode] = useState("");
   const [msg, setMsg]   = useState<{ text: string; bad?: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -57,6 +60,10 @@ export default function WhatsAppSender() {
     const j: Sender = await r.json();
     setS(j);
     setName(n => n || j.display_name || "");
+    // A number that isn't the leased line was typed by the client earlier —
+    // keep the form on that path so a reload doesn't flip them back to the
+    // DID Meta already refused.
+    if (j.chosen && j.chosen !== j.heynikki_number) { setUseOwn(true); setOwnNum(o => o || j.chosen!); }
     if (j.otp?.code) setCode(c => c || j.otp!.code);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -86,7 +93,7 @@ export default function WhatsAppSender() {
       });
       const j = await r.json();
       setMsg({ text: j.error || j.message || "Done", bad: !r.ok });
-      if (r.ok && path === "request-code") setCalling(true);
+      if (r.ok && path === "request-code" && !j.own) setCalling(true);
       await load();
       return r.ok;
     } catch (e: any) {
@@ -99,9 +106,15 @@ export default function WhatsAppSender() {
 
   const live = s.status === "active";
   const step = live ? 4 : !s.on_waba ? 1 : !s.otp?.code && !code ? 2 : 3;
+  // Own-number mode: chosen at step 1, or the number already on the WABA
+  // isn't the leased line. Without a leased line it's the only option.
+  const ownMode = s.on_waba ? s.own : (useOwn || !s.heynikki_number);
+  const ownOk   = /^[6-9]\d{9}$/.test(ownNum);
+  const canAdd  = step === 1 && name.trim().length >= 3 && (!ownMode || ownOk);
+  const target  = ownMode ? (s.chosen || ownNum) : s.heynikki_number;
   const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
     background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
-  const btn = (on: boolean, color = C.grn) => ({
+  const btn = (on: boolean, color: string = C.grn) => ({
     padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 800,
     background: on ? color : C.hi, color: on ? "#04120a" : C.dim,
     cursor: on ? "pointer" : "default", opacity: busy ? 0.7 : 1 } as const);
@@ -137,42 +150,70 @@ export default function WhatsAppSender() {
         <div style={{ marginTop: 12, color: C.mid, fontSize: 13 }}>
           We&apos;ll enable your own number as soon as your KYC is approved.
         </div>
-      ) : !s.heynikki_number ? (
-        <div style={{ marginTop: 12, color: C.mid, fontSize: 13 }}>
-          Your HeyNikki number isn&apos;t assigned yet — we&apos;ll enable this once it is.
-        </div>
       ) : (
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           {/* Step 1 */}
           <Step n={1} done={step > 1} active={step === 1} icon={<Phone size={14} />}
-            title={`Make ${s.heynikki_number} your WhatsApp number`}>
+            title={ownMode ? `Make ${ownNum || "your mobile"} your WhatsApp number`
+                           : `Make ${s.heynikki_number} your WhatsApp number`}>
             <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
-              Same number for calls and WhatsApp. Your personal WhatsApp is untouched.
+              {ownMode
+                ? "Calls keep coming to your HeyNikki number; WhatsApp goes out from this mobile. It must not already be on WhatsApp — a fresh SIM is easiest."
+                : "Same number for calls and WhatsApp. Your personal WhatsApp is untouched."}
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input value={name} onChange={e => setName(e.target.value)} disabled={step !== 1}
-                placeholder="Name customers see, e.g. Bismillah Clinic" style={{ ...input, width: 260 }} />
-              <button type="button" disabled={step !== 1 || !!busy || name.trim().length < 3}
-                onClick={() => post("add", { display_name: name.trim() }, "add")}
-                style={btn(step === 1 && name.trim().length >= 3)}>
-                {busy === "add" ? "Adding…" : "Add to WhatsApp"}
-              </button>
+            <div style={{ display: "grid", gap: 8 }}>
+              {s.heynikki_number && (
+                <label style={{ color: C.mid, fontSize: 12.5, display: "flex", gap: 7, alignItems: "center",
+                  cursor: step === 1 ? "pointer" : "default" }}>
+                  <input type="checkbox" checked={useOwn} disabled={step !== 1}
+                    onChange={e => setUseOwn(e.target.checked)} />
+                  Use my own mobile number instead
+                </label>
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                {ownMode && (
+                  <input value={ownNum} inputMode="numeric" disabled={step !== 1}
+                    onChange={e => setOwnNum(e.target.value.replace(/\D/g, "").slice(-10))}
+                    placeholder="10-digit mobile, e.g. 9876543210" style={{ ...input, width: 220 }} />
+                )}
+                <input value={name} onChange={e => setName(e.target.value)} disabled={step !== 1}
+                  placeholder="Name customers see, e.g. Bismillah Clinic" style={{ ...input, width: 260 }} />
+                <button type="button" disabled={!canAdd || !!busy}
+                  onClick={() => post("add", { display_name: name.trim(), own_number: ownMode ? ownNum : null }, "add")}
+                  style={btn(canAdd)}>
+                  {busy === "add" ? "Adding…" : "Add to WhatsApp"}
+                </button>
+              </div>
             </div>
           </Step>
 
           {/* Step 2 */}
           <Step n={2} done={step > 2} active={step === 2} icon={<PhoneCall size={14} />}
-            title="Let WhatsApp call the number with a code">
+            title={ownMode ? "Get a code from WhatsApp" : "Let WhatsApp call the number with a code"}>
             <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
-              WhatsApp rings {s.heynikki_number} and reads a 6-digit code out. You can&apos;t
-              pick that call up — <strong>Nikki answers it</strong>, hears the code, and it
-              appears here on its own. It also shows on your Calls list as <code>wa_otp_…</code>.
+              {ownMode ? (
+                <>WhatsApp sends a 6-digit code to {target} by SMS (or reads it out on a call).
+                  Type it in at step 3.</>
+              ) : (
+                <>WhatsApp rings {target} and reads a 6-digit code out. You can&apos;t
+                  pick that call up — <strong>Nikki answers it</strong>, hears the code, and it
+                  appears here on its own. It also shows on your Calls list as <code>wa_otp_…</code>.</>
+              )}
             </div>
-            <button type="button" disabled={step < 2 || !!busy || step === 4}
-              onClick={() => post("request-code", {}, "call")} style={btn(step >= 2)}>
-              {busy === "call" ? "Asking WhatsApp…" : calling ? "Calling… listening for the code" : s.otp ? "Call again" : "Call me with the code"}
-            </button>
-            {calling && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {ownMode && (
+                <button type="button" disabled={step < 2 || !!busy || step === 4}
+                  onClick={() => post("request-code", { method: "SMS" }, "sms")} style={btn(step >= 2)}>
+                  {busy === "sms" ? "Asking WhatsApp…" : "Text me the code"}
+                </button>
+              )}
+              <button type="button" disabled={step < 2 || !!busy || step === 4}
+                onClick={() => post("request-code", { method: "VOICE" }, "call")}
+                style={btn(step >= 2, ownMode ? C.cyn : C.grn)}>
+                {busy === "call" ? "Asking WhatsApp…" : calling && !ownMode ? "Calling… listening for the code" : s.otp ? "Call again" : "Call me with the code"}
+              </button>
+            </div>
+            {calling && !ownMode && (
               <div style={{ color: C.gold, fontSize: 12, marginTop: 6 }}>
                 Waiting for the call to finish — checking every 5 seconds.
               </div>
