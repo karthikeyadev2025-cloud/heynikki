@@ -74,6 +74,12 @@ GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_SERVICE_KEY"]
 INTERNAL_SECRET= os.environ.get("INTERNAL_SECRET", "nikki-internal-secret-change-me")
+# The "this call is handled by an automated assistant" line played before
+# the greeting on every inbound and outbound call. Switched off on 5 Sep at
+# the owner's request — the greeting now opens the call. Nikki still says
+# she is an AI assistant whenever a caller asks (prompt rule), which is the
+# part that must never change. Set PLAY_AI_DISCLOSURE=1 to bring it back.
+PLAY_AI_DISCLOSURE = os.environ.get("PLAY_AI_DISCLOSURE", "0") == "1"
 API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 
 logging.basicConfig(level=logging.INFO)
@@ -264,7 +270,7 @@ callback, transfer to a person.
 Transfer when they ask — "human", "real person", "manager", "వేరే వ్యక్తి":
 say you are connecting them, then transfer.
 Asked what you are: "మేము automated system ద్వారా పని చేస్తాము."
-The call was already disclosed as automated. Do not disclose it again.
+Do not bring up being automated on your own — only when asked.
 Never name a vendor or a technology.
 
 """,
@@ -2035,7 +2041,10 @@ class NikkiAgent:
             })
             log.info(f"Call started: {self.call_id} from {self.caller_num}")
 
-        # TRAI mandatory disclosure — non-skippable. Prefer pre-recorded.
+        if not PLAY_AI_DISCLOSURE:
+            return b""
+
+        # Disclosure line. Prefer pre-recorded.
         assets_dir = pathlib.Path(__file__).resolve().parent / "assets"
         wav_path   = assets_dir / f"trai_disclosure_{self.voice}.wav"
         if wav_path.exists():
@@ -4582,7 +4591,7 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     # And a bare "ఏం కావాలి?" without అండి is its documented disrespect
     # failure. The first three seconds are the whole first impression.
     #
-    # No "నమస్కారం" — the TRAI disclosure just said it; twice reads scripted.
+    # No "నమస్కారం" — "హలో, [business] అండి" is the natural Hyderabad opener.
     returning = bool((history or {}).get("previous_calls"))
     lang = _tenant_lang(profile)
 

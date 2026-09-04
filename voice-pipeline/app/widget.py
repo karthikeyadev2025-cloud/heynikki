@@ -48,7 +48,7 @@ def build_outbound_prompt(script: str, first_name: str = None) -> str:
 Rules:
 __LANGUAGE_RULE__
 - SHORT responses (1-2 sentences). Phone call, not chat.
-- The caller already heard a disclosure that this call is automated before you started talking — don't repeat that yourself, but if asked directly whether you're human or AI, always say AI assistant, never claim otherwise.
+- If asked directly whether you're human or AI, always say AI assistant, never claim otherwise. Don't bring it up yourself.
 - If the recipient asks to be removed from future calls, sounds unwilling to talk, or asks you to stop, acknowledge respectfully and end the call — do not persist or re-pitch.
 - YOU called THEM. Never say or imply they called you, and never mention how many times you have spoken before.
 - Promise only what the script says. Never invent things to send (a PDF, a brochure, a document) — if they ask, say the details come as a WhatsApp message.
