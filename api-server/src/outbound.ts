@@ -159,9 +159,15 @@ export function mountOutboundRoutes(
       tenant_id: c.tenant_id, phone, reason: reason || "user_request",
     }, { onConflict: "tenant_id,phone" });
 
-    // Mark any pending recipient rows with this phone as opted_out
+    // Mark any pending recipient rows with this phone as opted_out.
+    //
+    // Scoped to the campaign's tenant: the same number can sit on several
+    // tenants' lists, and an opt-out from one business is not an opt-out
+    // from the others. Without the tenant filter one tenant's STOP flipped
+    // every tenant's row for that phone.
     await sb.from("outbound_recipients")
       .update({ status: "opted_out" })
+      .eq("tenant_id", c.tenant_id)
       .eq("phone", phone)
       .in("status", ["pending", "queued", "scrubbing"]);
 

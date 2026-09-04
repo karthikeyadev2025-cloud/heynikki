@@ -37,6 +37,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
 import { resolveGeminiModel } from "../gemini.js";
+import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "../recordings";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -323,7 +324,8 @@ export async function runIncompleteBookings(): Promise<number> {
     // and the recording of that call is the consent record. The dispatcher
     // reads it as consent so the callback is not blocked as unscrubbed.
     const { data: already } = await sb.from("outbound_recipients")
-      .select("id").eq("phone", a.caller_number).eq("is_instant", true)
+      .select("id").eq("tenant_id", a.tenant_id)
+      .eq("phone", a.caller_number).eq("is_instant", true)
       .in("status", ["pending", "scrubbing", "queued", "in_progress"])
       .limit(1);
     if (already?.length) continue;
@@ -697,9 +699,6 @@ if (require.main === module) {
 
 
 /* ── Recording retention purge ──────────────────────────────── */
-const PIPELINE = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
-const INTERNAL = process.env.INTERNAL_SECRET || "";
-
 async function runRetentionPurge(): Promise<void> {
   // recording_days per plan; anything unrecognised keeps the tightest
   // default. A retention bug must err toward keeping less, not more —
@@ -719,19 +718,15 @@ async function runRetentionPurge(): Promise<void> {
     if (!calls?.length) continue;
 
     const keys = calls.map((c: any) => c.r2_object_key).filter(Boolean);
-    const r = await fetch(`${PIPELINE}/api/v1/recording/purge`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL },
-      body: JSON.stringify({ keys }),
-    });
+    const r = await purgeRecordings(keys);
     if (!r.ok) {
-      console.error(`[retention] purge call failed: ${r.status}`);
+      console.error(`[retention] purge call failed: ${r.status ?? "unreachable"}`);
       continue;   // keys stay on the rows; retried next cycle
     }
     // Only forget keys AFTER R2 confirmed. A row that forgets its key
     // while the object survives is an orphan nobody can ever delete.
     await sb.from("calls")
-      .update({ r2_object_key: null, recording_path: null })
+      .update(RECORDING_COLUMNS_CLEARED)
       .in("id", calls.map((c: any) => c.id));
     purged += calls.length;
     if (purged >= 200) break;

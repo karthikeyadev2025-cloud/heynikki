@@ -2286,6 +2286,55 @@ app.get("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res)
   }
 });
 
+// Self-serve deletion — the DPDP erasure right applied to one call's audio,
+// without waiting for the plan's retention window. Deletes the R2 object
+// through the same pipeline endpoint the retention job uses, then clears
+// the recording columns on the row. The transcript stays: it is the record
+// of what was agreed on the call, and the caller asked for the audio gone,
+// not the appointment. recording_size_bytes also stays, so the dashboard
+// can say "deleted" rather than "never recorded".
+app.delete("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+  const { data: call } = await sb.from("calls")
+    .select("id, tenant_id, r2_object_key, recording_url")
+    .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!call) return res.status(404).json({ error: "Call not found" });
+
+  // Private-bucket rows carry the key. Rows from a public-base deployment
+  // carry only a URL, whose path IS the key (<tenant>/<call>.wav[.enc]) —
+  // and that path must start with this tenant's id or it is not ours to
+  // touch, whatever the row says.
+  let key: string | null = call.r2_object_key || null;
+  if (!key && call.recording_url) {
+    try { key = decodeURIComponent(new URL(call.recording_url).pathname.replace(/^\/+/, "")); }
+    catch { key = null; }
+    if (key && !key.startsWith(`${tenantId}/`)) key = null;
+  }
+  if (!key) {
+    return res.status(404).json({ error: "No recording was kept for this call" });
+  }
+
+  const r = await purgeRecordings([key]);
+  if (!r.ok) {
+    return res.status(502).json({ error: "Could not delete the recording — try again in a minute" });
+  }
+  // Only forget the key AFTER R2 confirmed (see recordings.ts). An R2 404 is
+  // reported in errors but is not a failure to us: the object is gone, which
+  // is what was asked for.
+  const { error: upErr } = await sb.from("calls")
+    .update(RECORDING_COLUMNS_CLEARED)
+    .eq("id", call.id).eq("tenant_id", tenantId);
+  if (upErr) return res.status(500).json({ error: upErr.message });
+
+  await audit("call.recording.deleted", {
+    tenantId, actorId: req.user.id, actorEmail: req.user.email, req,
+    resource: key, metadata: { call_id: call.id },
+  });
+  res.json({ ok: true, call_id: call.id });
+});
+
 app.post("/api/test-call", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
@@ -3910,6 +3959,7 @@ import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountCampaignImport } from "./campaign-import";
+import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 
 // MUST be mounted BEFORE outbound.ts. Express matches routes in registration
 // order, and outbound.ts also defines /api/campaigns/:id/start and /pause —

@@ -41,7 +41,9 @@ function formatTime(ts: string) {
   });
 }
 
-function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }) {
+function CallDetail({ call, onClose, onRecordingDeleted }: {
+  call: CallRecord; onClose: () => void; onRecordingDeleted: (id: string) => void;
+}) {
   const transcript: Array<{ role: string; content: string; ts: string }> =
     Array.isArray(call.transcript) ? call.transcript : [];
 
@@ -104,7 +106,7 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
               had any. Retention is by plan — seven days on trial. */}
           {(!call.r2_object_key && !call.recording_url && (call as any).recording_size_bytes) ? (
             <div style={{ marginBottom: 16, color: C.dim, fontSize: 12.5 }}>
-              Recording deleted — your plan keeps call audio for a limited time.
+              Recording deleted — removed from this page, or past the time your plan keeps call audio.
             </div>
           ) : null}
           {(call.r2_object_key || call.recording_url) && (
@@ -114,6 +116,7 @@ function CallDetail({ call, onClose }: { call: CallRecord; onClose: () => void }
                 Recording
               </div>
               <RecordingPlayer callId={call.id} publicUrl={call.recording_url} />
+              <DeleteRecording callId={call.id} onDeleted={() => onRecordingDeleted(call.id)} />
             </div>
           )}
 
@@ -255,6 +258,48 @@ function RecordingPlayer({ callId, publicUrl }: { callId: string; publicUrl?: st
   );
 }
 
+// Self-serve erasure of one call's audio. DELETE goes through the API (the
+// browser never sees R2), and the parent drops the recording columns from
+// its copy of the row so the panel re-renders as "deleted" without a refetch.
+// The transcript is untouched — only the audio goes.
+function DeleteRecording({ callId, onDeleted }: { callId: string; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState("");
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          if (!confirm("Delete this recording? The audio is removed permanently. The transcript is kept.")) return;
+          setBusy(true); setErr("");
+          try {
+            const sb = createClient();
+            const { data: { session } } = await sb.auth.getSession();
+            const r = await fetch(
+              `${process.env.NEXT_PUBLIC_API_URL}/api/calls/${callId}/recording`,
+              { method: "DELETE", headers: { Authorization: `Bearer ${session?.access_token}` } });
+            if (!r.ok) {
+              const j = await r.json().catch(() => ({}));
+              setErr(j.error || "Could not delete the recording");
+            } else {
+              onDeleted();
+            }
+          } catch {
+            setErr("Could not delete the recording");
+          } finally { setBusy(false); }
+        }}
+        style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.red}55`,
+          background: "transparent", color: C.red, fontSize: 11.5, fontWeight: 700,
+          cursor: busy ? "wait" : "pointer" }}>
+        {busy ? "Deleting…" : "Delete recording"}
+      </button>
+      {err && <div style={{ color: C.dim, fontSize: 12, marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
 export default function CallsPage() {
   const [calls, setCalls]         = useState<CallRecord[]>([]);
   const [selected, setSelected]   = useState<CallRecord | null>(null);
@@ -294,7 +339,17 @@ export default function CallsPage() {
 
   return (
     <Shell title="Call History">
-      {selected && <CallDetail call={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <CallDetail call={selected} onClose={() => setSelected(null)}
+          onRecordingDeleted={(id) => {
+            // Mirror what the API did to the row: key and URL gone,
+            // recording_size_bytes kept so the panel says "deleted".
+            const strip = (c: CallRecord): CallRecord =>
+              c.id === id ? { ...c, r2_object_key: null, recording_url: null } : c;
+            setCalls(prev => prev.map(strip));
+            setSelected(prev => (prev ? strip(prev) : prev));
+          }} />
+      )}
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
