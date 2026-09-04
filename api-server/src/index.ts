@@ -2020,9 +2020,18 @@ async function metaGraph(path: string, body?: object): Promise<any> {
     signal: AbortSignal.timeout(20_000),
   });
   const j: any = await r.json().catch(() => ({}));
-  if (!r.ok || j.error) throw new Error(j?.error?.message || `Meta HTTP ${r.status}`);
+  if (!r.ok || j.error) {
+    // Meta's `message` is a category ("Request code error"); the reason a
+    // person can act on ("You have requested a verification code too many
+    // times. Try again later.") sits in error_user_msg. Show both.
+    const e = j?.error || {};
+    const msg = [e.message, e.error_user_msg].filter(Boolean).join(" — ");
+    throw new Error(msg || `Meta HTTP ${r.status}`);
+  }
   return j;
 }
+
+const last10 = (n: unknown) => String(n || "").replace(/\D/g, "").slice(-10);
 
 // The three steps as plain functions, so the super-admin page and the
 // client's own WhatsApp page drive the same code. Each throws with a message
@@ -2054,8 +2063,12 @@ async function waAddNumber(tenantId: string, displayName: string, ownNumber?: st
   // the client owns is the only path that actually goes live.
   const chosen = ownNumber || choice?.phone_number || did?.number;
   if (!chosen) throw new WaStepError(409, "No number to register — assign a DID, or have the client choose their own.");
-  const usingDid = !choice?.phone_number || choice.phone_number === did?.number;
-  const local = String(chosen).replace(/\D/g, "").slice(-10);
+  const local = last10(chosen);
+  // Judged on the number actually being registered. The old test compared
+  // the ROW's number with the DID, so an own-number add over a row that
+  // still held the DID kept did_id, and the page went on saying "Nikki
+  // answers the code call" for a mobile only the client can pick up.
+  const usingDid = !!did?.number && local === last10(did.number);
   let created: any;
   try {
     created = await metaGraph(`${WABA_ID()}/phone_numbers`, {
@@ -2106,8 +2119,10 @@ async function waAddNumber(tenantId: string, displayName: string, ownNumber?: st
 }
 
 async function waRequestCode(tenantId: string, method: string) {
-  const { data: row } = await sb.from("tenant_whatsapp")
-    .select("phone_number_id, phone_number, did_id").eq("tenant_id", tenantId).maybeSingle();
+  const [{ data: row }, { data: did }] = await Promise.all([
+    sb.from("tenant_whatsapp").select("phone_number_id, phone_number, did_id").eq("tenant_id", tenantId).maybeSingle(),
+    sb.from("dids").select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
+  ]);
   if (!row?.phone_number_id) throw new WaStepError(409, "Add the number to the WABA first");
   try {
     await metaGraph(`${row.phone_number_id}/request_code`, {
@@ -2115,7 +2130,7 @@ async function waRequestCode(tenantId: string, method: string) {
       language: "en_US",
     });
   } catch (e: any) { throw new WaStepError(502, e.message); }
-  return { number: row.phone_number, own: !row.did_id };
+  return { number: row.phone_number, own: !(did?.number && last10(row.phone_number) === last10(did.number)) };
 }
 
 async function waVerifyCode(tenantId: string, code: string) {
@@ -2218,6 +2233,12 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
     } catch { /* shown as unknown */ }
   }
   const platform = process.env.META_WA_PLATFORM_DISPLAY || "the HeyNikki platform number";
+  // Own number = the number on the WABA is not the leased line. Derived from
+  // the numbers, not did_id, and the row is repaired when they disagree.
+  const own = !!row?.phone_number_id && !(did?.number && last10(row.phone_number) === last10(did.number));
+  if (row?.phone_number_id && own && row.did_id) {
+    await sb.from("tenant_whatsapp").update({ did_id: null }).eq("tenant_id", tenantId);
+  }
   res.json({
     kyc_approved: !!kyc,
     heynikki_number: did?.number || null,
@@ -2227,7 +2248,7 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
     verified_at: row?.verified_at || null,
     review_note: row?.review_note || null,
     on_waba: !!row?.phone_number_id,
-    own: !!row?.phone_number_id && !row?.did_id,
+    own,
     sending_as: row?.status === "active" ? row.phone_number : platform,
     sending_as_own: row?.status === "active",
     otp,

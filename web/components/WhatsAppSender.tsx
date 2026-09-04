@@ -154,11 +154,11 @@ export default function WhatsAppSender() {
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           {/* Step 1 */}
           <Step n={1} done={step > 1} active={step === 1} icon={<Phone size={14} />}
-            title={ownMode ? `Make ${ownNum || "your mobile"} your WhatsApp number`
+            title={ownMode ? `Make ${target || ownNum || "your mobile"} your WhatsApp number`
                            : `Make ${s.heynikki_number} your WhatsApp number`}>
             <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
               {ownMode
-                ? "Calls keep coming to your HeyNikki number; WhatsApp goes out from this mobile. It must not already be on WhatsApp — a fresh SIM is easiest."
+                ? "Calls keep coming to your HeyNikki number; WhatsApp goes out from this mobile. It must not already be on WhatsApp — a fresh SIM is easiest. WhatsApp allows only a few code requests a day, so ask once and wait for it."
                 : "Same number for calls and WhatsApp. Your personal WhatsApp is untouched."}
             </div>
             <div style={{ display: "grid", gap: 8 }}>
