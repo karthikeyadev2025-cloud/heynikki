@@ -281,10 +281,13 @@ const STALE_IN_PROGRESS_MS = 30 * 60_000;
 
 async function reapStaleInProgress(): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_IN_PROGRESS_MS).toISOString();
+  // Rows from before last_attempt_at was stamped on dispatch have it NULL,
+  // and NULL < cutoff is never true — two such rows sat in_progress for a
+  // day. Fall back to created_at for those.
   const { data: stale, error } = await sb.from("outbound_recipients")
     .select("id, phone, campaign_id, metadata, last_attempt_at")
     .eq("status", "in_progress")
-    .lt("last_attempt_at", cutoff)
+    .or(`last_attempt_at.lt.${cutoff},and(last_attempt_at.is.null,created_at.lt.${cutoff})`)
     .limit(50);
   if (error) { console.error("[dispatcher] stale scan failed:", error.message); return; }
 
