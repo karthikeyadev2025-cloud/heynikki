@@ -4722,8 +4722,15 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // than in the pipeline so the pipeline keeps one source for everything it
     // needs about a call — it already gets routing_mode and ring_group from
     // this response.
+    //
+    // Consulted for every AI-answered inbound call, not only routing_mode
+    // 'ivr': the client switches the menu on from /setup, and the only thing
+    // that could set a DID to 'ivr' was the super-admin table — so a business
+    // that enabled its menu heard nothing change and there was no way for
+    // them to know why. An enabled menu with options IS the request; the
+    // routing_mode value stays as an explicit override for the admin.
     let ivr: any = null;
-    if (effectiveMode === "ivr") {
+    if (effectiveMode === "ivr" || effectiveMode === "ai") {
       const { data: menu } = await sb.from("ivr_menus")
         .select("greeting, options, enabled")
         .eq("tenant_id", did.tenant_id).eq("enabled", true)
@@ -4732,7 +4739,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
         .order("did_number", { ascending: false, nullsFirst: false })
         .limit(1).maybeSingle();
       if (menu?.options?.length) ivr = menu;
-      else console.warn(`[routing] DID ${didDigits} is on 'ivr' with no menu configured — using AI`);
+      else if (effectiveMode === "ivr") console.warn(`[routing] DID ${didDigits} is on 'ivr' with no menu configured — using AI`);
     }
 
     res.json({
