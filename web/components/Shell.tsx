@@ -5,7 +5,7 @@ import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
@@ -31,6 +31,7 @@ const NAV_ITEMS = [
   { href: "/verification", icon: ShieldCheck,  label: "Verification" },
   { href: "/setup",       icon: Settings,      label: "Setup"       },
   { href: "/billing",     icon: CreditCard,    label: "Billing"     },
+  { href: "/api-keys",    icon: KeyRound,      label: "API keys"    },
 ];
 
 

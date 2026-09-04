@@ -294,6 +294,13 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
       console.error("[lead-capture] upsert failed:", leadErr.message);
       return res.status(500).json({ error: "Could not save lead" });
     }
+    // The RPC has no source parameter, so every form lead was filed as
+    // inbound_call. Stamp it on a fresh row only — a caller who later fills
+    // the form keeps the source that first brought them.
+    if (leadId) {
+      await sb.from("leads").update({ source })
+        .eq("id", leadId).eq("tenant_id", match.tenant_id).eq("source", "inbound_call").eq("call_count", 1);
+    }
 
     // Respond fast — the caller is a form/webhook expecting a quick ack,
     // not waiting on WhatsApp delivery or a call being placed.
@@ -5439,6 +5446,15 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
           upload_recording: humanCall,
         }),
       }).catch(e => console.error("[Pipeline hangup]", e.message));
+    } else {
+      // No calls row: the inbound route refused the leg (credits or
+      // concurrency) and wrote nothing on purpose. The campaign recipient
+      // was still in_progress and sat there until the 30-minute reaper,
+      // holding a dial slot the whole time.
+      const { data: recip } = await sb.from("outbound_recipients")
+        .update({ status: "completed", outcome: `refused_${hangup_cause || "unknown"}` })
+        .eq("metadata->>fs_uuid", fs_uuid).eq("status", "in_progress").select("id");
+      if (recip?.length) console.log(`[FS Hangup] closed refused campaign recipient ${recip[0].id}`);
     }
 
     // Check if missed call (duration < 5 seconds = unanswered).

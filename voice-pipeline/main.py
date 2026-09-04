@@ -5199,7 +5199,7 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             "notes":     str(d.get("summary") or "")[:500] or None,
             "stage":     stage,
             "score":     score,
-            "source":    "inbound_call",
+            "source":    "outbound_campaign" if getattr(agent, "is_outbound", False) else "inbound_call",
             "first_call_id": agent.call_id,
         }
         async with httpx.AsyncClient(timeout=6.0) as c:
