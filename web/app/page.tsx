@@ -188,8 +188,8 @@ export default function Home() {
         </section>
 
         <footer className="v2-stats">
-          <span className="v2-stat"><Languages size={15} /> 3 languages, switched mid-call</span>
-          <span className="v2-stat"><Clock size={15} /> Live the same day</span>
+          <span className="v2-stat"><Languages size={15} /> Telugu, Hindi or English — Tenglish understood</span>
+          <span className="v2-stat"><Clock size={15} /> Live within a business day of KYC</span>
           <span className="v2-stat"><MessageCircle size={15} /> Confirmed on WhatsApp</span>
         </footer>
       </div>
@@ -216,12 +216,13 @@ export default function Home() {
               // MEASURED, not aspirational. Anything here can be tested on the
               // demo call in front of a prospect, so it has to survive that.
               // The previous "< 700 ms first reply" was off by roughly 4x:
-              // measured end to end it is ~0.5s before she starts speaking
-              // (an acknowledgement) and ~2.5s to a full spoken answer.
-              ["~0.5 s", "Before she starts speaking"],
+              // measured end to end her first spoken audio lands at ~1.3s
+              // (the acknowledgement filler fires at ~1.2s, and only when the
+              // full answer is not ready yet) and ~2.5s to a full spoken answer.
+              ["~1.3 s", "To her first words"],
               ["~2.5 s", "To a full spoken answer"],
             ["24 / 7", "Including Sunday, 2 AM, festival days"],
-            ["3 languages", "Switched mid-sentence, mid-call"],
+            ["3 languages", "Telugu, Hindi or English — Tenglish understood"],
           ].map(([big, small]) => (
             <div key={big}>
               <div style={{
@@ -257,12 +258,12 @@ export default function Home() {
             {
               n: "01", state: "Ringing", tone: C.marigold, icon: Phone,
               title: "The call arrives on your own number",
-              body: "Your existing business line, forwarded or fully ported. Customers dial the number already on your board and your cards. Nothing about the number changes.",
+              body: "Forward your existing business line, or use the new number we give you. Forwarded, customers keep dialling the number already on your board and your cards. Nothing about the number changes.",
             },
             {
               n: "02", state: "Live", tone: C.live, icon: Languages,
               title: "Nikki talks, in the caller's language",
-              body: "Telugu by default, switching to Hindi or English the moment the caller does. She asks for the name, the number, the service and the slot — and handles the caller who answers three of those in one breath.",
+              body: "Telugu, Hindi or English — you pick the language for your line, and she understands the everyday Telugu-English mix callers actually speak. She takes the name, the number and what they need, and books the slot.",
             },
             {
               n: "03", state: "On WhatsApp", tone: C.teal, icon: MessageCircle,
@@ -312,15 +313,15 @@ export default function Home() {
             <p style={{ fontSize: 16.5, lineHeight: 1.7, color: "rgba(255,255,255,0.62)", margin: 0 }}>
               Routine bookings go to the AI. A caller who says{" "}
               <em style={{ color: C.marigold, fontStyle: "normal" }}>&ldquo;manishitho matladali&rdquo;</em>{" "}
-              gets a human — with the customer&apos;s history already on screen when their phone rings.
+              gets a human — the call transfers on the same line, no callback, no re-dial. The full transcript and recording land in your dashboard when the call ends.
             </p>
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
             {[
               { icon: Languages,   t: "AI brain", d: "Answers, qualifies, books, confirms. Never on a break, never annoyed at 11 PM." },
-              { icon: Users,       t: "Human brain", d: "Your telecaller, with click-to-call and the full transcript already loaded." },
-              { icon: ShieldCheck, t: "One number, one identity", d: "The caller never learns which one they got. Your brand stays intact either way." },
+              { icon: Users,       t: "Human brain", d: "Your telecaller, on the same call — with click-to-call from the dashboard, and the transcript and recording there when the call ends." },
+              { icon: ShieldCheck, t: "One number, one identity", d: "No re-dial, no second number — the caller stays on the same call. Your brand stays intact either way." },
             ].map(({ icon: Icon, t, d }) => (
               <div key={t} style={{
                 display: "flex", gap: 15, padding: "19px 20px",
@@ -456,8 +457,8 @@ export default function Home() {
               Free on every new account
             </div>
             <div style={{ fontSize: 13.5, color: C.textMid, marginTop: 3, lineHeight: 1.5 }}>
-              Real calls on a real number — inbound and outbound. No card, no sandbox,
-              and nothing switches off at the end of a trial week.
+              Real calls, inbound and outbound, on the number we assign once your KYC
+              is approved. No card, no sandbox, and nothing switches off at the end of a trial week.
             </div>
           </div>
         </div>
@@ -492,8 +493,8 @@ export default function Home() {
             },
             {
               name: "Scale", price: "9,999", note: "per month",
-              points: ["1,500 minutes included", "10 numbers · 10 people on the account", "15 calls at once",
-                       "API access and webhooks", "Priority support"],
+              points: ["1,500 minutes included", "10 numbers · 10 people on the account", "10 calls at once",
+                       "API access", "Support on WhatsApp"],
             },
           ].map((p) => (
             <div key={p.name} style={{
@@ -549,7 +550,7 @@ export default function Home() {
         </div>
 
         <p style={{ marginTop: 22, fontSize: 13.5, color: C.textDim, fontFamily: M }}>
-          GST extra · Cancel any month · Extra minutes ₹15 · Add a number or CRM seat for ₹1,999
+          Prices exclusive of GST · Cancel any month · Need more minutes? Upgrade any time · Numbers and seats come with the plan
         </p>
       </Section>
 
@@ -578,17 +579,17 @@ export default function Home() {
         }}>
           {[
             ["One business, one wall",
-             "Every table is protected at the database level, not by our application code remembering to filter. A signed-in account can read its own calls, leads and recordings and nothing else — we test this by signing in as a fresh business and asking for everyone's data. It comes back empty."],
+             "Every business's data is isolated by row-level security in the database, not by our application code remembering to filter. A signed-in account can read its own calls, leads and recordings and nothing else."],
             ["Recordings encrypted at rest",
-             "Call audio is encrypted with AES-256-GCM before it is stored. The storage bucket is private: there is no public link to a recording, and there never was one. Playing a call in your dashboard mints a link that expires in minutes."],
+             "Call audio is encrypted with AES-256-GCM before it is stored. The storage bucket is private: there is no public link to a recording, and there never was one. A recording plays only inside a signed-in dashboard session — no public URL, ever."],
             ["Callers are told it is an AI",
              "Every call opens by disclosing that it is handled by an automated assistant, as TRAI requires. Nikki never claims to be a person, and says so if asked."],
             ["Outbound needs consent",
-             "A campaign dials only numbers whose consent was declared, recorded with who declared it and when. If the DND check cannot run, the call is blocked rather than placed — the safe failure, not the convenient one."],
+             "Every campaign upload requires you to declare consent for each contact — who gave it and when. A number without that declaration is never dialled — the safe default, not the convenient one."],
             ["Your dashboard is not on the internet",
              "Every signed-in page is excluded from search engines, and our llms.txt tells AI crawlers not to index or train on anything behind a login. Recordings and transcripts are never served from a public URL."],
             ["You can take it with you",
-             "Recordings, transcripts, leads and appointments are yours. Export them or ask us to delete them, and keep your number — port it in and port it out."],
+             "Recordings, transcripts, leads and appointments are yours. Export your calls to CSV from the dashboard, delete a recording from the dashboard, or ask us to delete everything."],
           ].map(([title, body]) => (
             <div key={title} style={{
               background: C.paper, border: `1px solid ${C.line}`,
@@ -631,15 +632,15 @@ export default function Home() {
           {[
             {
               q: "Is it really Telugu, or English with a Telugu accent?",
-              a: "Really Telugu. The speech model is trained on Telugu, not on English text spelled out phonetically. She handles the Telangana and coastal Andhra differences, and switches to Hindi or English the moment your caller does.",
+              a: "Really Telugu. The speech model is trained on Telugu, not on English text spelled out phonetically. She understands everyday spoken Telugu, including the English words mixed in — and you can set your line to Hindi or English instead.",
             },
             {
               q: "Do I have to change my number?",
-              a: "No. Forward your existing number to Nikki, or port it fully — both work. Your board, your cards and your Google listing all stay exactly as they are.",
+              a: "No. Forward your existing number to Nikki, or use the new number we give you. Your board, your cards and your Google listing all stay exactly as they are.",
             },
             {
               q: "What happens when Nikki doesn't understand?",
-              a: "She asks once, plainly. If it's still unclear, or the caller asks for a person, the call goes to your telecaller with the transcript already on their screen. She doesn't invent an answer to get off the call.",
+              a: "She asks once, plainly. If it's still unclear, or the caller asks for a person, the call transfers to your telecaller on the same line — no callback, no re-dial — and the full transcript and recording land in your dashboard when the call ends. She doesn't invent an answer to get off the call.",
             },
             {
               q: "Do my callers know it's an AI?",
@@ -647,7 +648,7 @@ export default function Home() {
             },
             {
               q: "Who can hear my call recordings?",
-              a: "You. Recordings are encrypted and stored against your account only — no other business on the platform can reach them. Export or delete them whenever you want.",
+              a: "You. Recordings are encrypted and stored against your account only — no other business on the platform can reach them. Export your calls to CSV, delete a recording from the dashboard, or ask us to delete everything.",
             },
           ].map((item, i) => {
             const open = openFaq === i;
@@ -693,7 +694,7 @@ export default function Home() {
           fontSize: 17, lineHeight: 1.65, color: "rgba(255,255,255,0.6)",
           maxWidth: 480, margin: "0 auto 32px",
         }}>
-          Sixty seconds to set up. Keep the number you already have.
+          Sign up in a minute; your number goes live within one business day of KYC approval. Keep the number you already have.
         </p>
         <a href="/signup" style={{
           display: "inline-flex", alignItems: "center", gap: 10,
@@ -706,7 +707,7 @@ export default function Home() {
           marginTop: 24, display: "inline-flex", alignItems: "center", gap: 8,
           color: "rgba(255,255,255,0.4)", fontFamily: M, fontSize: 12,
         }}>
-          <Clock size={13} /> Most businesses are live before their next call
+          <Clock size={13} /> Live within one business day of KYC approval
         </div>
       </Section>
 

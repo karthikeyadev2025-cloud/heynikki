@@ -4,7 +4,7 @@ export const metadata = { title: "Terms of Service — Hey Nikki" };
 
 export default function Terms() {
   return (
-    <LegalLayout title="Terms of Service" lastUpdated="29 June 2026">
+    <LegalLayout title="Terms of Service" lastUpdated="4 September 2026">
       <p>
         These Terms govern your use of Nikki (the "<strong>Service</strong>"), provided by
         Hey Nikki ("<strong>Hey Nikki</strong>", "we", "us"). By creating an
@@ -39,7 +39,7 @@ export default function Terms() {
 
       <h2>4. Billing</h2>
       <ul>
-        <li>Plans are billed monthly via Razorpay. GST (18%) is added at checkout.</li>
+        <li>Plans are billed monthly via Razorpay. Prices are exclusive of GST.</li>
         <li>Every new account gets 100 free minutes of calls and requires no card. Minutes are used as calls are answered; when they run out, calls stop until you choose a plan. There is no time limit on the free minutes. If you don't subscribe, your account becomes read-only and is deleted after 30 days.</li>
         <li>We may change pricing with 30 days' notice. Existing subscriptions are honoured at the old price until renewal.</li>
         <li>Failed payments lead to a 7-day grace period; service is paused after that until payment is settled.</li>
@@ -84,7 +84,7 @@ export default function Terms() {
 
       <h2>8. Termination</h2>
       <ul>
-        <li>You can cancel anytime from the dashboard. Cancellation takes effect at the end of the current billing cycle.</li>
+        <li>You can cancel any month by messaging us on WhatsApp; it is done the same day. Cancellation takes effect at the end of the current billing cycle.</li>
         <li>We may terminate immediately for material breach of these Terms or non-payment beyond the grace period.</li>
         <li>Upon termination: you can export your data for 30 days, after which it's permanently deleted (except records we must retain by law).</li>
       </ul>

@@ -37,7 +37,7 @@ export default function Page() {
         brochure and she reads it herself.
       </p>
       <ul>
-        <li><strong>Speaks real Telugu.</strong> Not English transliterated into Telugu letters. If the caller switches to Hindi or English mid-sentence, she switches too.</li>
+        <li><strong>Speaks real Telugu.</strong> Not English transliterated into Telugu letters. Pick Telugu, Hindi or English for your line; in Telugu she understands the English words callers mix in.</li>
         <li><strong>Books appointments</strong> and confirms them on WhatsApp, with a reminder the day before.</li>
         <li><strong>Captures the lead</strong> — name, number, what they asked about, and how serious they sounded.</li>
         <li><strong>Transfers to a person</strong> when the caller asks for one, instead of pretending to cope.</li>
@@ -60,8 +60,8 @@ export default function Page() {
 
       <h2>You keep your number</h2>
       <p>
-        Forward your existing business number to Nikki, or port it across entirely — both
-        work. Your board, your visiting cards and your Google listing stay exactly as they
+        Forward your existing business number to Nikki, or use the new number we give
+        you. Your board, your visiting cards and your Google listing stay exactly as they
         are. Nothing about how customers reach you changes.
       </p>
 
@@ -77,7 +77,7 @@ export default function Page() {
         { q: "Is it really Telugu, or English with a Telugu accent?",
           a: "Really Telugu. The speech model is trained on Telugu rather than English spelled out phonetically, and it keeps the English words Hyderabad actually uses instead of translating them into words nobody says." },
         { q: "Do I have to change my business number?",
-          a: "No. Forward your existing number to Nikki or port it fully — both work. Your board, your cards and your listings stay exactly as they are." },
+          a: "No. Forward your existing number to Nikki, or use the new number we give you. Your board, your cards and your listings stay exactly as they are." },
         { q: "What happens if the caller wants a human?",
           a: "The call transfers to your staff. Nikki never pretends to have understood, and if she cannot help she says so and takes a number for a callback." },
         { q: "Do callers know they are speaking to an AI?",

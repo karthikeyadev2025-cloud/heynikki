@@ -68,7 +68,7 @@ export default function Page() {
         { q: "Can it send the brochure to the caller?",
           a: "Yes, on WhatsApp during the call, so the buyer is reading it while the conversation is still fresh." },
         { q: "Can it call our old enquiry list?",
-          a: "Yes, in Telugu, reporting who was interested. Contacts who submitted their own enquiry are dialled; anyone else is refused unless cleared, because TRAI rules do not allow cold calling a bought list." },
+          a: "Yes, in Telugu, reporting who was interested. You declare consent for each contact when you upload the list — who gave it and when — and a number without it is never dialled, because TRAI rules do not allow cold calling a bought list." },
         { q: "Can it negotiate on rate?",
           a: "Within limits you set — the lowest figure you will accept and what she may offer instead of a discount. She never goes below your floor and never invents an offer." },
       ]} />

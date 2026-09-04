@@ -40,9 +40,9 @@ export default function Page() {
       <p>
         This is where most outbound goes wrong legally. Under TRAI rules you may not cold
         call people who have not consented, and &quot;we bought a list&quot; is not consent. Nikki
-        is built around that rather than despite it: contacts who submitted their own
-        enquiry are dialled normally, and anyone else is refused unless a scrubbing
-        provider clears them.
+        is built around that rather than despite it: every campaign upload requires you
+        to declare consent for each contact — who gave it and when — and a number
+        without that declaration is never dialled.
       </p>
       <p>
         There is a do-not-call list you control. Anyone who says stop is added, and no
@@ -68,13 +68,13 @@ export default function Page() {
 
       <Faq items={[
         { q: "Is AI telecalling legal in India?",
-          a: "Calling people who have consented is legal; cold calling numbers from a bought list is not, under TRAI rules. HeyNikki dials contacts who submitted their own enquiry, refuses the rest unless a scrubbing provider clears them, and honours a do-not-call list you control." },
+          a: "Calling people who have consented is legal; cold calling numbers from a bought list is not, under TRAI rules. HeyNikki requires a consent declaration — who gave it and when — for every contact you upload, never dials a number without one, and honours a do-not-call list you control." },
         { q: "Will people know it is an AI calling?",
           a: "Yes — the call opens with the disclosure TRAI requires, and if anyone asks directly she says she is an AI assistant. In practice most callers carry on regardless once they hear it answer their actual question." },
         { q: "Can it negotiate on price?",
           a: "Within limits you set. You give the lowest figure you will accept, the largest discount she may offer, and what she can offer instead of money. She concedes once, never goes below your floor, and never invents a discount." },
         { q: "How many calls can it make at once?",
-          a: "Five simultaneous calls on Growth and fifteen on Scale. Unlike a team, that capacity does not need hiring, training or a shift roster." },
+          a: "Five simultaneous calls on Growth and ten on Scale. Unlike a team, that capacity does not need hiring, training or a shift roster." },
         { q: "What happens when someone asks not to be called again?",
           a: "Add them to the do-not-call list from your dashboard and no campaign will dial them again. Anyone on your team can do it — honouring that request should never wait for the owner." },
       ]} />

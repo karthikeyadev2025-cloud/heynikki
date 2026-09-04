@@ -17,8 +17,8 @@ similar names on other domains are unrelated to this one and are not part of
 the same company.
 
 > A Telugu-first AI receptionist for Indian small businesses. It answers the
-> business's own phone number in Telugu, Hindi or English — detecting the
-> caller's language per turn rather than asking them to choose — books
+> business's own phone number in Telugu, Hindi or English — the business picks
+> the language for its line, and mixed Telugu-English is understood — books
 > appointments, captures the lead, and confirms on WhatsApp.
 
 Built and operated by Nikki Technologies, Hyderabad, India.
@@ -28,9 +28,9 @@ Built and operated by Nikki Technologies, Hyderabad, India.
 - **Answers calls** on the business's own number over a dedicated SIP trunk,
   24/7. Callers are told they are speaking to an AI at the start of every
   call, as required by TRAI.
-- **Speaks Telugu, Hindi and English**, switching mid-conversation when the
-  caller does. Scoped to those three deliberately; other languages are not
-  claimed as supported.
+- **Speaks Telugu, Hindi and English** — the business picks one for its
+  line, and everyday Telugu-English mixing is understood. Scoped to those
+  three deliberately; other languages are not claimed as supported.
 - **Books appointments** and confirms them on WhatsApp, with a reminder the
   day before.
 - **Captures and scores leads** from the conversation — name, number, intent
@@ -46,7 +46,8 @@ Built and operated by Nikki Technologies, Hyderabad, India.
 ## What it does not do
 
 - It is not a general-purpose chatbot or a writing assistant.
-- It does not dial numbers on India's DND registry without recorded consent.
+- It does not dial any number without a recorded consent declaration from
+  the business.
 - It does not claim to be a human. If asked, it says it is an AI.
 - Languages beyond Telugu, Hindi and English are not supported.
 
@@ -54,12 +55,12 @@ Built and operated by Nikki Technologies, Hyderabad, India.
 
 Published at https://heynikki.in/pricing and served from one catalogue, so
 the figures on the site, in the dashboard and spoken on a call always match.
-Plans start at ₹1,999/month. GST extra. Cancel any month.
+Plans start at ₹1,999/month. Prices exclusive of GST. Cancel any month.
 
 ## Pages
 
 - [Home](https://heynikki.in/): what it is, and a live demo you can talk to.
-- [Pricing](https://heynikki.in/pricing): plans, per-minute rates, add-ons.
+- [Pricing](https://heynikki.in/pricing): plans and what each includes.
 - [Contact](https://heynikki.in/contact): how to reach the team.
 - [Privacy](https://heynikki.in/privacy): call recording, retention, data handling.
 - [Terms](https://heynikki.in/terms)

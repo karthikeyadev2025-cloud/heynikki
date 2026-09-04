@@ -25,10 +25,10 @@ export const metadata = {
 // never a source: change the plans row first, then this, then the homepage.
 const TIERS = [
   {
-    name: "Starter", price: "1,999", annual: "1,599",
+    name: "Starter", price: "1,999", annual: "1,333", year: "15,999",
     line: "200 minutes · 1 number · 1 person · 2 calls at once",
     points: [
-      "Telugu, Hindi and English, switched mid-call",
+      "Telugu, Hindi or English — your pick for the line, Tenglish understood",
       "Inbound reception on your own number",
       "Appointments written straight to your dashboard",
       "WhatsApp confirmation on every booking",
@@ -36,36 +36,34 @@ const TIERS = [
     ],
   },
   {
-    name: "Growth", price: "4,999", annual: "3,999",
+    name: "Growth", price: "4,999", annual: "3,333", year: "39,999",
     line: "600 minutes · 3 numbers · 3 people · 5 calls at once",
     points: [
       "Everything in Starter",
       "Outbound campaigns and missed-call follow-up",
       "Call quality scoring on every call",
-      "3 voice profiles — one per branch or service",
       "Recordings kept 1 year",
     ],
   },
   {
-    name: "Scale", price: "9,999", annual: "7,999",
+    name: "Scale", price: "9,999", annual: "6,666", year: "79,999",
     line: "1,500 minutes · 10 numbers · 10 people · 10 calls at once",
     points: [
       "Everything in Growth",
-      "API access and webhooks",
-      "10 voice profiles",
+      "API access",
       "Recordings kept 2 years",
-      "Priority support",
+      "Support on WhatsApp",
     ],
   },
 ];
 
 export default function Pricing() {
   return (
-    <LegalLayout title="Pricing" lastUpdated="31 August 2026">
+    <LegalLayout title="Pricing" lastUpdated="4 September 2026">
       <p>
         Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
-        AI receptionist, the dashboard, and TRAI-compliant call disclosure. GST (18%)
-        is added at checkout. Annual billing saves 20%.
+        AI receptionist, the dashboard, and TRAI-compliant call disclosure. Prices are
+        exclusive of GST. Annual billing saves a third.
       </p>
 
       {TIERS.map(t => (
@@ -74,7 +72,7 @@ export default function Pricing() {
             {t.name} — ₹{t.price}/month
           </h2>
           <p>
-            <em>{t.line}</em> · ₹{t.annual}/month billed annually
+            <em>{t.line}</em> · ₹{t.year}/year billed annually (₹{t.annual}/month)
           </p>
           <ul>
             {t.points.map(p => <li key={p}>{p}</li>)}
@@ -91,21 +89,19 @@ export default function Pricing() {
 
       <h2>If you go over your minutes</h2>
       <p>
-        Extra minutes are <strong>₹15 per minute</strong>, charged only for what you use.
-        Calls do not stop when a plan&apos;s included minutes run out.
+        Need more minutes? Upgrade to the next plan any time.
       </p>
 
-      <h2>Add-ons</h2>
-      <ul>
-        <li><strong>Extra business number</strong> — ₹1,999/month per number, beyond
-          those included in your plan. Port a number you already use, or take a new one.</li>
-        <li><strong>Extra team seat</strong> — ₹1,999/month per seat, beyond those
-          included in your plan.</li>
-      </ul>
+      <h2>Numbers and seats</h2>
+      <p>
+        Business numbers and team seats come with your plan — one of each on Starter,
+        three on Growth, ten on Scale. Numbers are assigned by our team once your KYC
+        is approved; forward the number you already use to it, or hand out the new one.
+      </p>
 
       <h2>Cancellation</h2>
       <p>
-        Cancel any month from Dashboard → Billing. You keep access until the end of the
+        Cancel any month — message us on WhatsApp and it&apos;s done the same day. You keep access until the end of the
         period you&apos;ve paid for, and your call recordings and transcripts stay
         exportable.
       </p>
