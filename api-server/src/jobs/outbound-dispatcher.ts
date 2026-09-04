@@ -26,7 +26,7 @@ const PIPELINE_URL  = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
 // Loopback, not the public hostname: this runs on the same host as n8n, so
 // routing internal events out to Cloudflare and back only adds a round trip
 // and a dependency on the tunnel being up.
-const N8N_BASE      = process.env.N8N_WEBHOOK_BASE || "http://127.0.0.1:5678/webhook";
+const API_URL       = process.env.API_URL || "http://127.0.0.1:4000";
 const INTERNAL_SEC  = process.env.INTERNAL_SECRET!;
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -223,20 +223,28 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
   }
 
   try {
-    // Same event the inbound missed-call path fires, so both share one n8n
-    // workflow and one approved template.
-    await fetch(`${N8N_BASE.replace(/\/$/, "")}/missed-call`, {
+    // The same route the inbound missed-call path uses, straight into the
+    // api-server's Meta sender. This used to post to an n8n workflow whose
+    // WhatsApp node was never filled in, then mark the follow-up as sent —
+    // so every campaign no-answer "sent" a message nobody received, and the
+    // dashboard counted it. Marked sent only when the api-server says ok.
+    const r = await fetch(`${API_URL}/api/whatsapp/missed-call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-internal-secret": INTERNAL_SEC },
       body: JSON.stringify({
-        caller_number:   recipient.phone,
-        tenant_id:       tenantId,
-        call_id:         recipient.call_id ?? null,
-        business_name:   vp.business_name,
-        whatsapp_number: vp.whatsapp_number || null,
+        caller_number:    recipient.phone,
+        tenant_id:        tenantId,
+        voice_profile_id: profileId || null,
+        call_id:          recipient.call_id ?? null,
+        business_name:    vp.business_name,
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000),
     });
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      console.error(`[dispatcher] no-answer follow-up to ${recipient.phone} not sent (${r.status})`);
+      return;
+    }
     await sb.from("outbound_recipients")
       .update({ wa_followup_sent: true }).eq("id", recipient.id);
   } catch (e: any) {

@@ -178,6 +178,7 @@ services:
     env_file: .env
     environment:
       - PIPELINE_URL=http://127.0.0.1:8000
+      - API_URL=http://127.0.0.1:4000
     depends_on:
       - api-server
     command: ["node", "dist/jobs/outbound-dispatcher.js"]
