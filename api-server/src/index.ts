@@ -1472,10 +1472,20 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
 
   // Only templates this tenant can actually see — platform rows or its own.
   const { data: tmpl } = await sb.from("wa_templates")
-    .select("name, tenant_id").eq("name", name).limit(1).maybeSingle();
+    .select("name, tenant_id, language").eq("name", name).limit(1).maybeSingle();
   if (!tmpl || (tmpl.tenant_id && tmpl.tenant_id !== tenantId)) {
     return res.status(404).json({ error: "Template not found" });
   }
+  // The language Meta approved the template under, which is what it must be
+  // sent as. This was hard-coded "te", and the wa_templates rows say "te"
+  // too, but missed_call_followup and the other platform templates are
+  // approved as "en" — every manual send from the dashboard came back
+  // "(#132001) Template name does not exist in the translation". The
+  // automated senders' map is the source of truth; the row is the fallback
+  // for tenant-submitted templates it does not list.
+  const knownLang = [...Object.values(WA_TEMPLATES), ...Object.values(WA_TEMPLATE_PREFERRED)]
+    .find(t => t.name === name)?.lang;
+  const lang = knownLang || tmpl.language || "te";
 
   const vars = req.body?.variables && typeof req.body.variables === "object"
     ? Object.values(req.body.variables).map((v: any) => String(v).slice(0, 200))
@@ -1483,7 +1493,12 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
   const sender = await resolveWaSender(tenantId);
   // (to, template, lang, params, senderId) — params and lang are not
   // interchangeable and a swapped call typechecks as string vs string[].
-  const result = await sendTemplateViaMeta(to, name, "te", vars, sender.phoneId);
+  let result = await sendTemplateViaMeta(to, name, lang, vars, sender.phoneId);
+  // 132001 = no such template in that language. Try the other one before
+  // giving up: a template approved under the wrong code is still a template.
+  if (!result?.ok && /132001|does not exist/i.test(result?.error || "")) {
+    result = await sendTemplateViaMeta(to, name, lang === "te" ? "en" : "te", vars, sender.phoneId);
+  }
   if (!result?.ok) {
     return res.status(502).json({ error: result?.error || "WhatsApp rejected the template" });
   }
