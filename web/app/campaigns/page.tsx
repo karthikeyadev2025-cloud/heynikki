@@ -133,7 +133,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, string> = {
-    draft: C.mid, scrubbing: C.gold, running: C.grn,
+    draft: C.mid, scrubbing: C.gold, running: C.grn, scheduled: C.cyn,
     paused: C.gold, completed: C.cyn, cancelled: C.red,
   };
   const col = map[status] || C.mid;
@@ -667,7 +667,7 @@ export default function CampaignsPage() {
                 <div style={{ flex: "1 1 260px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap: 10, marginBottom: 6 }}>
                     <h3 style={{ margin: 0, fontSize: 17, color: C.txt }}>{c.name}</h3>
-                    <StatusPill status={c.status} />
+                    <StatusPill status={c.status === "running" && c.start_date && c.start_date > istToday() ? "scheduled" : c.status} />
                   </div>
                   <p style={{ color: C.mid, fontSize: 13, margin: "0 0 8px", lineHeight: 1.5 }}>
                     {c.script.length > 150 ? c.script.slice(0, 150) + "…" : c.script}
@@ -709,7 +709,7 @@ export default function CampaignsPage() {
                     <button onClick={() => setStatus(c.id, "running")} style={{
                       background: C.grn + "22", color: C.grn, border: `1px solid ${C.grn}44`,
                       borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    }}>Start</button>
+                    }}>{c.start_date && c.start_date > istToday() ? "Schedule" : "Start"}</button>
                   ) : null}
                 </div>
               </div>
