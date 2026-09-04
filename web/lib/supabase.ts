@@ -40,6 +40,7 @@ export type Appointment = {
   slot_time: string | null;
   status: string;
   wa_confirmed: boolean;
+  booking_ref?: string | null;
   created_at: string;
 };
 

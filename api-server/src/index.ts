@@ -1508,19 +1508,33 @@ function formatSlotTime(t: unknown): string {
   const h = +m[1];
   return `${h % 12 || 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
 }
+// The booking number the business set up (supabase/043). The approved
+// templates have no slot of their own for it, and a new template is weeks of
+// Meta review, so it rides inside the time parameter: "8:30 PM · OP-042".
+async function bookingRef(appointment_id: unknown): Promise<string | null> {
+  if (!appointment_id) return null;
+  const { data } = await sb.from("appointments").select("booking_ref")
+    .eq("id", appointment_id).maybeSingle();
+  return data?.booking_ref || null;
+}
+function timeWithRef(t: unknown, ref: string | null): string {
+  return ref ? `${formatSlotTime(t)} · ${ref}` : formatSlotTime(t);
+}
 
 app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) => {
   const { caller_number, business_name, slot_date, slot_time, service,
     tenant_id, voice_profile_id, call_id, appointment_id } = req.body;
 
+  const ref = await bookingRef(appointment_id);
   const message = `నమస్కారం! మీ appointment ${business_name} లో confirm అయింది.\n\n` +
     `📅 Date: ${slot_date || "soon"}\n⏰ Time: ${slot_time || "TBD"}\n` +
+    (ref ? `🔖 Booking no: ${ref}\n` : "") +
     (service ? `🏷️ Service: ${service}\n` : "") +
     `\nమీ అపాయింట్మెంట్ రద్దు చేయాలంటే CANCEL reply చేయండి.\nధన్యవాదాలు! 🙏`;
 
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
     "confirmation", call_id, appointment_id, business_name, undefined,
-    [business_name || "us", formatSlotDate(slot_date), formatSlotTime(slot_time)]);
+    [business_name || "us", formatSlotDate(slot_date), timeWithRef(slot_time, ref)]);
   // The dashboard shows a "WA" badge on appointments where wa_confirmed is
   // true, and nothing ever set it — the reminder job writes its own flag but
   // this handler never did, so the badge could not appear for any booking.
@@ -1556,13 +1570,15 @@ app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
   const { caller_number, business_name, slot_time, service,
     tenant_id, voice_profile_id, appointment_id, when } = req.body;
   const today = when === "today";
+  const ref = await bookingRef(appointment_id);
   const message = `🔔 Reminder: మీ appointment ${today ? "ఈరోజు" : "రేపు"}!\n\n` +
     `🏥 ${business_name}\n⏰ ${formatSlotTime(slot_time)}\n` +
+    (ref ? `🔖 Booking no: ${ref}\n` : "") +
     (service ? `🏷️ ${service}\n` : "") +
     `\nతప్పక వచ్చేందుకు request చేస్తున్నాము. ధన్యవాదాలు! 🙏`;
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
     today ? "reminder_today" : "reminder", undefined, appointment_id, business_name,
-    [business_name || "us", formatSlotTime(slot_time)]);
+    [business_name || "us", timeWithRef(slot_time, ref)]);
   if (ok) {
     await sb.from("appointments").update({ wa_reminder_sent: true }).eq("id", appointment_id);
   }
