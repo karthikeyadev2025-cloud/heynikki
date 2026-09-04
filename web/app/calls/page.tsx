@@ -14,17 +14,56 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-function IntentBadge({ intent }: { intent: string }) {
+// Intents are enquiry/appointment/callback/transfer/emergency/unknown, but
+// legacy rows also carry `wa_otp_<code>` (a WhatsApp verification call
+// surfaced through the pipeline). That is an internal marker, not a
+// caller intent, so it is shown as a readable label and never raw.
+function intentLabel(intent: string | null | undefined): string {
+  if (!intent) return "unknown";
+  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
+  return intent;
+}
+
+function IntentBadge({ intent }: { intent: string | null | undefined }) {
   const map: Record<string, string> = {
     appointment: C.grn, enquiry: C.cyn, callback: C.gold,
     transfer: C.gbr, emergency: C.red, unknown: C.dim,
+    "WhatsApp OTP": C.cyn,
   };
-  const col = map[intent] || C.dim;
+  const label = intentLabel(intent);
+  const col = map[label] || C.dim;
   return (
     <span style={{ background: col + "22", color: col, border: "1px solid " + col + "44",
       borderRadius: 4, padding: "2px 7px", fontSize: 10, fontWeight: 700,
-      textTransform: "uppercase", letterSpacing: "0.07em" }}>
-      {intent || "unknown"}
+      textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>
+      {label}
+    </span>
+  );
+}
+
+// calls.status was selected and exported to CSV but never drawn, so a
+// missed, failed or human-answered call looked identical to a completed
+// one. "transferred" is the API's word for a call a team member picked up.
+const STATUS_META: Record<string, { label: string; color: string }> = {
+  active:      { label: "Live",             color: C.grn  },
+  completed:   { label: "Completed",        color: C.mid  },
+  missed:      { label: "Missed",           color: C.gold },
+  transferred: { label: "Answered by team", color: C.gbr  },
+  failed:      { label: "Failed",           color: C.red  },
+};
+
+function StatusPill({ status }: { status: string | null | undefined }) {
+  const meta = STATUS_META[status || ""] || { label: status || "—", color: C.dim };
+  return (
+    <span style={{ background: meta.color + "22", color: meta.color,
+      border: "1px solid " + meta.color + "44", borderRadius: 20,
+      padding: "2px 8px", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
+      display: "inline-flex", alignItems: "center", gap: 5 }}>
+      {status === "active" && (
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: meta.color,
+          boxShadow: "0 0 6px " + meta.color, animation: "pulse 2s infinite" }} />
+      )}
+      {meta.label}
     </span>
   );
 }
@@ -62,7 +101,8 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
               {formatTime(call.created_at)} · {formatDur(call.duration_seconds)}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <StatusPill status={call.status} />
             <IntentBadge intent={call.intent} />
             {call.wa_sent && (
               <span style={{ color: C.cyn, fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>WA <Check size={11} /></span>
@@ -82,10 +122,14 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
               {[
                 "Call Received",
-                `Intent: ${call.intent || "Unknown"}`,
+                `Intent: ${intentLabel(call.intent)}`,
+                call.status === "transferred" ? "Answered by team" : null,
                 call.appointment_created ? "Appointment Booked" : null,
                 call.wa_sent ? "WhatsApp Sent" : null,
-                "Call Ended",
+                call.status === "active" ? "In Progress"
+                  : call.status === "missed" ? "Missed"
+                  : call.status === "failed" ? "Failed"
+                  : "Call Ended",
               ].filter(Boolean).map((step, i, arr) => (
                 <span key={step as string} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ background: C.glow + "22", color: C.gbr, border: "1px solid " + C.glow + "44",
@@ -176,8 +220,8 @@ function exportCsv(rows: CallRecord[]) {
     { key: "created_at",       label: "Date",         map: v => new Date(v).toLocaleString("en-IN") },
     { key: "caller_number",    label: "Caller" },
     { key: "direction",        label: "Direction" },
-    { key: "status",           label: "Status" },
-    { key: "intent",           label: "Intent" },
+    { key: "status",           label: "Status",       map: v => STATUS_META[String(v || "")]?.label || String(v ?? "") },
+    { key: "intent",           label: "Intent",       map: v => intentLabel(v) },
     { key: "duration_seconds", label: "Duration (s)" },
     { key: "transcript",       label: "Transcript",
     // An array of {role, content} turns — .toString() on it exported
@@ -334,8 +378,13 @@ export default function CallsPage() {
 
   const filtered = calls.filter(c =>
     !search || c.caller_number?.includes(search) ||
-    c.intent?.includes(search.toLowerCase())
+    intentLabel(c.intent).toLowerCase().includes(search.toLowerCase()) ||
+    (STATUS_META[c.status]?.label || "").toLowerCase().includes(search.toLowerCase())
   );
+
+  // "emergency" is written by the pipeline alongside the four below but had
+  // no tab, so an urgent call was findable only by scrolling.
+  const FILTERS = ["all", "appointment", "enquiry", "callback", "transfer", "emergency"];
 
   return (
     <Shell title="Call History">
@@ -354,14 +403,14 @@ export default function CallsPage() {
       {/* Filters */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by number or intent..."
+          placeholder="Search by number, intent or status..."
           style={{ maxWidth: 240 }} />
-        <div style={{ display: "flex", gap: 6 }}>
-          {["all","appointment","enquiry","callback","transfer"].map(f => (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
               padding: "7px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
               background: filter === f ? C.glow + "66" : C.hi,
-              color: filter === f ? C.gbr : C.mid,
+              color: filter === f ? C.gbr : f === "emergency" ? C.red : C.mid,
               border: "1px solid " + (filter === f ? C.glow : C.bord),
             }}>{f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}</button>
           ))}
@@ -415,7 +464,7 @@ export default function CallsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: C.hi }}>
-                {["Caller","Direction","Duration","Intent","WA Sent","Appt","Time",""].map(h => (
+                {["Caller","Direction","Status","Duration","Intent","WA Sent","Appt","Time",""].map(h => (
                   <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: "0.08em",
                     padding: "10px 12px", textAlign: "left" }}>{h}</th>
@@ -438,11 +487,14 @@ export default function CallsPage() {
                       {call.direction === "inbound" ? "↙ Inbound" : "↗ Outbound"}
                     </span>
                   </td>
+                  <td style={{ padding: "10px 12px" }}>
+                    <StatusPill status={call.status} />
+                  </td>
                   <td style={{ padding: "10px 12px", color: C.mid, fontSize: 12 }}>
                     {formatDur(call.duration_seconds)}
                   </td>
                   <td style={{ padding: "10px 12px" }}>
-                    <IntentBadge intent={call.intent || "unknown"} />
+                    <IntentBadge intent={call.intent} />
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 13,
                     color: call.wa_sent ? C.grn : C.dim }}>

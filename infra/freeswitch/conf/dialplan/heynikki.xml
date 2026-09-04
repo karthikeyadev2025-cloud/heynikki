@@ -179,7 +179,7 @@
              expansion degrades to 0 rather than breaking the payload. -->
         <action application="set" data="process_cdr=true"/>
         <action application="set" data="session_in_hangup_hook=true"/>
-        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;missed&quot;:&quot;\${nikki_missed}&quot;}' &amp;"/>
 
         <!-- mod_audio_stream registers uuid_audio_stream as an API, NOT an
              application — there is no `audio_stream` app, so the old
@@ -211,7 +211,10 @@
              which silently became the call_timeout. The :-20 default keeps
              cond well-formed no matter who transferred here. -->
         <action application="set" data="call_timeout=${cond(${guard_seconds:-20} &gt; 0 ? ${guard_seconds:-20} : 20)}"/>
-        <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
+        <!-- No second record_session here. inbound_sip_ai already records
+             this same channel to call_${uuid}.wav, which the pipeline
+             uploads at hangup; a second recorder wrote ${uuid}.wav that
+             nothing ever uploaded or deleted, on a 5.6 GB tmpfs. -->
         <!-- Jio sends early media on the B-leg (its own ringback, or a
              carrier announcement when the trunk is refusing outbound).
              Passed through, the caller heard a foreign recording between
@@ -259,24 +262,48 @@
            speak. When the variable is empty — a routing_mode=human DID,
            where no pipeline ever attached — the anti-actions below keep
            exactly the old behaviour rather than leaving dead air. -->
+      <!-- nikki_missed reaches the hangup hook (inbound_sip_ai reads it at
+           hook time). The guard hangs up NORMAL_CLEARING after the apology,
+           which the hook's "<5s and not NORMAL_CLEARING" test read as a
+           normal answered call: a ring-out was filed completed and billed
+           for the seconds the apology took. -->
       <condition field="${nikki_fallback_audio}" expression="^.+$">
+        <action application="set" data="nikki_missed=1"/>
         <action application="answer"/>
         <action application="playback" data="${nikki_fallback_audio}"/>
-        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
         <action application="hangup"/>
+        <anti-action application="set" data="nikki_missed=1"/>
         <anti-action application="answer"/>
         <anti-action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
-        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
+        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
         <anti-action application="hangup"/>
       </condition>
     </extension>
 
     <!-- ── CLICK-TO-CALL (Human CRM) ─────────────────────────── -->
+    <!-- Reached by esl.ts clickToCall: the seat's phone is originated with
+         did_number / caller_ani / ctc_customer_bridge set as channel
+         variables and dropped here once the seat answers. Recorded and
+         reported exactly like inbound_sip_ai so a Desk call gets a calls
+         row closed out, a credit debit and a recording — until now it was
+         a bare originate-and-bridge that no table ever heard about. -->
     <extension name="click_to_call_agent_leg" continue="false">
       <condition field="destination_number" expression="^ctc_agent_(\d+)$">
         <action application="set" data="hangup_after_bridge=true"/>
-        <action application="answer"/>
-        <action application="playback" data="tone_stream://%(2000,4000,440,480)"/>
+        <action application="set" data="ignore_early_media=true"/>
+        <action application="set" data="ringback=%(400,200,400);%(400,2000,400)"/>
+        <action application="set" data="RECORD_STEREO=false"/>
+        <action application="record_session" data="/tmp/recordings/call_${uuid}.wav"/>
+        <action application="set" data="process_cdr=true"/>
+        <action application="set" data="session_in_hangup_hook=true"/>
+        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+        <!-- The customer sees the tenant's DID, never the seat's mobile.
+             Set here rather than inside ctc_customer_bridge because a
+             {var=...} prefix in a channel variable would need escaping
+             through the originate's own {} block. -->
+        <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
+        <action application="set" data="effective_caller_id_name=HeyNikki"/>
         <action application="bridge" data="${ctc_customer_bridge}"/>
       </condition>
     </extension>

@@ -207,7 +207,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Do my callers know it's an AI?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes. TRAI requires disclosure at the start of every automated call, and HeyNikki does it.",
+              text: "Ask and she tells you. Nikki says she is an AI assistant whenever a caller asks, and never claims to be a person.",
             },
           },
         ],
@@ -238,7 +238,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             "@type": "Question",
             name: "Do my callers know they are speaking to an AI?",
             acceptedAnswer: { "@type": "Answer", text:
-              "Yes. TRAI requires disclosure at the start of every automated call and Nikki gives it. If a caller asks directly, she always says she is an AI assistant." },
+              "Ask and she tells you. If a caller asks directly, Nikki always says she is an AI assistant, and she never claims to be a person." },
           },
           {
             "@type": "Question",

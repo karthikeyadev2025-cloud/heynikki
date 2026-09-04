@@ -62,7 +62,7 @@ export default function Pricing() {
     <LegalLayout title="Pricing" lastUpdated="4 September 2026">
       <p>
         Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
-        AI receptionist, the dashboard, and TRAI-compliant call disclosure. Prices are
+        AI receptionist, the dashboard, call recordings and transcripts. Prices are
         exclusive of GST. Annual billing saves a third.
       </p>
 

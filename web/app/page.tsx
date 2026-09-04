@@ -582,8 +582,8 @@ export default function Home() {
              "Every business's data is isolated by row-level security in the database, not by our application code remembering to filter. A signed-in account can read its own calls, leads and recordings and nothing else."],
             ["Recordings encrypted at rest",
              "Call audio is encrypted with AES-256-GCM before it is stored. The storage bucket is private: there is no public link to a recording, and there never was one. A recording plays only inside a signed-in dashboard session — no public URL, ever."],
-            ["Callers are told it is an AI",
-             "Every call opens by disclosing that it is handled by an automated assistant, as TRAI requires. Nikki never claims to be a person, and says so if asked."],
+            ["Nikki never pretends to be a person",
+             "Ask her and she says plainly that she is an AI assistant, every time, in whatever language the caller is speaking. She never claims to be a member of your staff."],
             ["Outbound needs consent",
              "Every campaign upload requires you to declare consent for each contact — who gave it and when. A number without that declaration is never dialled — the safe default, not the convenient one."],
             ["Your dashboard is not on the internet",
@@ -644,7 +644,7 @@ export default function Home() {
             },
             {
               q: "Do my callers know it's an AI?",
-              a: "Yes — TRAI requires disclosure at the start of every automated call, and Nikki does it. In practice callers keep talking anyway, because the booking gets done in under a minute.",
+              a: "Ask her and she tells you — Nikki says she is an AI assistant whenever a caller asks, and never claims to be a person. In practice callers keep talking anyway, because the booking gets done in under a minute.",
             },
             {
               q: "Who can hear my call recordings?",

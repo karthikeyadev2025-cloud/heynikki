@@ -129,7 +129,7 @@ export default function ScriptAndMenu({ tenantId, profileId }:
     <div>
       <Card>
         <Title t="What Nikki says first"
-               s="Spoken word for word, right after the legally required AI disclosure. Leave it blank and she opens in her own words." />
+               s="The first thing your caller hears, spoken word for word. Leave it blank and she opens in her own words." />
         <textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2}
           placeholder="నమస్కారం, శ్రీ రామ్య డెంటల్ క్లినిక్. నేను నిక్కి."
           style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />

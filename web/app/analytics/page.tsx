@@ -19,7 +19,35 @@ const C = {
 const INTENT_COLORS: Record<string, string> = {
   appointment: C.grn, enquiry: C.cyn, callback: C.gold,
   transfer: C.gbr, emergency: C.red, unknown: C.dim,
+  "WhatsApp OTP": C.cyn,
 };
+
+// calls.intent is enquiry/appointment/callback/transfer/emergency/unknown,
+// can be null, and on legacy rows is `wa_otp_<code>` — an internal marker
+// for a WhatsApp verification call. Folded into one readable bucket so the
+// pie never shows a six-digit code as a slice.
+function intentLabel(intent: string | null | undefined): string {
+  if (!intent) return "unknown";
+  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
+  return intent;
+}
+
+// Every date-based figure on this page is IST — open_time/close_time are
+// local business hours and the customers are in India — so bucketing by the
+// browser's clock put a 9 AM Hyderabad call at 3:30 AM for anyone viewing
+// from a UTC machine (or a laptop with the wrong zone).
+const IST = "Asia/Kolkata";
+function istHour(iso: string): number {
+  return Number(new Date(iso).toLocaleString("en-GB", { timeZone: IST, hour: "2-digit", hour12: false }).slice(0, 2));
+}
+function istDay(iso: string | Date): string {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: IST }); // YYYY-MM-DD
+}
+
+// Used only when a won lead has no deal value recorded against it. Shown
+// next to the figure it produces, so nobody mistakes an assumption for a
+// measured number.
+const ASSUMED_DEAL_VALUE = 5000; // ₹ per won lead
 
 // ── Client-facing value constants ─────────────────────────────
 // AI_COST_PER_CALL (₹4 — our Sarvam + Gemini + infra unit cost) used to
@@ -149,6 +177,9 @@ export default function AnalyticsPage() {
   const custWa           = waLogs.filter(w => CUSTOMER_WA.includes(String(w.message_type)));
   const waSent           = custWa.length;
   const waDelivered      = custWa.filter(w => w.status === "delivered" || w.status === "read").length;
+  // The follow-ups that belong next to the missed-call count. `waSent`
+  // is every customer message (confirmations, reminders, brochures…).
+  const waMissedFollowups = custWa.filter(w => w.message_type === "missed_call").length;
   const avgDur           = totalCalls ? Math.round(calls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / totalCalls) : 0;
 
   // ROI
@@ -158,8 +189,16 @@ export default function AnalyticsPage() {
   // Lead funnel
   const newLeads         = leads.filter(l => l.stage === "new").length;
   const qualified        = leads.filter(l => l.stage === "qualified").length;
-  const won              = leads.filter(l => l.stage === "won").length;
+  const wonLeads         = leads.filter(l => l.stage === "won");
+  const won              = wonLeads.length;
   const conversionRate   = leads.length ? Math.round((won / leads.length) * 100) : 0;
+  // Revenue from won leads: the deal value the business recorded on the
+  // lead (leads.deal_value_paise, editable in the lead panel) where it
+  // exists, and the visible assumption for the rest.
+  const wonWithValue     = wonLeads.filter(l => Number(l.deal_value_paise) > 0);
+  const recordedRevenue  = wonWithValue.reduce((s, l) => s + Math.round(Number(l.deal_value_paise) / 100), 0);
+  const assumedCount     = won - wonWithValue.length;
+  const wonRevenue       = recordedRevenue + assumedCount * ASSUMED_DEAL_VALUE;
 
   // CTC disposition breakdown
   const ctcDispositions  = ctcLogs.reduce((acc: Record<string, number>, l) => {
@@ -183,33 +222,41 @@ export default function AnalyticsPage() {
   // a business comparing the chart to the KPI tiles saw two different
   // periods. The cap is now stated where the chart is drawn.
   const chartDays = Math.min(days, 30);
+  // Bucketed by IST calendar day (istDay), matching the hour chart below
+  // and the after-hours figures on the dashboard.
   const dailyData = Array.from({ length: chartDays }, (_, i) => {
     const d = new Date(Date.now() - (chartDays - 1 - i) * 86400000);
-    const label = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-    const dayStr = d.toISOString().split("T")[0];
-    const dayCalls  = calls.filter(c => c.created_at?.startsWith(dayStr));
-    const dayLeads  = leads.filter(l => l.created_at?.startsWith(dayStr));
+    const label = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: IST });
+    const dayStr = istDay(d);
+    const dayCalls  = calls.filter(c => c.created_at && istDay(c.created_at) === dayStr);
+    const dayLeads  = leads.filter(l => l.created_at && istDay(l.created_at) === dayStr);
     return {
       day:          label,
       calls:        dayCalls.length,
       ai_handled:   dayCalls.filter(c => c.status === "completed").length,
       missed:       dayCalls.filter(c => c.status === "missed").length,
-      appointments: dayCalls.filter(c => c.appointment_created).length,
+      // A booking call carries intent = 'appointment' and, on current
+      // rows, appointment_created; older rows only have the intent. The
+      // series used to read appointment_created alone and drew a flat zero
+      // under a KPI tile that counted real appointments.
+      appointments: dayCalls.filter(c => c.intent === "appointment" || c.appointment_created).length,
       leads:        dayLeads.length,
       cost_saved:   dayCalls.filter(c => c.status === "completed").length * HUMAN_SALARY_PER_CALL,
     };
   });
 
   const intentCounts = calls.reduce((acc: Record<string, number>, c) => {
-    const k = c.intent || "unknown";
+    const k = intentLabel(c.intent);
     acc[k] = (acc[k] || 0) + 1;
     return acc;
   }, {});
-  const intentData = Object.entries(intentCounts).map(([name, value]) => ({ name, value: value as number }));
+  const intentData = Object.entries(intentCounts)
+    .map(([name, value]) => ({ name, value: value as number }))
+    .sort((a, b) => b.value - a.value);
 
   const hourCounts = Array.from({ length: 24 }, (_, h) => ({
     hour: `${h}:00`,
-    calls: calls.filter(c => c.created_at && new Date(c.created_at).getHours() === h).length,
+    calls: calls.filter(c => c.created_at && istHour(c.created_at) === h).length,
   })).filter(h => h.calls > 0 || [9,10,11,12,13,14,15,16,17,18].includes(parseInt(h.hour)));
 
   const leadFunnelData = [
@@ -275,7 +322,7 @@ export default function AnalyticsPage() {
             // Bucket by the DAY THE CALL HAPPENED, not when it was scored.
             const byDay = new Map<string, { n: number; sum: number; next: number }>();
             quality.forEach((q: any) => {
-              const d = (q.calls?.created_at || "").slice(0, 10);
+              const d = q.calls?.created_at ? istDay(q.calls.created_at) : "";
               if (!d) return;
               const e = byDay.get(d) || { n: 0, sum: 0, next: 0 };
               e.n += 1; e.sum += q.overall_score || 0;
@@ -345,7 +392,7 @@ export default function AnalyticsPage() {
             <KpiCard label="Total Calls"      value={totalCalls}         color={C.gbr}  />
             <KpiCard label="AI Handled"       value={aiHandled}          color={C.glow} sub={`${totalCalls ? Math.round(aiHandled/totalCalls*100) : 0}% auto-resolved`} />
             <KpiCard label="Appointments"     value={appointments}       color={C.grn}  sub={`${totalCalls ? Math.round(appointments/totalCalls*100) : 0}% booking rate`} />
-            <KpiCard label="Missed (WA sent)" value={missedCalls}        color={C.gold} sub={`${waSent} WhatsApp follow-ups`} />
+            <KpiCard label="Missed Calls"     value={missedCalls}        color={C.gold} sub={`${waMissedFollowups} WhatsApp follow-up${waMissedFollowups === 1 ? "" : "s"} sent`} />
             <KpiCard label="Avg Duration"     value={`${avgDur}s`}       color={C.cyn}  />
           </div>
 
@@ -396,9 +443,21 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               ))}
-              <div style={{ color: C.grn, fontSize: 12, fontWeight: 700, marginTop: 12, textAlign: "center" }}>
-                Clients Won · ₹{(won * 5000).toLocaleString()} est. revenue
-              </div>
+              {won > 0 && (
+                <div style={{ marginTop: 12, textAlign: "center" }}>
+                  <div style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>
+                    {won} client{won === 1 ? "" : "s"} won · ₹{wonRevenue.toLocaleString("en-IN")}
+                    {assumedCount > 0 ? " est." : ""}
+                  </div>
+                  <div style={{ color: C.dim, fontSize: 10.5, marginTop: 3 }}>
+                    {assumedCount === 0
+                      ? "Deal values you recorded on each lead"
+                      : assumedCount === won
+                        ? `Estimate: assumes ₹${ASSUMED_DEAL_VALUE.toLocaleString("en-IN")} per won lead — record deal values on your leads for a real figure`
+                        : `₹${recordedRevenue.toLocaleString("en-IN")} recorded on ${wonWithValue.length} lead${wonWithValue.length === 1 ? "" : "s"} + ₹${ASSUMED_DEAL_VALUE.toLocaleString("en-IN")} assumed for ${assumedCount} without a deal value`}
+                  </div>
+                </div>
+              )}
             </Card>
 
             <Card title="CTC Call Dispositions" subtitle="Outcomes from Click-to-Call sales calls">
@@ -457,7 +516,7 @@ export default function AnalyticsPage() {
               <div style={{ color: C.dim, fontSize: 10, marginTop: 4, textAlign: "right" }}>{waConversionRate}% delivery rate</div>
             </Card>
 
-            <Card title="Call Intent Breakdown" subtitle="What callers wanted (30-day)">
+            <Card title="Call Intent Breakdown" subtitle={`What callers wanted (${range}-day)`}>
               {intentData.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 40 }}>No calls yet</div>
               ) : (
@@ -487,7 +546,7 @@ export default function AnalyticsPage() {
           </div>
 
           {/* ── Peak Hours ─────────────────────────────────────── */}
-          <Card title="Peak Call Hours" subtitle="When your customers call most — use to plan staff coverage">
+          <Card title="Peak Call Hours" subtitle="When your customers call most (IST) — use to plan staff coverage">
             <ResponsiveContainer width="100%" height={140}>
               <BarChart data={hourCounts} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 9 }} axisLine={false} tickLine={false} />

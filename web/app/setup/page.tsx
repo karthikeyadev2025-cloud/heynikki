@@ -733,8 +733,15 @@ export default function SetupPage() {
 
 // ── MISSED CALL GUARD CONFIG ──────────────────────────────────
 // Lets the tenant configure per-profile missed-call behaviour without
-// touching the Super Admin. The guard is triggered server-side by
-// FreeSWITCH ESL when a call shorter than guard_seconds is detected.
+// touching the Super Admin. When a call is handed to the team's phones
+// (human / hybrid routing, or a caller asking for a person), the inbound
+// route reads missed_call_guard_enabled / missed_call_guard_seconds off
+// the profile and passes them to the dialplan as the ring timeout. When
+// nobody picks up in time the caller hears the apology and, if the
+// WhatsApp follow-up is on, gets the missed-call template.
+
+const GUARD_MIN = 10, GUARD_MAX = 45;
+const clampGuard = (n: number) => Math.min(GUARD_MAX, Math.max(GUARD_MIN, Math.round(Number.isFinite(n) ? n : 20)));
 
 function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenantId: string }) {
   const C2 = C; // same palette
@@ -743,6 +750,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
   const [waFallback,    setWaFallback]    = useState(true);
   const [saving,        setSaving]        = useState(false);
   const [saved,         setSaved]         = useState(false);
+  const [saveError,     setSaveError]     = useState("");
   const [loading,       setLoading]       = useState(true);
 
   useEffect(() => {
@@ -751,10 +759,11 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
       .select("missed_call_guard_enabled, missed_call_guard_seconds, fallback_wa_enabled")
       .eq("id", profileId)
       .single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) setSaveError(`Could not load guard settings: ${error.message}`);
         if (data) {
           setGuardEnabled(data.missed_call_guard_enabled ?? true);
-          setGuardSeconds(data.missed_call_guard_seconds ?? 20);
+          setGuardSeconds(clampGuard(data.missed_call_guard_seconds ?? 20));
           setWaFallback(data.fallback_wa_enabled ?? true);
         }
         setLoading(false);
@@ -763,13 +772,21 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
 
   const save = async () => {
     setSaving(true);
+    setSaved(false);
+    setSaveError("");
+    const secs = clampGuard(guardSeconds);
+    setGuardSeconds(secs);
     const sb = createClient();
-    await sb.from("voice_profiles").update({
+    const { error, count } = await sb.from("voice_profiles").update({
       missed_call_guard_enabled:  guardEnabled,
-      missed_call_guard_seconds:  guardSeconds,
+      missed_call_guard_seconds:  secs,
       fallback_wa_enabled:        waFallback,
-    }).eq("id", profileId);
+    }, { count: "exact" }).eq("id", profileId);
     setSaving(false);
+    if (error) { setSaveError(error.message); return; }
+    // RLS filters silently: a row the policy hides updates zero rows and
+    // returns no error, which used to read as "Saved!".
+    if (count === 0) { setSaveError("Nothing was saved — you may not have permission to change this profile."); return; }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -809,8 +826,8 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><PhoneOff size={15} /> Missed Call Guard</span>
       </div>
       <div style={{ color: C2.mid, fontSize: 12, marginBottom: 16 }}>
-        When a caller hangs up before Nikki can answer — within {guardSeconds} seconds — the guard
-        automatically fires a WhatsApp follow-up so you never lose the lead.
+        When a call is passed to your team, we ring your phones for {guardSeconds} seconds. If nobody
+        picks up in time, the caller hears a short apology and gets a WhatsApp follow-up so you never lose the lead.
       </div>
 
       <Card>
@@ -822,7 +839,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
               on={guardEnabled}
               onChange={setGuardEnabled}
               label="Enable Missed Call Guard"
-              desc="Detect and handle calls shorter than the timeout threshold"
+              desc="Give up ringing your team after the timeout below and treat the call as missed"
             />
 
             {guardEnabled && (
@@ -830,16 +847,16 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
                 <div style={{ padding: "14px 0", borderBottom: "1px solid " + C2.bord + "44",
                   display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Guard Timeout</div>
+                    <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Ring time</div>
                     <div style={{ color: C2.dim, fontSize: 11 }}>
-                      Calls shorter than this are flagged as missed
+                      How long your phones ring before the call counts as missed ({GUARD_MIN}–{GUARD_MAX}s)
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <input
-                      type="range" min={5} max={60} step={5}
+                      type="range" min={GUARD_MIN} max={GUARD_MAX} step={5}
                       value={guardSeconds}
-                      onChange={e => setGuardSeconds(parseInt(e.target.value))}
+                      onChange={e => setGuardSeconds(clampGuard(parseInt(e.target.value)))}
                       style={{ width: 100, accentColor: C2.glow }}
                     />
                     <div style={{ ...inputStyle, width: 54, textAlign: "center", padding: "6px 8px" }}>
@@ -852,7 +869,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
                   on={waFallback}
                   onChange={setWaFallback}
                   label="WhatsApp Follow-up"
-                  desc="Send approved missed-call template to the caller via WhatsApp automatically"
+                  desc="Send the approved missed-call template to the caller on WhatsApp automatically"
                 />
               </>
             )}
@@ -862,9 +879,11 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
               borderRadius: 8, padding: "10px 14px", marginTop: 16, fontSize: 12 }}>
               <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Settings size={13} /> How it works</div>
               <div style={{ color: C2.mid, lineHeight: 1.6 }}>
-                Every call raises a hang-up event. If the call lasted under{" "}
-                <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>, we treat it as
-                missed and automatically send that caller a WhatsApp follow-up.
+                Applies whenever a call reaches your team's phones — a line set to ring
+                people first, or a caller who asks Nikki for a person. Everyone with a phone
+                on file rings for <strong style={{ color: C2.txt }}>{guardSeconds}s</strong>;
+                if nobody answers, the caller is told you'll get back to them
+                {waFallback ? " and receives the missed-call WhatsApp" : ""}, and the call is logged as missed.
               </div>
             </div>
 
@@ -878,6 +897,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
                 {saving ? "Saving..." : "Save Guard Settings"}
               </button>
               {saved && <span style={{ color: C2.grn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Saved!</span>}
+              {saveError && <span style={{ color: C2.red, fontSize: 12 }}>{saveError}</span>}
             </div>
           </>
         )}

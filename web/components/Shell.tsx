@@ -5,7 +5,7 @@ import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
@@ -19,6 +19,7 @@ const C = {
 
 const NAV_ITEMS = [
   { href: "/dashboard",   icon: Radio,         label: "Reception"   },
+  { href: "/desk",        icon: Headset,       label: "Human Desk"  },
   { href: "/calls",       icon: Phone,         label: "All Calls"   },
   { href: "/leads",       icon: Users,         label: "Leads"       },
   { href: "/appointments",icon: Calendar,      label: "Appointments"},

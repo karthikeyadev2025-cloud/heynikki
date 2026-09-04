@@ -1963,6 +1963,9 @@ class NikkiAgent:
         self.ring_group  : str = ""      # who to ring on a human request
         self.guard_seconds: int = 20
         self.transfer_requested: bool = False
+        # Set once the call is bridged to a person; cleanup then leaves the
+        # recording and the duration to the hangup hook.
+        self.handed_to_human: bool = False
         self.end_call_requested: bool = False
         self._bot_byes: int = 0           # consecutive replies that were goodbyes
         self._emergency_said: bool = False
@@ -2569,8 +2572,8 @@ class NikkiAgent:
             return i
         if self.appointment_id:
             return "appointment"
-        if i == "transfer":
-            return i
+        if i == "transfer" or self.handed_to_human:
+            return "transfer"
         if getattr(self, "callback_promised", False):
             return "callback"
         return i
@@ -5516,13 +5519,18 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                 # connecting them to staff.
                 await _esl_api(f"uuid_audio_stream {fs_uuid} stop")
                 async with httpx.AsyncClient(timeout=4.0) as client:
-                    await client.post(
+                    r = await client.post(
                         f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
                         headers={"X-Internal-Secret": INTERNAL_SECRET},
                         json={"fs_uuid": fs_uuid,
                               "ring_group": agent.ring_group,
                               "guard_seconds": agent.guard_seconds},
                     )
+                    r.raise_for_status()
+                # The caller is still on the line, now with a person. Cleanup
+                # must not stop the recording or file the call as completed
+                # — see the handed_to_human branch in the finally block.
+                agent.handed_to_human = True
                 try:
                     await ws.close(code=1000)
                 except Exception:  # noqa: BLE001
@@ -6229,6 +6237,20 @@ async def freeswitch_ws(
         except Exception as e:
             log.error(f"[FS] human transfer failed: {e} — continuing with AI")
         else:
+            # This handler returns before the try/finally below, so nothing
+            # else will touch the row: it stayed status=active with
+            # intent NULL, which the calls page rendered as a live
+            # "unknown" call until the hangup hook flipped it to
+            # "completed" — indistinguishable from a call Nikki took. File
+            # it as handed to the team now. record_session keeps running on
+            # the channel; the hangup hook has the pipeline upload the file
+            # once the humans have finished talking (see fs_hangup).
+            if routing.get("call_id"):
+                try:
+                    await db.update_call(routing["call_id"],
+                                         {"status": "transferred", "intent": "transfer"})
+                except Exception as e:  # noqa: BLE001
+                    log.warning(f"[FS] {fs_uuid}: could not mark call transferred: {e}")
             await ws.close(code=1000)
             return
 
@@ -6700,7 +6722,16 @@ async def freeswitch_ws(
         # FreeSWITCH mixed from BOTH legs; fall back to the caller-only PCM
         # this websocket received, which is all there used to be.
         r2_url = ""
-        wav_bytes = await _mixed_recording_bytes(fs_uuid)
+        handed_off = bool(getattr(agent, "handed_to_human", False))
+        if handed_off:
+            # The humans are still talking on this channel. Stopping the
+            # recording here cut every transferred call's file at the moment
+            # of handoff and uploaded the AI half; the hangup hook now asks
+            # fs_hangup to upload the whole thing once the channel is gone.
+            wav_bytes = b""
+            log.info(f"[FS] {fs_uuid}: handed to a person — leaving the recording running")
+        else:
+            wav_bytes = await _mixed_recording_bytes(fs_uuid)
         if wav_bytes:
             log.info(f"[FS] {fs_uuid}: uploading both-sides recording ({len(wav_bytes)}B)")
         elif recording_pcm:
@@ -6712,11 +6743,14 @@ async def freeswitch_ws(
         # Finalize call record — see NikkiAgent.final_intent for the ranking.
         final_intent = agent.final_intent()
         updates = {
-            "status":           "completed",
-            "duration_seconds": duration,
+            "status":           "transferred" if handed_off else "completed",
             "transcript":       agent.transcript,
             "intent":           final_intent,
         }
+        # A handed-off call is still running: its duration is whatever the
+        # hangup hook reports when the people finish, not the AI's share.
+        if not handed_off:
+            updates["duration_seconds"] = duration
         if r2_url:
             # With a private bucket _upload_to_r2 returns the object key, so
             # it goes in r2_object_key and the dashboard presigns it on play.
@@ -6827,6 +6861,8 @@ class FSHangupRequest(BaseModel):
     fs_uuid:    str
     call_id:    Optional[str] = None
     tenant_id:  Optional[str] = None
+    # True when no websocket will (or did) upload this call's recording.
+    upload_recording: bool = False
 
 @app.post("/api/v1/call/freeswitch/inbound")
 async def fs_inbound(req: FSInboundRequest, x_internal_secret: str = Header(None)):
@@ -6846,7 +6882,42 @@ async def fs_hangup(req: FSHangupRequest, x_internal_secret: str = Header(None))
     if x_internal_secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
     log.info(f"[FS REST] Hangup: uuid={req.fs_uuid} call_id={req.call_id}")
+    if req.upload_recording and req.call_id and req.tenant_id:
+        asyncio.create_task(_upload_leftover_recording(req.fs_uuid, req.call_id, req.tenant_id))
     return {"ok": True}
+
+
+async def _upload_leftover_recording(fs_uuid: str, call_id: str, tenant_id: str) -> None:
+    """Upload the record_session file for a call no websocket finished.
+
+    Two kinds of call end without the websocket cleanup above having run:
+    one handed to the team (the pipeline let go while people were still
+    talking, on purpose) and one the Human Desk dialled (no pipeline was
+    ever attached). Both left /tmp/recordings/call_<uuid>.wav on a tmpfs
+    forever and stored no recording. Same file, same uploader, same row
+    fields as the websocket path — and the file is deleted either way.
+    """
+    try:
+        # Give the channel a moment to close the file, then the usual settle.
+        await asyncio.sleep(1.0)
+        wav_bytes = await _mixed_recording_bytes(fs_uuid)
+        if not wav_bytes:
+            log.info(f"[FS REST] {fs_uuid}: no leftover recording to upload")
+            return
+        r2_url = await _upload_to_r2(wav_bytes, call_id, tenant_id)
+        if not r2_url:
+            return
+        updates: dict = {}
+        if r2_url.startswith("http"):
+            updates["recording_url"] = r2_url
+        else:
+            updates["r2_object_key"] = r2_url
+            updates["storage_provider"] = "r2"
+            updates["recording_size_bytes"] = len(wav_bytes)
+        await SupabaseClient().update_call(call_id, updates)
+        log.info(f"[FS REST] {fs_uuid}: uploaded leftover recording ({len(wav_bytes)}B)")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS REST] {fs_uuid}: leftover recording upload failed: {e}")
 
 
 

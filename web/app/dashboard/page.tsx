@@ -10,6 +10,8 @@ import {
   Smartphone, Check,
 } from "lucide-react";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
   glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
@@ -17,26 +19,47 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
+const PAID_PLANS = ["starter", "growth", "scale"];
+
+// Legacy rows carry `wa_otp_<code>` in calls.intent — an internal marker
+// for a WhatsApp verification call, not something a caller asked for.
+function intentLabel(intent: string | null | undefined): string {
+  if (!intent) return "unknown";
+  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
+  return intent;
+}
+
+const APPT_STATUS: Record<string, { label: string; color: string }> = {
+  pending:     { label: "Needs confirmation", color: NIKKI.gold },
+  confirmed:   { label: "Confirmed",          color: NIKKI.emerald },
+  completed:   { label: "Done",               color: NIKKI.cyan },
+  cancelled:   { label: "Cancelled",          color: NIKKI.red },
+  no_show:     { label: "No-show",            color: NIKKI.gold },
+  rescheduled: { label: "Rescheduled",        color: NIKKI.tealLight },
+};
+
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <div style={{ background: C.surf, border: "1px solid " + C.bord,
     borderRadius: 10, padding: 16, ...style }}>{children}</div>;
 }
 
-function IntentBadge({ intent }: { intent: string }) {
+function IntentBadge({ intent }: { intent: string | null | undefined }) {
   const map: Record<string, [string, string]> = {
-    appointment: [C.grn + "22",  C.grn],
-    enquiry:     [C.cyn + "22",  C.cyn],
-    callback:    [C.gold + "22", C.gold],
-    transfer:    [C.gbr + "22",  C.gbr],
-    emergency:   [C.red + "22",  C.red],
-    unknown:     [C.dim + "22",  C.dim],
+    appointment:    [C.grn + "22",  C.grn],
+    enquiry:        [C.cyn + "22",  C.cyn],
+    callback:       [C.gold + "22", C.gold],
+    transfer:       [C.gbr + "22",  C.gbr],
+    emergency:      [C.red + "22",  C.red],
+    unknown:        [C.dim + "22",  C.dim],
+    "WhatsApp OTP": [C.cyn + "22",  C.cyn],
   };
-  const [bg, fg] = map[intent] || map.unknown;
+  const label = intentLabel(intent);
+  const [bg, fg] = map[label] || map.unknown;
   return (
     <span style={{ background: bg, color: fg, border: "1px solid " + fg + "44",
       borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700,
       textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>
-      {intent}
+      {label}
     </span>
   );
 }
@@ -83,23 +106,29 @@ export default function DashboardPage() {
   const [monthValue, setMonthValue]         = useState({ afterHours: 0, booked: 0 });
   const [loading, setLoading]               = useState(true);
   const [tenantId, setTenantId]             = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt]           = useState<Date | null>(null);
 
   const fetchData = useCallback(async (tid: string) => {
     const sb = createClient();
     const today = new Date().toISOString().split("T")[0];
     const monthStart = today.slice(0, 8) + "01";
-    const monthKey = today.slice(0, 7);           // 'YYYY-MM' for call_minutes
+    // slot_date is a business-local date, so "today" for the diary is the
+    // IST calendar day, not the UTC one (they differ from 05:30 to midnight).
+    const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
     const [active, recent, missed, appts, todayStats,
-           profile, minutes, tenantRow, leadsRes, monthCalls] = await Promise.all([
+           profile, minutes, tenantRow, leadsRes, monthCalls, pricing] = await Promise.all([
       sb.from("calls").select("*").eq("tenant_id", tid).eq("status", "active")
         .order("created_at", { ascending: false }),
       sb.from("calls").select("*").eq("tenant_id", tid).neq("status", "active")
         .order("created_at", { ascending: false }).limit(20),
       sb.from("calls").select("*").eq("tenant_id", tid).eq("status", "missed")
         .order("created_at", { ascending: false }).limit(10),
+      // Today's diary. This used to be the ten most recent bookings of all
+      // time under an empty state that said "No appointments yet today".
       sb.from("appointments").select("*").eq("tenant_id", tid)
-        .order("created_at", { ascending: false }).limit(10),
+        .eq("slot_date", todayIst)
+        .order("slot_time", { ascending: true, nullsFirst: false }).limit(10),
       sb.from("calls").select("id, status, created_at, appointment_created")
         .eq("tenant_id", tid).gte("created_at", today + "T00:00:00"),
       // business hours — needed to work out which calls came in while closed
@@ -114,13 +143,20 @@ export default function DashboardPage() {
       // The balance that actually gates a trial tenant's calls, and which
       // the customer app never showed them anywhere.
       sb.from("tenants").select("credit_minutes, plan").eq("id", tid).maybeSingle(),
-      // warm leads still sitting untouched — the follow-up worklist
+      // warm leads still sitting untouched — the follow-up worklist. This is
+      // the one hot-leads list; a second component fetched a near-identical
+      // set (score 60+) and rendered it directly above this one.
       sb.from("leads").select("id, name, phone, interest, score, intent")
         .eq("tenant_id", tid).not("stage", "in", '("won","lost")').gte("score", 50)
         .order("score", { ascending: false }).limit(5),
       // whole month, for the value banner
       sb.from("calls").select("created_at, appointment_created")
         .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00"),
+      // Plan allowances come from the plans table via the same catalogue
+      // /billing renders, so the two pages cannot disagree. A hard-coded
+      // starter/growth/scale map here lied the moment a plan row was edited.
+      fetch(`${API_URL}/api/platform/pricing`)
+        .then(r => (r.ok ? r.json() : null)).catch(() => null),
     ]);
 
     setActiveCalls(active.data || []);
@@ -131,17 +167,18 @@ export default function DashboardPage() {
 
     const usedSeconds = (minutes.data || [])
       .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
-    const PLAN_MINUTES: Record<string, number> = { starter: 200, growth: 600, scale: 1500 };
     const planName = String(tenantRow.data?.plan || "trial").toLowerCase();
     const credits  = Math.round(tenantRow.data?.credit_minutes ?? 0);
+    const tier = (pricing?.tiers || []).find((t: any) => String(t.id).toLowerCase() === planName);
     // A trial tenant's allowance is their credit balance, not a plan tier —
     // showing "0 / 200 min" to someone whose real allowance is 100 free
-    // credits was wrong in both numbers.
+    // credits was wrong in both numbers. If the catalogue is unreachable the
+    // limit is 0 and the bar renders minutes used with no denominator.
     setUsage({
       used:  usedSeconds,
-      limit: (PLAN_MINUTES[planName] ?? 0) * 60,
+      limit: (Number(tier?.minutes) || 0) * 60,
     });
-    setCredits(planName in PLAN_MINUTES ? null : credits);
+    setCredits(PAID_PLANS.includes(planName) ? null : credits);
 
     // ── After-hours value ──
     // The number an owner actually feels: calls that arrived when the shop
@@ -172,6 +209,7 @@ export default function DashboardPage() {
       // so it occupied a prime dashboard slot showing a permanent zero.
       afterHours:   d.filter(c => isAfterHours(c.created_at)).length,
     });
+    setUpdatedAt(new Date());
     setLoading(false);
   }, []);
 
@@ -188,9 +226,12 @@ export default function DashboardPage() {
       setTenantId(tu.tenant_id);
       await fetchData(tu.tenant_id);
 
-      // Realtime: subscribe to BOTH calls and appointments for this tenant.
-      // Any insert/update/delete refreshes the view. Postgres-changes are
-      // filtered server-side so we only get rows for this tenant.
+      // Realtime subscriptions on calls and appointments. These only fire
+      // if the tables are in the supabase_realtime publication, which they
+      // are not today — so nothing arrives here and the 30-second poll
+      // below is what actually refreshes the page. Left wired so enabling
+      // the publication makes updates instant without a deploy; nothing in
+      // the UI promises "live".
       const callsChannel = sb.channel(`calls-live-${tu.tenant_id}`)
         .on("postgres_changes",
           { event: "*", schema: "public", table: "calls",
@@ -214,9 +255,8 @@ export default function DashboardPage() {
     return () => { if (cleanupChannels) cleanupChannels(); };
   }, [fetchData]);
 
-  // Safety-net polling — only fires if realtime drops (every 30s, not 5s).
-  // Realtime should handle nearly all updates; this just catches edge cases
-  // like the websocket reconnecting after a sleep.
+  // The refresh mechanism. Every 30 seconds; the timestamp in the header
+  // tells the owner how stale what they are looking at can be.
   useEffect(() => {
     if (!tenantId) return;
     const t = setInterval(() => fetchData(tenantId), 30000);
@@ -232,16 +272,28 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* Same idiom as /desk: inline styles cannot carry a media query,
+              so the two-column blocks get a class and collapse here. */}
+          <style>{`
+            @media (max-width: 900px) {
+              .dash-grid  { grid-template-columns: 1fr !important; }
+              .dash-stats { grid-template-columns: 1fr 1fr !important; }
+            }
+          `}</style>
+
+          {updatedAt && (
+            <div style={{ color: C.dim, fontSize: 11.5, marginBottom: 10, textAlign: "right" }}>
+              Updated {updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · refreshes every 30s
+            </div>
+          )}
+
           {/* Stats row */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+          <div className="dash-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
             <StatCard icon={Phone}    value={stats.total}        label="Calls Today"          color={C.gbr}  />
             <StatCard icon={Calendar} value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
             <StatCard icon={PhoneOff} value={stats.missed}       label="Missed (handled)"     color={C.gold} />
             <StatCard icon={Moon}     value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
           </div>
-
-          {/* Hot Leads Card — injected v4.0 */}
-          <HotLeadsCard tenantId={tenantId} />
 
           {/* ── Value banner ──
               "47 calls" means nothing to a shop owner. "Nikki caught 12 calls
@@ -304,10 +356,13 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {usage && usage.limit > 0 && (() => {
-            const pct = Math.min(100, Math.round((usage.used / usage.limit) * 100));
-            const barColor = pct >= 95 ? C.red : pct >= 80 ? C.gold : C.grn;
-            const usedMin = Math.round(usage.used / 60);
+          {usage && credits === null && (() => {
+            // limit is 0 when the pricing catalogue could not be reached:
+            // show the minutes talked without inventing a denominator.
+            const hasLimit = usage.limit > 0;
+            const pct = hasLimit ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
+            const barColor = !hasLimit ? C.gbr : pct >= 95 ? C.red : pct >= 80 ? C.gold : C.grn;
+            const usedMin = Math.ceil(usage.used / 60);
             const limitMin = Math.round(usage.limit / 60);
             return (
               <Card style={{ marginBottom: 20 }}>
@@ -318,14 +373,16 @@ export default function DashboardPage() {
                   </span>
                   <span style={{ color: barColor, fontSize: 13, fontWeight: 700,
                     fontFamily: "monospace" }}>
-                    {usedMin} / {limitMin} min
+                    {hasLimit ? `${usedMin} / ${limitMin} min` : `${usedMin} min used`}
                   </span>
                 </div>
-                <div style={{ height: 8, background: C.hi, borderRadius: 20, overflow: "hidden" }}>
-                  <div style={{ width: `${pct}%`, height: "100%", background: barColor,
-                    borderRadius: 20, transition: "width .4s ease" }} />
-                </div>
-                {pct >= 80 && (
+                {hasLimit && (
+                  <div style={{ height: 8, background: C.hi, borderRadius: 20, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", background: barColor,
+                      borderRadius: 20, transition: "width .4s ease" }} />
+                  </div>
+                )}
+                {hasLimit && pct >= 80 && (
                   <div style={{ marginTop: 10, fontSize: 12, color: barColor }}>
                     {pct >= 95
                       ? "You're almost out of minutes — calls will stop when you hit the limit."
@@ -340,13 +397,16 @@ export default function DashboardPage() {
 
           {/* ── Follow-up queue ──
               Turns the dashboard from a report into a worklist: warm callers
-              (score 50+) who are still sitting untouched in "new". */}
+              (score 50+) who are still sitting untouched in "new". This is
+              the only hot-leads list — a second "Hot Leads — Top Prospects"
+              card used to render the same people directly above it. */}
           {hotLeads.length > 0 && (
             <Card style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between",
                 alignItems: "center", marginBottom: 14 }}>
-                <span style={{ color: C.txt, fontSize: 15, fontWeight: 700 }}>
-                  Worth calling back
+                <span style={{ color: C.txt, fontSize: 15, fontWeight: 700,
+                  display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Flame size={15} color={C.gold} /> Worth calling back
                 </span>
                 <a href="/leads" style={{ color: C.gbr, fontSize: 13,
                   textDecoration: "none", fontWeight: 600 }}>All leads →</a>
@@ -370,10 +430,17 @@ export default function DashboardPage() {
                         <div style={{ color: C.mid, fontSize: 12 }}>{l.interest}</div>
                       )}
                     </div>
+                    {l.intent && <IntentBadge intent={l.intent} />}
                     <a href={`tel:${l.phone}`} style={{
                       color: C.gbr, fontSize: 13, fontFamily: "monospace",
                       textDecoration: "none", fontWeight: 600,
                     }}>{l.phone}</a>
+                    <a href="/leads" style={{ background: C.grn + "22", color: C.grn,
+                      border: "1px solid " + C.grn + "44", borderRadius: 5,
+                      padding: "4px 10px", fontSize: 10, fontWeight: 700,
+                      textDecoration: "none", flexShrink: 0 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Call</span>
+                    </a>
                   </div>
                 ))}
               </div>
@@ -393,7 +460,7 @@ export default function DashboardPage() {
               <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.6, maxWidth: 480, margin: "0 auto 20px" }}>
                 Your AI receptionist isn't taking calls yet. Two quick steps to go live:
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 560, margin: "0 auto" }}>
+              <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 560, margin: "0 auto" }}>
                 <a href="/setup" style={{
                   display: "block", padding: 16, background: C.surf,
                   border: "1px solid " + C.bord, borderRadius: 10,
@@ -426,7 +493,7 @@ export default function DashboardPage() {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.grn,
                   boxShadow: "0 0 8px " + C.grn, animation: "pulse 2s infinite" }} />
                 <span style={{ color: C.grn, fontSize: 13, fontWeight: 800 }}>
-                  {activeCalls.length} Active Call{activeCalls.length > 1 ? "s" : ""} Right Now
+                  {activeCalls.length} Active Call{activeCalls.length > 1 ? "s" : ""}
                 </span>
               </div>
               {activeCalls.map(call => (
@@ -445,24 +512,27 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <IntentBadge intent={call.intent || "unknown"} />
-                    <span style={{ color: C.grn, fontSize: 11, fontWeight: 700 }}>LIVE</span>
+                    <IntentBadge intent={call.intent} />
+                    <span style={{ color: C.grn, fontSize: 11, fontWeight: 700 }}>IN PROGRESS</span>
                   </div>
                 </div>
               ))}
             </Card>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+          <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
 
-            {/* Today's appointments */}
+            {/* Today's appointments — query is slot_date = today (IST) */}
             <Card>
-              <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Calendar size={15} /> Appointment Ledger</span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Calendar size={15} /> Today&apos;s Appointments</span>
+                </div>
+                <a href="/appointments" style={{ color: C.glow, fontSize: 12 }}>All bookings →</a>
               </div>
               {appointments.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
-                  No appointments yet today
+                  Nothing booked for today
                 </div>
               ) : appointments.map(a => (
                 <div key={a.id} style={{ padding: "8px 0", borderBottom: "1px solid " + C.bord + "44" }}>
@@ -473,17 +543,24 @@ export default function DashboardPage() {
                         {a.caller_name || a.caller_number}
                       </div>
                       <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
-                        {a.service || "General"} · {a.slot_date} {a.slot_time}
+                        {a.service || "General"} · {a.slot_time || "time not set"}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {a.wa_confirmed && (
                         <span style={{ color: C.grn, fontSize: 10, display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> WA</span>
                       )}
-                      <span style={{ background: C.grn + "22", color: C.grn, fontSize: 10,
-                        padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>
-                        {a.status}
-                      </span>
+                      {/* Derived from the row — this was hard-coded green, so a
+                          cancelled or no-show booking wore a success chip. */}
+                      {(() => {
+                        const s = APPT_STATUS[a.status] || { label: a.status, color: C.dim };
+                        return (
+                          <span style={{ background: s.color + "22", color: s.color, fontSize: 10,
+                            padding: "2px 6px", borderRadius: 4, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            {s.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -556,7 +633,7 @@ export default function DashboardPage() {
                       {formatDuration(call.duration_seconds)}
                     </td>
                     <td style={{ padding: "8px 8px" }}>
-                      <IntentBadge intent={call.intent || "unknown"} />
+                      <IntentBadge intent={call.intent} />
                     </td>
                     <td style={{ padding: "8px 8px", color: call.wa_sent ? C.grn : C.dim,
                       fontSize: 12 }}>
@@ -573,80 +650,5 @@ export default function DashboardPage() {
         </>
       )}
     </Shell>
-  );
-}
-
-// ── HOT LEADS CARD (v4.0) ────────────────────────────────────
-function HotLeadsCard({ tenantId }: { tenantId: string | null }) {
-  const [hotLeads, setHotLeads] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!tenantId) return;
-    const sb = createClient();
-    sb.from("leads")
-      .select("id, name, phone, score, intent, stage")
-      .eq("tenant_id", tenantId)
-      .gte("score", 60)
-      .not("stage", "in", '("won","lost")')
-      .order("score", { ascending: false })
-      .limit(5)
-      .then(({ data }) => setHotLeads(data || []));
-  }, [tenantId]);
-
-  if (hotLeads.length === 0) return null;
-
-  const scoreColor = (s: number) => s >= 80 ? C.grn : s >= 60 ? C.gold : C.gbr;
-
-  return (
-    <div style={{ background: C.surf, border: "1px solid " + C.bord,
-      borderRadius: 10, padding: 16, marginBottom: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}><Flame size={15} color={C.gold} /> Hot Leads — Top Prospects</div>
-        <a href="/leads" style={{ color: C.gbr, fontSize: 11, textDecoration: "none", fontWeight: 600 }}>
-          View all leads →
-        </a>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {hotLeads.map(lead => (
-          <div key={lead.id} style={{ display: "flex", alignItems: "center", gap: 12,
-            padding: "8px 10px", borderRadius: 7, background: C.hi }}>
-            {/* Score circle */}
-            <div style={{ width: 36, height: 36, borderRadius: "50%",
-              background: scoreColor(lead.score) + "22",
-              border: "2px solid " + scoreColor(lead.score) + "66",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 11, fontWeight: 900, color: scoreColor(lead.score), flexShrink: 0 }}>
-              {lead.score}
-            </div>
-            {/* Info */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: C.txt, fontSize: 12, fontWeight: 700, marginBottom: 2 }}>
-                {lead.name || lead.phone}
-              </div>
-              <div style={{ height: 3, background: C.bord, borderRadius: 2, width: "100%" }}>
-                <div style={{ width: lead.score + "%", height: "100%", borderRadius: 2,
-                  background: scoreColor(lead.score),
-                  boxShadow: "0 0 6px " + scoreColor(lead.score) + "66" }} />
-              </div>
-            </div>
-            {/* Intent */}
-            {lead.intent && (
-              <span style={{ background: C.gbr + "22", color: C.gbr, border: "1px solid " + C.gbr + "44",
-                borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 700,
-                textTransform: "uppercase" as const, whiteSpace: "nowrap" as const, flexShrink: 0 }}>
-                {lead.intent}
-              </span>
-            )}
-            {/* Call button */}
-            <a href="/leads" style={{ background: C.grn + "22", color: C.grn,
-              border: "1px solid " + C.grn + "44", borderRadius: 5,
-              padding: "4px 10px", fontSize: 10, fontWeight: 700,
-              textDecoration: "none", flexShrink: 0 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Call</span>
-            </a>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }

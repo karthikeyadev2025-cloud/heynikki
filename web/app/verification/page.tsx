@@ -14,7 +14,14 @@ import WhatsAppNumberChoice from "../../components/WhatsAppNumberChoice";
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
+import { NIKKI } from "../../lib/brand";
 import { Upload, Check, X, Clock, FileText } from "lucide-react";
+
+const C = {
+  surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border, teal: NIKKI.teal,
+  grn: NIKKI.emerald, red: NIKKI.red, gold: NIKKI.gold,
+  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
+};
 
 const DOC_TYPES = [
   { id: "gst",           label: "GST certificate" },
@@ -99,9 +106,9 @@ export default function VerificationPage() {
 
   const badge = (s: string) => {
     const map: Record<string, [string, React.ReactNode]> = {
-      approved: ["#10B981", <Check key="c" size={11} />],
-      rejected: ["#F87171", <X key="x" size={11} />],
-      pending:  ["#F59E0B", <Clock key="p" size={11} />],
+      approved: [C.grn,  <Check key="c" size={11} />],
+      rejected: [C.red,  <X key="x" size={11} />],
+      pending:  [C.gold, <Clock key="p" size={11} />],
     };
     const [c, icon] = map[s] || map.pending;
     return <span style={{ color: c, background: `${c}18`, border: `1px solid ${c}44`,
@@ -111,7 +118,7 @@ export default function VerificationPage() {
 
   return (
     <Shell title="Verification">
-      <p style={{ color: "#94A3B8", fontSize: 13, maxWidth: "62ch", marginTop: 0 }}>
+      <p style={{ color: C.mid, fontSize: 13, maxWidth: "62ch", marginTop: 0 }}>
         We need to verify your business before we can hand over a phone number —
         this is a requirement from the telecom operator, not us. Upload any one of
         GST, PAN or business registration to get started.
@@ -120,47 +127,47 @@ export default function VerificationPage() {
       {err && <Note tone="err">{err}</Note>}
       {ok  && <Note tone="ok">{ok}</Note>}
 
-      <div style={{ background: "#0F172A", border: "1px solid #1E293B", borderRadius: 10,
+      <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 10,
                     padding: 16, marginBottom: 18, maxWidth: 560 }}>
-        <label style={{ display: "block", fontSize: 11, color: "#94A3B8", marginBottom: 6 }}>
+        <label style={{ display: "block", fontSize: 11, color: C.mid, marginBottom: 6 }}>
           Document type
         </label>
         <select value={type} onChange={e => setType(e.target.value)}
-                style={{ background: "#0B1220", color: "#E2E8F0", border: "1px solid #1E293B",
+                style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
                          borderRadius: 7, padding: "8px 10px", fontSize: 13, width: "100%",
                          marginBottom: 12 }}>
           {DOC_TYPES.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
         </select>
 
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", cursor: busy ? "wait" : "pointer",
-                        background: "#38BDF8", color: "#06121F", borderRadius: 7,
+                        background: C.teal, color: "#fff", borderRadius: 7,
                         padding: "9px 16px", fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
           <Upload size={14} /> {busy ? "Uploading…" : "Choose file"}
           <input type="file" disabled={busy} style={{ display: "none" }}
                  accept={ALLOWED.join(",")}
                  onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} />
         </label>
-        <span style={{ color: "#64748B", fontSize: 11, marginLeft: 10 }}>
+        <span style={{ color: C.dim, fontSize: 11, marginLeft: 10 }}>
           JPG, PNG, WEBP or PDF · up to 10 MB
         </span>
       </div>
 
       <div style={{ maxWidth: 720 }}>
-        {!ready && <p style={{ color: "#64748B", fontSize: 12 }}>Loading…</p>}
-        {ready && docs.length === 0 && (
-          <p style={{ color: "#64748B", fontSize: 12 }}>Nothing uploaded yet.</p>
+        {!ready && <p style={{ color: C.dim, fontSize: 12 }}>Loading…</p>}
+        {ready && docs.length === 0 && !err && (
+          <p style={{ color: C.dim, fontSize: 12 }}>Nothing uploaded yet.</p>
         )}
         {docs.map(d => (
           <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "center",
-                                   padding: "10px 12px", borderBottom: "1px solid #1E293B" }}>
-            <FileText size={15} color="#64748B" />
-            <span style={{ flex: 1, color: "#E2E8F0", fontSize: 13 }}>
+                                   padding: "10px 12px", borderBottom: `1px solid ${C.bord}` }}>
+            <FileText size={15} color={C.dim} />
+            <span style={{ flex: 1, color: C.txt, fontSize: 13 }}>
               {d.file_name || d.doc_type}
-              <span style={{ color: "#64748B", fontSize: 11, marginLeft: 8 }}>
+              <span style={{ color: C.dim, fontSize: 11, marginLeft: 8 }}>
                 {DOC_TYPES.find(t => t.id === d.doc_type)?.label || d.doc_type}
               </span>
               {d.review_note && (
-                <span style={{ display: "block", color: "#F87171", fontSize: 11, marginTop: 2 }}>
+                <span style={{ display: "block", color: C.red, fontSize: 11, marginTop: 2 }}>
                   {d.review_note}
                 </span>
               )}
@@ -176,7 +183,7 @@ export default function VerificationPage() {
 }
 
 function Note({ tone, children }: { tone: "ok" | "err"; children: React.ReactNode }) {
-  const c = tone === "ok" ? "#10B981" : "#F87171";
+  const c = tone === "ok" ? C.grn : C.red;
   return <div style={{ background: `${c}18`, border: `1px solid ${c}44`, color: c,
                        borderRadius: 8, padding: "8px 12px", fontSize: 12,
                        marginBottom: 12, maxWidth: 560 }}>{children}</div>;

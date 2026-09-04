@@ -3,39 +3,24 @@
 /**
  * Outbound telecalling campaigns.
  *
- * The API layer for this (api-server/src/outbound.ts) has existed for a
- * while with solid TRAI-compliance logic -- DND scrubbing, calling-hours
- * enforcement, opt-out tracking -- but nothing in the app ever called it.
- * There was no way for a user to create a campaign or upload numbers.
- * This page is that missing interface.
+ * Reads (campaign list, recipient counts, the do-not-call list) go straight
+ * to Supabase with the logged-in user's own JWT: the outbound_* tables carry
+ * row-level security keyed to tenant membership, so Postgres enforces the
+ * tenant boundary and nothing secret ships to the browser. Anything that
+ * changes dialling state — start, pause, schedule, import — goes through
+ * api-server (outbound.ts / campaign-import.ts), which owns the guards a
+ * browser write would walk past: the consent declaration, "has any
+ * recipients", calling-hours and opt-out checks.
  *
- * SECURITY NOTE -- why this talks to Supabase directly instead of the API:
- * the existing dashboard pages authenticate to api-server by sending
- * a server secret from the browser. Anything prefixed
- * NEXT_PUBLIC_ is compiled into the client bundle, so that "secret" is
- * readable by anyone who views source -- meaning those endpoints are
- * effectively open. The outbound_* tables already have proper row-level
- * security keyed to tenant membership, so this page uses the logged-in
- * user's own JWT instead. Tenant isolation is enforced by Postgres, and
- * no shared secret ships to the browser.
+ * Dialling runs on our own Jio trunk: the pipeline serves the answered leg,
+ * the dispatcher runs as a compose service, and FreeSWITCH originates the
+ * call. What gates a campaign is operational rather than missing code — the
+ * dispatcher container is started explicitly (--profile outbound) and a
+ * campaign will not start without a consent declaration recorded against it.
  *
- * Phone normalization and opt-out filtering are reimplemented client-side
- * here to match api-server/src/outbound.ts exactly (E.164 +91). If that
- * server-side logic changes, this must change with it.
- *
- * DIALLING now works, on our own Jio trunk rather than Exotel. The three
- * pieces this comment used to list as missing are done: the pipeline
- * serves the answered leg, the dispatcher runs as a compose service, and
- * FreeSWITCH originates the call. What gates a campaign now is
- * operational rather than absent code — the dispatcher container is
- * started explicitly (--profile outbound) and a campaign will not start
- * without a consent declaration recorded against it.
- *
- * Recipient import moved to components/RecipientImport: it parses .xlsx
- * and .csv in the browser and posts clean rows to
- * /api/campaigns/:id/import. The paste-a-list textarea it replaced could
- * not tell anyone WHICH line was malformed, so a 500-number paste with
- * eight bad rows failed as one opaque error.
+ * Recipient import lives in components/RecipientImport: it parses .xlsx and
+ * .csv in the browser and posts clean rows to /api/campaigns/:id/import,
+ * naming the exact rows that are malformed.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -92,38 +77,6 @@ type Stats = {
   completed: number; blocked_dnd: number; opted_out: number; failed: number;
 };
 
-/** Mirrors normalize() in api-server/src/outbound.ts -- keep in sync. */
-function normalizePhone(raw: string): string | null {
-  const digits = raw.replace(/[^\d]/g, "");
-  if (digits.length === 10) return `+91${digits}`;
-  if (digits.length === 12 && digits.startsWith("91")) return `+${digits}`;
-  if (digits.length === 13 && digits.startsWith("91")) return `+${digits}`;
-  return null;
-}
-
-/**
- * Accepts pasted CSV or a plain list. Tolerates "phone,name" or just
- * phones, one per line, with or without a header row -- people paste
- * whatever their spreadsheet gives them.
- */
-function parseRecipients(text: string): { phone: string; first_name: string | null; raw: string }[] {
-  const out: { phone: string; first_name: string | null; raw: string }[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const parts = trimmed.split(/[,\t;]/).map(p => p.trim());
-    // skip an obvious header row
-    if (/^(phone|mobile|number|contact)$/i.test(parts[0])) continue;
-    const phone = normalizePhone(parts[0]);
-    out.push({
-      phone: phone || "",
-      first_name: parts[1] || null,
-      raw: parts[0],
-    });
-  }
-  return out;
-}
-
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <div style={{
     background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
@@ -133,7 +86,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, string> = {
-    draft: C.mid, scrubbing: C.gold, running: C.grn, scheduled: C.cyn,
+    draft: C.mid, running: C.grn, scheduled: C.cyn,
     paused: C.gold, completed: C.cyn, cancelled: C.red,
   };
   const col = map[status] || C.mid;
@@ -148,17 +101,54 @@ function StatusPill({ status }: { status: string }) {
 // Who was actually dialled. The campaign card showed five counters and no
 // way to see a single contact behind them — a business could not tell which
 // number failed, which was blocked, or who had already been reached.
+//
+// Columns are the ones outbound_recipients actually has (006 + 019):
+// first_name, status, attempts, outcome. There is no `name` or `last_error`
+// — selecting either made PostgREST refuse the whole query, and the list
+// read "no contacts imported" to a business with 500 rows in it.
+type RecipientRow = {
+  phone: string; first_name: string | null; status: string;
+  attempts: number; outcome: string | null;
+};
+
+const RECIPIENT_STATUS: Record<string, { label: string; color: string }> = {
+  pending:     { label: "waiting",                  color: C.mid },
+  scrubbing:   { label: "checking",                 color: C.gold },
+  queued:      { label: "queued",                   color: C.cyn },
+  in_progress: { label: "on a call",                color: C.gbr },
+  completed:   { label: "called",                   color: C.grn },
+  failed:      { label: "failed",                   color: C.red },
+  blocked_dnd: { label: "not dialled (no consent)", color: C.gold },
+  opted_out:   { label: "opted out",                color: C.red },
+};
+
+/** The dispatcher writes `answered`, `dialled`, `no_conversation_<CAUSE>` or
+ *  a raw trunk reason. Say it in words where the shape is known. */
+function fmtOutcome(o: string | null): string {
+  if (!o) return "";
+  if (o === "answered") return "answered";
+  if (o === "dialled")  return "dialling";
+  if (o.startsWith("no_conversation_")) {
+    const cause = o.slice("no_conversation_".length).replace(/_/g, " ").toLowerCase();
+    return cause === "stale" || cause === "unknown" ? "no conversation" : `no answer (${cause})`;
+  }
+  return o.replace(/_/g, " ").toLowerCase();
+}
+
 function RecipientList({ campaignId }: { campaignId: string }) {
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [rows, setRows] = useState<RecipientRow[] | null>(null);
+  const [err, setErr]   = useState("");
   const [open, setOpen] = useState(false);
 
   const load = async () => {
+    setErr("");
     const sb = createClient();
-    const { data } = await sb.from("outbound_recipients")
-      .select("phone, name, status, attempts, last_error")
+    const { data, error } = await sb.from("outbound_recipients")
+      .select("phone, first_name, status, attempts, outcome")
       .eq("campaign_id", campaignId)
       .order("status").limit(200);
-    setRows(data || []);
+    if (error) { setErr(error.message); setRows([]); return; }
+    setRows((data || []) as RecipientRow[]);
   };
 
   return (
@@ -174,29 +164,38 @@ function RecipientList({ campaignId }: { campaignId: string }) {
           border: `1px solid ${C.bord}`, borderRadius: 8 }}>
           {rows === null ? (
             <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>Loading…</div>
+          ) : err ? (
+            <div style={{ padding: 10, color: C.red, fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ flex: 1 }}>Couldn&apos;t load the contacts: {err}</span>
+              <button type="button" onClick={load}
+                style={{ background: "none", border: `1px solid ${C.bord}`, color: C.txt,
+                  borderRadius: 6, padding: "3px 9px", fontSize: 11.5, cursor: "pointer" }}>
+                Retry
+              </button>
+            </div>
           ) : rows.length === 0 ? (
             <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>
-              No contacts imported yet — upload a list before starting.
+              No contacts on this campaign yet — use Upload numbers to add a list.
             </div>
-          ) : rows.map((r: any, i: number) => (
-            <div key={i} style={{ display: "flex", gap: 10, alignItems: "center",
-              padding: "7px 10px", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
-              <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
-              <span style={{ color: C.mid, flex: 1 }}>{r.name || "—"}</span>
-              <span style={{ color: r.status === "completed" ? C.grn
-                : r.status === "failed" ? C.red
-                : r.status === "blocked_dnd" ? C.gold : C.dim }}>
-                {r.status === "blocked_dnd" ? "not dialled (no consent)" : r.status}
-              </span>
-              {r.attempts > 1 && <span style={{ color: C.dim }}>{r.attempts} tries</span>}
-            </div>
-          ))}
+          ) : rows.map((r, i) => {
+            const st = RECIPIENT_STATUS[r.status] || { label: r.status, color: C.dim };
+            const outcome = fmtOutcome(r.outcome);
+            return (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "center",
+                padding: "7px 10px", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
+                <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
+                <span style={{ color: C.mid, flex: 1 }}>{r.first_name || "—"}</span>
+                <span style={{ color: st.color }}>{st.label}</span>
+                {outcome && <span style={{ color: C.dim, fontSize: 11.5 }}>{outcome}</span>}
+                {r.attempts > 1 && <span style={{ color: C.dim, fontSize: 11.5 }}>{r.attempts} tries</span>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
-
 
 // Do-not-call, owned by the business.
 //
@@ -365,8 +364,6 @@ export default function CampaignsPage() {
   const [editing, setEditing] = useState<string | null>(null);
 
   const [uploadFor, setUploadFor] = useState<string | null>(null);
-  const [uploadText, setUploadText] = useState("");
-  const [uploading, setUploading] = useState(false);
 
   const loadStats = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
@@ -433,7 +430,7 @@ export default function CampaignsPage() {
     });
     if (e) {
       setError(/start_date|end_date/.test(e.message)
-        ? "Calling days aren't enabled on the database yet — apply supabase/042_campaign_schedule.sql, then try again."
+        ? "Calling days can't be saved on this account yet — leave both days blank for now, or contact support."
         : e.message);
       return;
     }
@@ -441,49 +438,6 @@ export default function CampaignsPage() {
     setForm({ name:"", script:"", start_date:"", end_date:"", window_start:"10:00", window_end:"19:00", max_concurrent:3 });
     setNotice("Campaign created.");
     load();
-  }
-
-  async function uploadRecipients(campaignId: string) {
-    setError(""); setNotice(""); setUploading(true);
-    const sb = createClient();
-    try {
-      const parsed = parseRecipients(uploadText);
-      if (!parsed.length) { setError("Nothing to upload — paste numbers first."); return; }
-      if (parsed.length > 10000) { setError("Max 10,000 numbers per upload."); return; }
-
-      const invalid = parsed.filter(p => !p.phone);
-      const valid   = parsed.filter(p => p.phone);
-      if (!valid.length) { setError("No valid Indian mobile numbers found."); return; }
-
-      // Filter against this tenant's opt-out list (RLS scopes this to us).
-      const { data: outs } = await sb.from("outbound_opt_outs")
-        .select("phone").eq("tenant_id", tenantId).in("phone", valid.map(v => v.phone));
-      const blocked = new Set((outs || []).map((o: { phone: string }) => o.phone));
-
-      const rows = valid.filter(v => !blocked.has(v.phone)).map(v => ({
-        campaign_id: campaignId,
-        tenant_id:   tenantId,
-        phone:       v.phone,
-        first_name:  v.first_name,
-        metadata:    {},
-        status:      "pending",
-      }));
-
-      if (!rows.length) { setError("Every number was already opted out."); return; }
-
-      const { error: e } = await sb.from("outbound_recipients").insert(rows);
-      if (e) { setError(e.message); return; }
-
-      setNotice(
-        `Uploaded ${rows.length}. ` +
-        (invalid.length ? `${invalid.length} invalid (skipped). ` : "") +
-        (blocked.size ? `${blocked.size} opted out (skipped).` : "")
-      );
-      setUploadText(""); setUploadFor(null);
-      load();
-    } finally {
-      setUploading(false);
-    }
   }
 
   // Start and Pause used to write outbound_campaigns.status straight from
@@ -496,7 +450,7 @@ export default function CampaignsPage() {
     const sb = createClient();
     const { data: { session } } = await sb.auth.getSession();
     const action = status === "running" ? "start" : "pause";
-    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/campaigns/${id}/${action}`, {
+    const r = await fetch(`${API}/api/campaigns/${id}/${action}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session?.access_token}` },
     });
@@ -693,7 +647,7 @@ export default function CampaignsPage() {
                   )}
                 </div>
                 <div style={{ display:"flex", gap: 8, flexWrap:"wrap" }}>
-                  <button onClick={() => { setUploadFor(uploadFor === c.id ? null : c.id); setUploadText(""); }}
+                  <button onClick={() => setUploadFor(uploadFor === c.id ? null : c.id)}
                     style={{
                       background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
                       borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
@@ -726,12 +680,14 @@ export default function CampaignsPage() {
                     gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}`,
                   }}>
                     {[
-                      { l:"Total",     v:s.total,       c:C.txt },
-                      { l:"Pending",   v:s.pending,     c:C.mid },
-                      { l:"Queued",    v:s.queued,      c:C.cyn },
-                      { l:"Called",    v:s.completed,   c:C.grn },
-                      { l:"Blocked",   v:s.blocked_dnd, c:C.gold },
-                      { l:"Opted out", v:s.opted_out,   c:C.red },
+                      { l:"Total",       v:s.total,       c:C.txt },
+                      { l:"Pending",     v:s.pending,     c:C.mid },
+                      { l:"Queued",      v:s.queued,      c:C.cyn },
+                      { l:"On a call",   v:s.in_progress, c:C.gbr },
+                      { l:"Called",      v:s.completed,   c:C.grn },
+                      { l:"Failed",      v:s.failed,      c:C.red },
+                      { l:"Blocked",     v:s.blocked_dnd, c:C.gold },
+                      { l:"Opted out",   v:s.opted_out,   c:C.red },
                     ].map(x => (
                       <div key={x.l}>
                         <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
@@ -752,9 +708,11 @@ export default function CampaignsPage() {
                     </div>
                   )}
 
-                  <RecipientList campaignId={c.id} />
                 </>
               )}
+              {/* Always offered: with zero recipients the list says so itself,
+                  and a stats query failure no longer hides the contacts. */}
+              <RecipientList campaignId={c.id} />
 
               {uploadFor === c.id && (
                 <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}` }}>

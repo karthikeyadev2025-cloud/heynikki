@@ -29,11 +29,13 @@ interface ApiKey {
   created_at: string;
 }
 
+// Only what the API actually checks (requireScope in api-server). The
+// former "appointments.write" and "webhook.subscribe" entries gated nothing:
+// every /api/v1 route is a GET and no webhook subscription endpoint exists,
+// so granting them was a promise the key could not keep.
 const AVAILABLE_SCOPES = [
-  { id: "calls.read",         label: "Read calls",            recommended: true },
-  { id: "appointments.read",  label: "Read appointments",     recommended: true },
-  { id: "appointments.write", label: "Create / update appts" },
-  { id: "webhook.subscribe",  label: "Subscribe to webhooks" },
+  { id: "calls.read",         label: "Read calls",            hint: "GET /api/v1/calls, /api/v1/calls/:id", recommended: true },
+  { id: "appointments.read",  label: "Read appointments",     hint: "GET /api/v1/appointments",             recommended: true },
 ];
 
 export default function ApiKeysPage() {
@@ -41,8 +43,10 @@ export default function ApiKeysPage() {
   const [tenantId, setTenantId]       = useState<string | null>(null);
   const [loading, setLoading]         = useState(true);
   const [issuing, setIssuing]         = useState(false);
-  const [newKey, setNewKey]           = useState<{ key: string; name: string } | null>(null);
+  const [newKey, setNewKey]           = useState<{ key: string; name: string; expires_at: string | null } | null>(null);
   const [error, setError]             = useState("");
+  const [revokeError, setRevokeError] = useState("");
+  const [revoking, setRevoking]       = useState<string | null>(null);
 
   // Issue form
   const [showIssueForm, setShowIssueForm] = useState(false);
@@ -77,7 +81,6 @@ export default function ApiKeysPage() {
     setError("");
 
     const sb = createClient();
-    const { data: user } = await sb.auth.getUser();
 
     let expires_at: string | null = null;
     if (expiresIn !== "never") {
@@ -89,6 +92,8 @@ export default function ApiKeysPage() {
       // Session auth, not a shared secret. The old header shipped
       // NEXT_PUBLIC_INTERNAL_SECRET — a server-to-server secret compiled into
       // browser JavaScript — and was empty, so this never worked at all.
+      // The tenant and creator come from the session server-side; only
+      // name, scopes and expires_at are the caller's to choose.
       const { data: { session } } = await sb.auth.getSession();
       const r = await fetch(`${API_URL}/api/keys/mine`, {
         method: "POST",
@@ -97,18 +102,18 @@ export default function ApiKeysPage() {
           Authorization:   `Bearer ${session?.access_token}`,
         },
         body: JSON.stringify({
-          name:       name.trim(),
-          scopes:     chosenScopes,
+          name:   name.trim(),
+          scopes: chosenScopes,
           expires_at,
-          created_by: user.user?.id,
         }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Failed to issue key");
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.key) throw new Error(j.error || "Failed to issue key");
 
-      setNewKey({ key: j.key, name: j.name });
+      setNewKey({ key: j.key, name: j.name || name.trim(), expires_at: j.expires_at ?? expires_at });
       setShowIssueForm(false);
       setName("");
+      setExpiresIn("never");
       // Refresh list
       const { data: ks } = await sb.from("api_keys")
         .select("id, name, prefix, scopes, mode, last_used_at, request_count, expires_at, revoked_at, created_at")
@@ -124,22 +129,30 @@ export default function ApiKeysPage() {
 
   async function revokeKey(id: string, label: string) {
     if (!confirm(`Revoke "${label}"? Any integration using it will immediately stop working.`)) return;
-
-    const sb = createClient();
-    const { data: user } = await sb.auth.getUser();
-
-    const { data: { session } } = await sb.auth.getSession();
-    const r = await fetch(`${API_URL}/api/keys/mine/${id}/revoke`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization:  `Bearer ${session?.access_token}`,
-      },
-    });
-    if (r.ok) {
+    setRevokeError("");
+    setRevoking(id);
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const r = await fetch(`${API_URL}/api/keys/mine/${id}/revoke`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization:  `Bearer ${session?.access_token}`,
+        },
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || `Could not revoke "${label}" (${r.status})`);
       setKeys(ks => ks.map(k => k.id === id ? { ...k, revoked_at: new Date().toISOString() } : k));
+    } catch (e: any) {
+      setRevokeError(e.message || `Could not revoke "${label}"`);
+    } finally {
+      setRevoking(null);
     }
   }
+
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
   return (
     <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, padding: 24 }}>
@@ -179,9 +192,10 @@ export default function ApiKeysPage() {
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={12} /> Key created — copy it now</span>
             </div>
             <p style={{ color: J.textMid, fontSize: 13, marginBottom: 16 }}>
-              <strong style={{ color: J.chandra }}>{newKey.name}</strong>. This key is shown
-              only once and cannot be recovered. Copy it to a password manager or your
-              integration's environment file now.
+              <strong style={{ color: J.chandra }}>{newKey.name}</strong>
+              {newKey.expires_at ? ` — expires ${fmtDate(newKey.expires_at)}` : " — never expires"}.
+              This key is shown only once and cannot be recovered. Copy it to a password
+              manager or your integration's environment file now.
             </p>
             <div style={{
               background: J.bg, border: `1px solid ${J.border}`,
@@ -246,6 +260,7 @@ export default function ApiKeysPage() {
                     )} />
                   <span style={{ color: J.chandra, fontWeight: 600 }}>{s.label}</span>
                   {s.recommended && <span style={{ color: J.mercury, fontSize: 11 }}>recommended</span>}
+                  <span style={{ color: J.textDim, fontSize: 11 }}>{s.hint}</span>
                   <code style={{ color: J.textDim, fontSize: 11, marginLeft: "auto" }}>{s.id}</code>
                 </label>
               ))}
@@ -289,6 +304,12 @@ export default function ApiKeysPage() {
           </form>
         )}
 
+        {revokeError && <div style={{
+          color: J.red, fontSize: 13, padding: 10,
+          background: J.red + "22", border: `1px solid ${J.red}`,
+          borderRadius: 8, marginBottom: 16,
+        }}>{revokeError}</div>}
+
         {/* Key list */}
         {loading ? (
           <div style={{ color: J.textMid, padding: 40, textAlign: "center" }}>Loading…</div>
@@ -318,12 +339,13 @@ export default function ApiKeysPage() {
                       {expired && !k.revoked_at && <span style={{ color: J.surya, fontSize: 11, marginLeft: 10 }}>EXPIRED</span>}
                     </div>
                     {!dead && (
-                      <button onClick={() => revokeKey(k.id, k.name)}
+                      <button onClick={() => revokeKey(k.id, k.name)} disabled={revoking === k.id}
                         style={{
                           padding: "6px 12px", background: "transparent",
                           border: `1px solid ${J.red}55`, color: J.red,
-                          borderRadius: 6, fontSize: 12, cursor: "pointer",
-                        }}>Revoke</button>
+                          borderRadius: 6, fontSize: 12, cursor: revoking === k.id ? "wait" : "pointer",
+                          opacity: revoking === k.id ? 0.6 : 1,
+                        }}>{revoking === k.id ? "Revoking…" : "Revoke"}</button>
                     )}
                   </div>
                   <div style={{ fontFamily: "monospace", color: J.textMid, fontSize: 13, marginBottom: 8 }}>
@@ -332,6 +354,7 @@ export default function ApiKeysPage() {
                   <div style={{ display: "flex", gap: 16, fontSize: 12, color: J.textMid, flexWrap: "wrap" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><BarChart3 size={12} /> {k.request_count?.toLocaleString() || 0} requests</span>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {k.last_used_at ? `last used ${new Date(k.last_used_at).toLocaleString()}` : "never used"}</span>
+                    <span>{k.expires_at ? `${expired ? "expired" : "expires"} ${fmtDate(k.expires_at)}` : "never expires"}</span>
                     <span style={{ color: J.textDim }}>{(k.scopes || []).join(" · ") || "no scopes"}</span>
                   </div>
                 </div>

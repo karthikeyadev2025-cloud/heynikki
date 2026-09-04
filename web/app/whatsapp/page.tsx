@@ -5,7 +5,7 @@ import Shell from "../../components/Shell";
 import WhatsAppSender from "../../components/WhatsAppSender";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
-import { Check, X, Send, MessageCircle, ClipboardList, ScrollText } from "lucide-react";
+import { Send, MessageCircle, ClipboardList, ScrollText, Inbox } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -27,15 +27,70 @@ function Card({ children, title, style }: { children: React.ReactNode; title?: R
 function Pill({ label, color }: { label: string; color: string }) {
   return (
     <span style={{ background: color + "22", color, border: "1px solid " + color + "44",
-      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, textTransform: "capitalize" as const }}>
+      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, textTransform: "capitalize" as const,
+      whiteSpace: "nowrap" }}>
       {label}
     </span>
   );
 }
 
+function SectionTitle({ icon, children, right }: { icon: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+      <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, display: "inline-flex", alignItems: "center", gap: 6 }}>
+        {icon} {children}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+// Every value the API writes to wa_dispatch_log.status: "sent" at send time
+// (Meta accepted it), "failed" when Meta refused, then the delivery webhook
+// moves it to "delivered" / "read" / "failed".
+const DISPATCH_STATUS: Record<string, { label: string; color: string }> = {
+  sent:      { label: "sent",      color: C.gold },
+  delivered: { label: "delivered", color: C.grn },
+  read:      { label: "read",      color: C.cyn },
+  failed:    { label: "failed",    color: C.red },
+};
+
+// message_type is descriptive, not an enum (migration 030 dropped the CHECK):
+// the automated kinds plus whatever a person sends from this page.
+const MESSAGE_TYPE_LABEL: Record<string, string> = {
+  confirmation:       "Booking confirmation",
+  reminder:           "Reminder",
+  reminder_today:     "Same-day reminder",
+  booking_incomplete: "Unfinished booking",
+  missed_call:        "Missed-call follow-up",
+  callback:           "Callback",
+  brochure:           "Brochure",
+  survey:             "Survey",
+  daily_summary:      "Daily summary (to you)",
+  custom:             "Message",
+  manual_reply:       "Your reply",
+  manual_template:    "Template",
+  lead_capture_ack:   "Enquiry acknowledgement",
+};
+// onboarding_* rows are HeyNikki's messages to the business owner, not to
+// their customers; label them as such rather than as a bare slug.
+
+const typeLabel = (t: string | null) => {
+  if (!t) return "Message";
+  if (MESSAGE_TYPE_LABEL[t]) return MESSAGE_TYPE_LABEL[t];
+  if (t.startsWith("onboarding_")) return "HeyNikki (to you)";
+  return t.replace(/_/g, " ").replace(/^\w/, ch => ch.toUpperCase());
+};
+
+/** manual_template rows store `template:<name>` in message_body. */
+const templateOf = (d: { message_type?: string | null; message_body?: string | null }) =>
+  d.message_type === "manual_template" && d.message_body?.startsWith("template:")
+    ? d.message_body.slice("template:".length) : null;
+
 export default function WhatsAppPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [dispatch, setDispatch]   = useState<any[]>([]);
+  const [dispatchErr, setDispatchErr] = useState("");
   const [loading, setLoading]     = useState(true);
   const [sending, setSending]     = useState<string | null>(null);
   const [modal, setModal]         = useState<{ template: any } | null>(null);
@@ -66,12 +121,14 @@ export default function WhatsAppPage() {
           { headers: { Authorization: `Bearer ${session?.access_token}` } })
           .then(async r => { const j = await r.json().catch(() => ({})); return r.ok ? j : { error: j.error }; })
           .catch(e => ({ error: e.message })),
-        sb.from("wa_dispatch_log").select("*")
+        sb.from("wa_dispatch_log")
+          .select("id, message_type, to_number, message_body, status, sent_at, call_id, appointment_id")
           .eq("tenant_id", tu.tenant_id)
           .order("sent_at", { ascending: false }).limit(50),
       ]);
       if (tmpl.error) { setToast(tmpl.error); setTimeout(() => setToast(null), 6000); }
       setTemplates((tmpl.templates || []).map((t: any) => ({ ...t, id: `${t.name}:${t.language}` })));
+      if (disp.error) setDispatchErr(disp.error.message);
       setDispatch(disp.data || []);
       setLoading(false);
     });
@@ -152,6 +209,11 @@ export default function WhatsAppPage() {
       setModal(null);
       setToNumber("");
       setVars({});
+      // Show the row we just wrote without a reload.
+      setDispatch(d => [{
+        id: `local-${Date.now()}`, message_type: "manual_template", to_number: toNumber,
+        message_body: `template:${modal.template.name}`, status: "sent", sent_at: new Date().toISOString(),
+      }, ...d]);
     } catch {
       setToast("Send failed — check API connection");
     }
@@ -165,14 +227,21 @@ export default function WhatsAppPage() {
   const read      = dispatch.filter(d => d.status === "read").length;
   const failed    = dispatch.filter(d => d.status === "failed").length;
 
-  // 24h service window — messages where customer replied in last 24h
-  const within24h = dispatch.filter(d => {
-    if (!d.sent_at) return false;
-    return Date.now() - new Date(d.sent_at).getTime() < 86400000;
-  }).length;
+  // 24-hour service window: people who messaged US in the last 24 h are the
+  // ones a free-form reply can still reach. It used to count our own
+  // outbound sends, which is not what the window means.
+  const openChats = new Set(inbox
+    .filter((m: any) => m.received_at && Date.now() - new Date(m.received_at).getTime() < 86400000)
+    .map((m: any) => m.from_number)).size;
 
-  const statusColor = (s: string) =>
-    s === "delivered" ? C.grn : s === "read" ? C.cyn : s === "failed" ? C.red : C.gold;
+  // "Resend" only when this page can honestly do it: a template this account
+  // sent by hand, and the template is still approved. Automated messages are
+  // sent by Nikki on an event, and a free-text reply outside the window would
+  // be accepted by Meta and silently dropped.
+  const resendTarget = (d: any) => {
+    const name = templateOf(d);
+    return name ? templates.find(t => t.name === name) || null : null;
+  };
 
   return (
     <Shell title="WhatsApp">
@@ -260,24 +329,26 @@ export default function WhatsAppPage() {
     {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
         container log, and vanish — a business could send a follow-up and
         never learn the customer said yes. */}
-    <div style={{ marginBottom: 26 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <h2 style={{ color: C.txt, fontSize: 17, fontWeight: 800, margin: 0 }}>Replies</h2>
-        {unread > 0 && (
-          <span style={{ background: C.grn, color: "#04120a", borderRadius: 20,
-            padding: "2px 9px", fontSize: 11.5, fontWeight: 800 }}>{unread} new</span>
-        )}
-      </div>
+    <div style={{ marginBottom: 24 }}>
+      <SectionTitle icon={<Inbox size={14} />}
+        right={unread > 0 && (
+          <span style={{ background: C.grn, color: "#fff", borderRadius: 20,
+            padding: "2px 9px", fontSize: 11, fontWeight: 800 }}>{unread} new</span>
+        )}>
+        Replies
+      </SectionTitle>
+      <Card>
       {inbox.length === 0 ? (
-        <div style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.6 }}>
-          No replies yet. When someone answers one of your WhatsApp messages,
-          it appears here and against their lead.
+        <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+          No replies yet. When someone answers one of your WhatsApp messages, it appears here
+          and you can reply for 24 hours.
         </div>
-      ) : inbox.map((m: any) => {
+      ) : inbox.map((m: any, i: number) => {
         const hours = (Date.now() - new Date(m.received_at).getTime()) / 3600000;
         const canReply = hours < 24;
         return (
-          <div key={m.id} style={{ padding: "11px 0", borderBottom: `1px solid ${C.bord}44` }}>
+          <div key={m.id} style={{ padding: "11px 0",
+            borderBottom: i === inbox.length - 1 ? "none" : `1px solid ${C.bord}` }}>
             <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
               <span style={{ color: C.txt, fontWeight: 800, fontSize: 13.5 }}>{m.from_number}</span>
               <span style={{ color: C.dim, fontSize: 11.5 }}>
@@ -298,7 +369,7 @@ export default function WhatsAppPage() {
                   disabled={!(replyDraft[m.id] || "").trim()}
                   onClick={() => { replyTo(m.from_number, replyDraft[m.id]); setReplyDraft(d => ({ ...d, [m.id]: "" })); }}
                   style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
-                    fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
+                    fontWeight: 800, background: C.grn, color: "#fff", cursor: "pointer" }}>
                   Send
                 </button>
               </div>
@@ -310,15 +381,16 @@ export default function WhatsAppPage() {
           </div>
         );
       })}
+      </Card>
     </div>
           {/* KPI Row */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 20 }}>
             {[
-              { label: "Messages Sent",     value: total,    color: C.gbr  },
-              { label: "Delivered",          value: delivered, color: C.grn  },
-              { label: "Read",               value: read,      color: C.cyn  },
-              { label: "Failed",             value: failed,    color: C.red  },
-              { label: "24h Active Window",  value: within24h, color: C.gold },
+              { label: "Messages (last 50)", value: total,     color: C.gbr  },
+              { label: "Delivered",         value: delivered, color: C.grn  },
+              { label: "Read",              value: read,      color: C.cyn  },
+              { label: "Failed",            value: failed,    color: C.red  },
+              { label: "Open chats (24h)",  value: openChats, color: C.gold },
             ].map(s => (
               <Card key={s.label}>
                 <div style={{ color: C.mid, fontSize: 10, textTransform: "uppercase",
@@ -336,10 +408,16 @@ export default function WhatsAppPage() {
           </div>
 
           {/* Template Library */}
-          <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, marginBottom: 12 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClipboardList size={14} /> Template Library</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
+          <SectionTitle icon={<ClipboardList size={14} />}>Template Library</SectionTitle>
+          {templates.length === 0 && (
+            <Card style={{ marginBottom: 24 }}>
+              <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+                No approved templates yet. Templates are approved by WhatsApp and appear here
+                once they are — contact support if you need one added.
+              </div>
+            </Card>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, marginBottom: 24 }}>
             {templates.map(t => (
               <Card key={t.id}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
@@ -364,49 +442,68 @@ export default function WhatsAppPage() {
           </div>
 
           {/* Dispatch History */}
-          <Card title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><ScrollText size={14} /> Dispatch History — Last 50 Messages</span>}>
-            {dispatch.length === 0 ? (
-              <div style={{ color: C.dim, textAlign: "center", padding: 24 }}>No messages sent yet</div>
+          <SectionTitle icon={<ScrollText size={14} />}>Sent messages</SectionTitle>
+          <Card>
+            {dispatchErr ? (
+              <div style={{ color: C.red, fontSize: 13, textAlign: "center", padding: 16 }}>
+                Couldn&apos;t load your message history: {dispatchErr}
+              </div>
+            ) : dispatch.length === 0 ? (
+              <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+                Nothing sent yet. Confirmations, reminders and follow-ups Nikki sends — and any
+                template you send from here — will be listed with their delivery status.
+              </div>
             ) : (
+              <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr>{["Time", "To", "Template", "Type", "Status", ""].map(h => (
+                  <tr>{["Time", "To", "Type", "Message", "Status", ""].map(h => (
                     <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
                       textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
                       borderBottom: "1px solid " + C.bord }}>{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {dispatch.map((d: any) => (
-                    <tr key={d.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
-                      onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
-                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                      <td style={{ padding: "10px", color: C.dim, fontSize: 11 }}>
-                        {new Date(d.sent_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
-                      </td>
-                      <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 600 }}>
-                        {d.to_number}
-                      </td>
-                      <td style={{ padding: "10px", color: C.mid, fontSize: 11 }}>
-                        {d.message_type || "—"}
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        <Pill label={d.template_name || "custom"} color={C.gbr} />
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        <Pill label={d.status || "sent"} color={statusColor(d.status)} />
-                      </td>
-                      <td style={{ padding: "10px" }}>
-                        <button onClick={() => setToNumber(d.to_number)}
-                          style={{ background: "none", color: C.dim, border: "1px solid " + C.bord + "66",
-                            borderRadius: 5, padding: "3px 8px", fontSize: 10, cursor: "pointer" }}>
-                          Resend
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {dispatch.map((d: any) => {
+                    const st  = DISPATCH_STATUS[d.status] || { label: d.status || "sent", color: C.gold };
+                    const tpl = resendTarget(d);
+                    const tplName = templateOf(d);
+                    return (
+                      <tr key={d.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
+                        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                        <td style={{ padding: "10px", color: C.dim, fontSize: 11, whiteSpace: "nowrap" }}>
+                          {d.sent_at ? new Date(d.sent_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                        </td>
+                        <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                          {d.to_number}
+                        </td>
+                        <td style={{ padding: "10px", color: C.mid, fontSize: 11, whiteSpace: "nowrap" }}>
+                          {typeLabel(d.message_type)}
+                        </td>
+                        <td style={{ padding: "10px", color: C.mid, fontSize: 11, maxWidth: 320,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          title={d.message_body || ""}>
+                          {tplName ? <Pill label={tplName} color={C.gbr} /> : (d.message_body || "—")}
+                        </td>
+                        <td style={{ padding: "10px" }}>
+                          <Pill label={st.label} color={st.color} />
+                        </td>
+                        <td style={{ padding: "10px", textAlign: "right" }}>
+                          {tpl && (
+                            <button onClick={() => { setToNumber(d.to_number); setVars({}); setModal({ template: tpl }); }}
+                              style={{ background: "none", color: C.gbr, border: "1px solid " + C.bord,
+                                borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                              Resend
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+              </div>
             )}
           </Card>
         </>

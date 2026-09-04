@@ -185,18 +185,31 @@ export class FreeSwitchESL {
     // "api originate{...}sofia/...&bridge(...)" — which FreeSWITCH
     // cannot parse, so every click-to-call failed at runtime while
     // still typechecking cleanly.
+    const customer10 = customer.replace(/\D/g, "").slice(-10);
+    const did10      = masked.replace(/\D/g, "").slice(-10);
     const vars = [
       `origination_caller_id_number=${wireCli(masked)}`,
       `origination_caller_id_name=HeyNikki`,
       `hangup_after_bridge=true`,
       `ignore_early_media=true`,
       `originate_timeout=30`,
+      // Read by the click_to_call_agent_leg extension: the hangup hook
+      // reports did_number/caller_ani the same way an inbound leg does, so
+      // the api-server closes the calls row it opened for this dial.
+      `did_number=${did10}`,
+      `caller_ani=${customer10}`,
+      `outbound_cli=${wireCli(masked)}`,
+      `ctc_customer_bridge=sofia/gateway/jio_primary/${wireCallee(customer)}`,
     ].join(",");
 
-    // Leg 1 = agent, bridged to Leg 2 = customer.
+    // Leg 1 = agent. Once they answer, the leg is dropped into the
+    // click_to_call_agent_leg extension, which records it, arms the hangup
+    // hook and bridges Leg 2 = customer. The old form bridged straight from
+    // the originate, which meant no dialplan ran: no recording, no hangup
+    // report, and a call nothing in the product could see afterwards.
     const cmd =
       `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(agent)} ` +
-      `&bridge({origination_caller_id_number=${wireCli(masked)}}sofia/gateway/jio_primary/${wireCallee(customer)})`;
+      `ctc_agent_${customer10} XML heynikki`;
 
     const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
 
@@ -372,6 +385,18 @@ export class FreeSwitchESL {
    */
   async hangupChannel(uuid: string): Promise<void> {
     await eslCommand(`api uuid_kill ${uuid}`);
+  }
+
+  /**
+   * Is this channel still up? `uuid_exists` answers "true"/"false" as the
+   * body. Used to time a click-to-call leg, which has no hangup hook of its
+   * own (the originate variables cannot carry the quoted curl the dialplan
+   * uses), and to tell the dashboard when a dialled call has ended.
+   */
+  async channelExists(uuid: string): Promise<boolean> {
+    if (!/^[a-f0-9-]{36}$/i.test(uuid)) return false;
+    const r = await eslCommand(`api uuid_exists ${uuid}`);
+    return /\btrue\b/.test(r);
   }
 
   /**

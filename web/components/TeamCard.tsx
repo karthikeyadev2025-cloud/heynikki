@@ -58,12 +58,25 @@ export default function TeamCard() {
     setBusy(false);
   };
 
-  const act = async (path: string) => {
-    const sb = createClient();
-    const { data: { session } } = await sb.auth.getSession();
-    await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token}` } });
+  // Remove a member / cancel an invite. A refused request (last owner,
+  // wrong tenant, plan gate) used to re-render the list unchanged with no
+  // word about why.
+  const act = async (path: string, what: string) => {
+    setMsg(""); setLink("");
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const r = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${session?.access_token}` } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || `Could not ${what} (${r.status})`);
+    } catch (e: any) {
+      setMsg(e.message || `Could not ${what}`);
+    }
     load();
   };
+
+  const prettyPhone = (n: string) => { const d = String(n).replace(/\D/g, "").slice(-10); return d.length === 10 ? `${d.slice(0, 5)} ${d.slice(5)}` : n; };
+  const showsPhones = (d.members || []).some((m: any) => m.phone);
 
   const label = { fontSize: 11.5, color: C.dim, marginBottom: 4 } as const;
   const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
@@ -91,9 +104,14 @@ export default function TeamCard() {
             {m.role === "super_admin" ? "owner" : m.role}
           </span>
           {m.is_you && <span style={{ color: C.dim, fontSize: 11.5 }}>you</span>}
+          {m.phone && (
+            <span style={{ color: C.dim, fontSize: 12, fontVariantNumeric: "tabular-nums" }} title="Rings on calls passed to the team">
+              {prettyPhone(m.phone)}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           {d.you_are_owner && !m.is_you && !["owner","super_admin"].includes(m.role) && (
-            <button type="button" onClick={() => act(`/api/team/${m.id}/remove`)}
+            <button type="button" onClick={() => act(`/api/team/${m.id}/remove`, `remove ${m.email}`)}
               style={{ background: "none", border: "none", color: C.dim, fontSize: 12, cursor: "pointer" }}>
               remove
             </button>
@@ -108,13 +126,22 @@ export default function TeamCard() {
           <span style={{ color: C.gold, fontSize: 12 }}>invited · not joined yet</span>
           <span style={{ flex: 1 }} />
           {d.you_are_owner && (
-            <button type="button" onClick={() => act(`/api/team/invite/${i.id}/revoke`)}
+            <button type="button" onClick={() => act(`/api/team/invite/${i.id}/revoke`, "cancel the invite")}
               style={{ background: "none", border: "none", color: C.dim, fontSize: 12, cursor: "pointer" }}>
               cancel
             </button>
           )}
         </div>
       ))}
+
+      {showsPhones && (
+        <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>
+          Numbers shown ring when a call is passed to the team.{" "}
+          <a href="/desk" style={{ color: C.grn, fontWeight: 600, textDecoration: "none" }}>Manage who answers calls →</a>
+        </div>
+      )}
+
+      {!d.you_are_owner && msg && <div style={{ color: C.mid, fontSize: 12.5, marginTop: 8 }}>{msg}</div>}
 
       {d.you_are_owner && (
         <div style={{ marginTop: 14 }}>

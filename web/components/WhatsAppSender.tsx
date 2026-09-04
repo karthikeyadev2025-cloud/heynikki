@@ -13,6 +13,22 @@ const C = {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
+// Every value the API writes to tenant_whatsapp.status (index.ts + 024):
+// pending_kyc / awaiting_signup at provisioning, requested from the old
+// number-choice form, pending_verification once the number is on the WABA,
+// active after verify+register, failed / submitted from the Meta review path.
+export const WA_STATUS: Record<string, { label: string; color: string }> = {
+  pending_kyc:          { label: "Waiting for KYC",       color: NIKKI.gold },
+  awaiting_signup:      { label: "Not set up yet",        color: NIKKI.textDim },
+  requested:            { label: "Requested",             color: NIKKI.gold },
+  pending_verification: { label: "Awaiting code",         color: NIKKI.gold },
+  submitted:            { label: "With WhatsApp",         color: NIKKI.cyan },
+  active:               { label: "Live",                  color: NIKKI.emerald },
+  failed:               { label: "Rejected by WhatsApp",  color: NIKKI.red },
+};
+export const waStatus = (status: string | null | undefined) =>
+  (status && WA_STATUS[status]) || { label: "Using the shared number", color: NIKKI.textDim };
+
 type Sender = {
   kyc_approved: boolean;
   heynikki_number: string | null;
@@ -48,15 +64,24 @@ export default function WhatsAppSender() {
   const [msg, setMsg]   = useState<{ text: string; bad?: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [calling, setCalling] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     const sb = createClient();
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return;
-    const r = await fetch(`${API}/api/whatsapp/sender`,
-      { headers: { Authorization: `Bearer ${session.access_token}` } });
-    if (!r.ok) return;
+    let r: Response;
+    try {
+      r = await fetch(`${API}/api/whatsapp/sender`,
+        { headers: { Authorization: `Bearer ${session.access_token}` } });
+    } catch (e: any) { setLoadErr(e.message || "Could not reach the server"); return; }
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setLoadErr(j.error || `Could not load your WhatsApp number (${r.status})`);
+      return;
+    }
+    setLoadErr("");
     const j: Sender = await r.json();
     setS(j);
     setName(n => n || j.display_name || "");
@@ -102,7 +127,19 @@ export default function WhatsAppSender() {
     } finally { setBusy(null); }
   };
 
-  if (!s) return null;
+  if (!s) {
+    if (!loadErr) return null;
+    return (
+      <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
+        padding: 18, marginBottom: 26 }}>
+        <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800 }}>Your WhatsApp number</div>
+        <div style={{ marginTop: 8, color: C.red, fontSize: 12.5, display: "flex", gap: 6, alignItems: "flex-start" }}>
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>{loadErr}</span>
+        </div>
+      </div>
+    );
+  }
 
   const live = s.status === "active";
   const step = live ? 4 : !s.on_waba ? 1 : !s.otp?.code && !code ? 2 : 3;
@@ -116,7 +153,7 @@ export default function WhatsAppSender() {
     background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
   const btn = (on: boolean, color: string = C.grn) => ({
     padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 800,
-    background: on ? color : C.hi, color: on ? "#04120a" : C.dim,
+    background: on ? color : C.hi, color: on ? "#fff" : C.dim,
     cursor: on ? "pointer" : "default", opacity: busy ? 0.7 : 1 } as const);
 
   return (
@@ -131,14 +168,15 @@ export default function WhatsAppSender() {
             {live ? ` as “${s.meta?.name || s.display_name}”.` : " — the shared HeyNikki number, until yours is live."}
           </div>
         </div>
-        {s.meta && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <Tag label={waStatus(s.status).label} color={waStatus(s.status).color} />
+          {s.meta && (<>
             <Tag label={`Meta: ${s.meta.status || "?"}`} color={s.meta.status === "CONNECTED" ? C.grn : C.gold} />
             <Tag label={`Code: ${s.meta.verification || "?"}`} color={s.meta.verification === "VERIFIED" ? C.grn : C.gold} />
             <Tag label={`Name: ${s.meta.name_status || "?"}`} color={s.meta.name_status === "APPROVED" ? C.grn : C.gold} />
             {s.meta.quality && <Tag label={`Quality: ${s.meta.quality}`} color={s.meta.quality === "GREEN" ? C.grn : C.red} />}
-          </div>
-        )}
+          </>)}
+        </div>
       </div>
 
       {live ? (

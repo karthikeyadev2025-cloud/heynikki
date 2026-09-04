@@ -41,9 +41,17 @@ type Appointment = {
   created_at: string;
 };
 
+// `pending` is what the AI writes the moment a caller asks to book, before
+// a date AND time are both known (supabase/041). It needs a colour and a
+// way to be confirmed by hand, otherwise a half-captured booking sits in
+// the list in the fallback grey with nothing to do about it.
 const STATUS_COLORS: Record<string, string> = {
-  confirmed: C.grn, completed: C.cyn, cancelled: C.red,
+  pending: C.gold, confirmed: C.grn, completed: C.cyn, cancelled: C.red,
   no_show: C.gold, rescheduled: C.gbr,
+};
+const STATUS_LABELS: Record<string, string> = {
+  pending: "Needs confirmation", confirmed: "Confirmed", completed: "Done",
+  cancelled: "Cancelled", no_show: "No-show", rescheduled: "Rescheduled",
 };
 
 function fmtDate(d: string | null): string {
@@ -94,9 +102,12 @@ function BookingNumberSettings({ tenantId, onSaved }: { tenantId: string; onSave
       .eq("id", tenantId);
     setSaving(false);
     if (error) {
+      // A customer cannot apply a migration; naming the SQL file to them
+      // was an instruction for us dressed up as an error for them.
       setMsg({ bad: true, text: /booking_ref/.test(error.message)
-        ? "Booking numbers aren't enabled on the database yet — apply supabase/043_booking_reference.sql."
-        : error.message });
+        ? "Booking numbers aren't available on your account yet. Email support@heynikki.in and we'll switch them on."
+        : "Couldn't save booking-number settings. Please try again." });
+      console.error("[appointments] booking_ref save failed:", error.message);
       return;
     }
     setMsg({ text: `Saved. The next confirmed booking will be ${preview(Math.max(1, Math.floor(next) || 1))}.` });
@@ -194,12 +205,20 @@ export default function AppointmentsPage() {
     const sb = createClient();
     const { error: e } = await sb.from("appointments")
       .update({ status }).eq("id", id);
-    if (e) setError(e.message);
-    else { setNotice(`Marked ${status}.`); load(); }
+    if (e) {
+      console.error("[appointments] status update failed:", e.message);
+      setError("Couldn't update that appointment. Please try again.");
+    } else {
+      setNotice(status === "confirmed" ? "Confirmed." : `Marked ${STATUS_LABELS[status] || status}.`);
+      load();
+    }
   }
 
-  const shown = appts.filter(a => filter === "all" || isUpcoming(a.slot_date));
+  // A pending booking has no slot yet, so it is never "upcoming" by date;
+  // it is listed under both filters so it cannot be hidden by accident.
+  const shown = appts.filter(a => filter === "all" || a.status === "pending" || isUpcoming(a.slot_date));
   const upcomingCount = appts.filter(a => isUpcoming(a.slot_date) && a.status === "confirmed").length;
+  const pendingCount  = appts.filter(a => a.status === "pending").length;
 
   return (
     <Shell>
@@ -208,8 +227,10 @@ export default function AppointmentsPage() {
           Appointments
         </h1>
         <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20 }}>
-          Bookings Hey Nikki captured on calls. {upcomingCount > 0 &&
-            <span style={{ color: C.grn }}>{upcomingCount} upcoming.</span>}
+          Bookings Hey Nikki captured on calls.
+          {upcomingCount > 0 && <>{" "}<span style={{ color: C.grn }}>{upcomingCount} upcoming.</span></>}
+          {pendingCount > 0 && <>{" "}<span style={{ color: C.gold }}>
+            {pendingCount} waiting for you to confirm.</span></>}
         </p>
 
         {error && (
@@ -289,8 +310,8 @@ export default function AppointmentsPage() {
                       <span style={{
                         background: col + "22", color: col, border: `1px solid ${col}44`,
                         fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
-                        textTransform: "uppercase", letterSpacing: 0.5,
-                      }}>{a.status}</span>
+                        textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
+                      }}>{STATUS_LABELS[a.status] || a.status}</span>
                     </div>
                     <div style={{ fontSize: 13, color: C.mid, fontFamily: "monospace" }}>
                       {a.caller_number}
@@ -303,9 +324,26 @@ export default function AppointmentsPage() {
                         {a.notes}
                       </div>
                     )}
+                    {a.status === "pending" && (!a.slot_date || !a.slot_time) && (
+                      <div style={{ fontSize: 12, color: C.gold, marginTop: 4 }}>
+                        {!a.slot_date ? "Date" : "Time"} wasn&apos;t captured on the call — check with the caller before confirming.
+                      </div>
+                    )}
                   </div>
 
                   {/* actions */}
+                  {a.status === "pending" && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button onClick={() => updateStatus(a.id, "confirmed")} style={{
+                        background: C.grn + "22", color: C.grn, border: `1px solid ${C.grn}44`,
+                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      }}>Confirm</button>
+                      <button onClick={() => updateStatus(a.id, "cancelled")} style={{
+                        background: C.red + "22", color: C.red, border: `1px solid ${C.red}44`,
+                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      }}>Cancel</button>
+                    </div>
+                  )}
                   {a.status === "confirmed" && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <button onClick={() => updateStatus(a.id, "completed")} style={{

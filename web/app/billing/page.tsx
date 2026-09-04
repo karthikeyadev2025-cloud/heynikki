@@ -48,11 +48,17 @@ const PLANS_FALLBACK = [
   },
 ];
 
-function UsageRing({ used, total }: { used: number; total: number }) {
-  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+// `used` and `total` are MINUTES. `period` says what the allowance is —
+// "This month" for a plan tier, "Free trial" for a credit balance, which is
+// a lifetime pool and not a monthly one. A trial tenant has no plan row and
+// no call_minutes row, so this used to read "0% · 0 / 0 min · 0 minutes
+// remaining" for every new account.
+function UsageRing({ used, total, period }: { used: number; total: number; period: string }) {
+  const hasTotal = total > 0;
+  const pct = hasTotal ? Math.min(100, Math.round((used / total) * 100)) : 0;
   const r = 40, circ = 2 * Math.PI * r;
   const dash = circ * (pct / 100);
-  const color = pct > 90 ? C.red : pct > 70 ? C.gold : C.grn;
+  const color = !hasTotal ? C.mid : pct > 90 ? C.red : pct > 70 ? C.gold : C.grn;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
@@ -63,27 +69,48 @@ function UsageRing({ used, total }: { used: number; total: number }) {
           strokeLinecap="round"
           transform="rotate(-90 50 50)"
           style={{ transition: "stroke-dasharray 0.5s ease" }} />
-        <text x={50} y={46} textAnchor="middle" fill={color} fontSize={16} fontWeight={900}>{pct}%</text>
-        <text x={50} y={60} textAnchor="middle" fill={C.dim} fontSize={9}>used</text>
+        {hasTotal ? (
+          <>
+            <text x={50} y={46} textAnchor="middle" fill={color} fontSize={16} fontWeight={900}>{pct}%</text>
+            <text x={50} y={60} textAnchor="middle" fill={C.dim} fontSize={9}>used</text>
+          </>
+        ) : (
+          <>
+            <text x={50} y={46} textAnchor="middle" fill={C.txt} fontSize={16} fontWeight={900}>{used}</text>
+            <text x={50} y={60} textAnchor="middle" fill={C.dim} fontSize={9}>min used</text>
+          </>
+        )}
       </svg>
       <div>
         <div style={{ color: C.txt, fontSize: 16, fontWeight: 900 }}>
-          {Math.round(used / 60)}
-          <span style={{ color: C.mid, fontSize: 12, fontWeight: 400 }}> / {Math.round(total / 60)} min</span>
+          {used}
+          <span style={{ color: C.mid, fontSize: 12, fontWeight: 400 }}>
+            {hasTotal ? ` / ${total} min` : " min"}
+          </span>
         </div>
-        <div style={{ color: C.mid, fontSize: 12, marginTop: 4 }}>This month</div>
-        <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
-          {Math.max(0, Math.round((total - used) / 60))} minutes remaining
-        </div>
+        <div style={{ color: C.mid, fontSize: 12, marginTop: 4 }}>{period}</div>
+        {hasTotal && (
+          <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
+            {Math.max(0, total - used)} minutes remaining
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+const PAID_PLANS = ["starter", "growth", "scale"];
+
 export default function BillingPage() {
   const [PLANS, setPlans]     = useState<any[]>(PLANS_FALLBACK);
   const [tenant, setTenant]   = useState<Tenant | null>(null);
+  // Paid plans: this month's call seconds vs the plan allowance.
   const [usage, setUsage]     = useState<CallMinutes | null>(null);
+  // Trial: minutes granted and spent, from credit_ledger — the table the
+  // deduction on every hangup actually writes to. `granted` is the sum of
+  // positive rows (the 100-minute signup grant plus any admin top-ups), so
+  // the allowance is read, not assumed.
+  const [trial, setTrial]     = useState<{ granted: number; spent: number } | null>(null);
   const [annual, setAnnual]   = useState(false);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
@@ -134,7 +161,7 @@ export default function BillingPage() {
       const { data: tu } = await sb.from("tenant_users")
         .select("tenant_id").eq("user_id", data.user.id).single();
       if (!tu) return;
-      const [{ data: t }, { data: monthCalls }, { data: u }] = await Promise.all([
+      const [{ data: t }, { data: monthCalls }, { data: u }, { data: ledger }] = await Promise.all([
         sb.from("tenants").select("*").eq("id", tu.tenant_id).single(),
         // call_minutes.used_seconds is a counter nothing increments — this
         // ring read empty for every customer forever. The month's calls are
@@ -142,15 +169,22 @@ export default function BillingPage() {
         sb.from("calls").select("duration_seconds").eq("tenant_id", tu.tenant_id)
           .gte("created_at", new Date().toISOString().slice(0, 7) + "-01T00:00:00"),
         sb.from("call_minutes").select("*").eq("tenant_id", tu.tenant_id)
-          .eq("month", new Date().toISOString().slice(0, 7)).single(),
+          .eq("month", new Date().toISOString().slice(0, 7)).maybeSingle(),
+        // RLS policy credit_ledger_select_own lets a tenant read its own rows.
+        sb.from("credit_ledger").select("delta").eq("tenant_id", tu.tenant_id),
       ]);
       setTenant(t);
       setUsage({
-        ...(u || {}),
         used_seconds: (monthCalls || [])
           .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0),
-        plan_limit_seconds: u?.plan_limit_seconds
-          ?? ({ starter: 200, growth: 600, scale: 1500 }[String(t?.plan || "").toLowerCase()] ?? 0) * 60,
+        // Only the call_minutes row is known here; the plan tier's allowance
+        // comes from the live pricing catalogue and is resolved at render.
+        plan_limit_seconds: u?.plan_limit_seconds ?? 0,
+      });
+      const rows = (ledger || []) as { delta: number | string }[];
+      setTrial({
+        granted: rows.reduce((s, r) => s + Math.max(0, Number(r.delta) || 0), 0),
+        spent:   rows.reduce((s, r) => s + Math.max(0, -(Number(r.delta) || 0)), 0),
       });
       setLoading(false);
     });
@@ -249,6 +283,26 @@ export default function BillingPage() {
     ? Math.max(0, Math.ceil((new Date(tenant.trial_ends_at).getTime() - Date.now()) / 86400000))
     : null;
 
+  // What the ring shows depends on what gates this tenant's calls: a plan
+  // tier's monthly minutes, or — for everyone else — the trial credit pool.
+  const planId  = String(tenant?.plan || "").toLowerCase();
+  const onPaid  = PAID_PLANS.includes(planId);
+  const ring = (() => {
+    if (onPaid) {
+      const tierMinutes = Number(PLANS.find(p => p.id === planId)?.minutes) || 0;
+      const limitMin = usage?.plan_limit_seconds
+        ? Math.round(usage.plan_limit_seconds / 60) : tierMinutes;
+      return { used: Math.ceil((usage?.used_seconds || 0) / 60), total: limitMin, period: "This month" };
+    }
+    // Trial: credits are deducted per call, rounded up to the minute, so the
+    // ledger is the same number the customer is actually charged against.
+    if (trial && trial.granted > 0) {
+      return { used: Math.round(trial.spent), total: Math.round(trial.granted), period: "Free trial credits" };
+    }
+    // No ledger visible: show what was talked, without inventing a denominator.
+    return { used: Math.ceil((usage?.used_seconds || 0) / 60), total: 0, period: "This month" };
+  })();
+
   return (
     <Shell title="Billing">
       <script src="https://checkout.razorpay.com/v1/checkout.js" async />
@@ -257,8 +311,11 @@ export default function BillingPage() {
         <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading billing...</div>
       ) : (
         <>
+          <style>{`
+            @media (max-width: 760px) { .billing-grid { grid-template-columns: 1fr !important; } }
+          `}</style>
           {/* Current plan + usage */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+          <div className="billing-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
             <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, padding: 20 }}>
               <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
                 letterSpacing: "0.1em", marginBottom: 10 }}>Current Plan</div>
@@ -282,8 +339,8 @@ export default function BillingPage() {
             <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, padding: 20 }}>
               <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
                 letterSpacing: "0.1em", marginBottom: 10 }}>Minutes Usage</div>
-              {usage ? (
-                <UsageRing used={usage.used_seconds} total={usage.plan_limit_seconds} />
+              {usage || trial ? (
+                <UsageRing used={ring.used} total={ring.total} period={ring.period} />
               ) : (
                 <div style={{ color: C.dim, fontSize: 12 }}>No usage data yet</div>
               )}

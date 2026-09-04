@@ -18,7 +18,7 @@
  * tenant isolation in Postgres, so no shared secret ships to the browser.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -76,9 +76,22 @@ const INTENT_LABELS: Record<string, string> = {
   location_hours:       "Location / hours",
   complaint:            "Complaint",
   follow_up:            "Follow-up",
-  spam_or_wrong_number: "Spam / wrong number",
   other:                "Other",
 };
+
+// What the seat can record after a dialled call. The hint says what the
+// server's /api/calls/disposition does to the lead's stage — "busy" is
+// accepted and logged but is not in its STAGE_MAP, so it moves nothing.
+const DISPOSITIONS = [
+  { label: "Interested",     value: "interested",     color: C.grn,  icon: Check,     hint: "Lead moves to Qualified" },
+  { label: "Booked",         value: "booked",         color: C.gbr,  icon: Calendar,  hint: "Lead moves to Won" },
+  { label: "Call Back",      value: "callback",       color: C.gold, icon: RefreshCw, hint: "Stays in Contacted" },
+  { label: "Not Interested", value: "not_interested", color: C.dim,  icon: X,         hint: "Lead moves to Lost" },
+  { label: "No Answer",      value: "no_answer",      color: C.mid,  icon: PhoneOff,  hint: "Back to New" },
+  { label: "Busy",           value: "busy",           color: C.mid,  icon: PhoneOff,  hint: "Logged only — stage unchanged" },
+];
+
+const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 
 function scoreColor(s: number): string {
   if (s >= 80) return C.grn;
@@ -198,15 +211,27 @@ export default function LeadsPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   // Click-to-Call + Disposition state
-  const [ctcActive, setCtcActive] = useState<{ lead: Lead; ctcLogId?: string } | null>(null);
-  const [dispModal, setDispModal] = useState<{ lead: Lead; ctcLogId: string } | null>(null);
+  const [ctcActive, setCtcActive] = useState<{ lead: Lead; ctcLogId: string; startedAt: number; seconds: number } | null>(null);
+  const [dispModal, setDispModal] = useState<{ lead: Lead; ctcLogId: string; seconds?: number } | null>(null);
   const [dispNotes, setDispNotes] = useState("");
+  const [dispSaving, setDispSaving] = useState<string | null>(null);
+  const [dispError, setDispError] = useState("");
   const [ctcLoading, setCtcLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  useEffect(() => () => stopPolling(), []);
+
+  // Same flow as the Human Desk (web/app/desk/page.tsx): the POST returns
+  // once YOUR phone is answered and the customer leg is bridged. From there
+  // GET /api/calls/click-to-call/:id says whether the channel is still up,
+  // so the outcome prompt opens when the call actually ends — not on a
+  // blind 30-second timer that fired mid-conversation, or while still
+  // ringing, or long after a quick no-answer.
   const handleClickToCall = async (lead: Lead) => {
     setCtcLoading(lead.id);
     const sb = createClient();
@@ -217,17 +242,45 @@ export default function LeadsPage() {
         headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ customer_number: lead.phone, lead_id: lead.id }),
       });
-      const data = await resp.json();
-      if (resp.ok) {
-        setCtcActive({ lead, ctcLogId: data.ctc_log_id });
-        showToast(`Calling ${lead.name || lead.phone}...`);
-        // Auto-show disposition modal after 30 seconds
-        setTimeout(() => {
-          setCtcActive(null);
-          if (data.ctc_log_id) setDispModal({ lead, ctcLogId: data.ctc_log_id });
-        }, 30000);
+      const data = await resp.json().catch(() => ({}));
+      const ctcLogId: string | undefined = data.ctc_log_id || data.id;
+      if (!resp.ok || !ctcLogId) {
+        const m = String(data.error || data.detail || "Call failed");
+        showToast(
+          /NO_ANSWER|ORIGINATOR_CANCEL|timeout/i.test(m) ? "Your phone didn't pick up — try again when you're ready."
+          : /USER_BUSY/i.test(m) ? "Your phone is busy on another call."
+          : /no_outbound_cli/i.test(m) ? "No business number is assigned to this account yet."
+          : m);
       } else {
-        showToast(`${data.error || "Call failed"}`);
+        const started = Date.now();
+        setCtcActive({ lead, ctcLogId, startedAt: started, seconds: 0 });
+        showToast(`Connected to ${lead.name || lead.phone}`);
+        stopPolling();
+        pollRef.current = setInterval(async () => {
+          const secsLocal = Math.round((Date.now() - started) / 1000);
+          try {
+            const { data: { session: s2 } } = await sb.auth.getSession();
+            const r = await fetch(`${API}/api/calls/click-to-call/${ctcLogId}`, {
+              headers: { Authorization: `Bearer ${s2?.access_token}` },
+            });
+            const st = r.ok ? await r.json() : null;
+            if (st?.ended) {
+              stopPolling();
+              setCtcActive(null);
+              setDispModal({ lead, ctcLogId, seconds: st.duration_seconds || secsLocal });
+              return;
+            }
+            setCtcActive(cur => cur && cur.ctcLogId === ctcLogId
+              ? { ...cur, seconds: st?.duration_seconds || secsLocal } : cur);
+          } catch { /* keep polling */ }
+          // Fallback: if the status route never reports an end (ESL down,
+          // token expired), still ask after three minutes rather than never.
+          if (secsLocal >= 180) {
+            stopPolling();
+            setCtcActive(null);
+            setDispModal({ lead, ctcLogId, seconds: secsLocal });
+          }
+        }, 3000);
       }
     } catch (e: any) {
       showToast(`${e.message}`);
@@ -236,18 +289,28 @@ export default function LeadsPage() {
   };
 
   const submitDisposition = async (disposition: string) => {
-    if (!dispModal) return;
-    const sb = createClient();
-    const { data: { session } } = await sb.auth.getSession();
-    await fetch(`${API}/api/calls/disposition`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ctc_log_id: dispModal.ctcLogId, disposition, notes: dispNotes }),
-    });
-    showToast(`Disposition saved: ${disposition}`);
-    setDispModal(null);
-    setDispNotes("");
-    load();
+    if (!dispModal || dispSaving) return;
+    setDispSaving(disposition);
+    setDispError("");
+    try {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      const resp = await fetch(`${API}/api/calls/disposition`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ctc_log_id: dispModal.ctcLogId, disposition, notes: dispNotes }),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(j.error || `Could not save the outcome (${resp.status})`);
+      const d = DISPOSITIONS.find(x => x.value === disposition);
+      showToast(`Outcome saved: ${d?.label || disposition}`);
+      setDispModal(null);
+      setDispNotes("");
+      load();
+    } catch (e: any) {
+      setDispError(e.message || "Could not save the outcome");
+    }
+    setDispSaving(null);
   };
 
   const load = useCallback(async () => {
@@ -278,6 +341,14 @@ export default function LeadsPage() {
     if (e) setError(e.message);
     else setLeads((data || []) as Lead[]);
     setLoading(false);
+    // Deep links from the Human Desk and the live board: ?lead=<id> opens
+    // that lead, ?phone=<10 digits> filters to it.
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const wantId = q.get("lead"), wantPhone = q.get("phone");
+      if (wantId) { const hit = (data || []).find((l: any) => l.id === wantId); if (hit) setOpenLead(hit as Lead); }
+      else if (wantPhone) setSearch(wantPhone.replace(/\D/g, "").slice(-10));
+    } catch { /* no window */ }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -306,7 +377,7 @@ export default function LeadsPage() {
         || (l.interest || "").toLowerCase().includes(q);
   });
 
-  const counts = STAGES.reduce((acc, s) => {
+  const counts = stages.reduce((acc, s) => {
     acc[s.id] = leads.filter(l => l.stage === s.id).length;
     return acc;
   }, {} as Record<string, number>);
@@ -337,34 +408,40 @@ export default function LeadsPage() {
             borderRadius: 12, padding: 28, width: 440, boxShadow: "0 20px 60px #0008" }}>
             <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><ClipboardList size={16} /> Call Disposition</div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 20 }}>
-              {dispModal.lead.name || dispModal.lead.phone} — How did the call go?
+              {dispModal.lead.name || dispModal.lead.phone}
+              {dispModal.seconds != null && <> — call ended · {fmtDur(dispModal.seconds)}</>}
+              . How did it go?
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-              {[
-                { label: "Interested",     value: "interested",     color: C.grn,  icon: Check },
-                { label: "Booked",         value: "booked",         color: C.gbr,  icon: Calendar },
-                { label: "Call Back",      value: "callback",       color: C.gold, icon: RefreshCw },
-                { label: "Not Interested", value: "not_interested", color: C.dim,  icon: X },
-                { label: "No Answer",      value: "no_answer",      color: C.mid,  icon: PhoneOff },
-                { label: "Busy",           value: "busy",           color: C.mid,  icon: PhoneOff },
-              ].map(d => (
-                <button key={d.value} onClick={() => submitDisposition(d.value)} style={{
+              {DISPOSITIONS.map(d => (
+                <button key={d.value} onClick={() => submitDisposition(d.value)}
+                  disabled={!!dispSaving} title={d.hint} style={{
                   background: d.color + "22", color: d.color,
                   border: "1px solid " + d.color + "44",
-                  borderRadius: 8, padding: "12px 10px", fontSize: 13,
-                  fontWeight: 700, cursor: "pointer", textAlign: "center",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                }}><d.icon size={14} /> {d.label}</button>
+                  borderRadius: 8, padding: "10px 10px", fontSize: 13,
+                  fontWeight: 700, cursor: dispSaving ? "wait" : "pointer", textAlign: "center",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  opacity: dispSaving && dispSaving !== d.value ? 0.5 : 1, fontFamily: "inherit",
+                }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <d.icon size={14} /> {dispSaving === d.value ? "Saving…" : d.label}
+                  </span>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: C.dim }}>{d.hint}</span>
+                </button>
               ))}
             </div>
             <textarea value={dispNotes} onChange={e => setDispNotes(e.target.value)}
               placeholder="Add notes (optional)…" rows={3}
               style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
                 borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 12,
-                resize: "vertical", marginBottom: 12 }} />
-            <button onClick={() => { setDispModal(null); setDispNotes(""); }}
+                resize: "vertical", marginBottom: 12, boxSizing: "border-box", fontFamily: "inherit" }} />
+            {dispError && (
+              <div style={{ color: C.red, fontSize: 12, marginBottom: 12 }}>{dispError}</div>
+            )}
+            <button onClick={() => { setDispModal(null); setDispNotes(""); setDispError(""); }}
+              disabled={!!dispSaving}
               style={{ background: "none", color: C.dim, border: "1px solid " + C.bord,
-                borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer" }}>
+                borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
               Dismiss
             </button>
           </div>
@@ -484,7 +561,7 @@ export default function LeadsPage() {
                     </div>
 
                     {editing === l.id ? (
-                      <div style={{ marginTop: 10 }}>
+                      <div style={{ marginTop: 10 }} onClick={e => e.stopPropagation()}>
                         <textarea
                           style={{ ...inputStyle, width: "100%", minHeight: 60, resize: "vertical" }}
                           value={noteDraft}
@@ -503,9 +580,12 @@ export default function LeadsPage() {
                         </div>
                       </div>
                     ) : (
-                      <div style={{ marginTop: 8 }}>
+                      /* The card itself opens the drawer; without this every
+                         button inside it also opened a full-screen overlay on
+                         top of what it just revealed. */
+                      <div style={{ marginTop: 8 }} onClick={e => e.stopPropagation()}>
                         {l.notes && (
-                          <div onClick={e => e.stopPropagation()} /* the card itself opens the drawer; without this every button inside it also opened a full-screen overlay on top of what it just revealed */  style={{ fontSize: 12, color: C.mid, fontStyle: "italic",
+                          <div style={{ fontSize: 12, color: C.mid, fontStyle: "italic",
                             marginBottom: 4, lineHeight: 1.5 }}>{l.notes}</div>
                         )}
                         <button
@@ -519,7 +599,8 @@ export default function LeadsPage() {
                   </div>
 
                   {/* stage control + click-to-call */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}
+                    onClick={e => e.stopPropagation()}>
                     {/* Click-to-Call button */}
                     <button
                       onClick={() => handleClickToCall(l)}
@@ -532,12 +613,13 @@ export default function LeadsPage() {
                         opacity: ctcLoading === l.id ? 0.7 : 1,
                         display: "flex", alignItems: "center", gap: 5,
                       }}>
-                      {ctcLoading === l.id ? (<><RefreshCw size={12} /> Dialing...</>) :
-                       ctcActive?.lead.id === l.id ? (<><Phone size={12} /> Active Call</>) : (<><Phone size={12} /> Call Lead</>)}
+                      {ctcLoading === l.id ? (<><RefreshCw size={12} /> Ringing you…</>) :
+                       ctcActive?.lead.id === l.id ? (<><Phone size={12} /> On call · {fmtDur(ctcActive.seconds)}</>) : (<><Phone size={12} /> Call Lead</>)}
                     </button>
-                    {/* Disposition trigger */}
+                    {/* Disposition trigger — the prompt opens by itself when
+                        the call ends; this is for logging early. */}
                     {ctcActive?.lead.id === l.id && (
-                      <button onClick={() => { setCtcActive(null); setDispModal({ lead: l, ctcLogId: ctcActive.ctcLogId! }); }}
+                      <button onClick={() => { stopPolling(); setDispModal({ lead: l, ctcLogId: ctcActive.ctcLogId, seconds: ctcActive.seconds }); setCtcActive(null); }}
                         style={{ background: C.gold + "22", color: C.gold, border: "1px solid " + C.gold + "44",
                           borderRadius: 7, padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer",
                           display: "flex", alignItems: "center", gap: 5 }}>

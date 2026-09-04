@@ -4126,6 +4126,7 @@ import { mountOutboundRoutes } from "./outbound";
 import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
+import { mountDeskRoutes } from "./desk";
 import { mountCampaignImport } from "./campaign-import";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 
@@ -4139,6 +4140,7 @@ mountCampaignImport(app, sb, verifyJWT, getTenantId, audit, planAllows);
 
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 mountAssetRoutes(app, verifyJWT, getTenantId);
+mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.
@@ -4532,18 +4534,30 @@ app.post("/api/keys/mine", verifyJWT, async (req: any, res) => {
   const scopes = Array.isArray(req.body?.scopes)
     ? req.body.scopes.filter((x: any) => typeof x === "string").slice(0, 12) : [];
 
+  // The page offered an expiry and this route dropped it, so every key
+  // was permanent whatever the owner picked. Accepted as an ISO date in
+  // the future, or null for "never".
+  let expires_at: string | null = null;
+  if (req.body?.expires_at) {
+    const t = new Date(String(req.body.expires_at));
+    if (!Number.isFinite(t.getTime()) || t.getTime() <= Date.now()) {
+      return res.status(400).json({ error: "expires_at must be a date in the future" });
+    }
+    expires_at = t.toISOString();
+  }
+
   const key      = generateApiKey("live");
   const prefix   = key.slice(0, 12);
   const key_hash = await bcrypt.hash(key, 10);
   const { error } = await sb.from("api_keys").insert({
-    tenant_id: tenantId, name, prefix, key_hash, scopes,
+    tenant_id: tenantId, name, prefix, key_hash, scopes, expires_at,
     created_by: req.user.id,
   });
   if (error) return res.status(500).json({ error: error.message });
 
-  await audit("api_key_created", { tenantId, actorId: req.user.id, metadata: { name, prefix } });
+  await audit("api_key_created", { tenantId, actorId: req.user.id, metadata: { name, prefix, expires_at } });
   // The only time the full key is ever returned. It is stored hashed.
-  res.json({ ok: true, key, prefix });
+  res.json({ ok: true, key, prefix, name, expires_at });
 });
 
 app.post("/api/keys/mine/:id/revoke", verifyJWT, async (req: any, res) => {
@@ -4919,8 +4933,22 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
         .join(",");
     }
 
+    // The Setup page has written missed_call_guard_enabled/_seconds to the
+    // voice profile since migration 016 and nothing read them: the ring
+    // timeout came from platform_config alone, so a business that set 30
+    // seconds still rang out at 20 and could not turn the guard off. The
+    // tenant's value wins; the platform value is the default.
     const cfg = await getPlatformConfig();
-    const guardSeconds = parseInt(cfg["missed_call_seconds"] || "20");
+    const { data: guardVp } = did.voice_profile_id
+      ? await sb.from("voice_profiles")
+          .select("missed_call_guard_enabled, missed_call_guard_seconds")
+          .eq("id", did.voice_profile_id).maybeSingle()
+      : { data: null as any };
+    const platformGuard = parseInt(cfg["missed_call_seconds"] || "20");
+    const tenantGuard   = Number(guardVp?.missed_call_guard_seconds);
+    const guardSeconds  = Math.min(45, Math.max(10,
+      Number.isFinite(tenantGuard) && tenantGuard > 0 ? tenantGuard : platformGuard));
+    const guardEnabled  = did.missed_call_guard !== false && guardVp?.missed_call_guard_enabled !== false;
 
     // A "human" DID with nobody to ring would drop the caller into
     // silence, so fall back to the AI rather than to nothing.
@@ -4947,8 +4975,10 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // that enabled its menu heard nothing change and there was no way for
     // them to know why. An enabled menu with options IS the request; the
     // routing_mode value stays as an explicit override for the admin.
+    // 'hybrid' is the AI answering with a person one ask away, so it takes
+    // the menu too — it was skipped here and a hybrid line lost its menu.
     let ivr: any = null;
-    if (effectiveMode === "ivr" || effectiveMode === "ai") {
+    if (effectiveMode === "ivr" || effectiveMode === "ai" || effectiveMode === "hybrid") {
       const { data: menu } = await sb.from("ivr_menus")
         .select("greeting, options, enabled")
         .eq("tenant_id", did.tenant_id).eq("enabled", true)
@@ -4970,7 +5000,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       ring_group:         ringGroup,
       direction:          isOutbound ? "outbound" : "inbound",
       campaign_id:        campaign_id || null,
-      missed_call_guard:  did.missed_call_guard !== false,
+      missed_call_guard:  guardEnabled,
       missed_call_seconds: guardSeconds,
     });
   } catch (err: any) {
@@ -5246,7 +5276,12 @@ app.post("/webhooks/whatsapp", async (req, res) => {
 // ── FreeSWITCH hangup webhook ─────────────────────────────────
 app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
   try {
-    const { fs_uuid, duration, hangup_cause, did_number, caller_number } = req.body;
+    const { fs_uuid, duration, hangup_cause, did_number, caller_number, missed } = req.body;
+    // "1" when the ring group rang out and the Missed Call Guard hung up —
+    // set by the dialplan, because from billsec/hangup_cause alone that
+    // leg looks like a short answered call (the apology was played on an
+    // answered channel and ends NORMAL_CLEARING).
+    const rangOut = String(missed ?? "") === "1";
 
     // Find call by FS UUID
     // supabase-js RESOLVES {data:null,error} on failure rather than throwing,
@@ -5254,10 +5289,19 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // error, a failed query is indistinguishable from "no such call" and the
     // completion update below is silently skipped.
     const { data: callRow, error: selErr } = await sb.from("calls")
-      .select("id, tenant_id, voice_profile_id, created_at, direction, caller_number")
+      .select("id, tenant_id, voice_profile_id, created_at, direction, caller_number, status, intent")
       .eq("livekit_room_id", fs_uuid)
       .single();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
+
+    // What this call ends as. A human ring-out is missed whatever the
+    // hangup cause says; a call the pipeline handed to a person (or the
+    // Human Desk dialled) stays "transferred" — before this, both were
+    // overwritten to "completed" and were indistinguishable from a call
+    // Nikki took, and the ring-out was billed.
+    const wasMissed  = rangOut || callRow?.status === "missed";
+    const humanCall  = callRow?.status === "transferred" || callRow?.intent === "transfer";
+    const finalStatus = wasMissed ? "missed" : (callRow?.status === "transferred" ? "transferred" : "completed");
 
     // The number the WhatsApp goes to. Taken from the body only when it is a
     // real mobile: the 13:46 hangup today arrived with caller_number "$1" (an
@@ -5293,8 +5337,8 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     if (callRow) {
       // Update call status
       const { error: updErr } = await sb.from("calls").update({
-        status:           "completed",
-        duration_seconds: secs,
+        status:           finalStatus,
+        duration_seconds: wasMissed ? 0 : secs,
         updated_at:       new Date().toISOString(),
       }).eq("id", callRow.id);
       if (updErr) console.error("[FS Hangup] completion update failed:", updErr.message);
@@ -5345,7 +5389,8 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // to run twice — FreeSWITCH has delivered a duplicate hangup before,
       // and a second insert is rejected rather than billing the minute
       // again. A conflict here is expected, not an error.
-      if (callRow.tenant_id && secs > 0) {
+      // A ring-out cost the tenant nothing but an apology; not a minute.
+      if (callRow.tenant_id && secs > 0 && !wasMissed) {
         const minutes = Math.ceil(secs / 60);
         const { error: cErr } = await sb.from("credit_ledger").insert({
           tenant_id: callRow.tenant_id,
@@ -5360,11 +5405,39 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         }
       }
 
-      // Trigger R2 upload in voice pipeline (async)
+      // ── Close out a human call ──────────────────────────────────
+      // The Desk's click_to_call_log row and the lead behind it. Written
+      // here, from the hangup hook, rather than by an in-process poller
+      // that an api-server restart mid-call left at duration 0 forever.
+      if (humanCall) {
+        const { data: ctc } = await sb.from("click_to_call_log")
+          .update({ duration_seconds: secs, call_id: callRow.id, updated_at: new Date().toISOString() })
+          .eq("freeswitch_uuid", fs_uuid).select("id, lead_id").maybeSingle();
+        if (ctc?.lead_id) {
+          const { data: l } = await sb.from("leads").select("call_count").eq("id", ctc.lead_id).maybeSingle();
+          await sb.from("leads").update({
+            call_count: (l?.call_count || 0) + 1, last_contacted_at: new Date().toISOString(),
+            last_call_id: callRow.id,
+          }).eq("id", ctc.lead_id);
+        } else if (callRow.direction === "inbound" && waCaller && !wasMissed) {
+          // Somebody on the team took this call. Nikki never heard it, so
+          // there is no scored lead — file the caller as contacted so the
+          // Human CRM produces the same thing an AI call does.
+          await touchLeadFromHumanCall(callRow.tenant_id, waCaller, callRow.id, true);
+        }
+      }
+
+      // Recording: the websocket cleanup uploads it for a call Nikki
+      // finished. A call handed to a person, or dialled from the Desk,
+      // still has its record_session file on disk — the pipeline uploads
+      // that one on request (and deletes it, tmpfs being finite).
       fetch(`${PIPELINE_URL}/api/v1/call/freeswitch/hangup`, {
         method:  "POST",
         headers: { "Content-Type": "application/json", "X-Internal-Secret": INTERNAL_SECRET },
-        body: JSON.stringify({ fs_uuid, call_id: callRow.id, tenant_id: callRow.tenant_id }),
+        body: JSON.stringify({
+          fs_uuid, call_id: callRow.id, tenant_id: callRow.tenant_id,
+          upload_recording: humanCall,
+        }),
       }).catch(e => console.error("[Pipeline hangup]", e.message));
     }
 
@@ -5378,8 +5451,10 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // someone we missed a call they never made is both wrong and the second
     // message they get, since the dispatcher already sends its own no-answer
     // follow-up on the first failed attempt.
+    // A ring-out is excluded too: the guard extension already sent the
+    // missed-call WhatsApp before it hung up, and filed the row.
     const wasOutbound = callRow?.direction === "outbound";
-    if (!wasOutbound && secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
+    if (!wasOutbound && !rangOut && secs < 5 && hangup_cause !== "NORMAL_CLEARING") {
       // The n8n missed-call workflow reads business_name straight into the
       // WhatsApp template's {{1}}, and picks the recipient from
       // whatsapp_number falling back to caller_number. This call site sent
@@ -5430,9 +5505,37 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
 });
 
 // ── FreeSWITCH missed-call explicit webhook ───────────────────
+/**
+ * A lead for a call no AI scored: one the team answered (contacted) or one
+ * that rang out (new, flagged for a call back). Same upsert the pipeline's
+ * scorer uses, so a returning caller updates their row instead of 409ing.
+ */
+async function touchLeadFromHumanCall(tenantId: string, phone10: string,
+                                      callId: string | null, answered: boolean) {
+  try {
+    const { data: leadId, error } = await sb.rpc("upsert_lead_from_call", {
+      p_tenant_id: tenantId, p_phone: phone10, p_name: null,
+      p_intent:   answered ? "follow_up" : "other",
+      p_interest: answered ? "Spoke to the team" : "Missed call — nobody could answer",
+      p_score:    answered ? 40 : 35,
+      p_call_id:  callId,
+    });
+    if (error) { console.warn("[lead] human-call upsert failed:", error.message); return; }
+    if (answered && leadId) {
+      // The RPC never touches stage; a person spoke to them, so 'new' is wrong.
+      await sb.from("leads").update({ stage: "contacted" })
+        .eq("id", leadId).eq("tenant_id", tenantId).eq("stage", "new");
+    }
+  } catch (e: any) {
+    console.warn("[lead] human-call upsert threw:", e.message);
+  }
+}
+
 app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) => {
   try {
-    const { caller_number, did_number } = req.body;
+    const { caller_number, did_number, fs_uuid } = req.body;
+    const callerDigits = String(caller_number ?? "").replace(/[^\d+]/g, "")
+      .match(/^(?:\+?91|0)?(\d{10})$/)?.[1] || "";
 
     // Match on the last 10 digits, same as /webhooks/freeswitch/inbound.
     // dids.number is stored E.164 ("+918633502031") but the dialplan posts
@@ -5459,12 +5562,29 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
       // the workflow ran green, reported success, and delivered nothing. This
       // path uses the approved missed_call_followup template on Meta, and
       // writes wa_dispatch_log itself.
-      if (vp?.fallback_wa_enabled !== false) {
+      let waSent = false;
+      if (vp?.fallback_wa_enabled !== false && callerDigits) {
         const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
           `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
         await sendWhatsApp(caller_number, msg, did.tenant_id,
           did.voice_profile_id, "missed_call", undefined, undefined,
           vp?.business_name || "our team");
+        waSent = true;
+      }
+
+      // File the call and the caller. A ring-out used to leave the calls
+      // row for the hangup hook, which marked it completed, and created no
+      // lead at all — the one caller a business most needs to ring back
+      // was the one that never reached /leads.
+      let callId: string | null = null;
+      if (fs_uuid) {
+        const { data: c } = await sb.from("calls")
+          .update({ status: "missed", wa_sent: waSent, updated_at: new Date().toISOString() })
+          .eq("livekit_room_id", fs_uuid).select("id").maybeSingle();
+        callId = c?.id || null;
+      }
+      if (callerDigits) {
+        await touchLeadFromHumanCall(did.tenant_id, callerDigits, callId, false);
       }
     }
 
@@ -5476,6 +5596,26 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
 });
 
 // ── Click-to-Call ─────────────────────────────────────────────
+
+// Where a dialled call stands: still up, or ended and how long it ran.
+app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { data: row } = await sb.from("click_to_call_log")
+    .select("id, freeswitch_uuid, duration_seconds, disposition, created_at")
+    .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  if (!row) return res.status(404).json({ error: "Not found" });
+  let alive = false;
+  if (!row.duration_seconds && row.freeswitch_uuid) {
+    try { alive = await fsl.channelExists(row.freeswitch_uuid); } catch { alive = false; }
+  }
+  res.json({
+    id: row.id, alive, ended: !alive,
+    duration_seconds: row.duration_seconds || (alive ? Math.round((Date.now() - new Date(row.created_at).getTime()) / 1000) : 0),
+    disposition: row.disposition,
+  });
+});
+
 app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res) => {
   try {
     const user     = req.user;
@@ -5491,8 +5631,17 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     // Get tenant's DID for masked CLI
     const { data: did } = await sb.from("dids")
-      .select("number").eq("tenant_id", tenantId).eq("status", "assigned")
+      .select("number, voice_profile_id").eq("tenant_id", tenantId).eq("status", "assigned")
       .limit(1).maybeSingle();
+
+    // Desk calls ride the same trunk and are billed the same minute, so
+    // the same gate applies: a trial with no credits left cannot dial.
+    const { data: tenantRow } = await sb.from("tenants")
+      .select("credit_minutes, plan").eq("id", tenantId).maybeSingle();
+    const onPaidPlan = ["starter", "growth", "scale"].includes(String(tenantRow?.plan || "").toLowerCase());
+    if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
+      return res.status(402).json({ error: "no_credits", detail: "This account has no call minutes left. Top up on the Billing page to dial." });
+    }
 
     // NEVER fall back to the customer's own number. This read
     // `did?.number || customer_number`, so a tenant with no assigned DID —
@@ -5514,6 +5663,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     }
 
     let fsUuid = "";
+    let agentNumberUsed = "";
     if (engine === "freeswitch") {
       // Use FreeSWITCH ESL for 2-leg bridge
       // auth.users.phone is empty for every account here — signup is by
@@ -5528,6 +5678,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
           error: "Add your mobile number on the Setup page — that's the phone we ring first.",
         });
       }
+      agentNumberUsed = agentNumber;
       fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
     } else {
       // The Exotel branch is gone. It was the only other engine, and the
@@ -5538,24 +5689,66 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       });
 }
 
-    // Log to click_to_call_log
+    // A number dialled from the desk that has no lead yet becomes one, so
+    // the outcome the seat records afterwards has somewhere to land — the
+    // disposition route moves a LEAD's stage, and without a row here a
+    // dialled number left no trace beyond the log.
+    let leadId: string | null = lead_id || null;
+    const dialledDigits = String(customer_number).replace(/\D/g, "").slice(-10);
+    if (!leadId && dialledDigits.length === 10) {
+      const { data: existing } = await sb.from("leads").select("id")
+        .eq("tenant_id", tenantId).eq("phone", dialledDigits).maybeSingle();
+      if (existing?.id) leadId = existing.id;
+      else {
+        const { data: created } = await sb.from("leads").insert({
+          tenant_id: tenantId, phone: dialledDigits, stage: "contacted",
+          source: "manual", intent: "other", score: 30, call_count: 0,
+          notes: "Dialled from the Human Desk",
+        }).select("id").maybeSingle();
+        leadId = created?.id || null;
+      }
+    }
+
+    // The call itself. Without this row a Desk call was never billed, never
+    // listed on /calls, never counted against concurrency and had nowhere
+    // to hang a recording. intent "transfer" marks it as human-handled; the
+    // hangup hook closes it out like any other leg.
+    const seatPhone = String(agentNumberUsed).replace(/\D/g, "").slice(-10);
+    const { data: callRow, error: callErr } = await sb.from("calls").insert({
+      tenant_id:        tenantId,
+      voice_profile_id: did?.voice_profile_id || null,
+      caller_number:    dialledDigits || String(customer_number),
+      direction:        "outbound",
+      status:           "active",
+      intent:           "transfer",
+      livekit_room_id:  fsUuid,
+    }).select("id").maybeSingle();
+    if (callErr) console.error("[ctc] calls insert failed:", callErr.message);
+
+    // Log to click_to_call_log. caller_number is the seat that rang — the
+    // column was documented that way and had been storing the masked CLI,
+    // which masked_cli already holds.
     const { data: ctcLog } = await sb.from("click_to_call_log").insert({
       tenant_id:       tenantId,
       agent_user_id:   user.id,
-      lead_id:         lead_id || null,
-      caller_number:   maskedCli,
+      lead_id:         leadId,
+      call_id:         callRow?.id || null,
+      caller_number:   seatPhone || maskedCli,
       callee_number:   customer_number,
       masked_cli:      maskedCli,
       freeswitch_uuid: fsUuid,
     }).select().single();
 
     // Update lead last_contacted_at
-    if (lead_id) {
+    if (leadId) {
       await sb.from("leads").update({
         last_contacted_at: new Date().toISOString(),
         stage: "contacted",
-      }).eq("id", lead_id).eq("tenant_id", tenantId);
+      }).eq("id", leadId).eq("tenant_id", tenantId);
     }
+
+    // Duration, lead call_count and the recording arrive from the dialplan
+    // hangup hook (click_to_call_agent_leg) — see /webhooks/freeswitch/hangup.
 
     await audit("click_to_call", {
       tenantId, actorId: user.id,

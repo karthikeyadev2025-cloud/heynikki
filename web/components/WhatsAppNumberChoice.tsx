@@ -1,165 +1,108 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "../lib/supabase";
 import { NIKKI } from "../lib/brand";
+import { MessageCircle, ArrowRight } from "lucide-react";
+import { waStatus } from "./WhatsAppSender";
 
 // The same local alias every other component in this app uses — the palette
 // exports surface/vault/text, not surf/hi/txt.
 const C = {
   surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
-  grn: NIKKI.emerald, gold: NIKKI.gold,
+  grn: NIKKI.emerald, gold: NIKKI.gold, gbr: NIKKI.tealLight,
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-const API = process.env.NEXT_PUBLIC_API_URL;
+const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+type SenderSummary = {
+  kyc_approved: boolean;
+  heynikki_number: string | null;
+  chosen: string | null;
+  display_name: string | null;
+  status: string | null;
+  on_waba: boolean;
+  sending_as: string;
+  sending_as_own: boolean;
+};
 
 /**
- * Which number this business sends WhatsApp from.
+ * Which number this business sends WhatsApp from — shown on the
+ * Verification page because KYC is what unlocks it.
  *
- * The HeyNikki number is the default because it costs the business nothing:
- * one identity for calls and messages, nothing to arrange, live the same
- * day. Their own number is offered too — but the trade-off is stated BEFORE
- * they choose, not discovered afterwards: putting a number on the WhatsApp
- * Cloud API ends its WhatsApp Business app account, and the chats already on
- * it do not come across. For a shop that has messaged its customers from
- * that number for years, that is a real loss.
+ * Read-only on purpose. This card used to run its own "pick a number" form
+ * against /api/whatsapp/number-choice, while the WhatsApp page ran the real
+ * three-step Meta registration against /api/whatsapp/sender/*. Both wrote
+ * the same tenant_whatsapp row with different meanings, so a choice made
+ * here could contradict what the WhatsApp page said. There is one flow now:
+ * this card reflects it and links to it.
  */
 export default function WhatsAppNumberChoice() {
-  const [state, setState] = useState<any>(null);
-  const [mode, setMode]   = useState<"did" | "own">("did");
-  const [own, setOwn]     = useState("");
-  const [name, setName]   = useState("");
-  const [ack, setAck]     = useState(false);
-  const [msg, setMsg]     = useState("");
-  const [busy, setBusy]   = useState(false);
+  const [s, setS] = useState<SenderSummary | null>(null);
+  const [err, setErr] = useState("");
 
-  const load = useCallback(async () => {
-    const sb = createClient();
-    const { data: { session } } = await sb.auth.getSession();
-    const r = await fetch(`${API}/api/whatsapp/number-choice`,
-      { headers: { Authorization: `Bearer ${session?.access_token}` } });
-    if (r.ok) {
-      const j = await r.json();
-      setState(j);
-      if (j.display_name) setName(j.display_name);
-    }
+  useEffect(() => {
+    (async () => {
+      const sb = createClient();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return;
+      try {
+        const r = await fetch(`${API}/api/whatsapp/sender`,
+          { headers: { Authorization: `Bearer ${session.access_token}` } });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { setErr(j.error || "Could not load your WhatsApp number"); return; }
+        setS(j);
+      } catch (e: any) { setErr(e.message || "Could not reach the server"); }
+    })();
   }, []);
-  useEffect(() => { load(); }, [load]);
 
-  if (!state) return null;
+  if (!s && !err) return null;
 
-  const save = async () => {
-    setBusy(true); setMsg("");
-    const sb = createClient();
-    const { data: { session } } = await sb.auth.getSession();
-    const r = await fetch(`${API}/api/whatsapp/number-choice`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ mode, display_name: name, phone: own }),
-    });
-    const j = await r.json();
-    setMsg(j.error || j.message || "Saved");
-    setBusy(false);
-    load();
-  };
-
-  const label = { fontSize: 13.5, color: C.txt, display: "flex", gap: 9,
-    alignItems: "flex-start", cursor: "pointer", padding: "9px 0" } as const;
+  const st   = waStatus(s?.status);
+  const live = s?.status === "active";
 
   return (
     <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-      padding: 18, marginTop: 18 }}>
-      <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800, marginBottom: 3 }}>
-        Your WhatsApp number
-      </div>
-      <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 12, lineHeight: 1.55 }}>
-        This is the number your customers see when Nikki sends them a confirmation,
-        a brochure or a follow-up.
+      padding: 18, marginTop: 18, maxWidth: 720 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+          <MessageCircle size={16} /> Your WhatsApp number
+        </div>
+        {s && (
+          <span style={{ background: st.color + "22", color: st.color, border: `1px solid ${st.color}44`,
+            borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>{st.label}</span>
+        )}
       </div>
 
-      {state.status === "active" ? (
-        <div style={{ color: C.grn, fontSize: 13.5, fontWeight: 700 }}>
-          Live on {state.chosen} — your customers see “{state.display_name}”.
-        </div>
-      ) : !state.kyc_approved ? (
-        <div style={{ color: C.mid, fontSize: 13 }}>
-          We&apos;ll enable this as soon as your KYC is approved.
-        </div>
-      ) : (
+      {err ? (
+        <div style={{ color: NIKKI.red, fontSize: 12.5, marginTop: 8 }}>{err}</div>
+      ) : s && (
         <>
-          <label style={label}>
-            <input type="radio" checked={mode === "did"} onChange={() => setMode("did")} />
-            <span>
-              <strong>Use my HeyNikki number{state.heynikki_number ? ` (${state.heynikki_number})` : ""}</strong>
-              <div style={{ color: C.mid, fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>
-                Recommended. One number for calls and WhatsApp, nothing for you to set up,
-                and your personal WhatsApp keeps working exactly as it does today.
-              </div>
-            </span>
-          </label>
-
-          <label style={label}>
-            <input type="radio" checked={mode === "own"} onChange={() => setMode("own")} />
-            <span>
-              <strong>Use my own number</strong>
-              <div style={{ color: C.mid, fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>
-                Keeps the number your customers already know.
-              </div>
-            </span>
-          </label>
-
-          {mode === "own" && (
-            <div style={{ marginLeft: 26, marginBottom: 6 }}>
-              <input value={own} onChange={e => setOwn(e.target.value)}
-                placeholder="98765 43210"
-                style={{ padding: "8px 11px", borderRadius: 8, fontSize: 13.5, width: 190,
-                  background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
-              <div style={{ background: `${C.gold}14`, border: `1px solid ${C.gold}44`,
-                borderRadius: 8, padding: "10px 12px", marginTop: 10 }}>
-                <div style={{ color: C.gold, fontSize: 12.5, fontWeight: 800, marginBottom: 4 }}>
-                  Read this before choosing your own number
-                </div>
-                <div style={{ color: C.mid, fontSize: 12.5, lineHeight: 1.6 }}>
-                  Once this number is connected, the <strong>WhatsApp Business app on it stops
-                  working</strong> and the chats already in it will not move across. You&apos;ll
-                  message customers from your HeyNikki dashboard instead. If you want to keep
-                  using WhatsApp on your phone as you do now, pick the HeyNikki number above.
-                </div>
-                <label style={{ display: "flex", gap: 7, alignItems: "center",
-                  marginTop: 9, fontSize: 12.5, color: C.txt, cursor: "pointer" }}>
-                  <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} />
-                  I understand and want to use my own number
-                </label>
-              </div>
-            </div>
-          )}
-
-          <div style={{ marginTop: 12 }}>
-            <div style={{ color: C.dim, fontSize: 11.5, marginBottom: 4 }}>
-              Name your customers will see on WhatsApp
-            </div>
-            <input value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. Aduri Group"
-              style={{ padding: "8px 11px", borderRadius: 8, fontSize: 13.5, width: 240,
-                background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+          <div style={{ color: C.mid, fontSize: 12.5, marginTop: 6, lineHeight: 1.55 }}>
+            Customers get confirmations, brochures and follow-ups from{" "}
+            <strong style={{ color: live ? C.grn : C.gold }}>{s.sending_as}</strong>
+            {live
+              ? ` as “${s.display_name || "your business"}”.`
+              : " — the shared HeyNikki number, until your own is live."}
           </div>
 
-          <button type="button" disabled={busy || name.trim().length < 3 || (mode === "own" && (!ack || own.replace(/\D/g, "").length < 10))}
-            onClick={save}
-            style={{ marginTop: 12, padding: "9px 18px", borderRadius: 8, border: "none",
-              fontSize: 13.5, fontWeight: 800, background: C.grn, color: "#04120a",
-              cursor: busy ? "wait" : "pointer",
-              opacity: (name.trim().length < 3 || (mode === "own" && (!ack || own.replace(/\D/g, "").length < 10))) ? 0.5 : 1 }}>
-            {busy ? "Saving…" : state.chosen ? "Update my choice" : "Confirm"}
-          </button>
-
-          {state.status === "requested" && (
-            <div style={{ color: C.gold, fontSize: 12, marginTop: 8 }}>
-              Requested {state.chosen} — we&apos;re verifying it with WhatsApp now.
+          {!live && (
+            <div style={{ color: C.mid, fontSize: 12.5, marginTop: 8, lineHeight: 1.55 }}>
+              {!s.kyc_approved
+                ? "Once your KYC is approved you can move WhatsApp to your own number from the WhatsApp page."
+                : s.on_waba
+                  ? `${s.chosen} is added and waiting for its verification code — finish on the WhatsApp page.`
+                  : "Your KYC is approved, so you can put WhatsApp on your own number now."}
             </div>
           )}
-          {msg && <div style={{ color: C.mid, fontSize: 12.5, marginTop: 8 }}>{msg}</div>}
+
+          <Link href="/whatsapp" style={{ display: "inline-flex", alignItems: "center", gap: 6,
+            marginTop: 12, color: C.gbr, fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
+            {live ? "Manage on the WhatsApp page" : s.kyc_approved ? "Set up on the WhatsApp page" : "Open the WhatsApp page"}
+            <ArrowRight size={14} />
+          </Link>
         </>
       )}
     </div>
