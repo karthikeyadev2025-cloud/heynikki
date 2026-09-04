@@ -100,6 +100,25 @@ async function tenantCli(tenantId: string): Promise<string | null> {
  * call THROWS — NO_ANSWER, USER_BUSY and CALL_REJECTED are ordinary campaign
  * outcomes rather than faults, and the caller decides the follow-up.
  */
+// The voice pipeline reads this before promising a caller "connecting you
+// to staff": a transfer is an outbound leg on the same trunk, and when Jio
+// is refusing outbound (the fault the dispatcher sees first, every 15
+// minutes) Nikki must say "we'll call you back" instead of dead-ending a
+// caller into ringback. Stored as JSON text; the pipeline parses it and
+// only trusts a fault younger than six hours.
+let _lastTrunkState: string | null = null;
+async function recordTrunkState(ok: boolean, cause?: string): Promise<void> {
+  const state = ok ? "ok" : `fault:${cause}`;
+  if (state === _lastTrunkState) return;          // one write per change
+  _lastTrunkState = state;
+  const value = JSON.stringify({ ok, at: new Date().toISOString(), ...(ok ? {} : { cause }) });
+  const { error } = await sb.from("platform_config").upsert(
+    { key: "trunk_outbound_state", value, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) console.error("[dispatcher] trunk_outbound_state write failed:", error.message);
+}
+
 async function dispatchCall(recipient: any, campaign: any | null): Promise<string> {
   const tenantId = recipient.tenant_id || campaign?.tenant_id;
   if (!tenantId) throw new Error("recipient has no tenant");
@@ -296,6 +315,7 @@ async function tick(): Promise<void> {
 
       try {
         const fsUuid = await dispatchCall(r, c);
+        void recordTrunkState(true);
         // Answered. The pipeline drives the conversation from here and
         // scores the lead on hangup; the brochure, if the lead qualifies,
         // is fired from there rather than guessed at here.
@@ -321,6 +341,7 @@ async function tick(): Promise<void> {
         const reason = String(e?.message || e).slice(0, 120);
 
         if (isTrunkFault(reason)) {
+          void recordTrunkState(false, reason);
           // The phone never rang, so this is not a missed call: no WhatsApp,
           // and the attempt is rolled back to what it was before we tried.
           const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + 1;
@@ -347,6 +368,9 @@ async function tick(): Promise<void> {
           }).eq("id", r.id);
           continue;
         }
+
+        // NO_ANSWER / USER_BUSY: the far phone rang, so the trunk is fine.
+        void recordTrunkState(true);
 
         // The WhatsApp goes out on the FIRST no-answer, while the intent is
         // still warm, and the phone retries continue behind it.
@@ -379,7 +403,9 @@ async function tick(): Promise<void> {
 // submissions can't overwhelm the trunk or a single tenant's concurrency.
 async function tickInstant(): Promise<void> {
   const { data: pending } = await sb.from("outbound_recipients")
-    .select("*").eq("is_instant", true).eq("status", "pending").limit(20);
+    .select("*").eq("is_instant", true).eq("status", "pending")
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`)
+    .limit(20);
 
   for (const r of (pending || [])) {
     // Whether THIS tenant has opted in to skipping third-party DND
@@ -410,14 +436,49 @@ async function tickInstant(): Promise<void> {
       status: "in_progress", scrubbed_at: new Date().toISOString(), dnd_blocked: false,
     }).eq("id", r.id);
 
-    const callId = await dispatchCall(r, null);
-    if (callId) {
-      await sb.from("outbound_recipients").update({ call_id: callId }).eq("id", r.id);
-    } else {
-      // One-off leads don't get a 24h retry cycle like campaigns —
-      // the moment has passed; a failed instant callback just fails.
-      await sb.from("outbound_recipients").update({ status: "failed" }).eq("id", r.id);
+    // dispatchCall THROWS on a rejected or unanswered call (see above). This
+    // loop used to await it bare, so the first CALL_REJECTED escaped to
+    // main()'s catch, the recipient was left in_progress with attempts 0 and
+    // no outcome — two incomplete-booking callbacks sat like that from 3 Sep
+    // — and every later instant recipient in the batch was skipped with it.
+    const now = new Date().toISOString();
+    let fsUuid: string;
+    try {
+      fsUuid = await dispatchCall(r, null);
+    } catch (e: any) {
+      const reason = String(e?.message || e).slice(0, 120);
+      const fault  = isTrunkFault(reason);
+      void recordTrunkState(!fault, fault ? reason : undefined);
+      // A trunk fault is our problem, not the lead's: keep the row pending
+      // and try again shortly, a bounded number of times. A phone that rang
+      // and was not answered is a one-shot — the moment has passed.
+      const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + (fault ? 1 : 0);
+      const retry      = fault && trunkTries < TRUNK_MAX_TRIES;
+      console.error(
+        `[dispatcher] instant callback to ${r.phone} failed: ${reason}` +
+        (retry ? ` — retrying in ${TRUNK_RETRY_MS / 60000}m (${trunkTries}/${TRUNK_MAX_TRIES})` : "")
+      );
+      await sb.from("outbound_recipients").update({
+        status:          retry ? "pending" : "failed",
+        outcome:         reason,
+        attempts:        (r.attempts || 0) + (fault ? 0 : 1),
+        last_attempt_at: now,
+        next_attempt_at: retry ? new Date(Date.now() + TRUNK_RETRY_MS).toISOString() : null,
+        metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
+      }).eq("id", r.id);
+      continue;
     }
+    void recordTrunkState(true);
+    // A channel UUID, not a calls.id — same FK trap as the campaign path;
+    // the hangup webhook resolves metadata.fs_uuid to the real call row.
+    const { error: linkErr } = await sb.from("outbound_recipients").update({
+      status:          "in_progress",
+      outcome:         "dialled",
+      attempts:        (r.attempts || 0) + 1,
+      last_attempt_at: now,
+      metadata:        { ...(r.metadata || {}), fs_uuid: fsUuid },
+    }).eq("id", r.id);
+    if (linkErr) console.error(`[dispatcher] link ${r.id} failed:`, linkErr.message);
   }
 }
 

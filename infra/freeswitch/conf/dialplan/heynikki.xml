@@ -212,6 +212,21 @@
              cond well-formed no matter who transferred here. -->
         <action application="set" data="call_timeout=${cond(${guard_seconds:-20} &gt; 0 ? ${guard_seconds:-20} : 20)}"/>
         <action application="record_session" data="/tmp/recordings/${uuid}.wav"/>
+        <!-- Jio sends early media on the B-leg (its own ringback, or a
+             carrier announcement when the trunk is refusing outbound).
+             Passed through, the caller heard a foreign recording between
+             Nikki's "connecting you" and the missed-call apology. Generate
+             a plain Indian ringback locally instead. -->
+        <action application="set" data="ignore_early_media=true"/>
+        <action application="set" data="ringback=%(400,200,400);%(400,2000,400)"/>
+        <!-- The B-leg inherits the A-leg caller ID — the CALLER's mobile —
+             and Jio's SBC classifies outbound by From-user, which must be
+             one of OUR numbers in E.164. With the caller's number it
+             answered 500 "Classification Failure" on every transfer, so
+             staff never rang. Present the tenant DID; the missed-call
+             WhatsApp carries the caller's number. -->
+        <action application="set" data="effective_caller_id_number=+91${did_number}"/>
+        <action application="set" data="effective_caller_id_name=HeyNikki"/>
         <action application="bridge" data="${ring_group}"/>
         <!-- Nobody picked up in time -->
         <action application="transfer" data="missed_${caller_ani} XML heynikki"/>
@@ -225,6 +240,11 @@
       inbound_human now falls through to it on ring-out.
       ============================================================ -->
     <extension name="missed_call_guard" continue="false">
+      <!-- The curl below used to send caller_number "$1" — the capture from
+           THIS condition, which a later <condition> does not carry. Meta
+           rejected the literal "$1" (#131009) and every missed-call
+           WhatsApp failed. ${caller_ani} is set by the inbound entry
+           extensions and survives the transfer. -->
       <!-- (.*) not (.+): a withheld/anonymous CLI makes caller_ani empty, so
            the transfer target is bare "missed_". With (.+) that failed to
            match and the call fell through to catch_all, which answers 404 on
@@ -242,11 +262,11 @@
       <condition field="${nikki_fallback_audio}" expression="^.+$">
         <action application="answer"/>
         <action application="playback" data="${nikki_fallback_audio}"/>
-        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
         <action application="hangup"/>
         <anti-action application="answer"/>
         <anti-action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
-        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;$1&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
+        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;}' &amp;"/>
         <anti-action application="hangup"/>
       </condition>
     </extension>

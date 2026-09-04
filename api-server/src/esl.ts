@@ -106,19 +106,25 @@ async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
 /**
  * The form the trunk will accept as a caller ID.
  *
- * The SBC classifies outbound calls on the CLI and refuses a bare ten-digit
- * number with 500 "Classification Failure", which reaches us as
- * NORMAL_TEMPORARY_FAILURE and is indistinguishable from a dead trunk. With
- * the country code, the identical INVITE is accepted. FreeSWITCH itself
- * rejects a leading "+" as INVALID_NUMBER_FORMAT, so 91-prefixed bare digits
- * is the single form that works.
+ * Jio's SBC (AudioCodes) classifies every outbound INVITE by the From-user
+ * and needs it in strict E.164. Traced on 2026-09-04 against the live
+ * trunk, same callee, three CLIs:
+ *   8633502033     -> 500 "Classification Failure"  (NORMAL_TEMPORARY_FAILURE)
+ *   918633502033   -> 407 Proxy Authentication Required, no challenge (CALL_REJECTED)
+ *   +918633502033  -> 183 / 180 Ringing / 200 OK
+ * The "91" form was accepted once; Jio tightened classification and 250
+ * consecutive outbound attempts then failed as CALL_REJECTED, which reads
+ * like a dead trunk. The old note here that FreeSWITCH rejects a leading
+ * "+" is wrong for origination_caller_id_number — verified in the same
+ * trace.
  *
  * Every originate path needed this and each was written to remember it
  * separately, so none of them did.
  */
 export function wireCli(n: string): string {
   const d = String(n || "").replace(/[^\d]/g, "").replace(/^0+/, "");
-  if (d.length === 10) return `91${d}`;
+  if (d.length === 10) return `+91${d}`;
+  if (d.length === 12 && d.startsWith("91")) return `+${d}`;
   return d;
 }
 
