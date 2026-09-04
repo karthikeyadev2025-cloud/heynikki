@@ -155,3 +155,69 @@ business name as the single parameter. Confirm it went live with:
 curl -s "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_ID/message_templates?fields=name,status&limit=100" \
   -H "Authorization: Bearer $META_WA_TOKEN" | grep -o 'booking_incomplete_callback[^}]*'
 ```
+
+---
+
+## 7. `appointment_confirmed_slot` · te · UTILITY — NOT YET SUBMITTED
+
+The approved `appointment_confirmed` (en) takes only the business name, so
+every confirmation ever delivered said the appointment was confirmed and never
+**when**. The date and time went in a free-text follow-up that Meta drops
+outside the 24-hour window — and a phone call never opens that window. This
+template carries the slot itself. The code already prefers it
+(`WA_TEMPLATE_PREFERRED.confirmation`) and falls back to the old one until Meta
+approves it, so nothing changes on approval day.
+
+| Field | Value |
+|---|---|
+| Name | `appointment_confirmed_slot` |
+| Category | **Utility** |
+| Language | Telugu (`te`) |
+| Header / Footer / Buttons | none |
+
+Body — `{{1}}` business name, `{{2}}` date, `{{3}}` time:
+
+```
+{{1}} లో మీ appointment confirm అయింది.
+
+📅 {{2}}
+⏰ {{3}}
+
+మార్చాలంటే లేదా రద్దు చేయాలంటే ఈ message కి reply చేయండి. ధన్యవాదాలు! 🙏
+```
+
+Samples: `Ravi Clinic` · `Thu, 4 Sep 2026` · `8:30 PM`
+
+## 8. `appointment_reminder_today` · te · UTILITY — NOT YET SUBMITTED
+
+`appointment_reminder` says "రేపు" in its fixed text, so it cannot be used
+for a same-day reminder. The scheduler sends this one 90–180 minutes before
+the slot for any confirmed appointment that did not get the evening-before
+reminder — same-day bookings, and bookings made after 21:00 for the next
+morning. Until it is approved those sends fail and are retried on each tick
+inside that window; nobody receives a wrong "tomorrow".
+
+| Field | Value |
+|---|---|
+| Name | `appointment_reminder_today` |
+| Category | **Utility** |
+| Language | Telugu (`te`) |
+| Header / Footer / Buttons | none |
+
+Body — `{{1}}` business name, `{{2}}` time:
+
+```
+గుర్తు చేస్తున్నాము: {{1}} లో మీ appointment ఈరోజు {{2}} కి ఉంది.
+
+రాలేకపోతే ఈ message కి reply చేయండి, మేము వేరే time ఇస్తాము.
+```
+
+Samples: `Ravi Clinic` · `8:30 PM`
+
+Both can also be submitted from the shell instead of Business Manager:
+
+```
+curl -s -X POST "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_ID/message_templates" \
+  -H "Authorization: Bearer $META_WA_TOKEN" -H "Content-Type: application/json" \
+  -d @docs/templates/appointment_confirmed_slot.json
+```

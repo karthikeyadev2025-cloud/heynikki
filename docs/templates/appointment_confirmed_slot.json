@@ -1,0 +1,20 @@
+{
+  "name": "appointment_confirmed_slot",
+  "category": "UTILITY",
+  "language": "te",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}} లో మీ appointment confirm అయింది.\n\n📅 {{2}}\n⏰ {{3}}\n\nమార్చాలంటే లేదా రద్దు చేయాలంటే ఈ message కి reply చేయండి. ధన్యవాదాలు! 🙏",
+      "example": {
+        "body_text": [
+          [
+            "Ravi Clinic",
+            "Thu, 4 Sep 2026",
+            "8:30 PM"
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -116,20 +116,54 @@ function istDateString(daysAhead = 0): string {
   return now.toISOString().split("T")[0];
 }
 
+function istMinutesNow(): number {
+  const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+}
+
+function slotMinutes(t: string | null): number | null {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
+  return m ? +m[1] * 60 + +m[2] : null;
+}
+
+// Two reminders, each sent once per appointment (wa_reminder_sent):
+//
+//  * the evening before, 17:00–21:00 IST. This used to fire on the first
+//    15-minute tick after midnight IST — "your appointment is tomorrow" at
+//    00:07 is a wake-up, not a reminder.
+//  * the same day, 90–180 minutes before the slot, for anything the evening
+//    pass could not cover: booked after 21:00 for the next morning, or booked
+//    the same day (today's 20:30 was booked at 15:12 and would never have
+//    been reminded at all).
 export async function runAppointmentReminders(): Promise<number> {
-  const tomorrow = istDateString(1);
-  const { data, error } = await sb
-    .from("appointments")
-    .select("id, tenant_id, voice_profile_id, caller_number, caller_name, service, slot_time")
-    .eq("slot_date", tomorrow)
-    .eq("status", "confirmed")
-    .eq("wa_reminder_sent", false)
-    .limit(200);
-  if (error) { log("reminder fetch failed:", error.message); return 0; }
-  if (!data?.length) return 0;
+  const nowMin = istMinutesNow();
+  const evening = nowMin >= 17 * 60 && nowMin < 21 * 60;
+  const [{ data: tomorrowRows, error: e1 }, { data: todayRows, error: e2 }] = await Promise.all([
+    evening
+      ? sb.from("appointments")
+          .select("id, tenant_id, voice_profile_id, caller_number, caller_name, service, slot_time, slot_date")
+          .eq("slot_date", istDateString(1)).eq("status", "confirmed")
+          .eq("wa_reminder_sent", false).limit(200)
+      : Promise.resolve({ data: [] as any[], error: null }),
+    sb.from("appointments")
+      .select("id, tenant_id, voice_profile_id, caller_number, caller_name, service, slot_time, slot_date")
+      .eq("slot_date", istDateString(0)).eq("status", "confirmed")
+      .eq("wa_reminder_sent", false).limit(200),
+  ]);
+  if (e1) { log("reminder fetch failed:", e1.message); return 0; }
+  if (e2) { log("reminder fetch failed:", e2.message); return 0; }
+
+  const due = [
+    ...(tomorrowRows || []).map(a => ({ ...a, when: "tomorrow" as const })),
+    ...(todayRows || []).filter(a => {
+      const sm = slotMinutes(a.slot_time);
+      return sm !== null && sm - nowMin >= 90 && sm - nowMin <= 180;
+    }).map(a => ({ ...a, when: "today" as const })),
+  ];
+  if (!due.length) return 0;
 
   let sent = 0;
-  for (const a of data) {
+  for (const a of due) {
     if (!a.caller_number) continue;
     // tenants has no business_name column — this select failed on every
     // reminder and the error was discarded, so every customer was told
@@ -157,6 +191,7 @@ export async function runAppointmentReminders(): Promise<number> {
           tenant_id:        a.tenant_id,
           voice_profile_id: a.voice_profile_id,
           appointment_id:   a.id,
+          when:             a.when,
         }),
       });
       if (r.ok) sent++;
@@ -166,7 +201,7 @@ export async function runAppointmentReminders(): Promise<number> {
       log("reminder send failed:", e);
     }
   }
-  if (sent) log(`sent ${sent} appointment reminder(s) for ${tomorrow}`);
+  if (sent) log(`sent ${sent} appointment reminder(s)`);
   return sent;
 }
 

@@ -734,6 +734,10 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   // text, which Meta accepts and then drops outside the window — so neither
   // has ever been delivered to anyone who had not messaged us first.
   reminder:         { name: "appointment_reminder", lang: "te" },
+  // Same-day reminder, ~2h before the slot, for bookings made too late for
+  // the evening-before one (tonight's 20:30 was booked at 15:12). Text in
+  // docs/whatsapp-templates.md; until approved the send fails and retries.
+  reminder_today:   { name: "appointment_reminder_today", lang: "te" },
   // A booking that was started and never finished. Goes out two hours after
   // the call, so the 24-hour service window is almost always shut by then —
   // the caller phoned us, which does not open it. Without this template
@@ -753,6 +757,14 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
 // on its own.
 const WA_TEMPLATE_PREFERRED: Record<string, { name: string; lang: string }> = {
   brochure: { name: "lead_brochure_details", lang: "te" },
+  // appointment_confirmed (en) takes only the business name, so every
+  // confirmation ever delivered said "your appointment is confirmed" and
+  // never WHEN — the date and time rode along in a free-text message Meta
+  // drops outside the 24-hour window, which a phone call never opens. This
+  // one carries business, date and time; the submission text is in
+  // docs/whatsapp-templates.md. Until it is approved the send falls back to
+  // the old template with the old single parameter.
+  confirmation: { name: "appointment_confirmed_slot", lang: "te" },
 };
 
 async function sendTemplateViaMeta(
@@ -795,7 +807,12 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   voiceProfileId: string | null | undefined, messageType: string,
   callId?: string, apptId?: string,
   // Also nullable: business_name comes straight off a DB row.
-  businessName?: string | null, templateParams?: string[]) {
+  businessName?: string | null, templateParams?: string[],
+  // Parameters for the PREFERRED template when its shape differs from the
+  // approved fallback's. The confirmation's preferred template takes three
+  // (business, date, time) where the fallback takes one; sending three to a
+  // one-slot template is a 132000 parameter-count error, not a delivery.
+  preferredParams?: string[]) {
   const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
   const tpl = WA_TEMPLATES[messageType];
   const sender = await resolveWaSender(tenantId);
@@ -809,8 +826,9 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
       // explicit list wins when the caller supplies one.
       const params = templateParams?.length ? templateParams : [businessName || "us"];
       const pref = WA_TEMPLATE_PREFERRED[messageType];
+      const prefParams = preferredParams?.length ? preferredParams : params;
       result = pref
-        ? await sendTemplateViaMeta(to, pref.name, pref.lang, params, sender.phoneId)
+        ? await sendTemplateViaMeta(to, pref.name, pref.lang, prefParams, sender.phoneId)
         : await sendTemplateViaMeta(to, tpl.name, tpl.lang, params, sender.phoneId);
       // 132001 means the preferred template is not approved yet. Anything else
       // is a real failure and must not be papered over by a second attempt.
@@ -1473,6 +1491,24 @@ app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
 });
 
 // Appointment confirmation
+// Slot columns are stored as "2026-09-04" and "20:30". Neither reads well on
+// a phone screen, and a template parameter cannot contain a newline, so both
+// are rendered here into the form a caller would say out loud.
+function formatSlotDate(d: unknown): string {
+  const m = String(d ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return String(d || "త్వరలో");
+  const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dt.getUTCDay()];
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][dt.getUTCMonth()];
+  return `${day}, ${+m[3]} ${mon} ${m[1]}`;
+}
+function formatSlotTime(t: unknown): string {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return String(t || "time TBD");
+  const h = +m[1];
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
+}
+
 app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) => {
   const { caller_number, business_name, slot_date, slot_time, service,
     tenant_id, voice_profile_id, call_id, appointment_id } = req.body;
@@ -1483,7 +1519,8 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
     `\nమీ అపాయింట్మెంట్ రద్దు చేయాలంటే CANCEL reply చేయండి.\nధన్యవాదాలు! 🙏`;
 
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
-    "confirmation", call_id, appointment_id, business_name);
+    "confirmation", call_id, appointment_id, business_name, undefined,
+    [business_name || "us", formatSlotDate(slot_date), formatSlotTime(slot_time)]);
   // The dashboard shows a "WA" badge on appointments where wa_confirmed is
   // true, and nothing ever set it — the reminder job writes its own flag but
   // this handler never did, so the badge could not appear for any booking.
@@ -1511,16 +1548,21 @@ app.post("/api/whatsapp/missed-call", verifyInternal, async (req, res) => {
 });
 
 // 24h appointment reminder
+// `when` is "tomorrow" (default) or "today". The approved template says
+// "రేపు" in its fixed text, so a same-day reminder needs its own template
+// (appointment_reminder_today) — there is no honest fallback for it, and
+// the scheduler simply retries until that template is approved.
 app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
   const { caller_number, business_name, slot_time, service,
-    tenant_id, voice_profile_id, appointment_id } = req.body;
-  const message = `🔔 Reminder: మీ appointment రేపు!\n\n` +
-    `🏥 ${business_name}\n⏰ ${slot_time || "Tomorrow"}\n` +
+    tenant_id, voice_profile_id, appointment_id, when } = req.body;
+  const today = when === "today";
+  const message = `🔔 Reminder: మీ appointment ${today ? "ఈరోజు" : "రేపు"}!\n\n` +
+    `🏥 ${business_name}\n⏰ ${formatSlotTime(slot_time)}\n` +
     (service ? `🏷️ ${service}\n` : "") +
     `\nతప్పక వచ్చేందుకు request చేస్తున్నాము. ధన్యవాదాలు! 🙏`;
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
-    "reminder", undefined, appointment_id, business_name,
-    [business_name || "us", slot_time || "your appointment time"]);
+    today ? "reminder_today" : "reminder", undefined, appointment_id, business_name,
+    [business_name || "us", formatSlotTime(slot_time)]);
   if (ok) {
     await sb.from("appointments").update({ wa_reminder_sent: true }).eq("id", appointment_id);
   }
@@ -1874,86 +1916,78 @@ async function metaGraph(path: string, body?: object): Promise<any> {
   return j;
 }
 
-// 1. Add the tenant's assigned DID to our WABA as a new sender.
-app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (req: any, res) => {
-  const tenantId = req.params.tenantId;
-  const displayName = String(req.body?.display_name || "").trim();
-  if (displayName.length < 3) {
-    return res.status(400).json({ error: "A display name of at least 3 characters is required" });
-  }
+// The three steps as plain functions, so the super-admin page and the
+// client's own WhatsApp page drive the same code. Each throws with a message
+// fit to show to the person who clicked. `status` on the error is the HTTP
+// status the route should answer with.
+class WaStepError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
+async function waAddNumber(tenantId: string, displayName: string) {
+  if (displayName.length < 3) throw new WaStepError(400, "A display name of at least 3 characters is required");
   const [{ data: did }, { data: choice }] = await Promise.all([
     sb.from("dids").select("id, number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
-    sb.from("tenant_whatsapp").select("phone_number, did_id, display_name")
+    sb.from("tenant_whatsapp").select("phone_number, did_id, display_name, status, phone_number_id")
       .eq("tenant_id", tenantId).maybeSingle(),
   ]);
+  if (choice?.status === "active") throw new WaStepError(409, "This number is already live on WhatsApp.");
+  // Already on the WABA (an earlier attempt that never finished verifying):
+  // do not add it twice, just carry on from the code step.
+  if (choice?.phone_number_id) return { phone_number_id: choice.phone_number_id, number: choice.phone_number };
 
   // The client may have asked for their OWN number instead of the DID we
   // lease them. Honour that: registering the DID over their request would
   // hand them an identity they explicitly declined.
   const chosen = choice?.phone_number || did?.number;
-  if (!chosen) {
-    return res.status(409).json({
-      error: "No number to register — assign a DID, or have the client choose their own.",
-    });
-  }
+  if (!chosen) throw new WaStepError(409, "No number to register — assign a DID, or have the client choose their own.");
   const usingDid = !choice?.phone_number || choice.phone_number === did?.number;
   const local = String(chosen).replace(/\D/g, "").slice(-10);
+  let created: any;
   try {
-    const created = await metaGraph(`${WABA_ID()}/phone_numbers`, {
+    created = await metaGraph(`${WABA_ID()}/phone_numbers`, {
       cc: "91", phone_number: local, verified_name: displayName,
     });
-    const { error } = await sb.from("tenant_whatsapp").upsert({
-      tenant_id: tenantId,
-      did_id: usingDid ? did?.id ?? null : null,
-      phone_number: local,
-      waba_id: WABA_ID(),
-      phone_number_id: created.id,
-      display_name: displayName,
-      // NOT active yet — resolveWaSender only picks up 'active', so an
-      // unverified sender can never be used to send anything.
-      status: "pending_verification",
-    }, { onConflict: "tenant_id" });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, phone_number_id: created.id, number: local });
   } catch (e: any) {
-    console.error("[wa-register] add", e.message);
-    res.status(502).json({ error: e.message });
+    // The system user's token can message but not manage numbers until the
+    // WABA is assigned to it in Business Settings. Say that, not "(#200)".
+    const hint = /\(#200\)|Permissions error/i.test(e.message)
+      ? " — Meta refused: the HeyNikki system user needs Full control of the WhatsApp account in Business Settings › System users › Add assets."
+      : "";
+    throw new WaStepError(502, e.message + hint);
   }
-});
+  const { error } = await sb.from("tenant_whatsapp").upsert({
+    tenant_id: tenantId,
+    did_id: usingDid ? did?.id ?? null : null,
+    phone_number: local,
+    waba_id: WABA_ID(),
+    phone_number_id: created.id,
+    display_name: displayName,
+    // NOT active yet — resolveWaSender only picks up 'active', so an
+    // unverified sender can never be used to send anything.
+    status: "pending_verification",
+  }, { onConflict: "tenant_id" });
+  if (error) throw new WaStepError(500, error.message);
+  return { phone_number_id: created.id, number: local };
+}
 
-// 2. Ask Meta to ring it and read the code out.
-app.post("/api/admin/whatsapp/:tenantId/request-code", verifySuperAdmin, async (req: any, res) => {
-  const method = String(req.body?.method || "VOICE").toUpperCase();
+async function waRequestCode(tenantId: string, method: string) {
   const { data: row } = await sb.from("tenant_whatsapp")
-    .select("phone_number_id, phone_number").eq("tenant_id", req.params.tenantId).maybeSingle();
-  if (!row?.phone_number_id) return res.status(409).json({ error: "Add the number to the WABA first" });
+    .select("phone_number_id, phone_number").eq("tenant_id", tenantId).maybeSingle();
+  if (!row?.phone_number_id) throw new WaStepError(409, "Add the number to the WABA first");
   try {
     await metaGraph(`${row.phone_number_id}/request_code`, {
       code_method: method === "SMS" ? "SMS" : "VOICE",
       language: "en_US",
     });
-    res.json({
-      ok: true,
-      message: method === "SMS"
-        ? "Meta is sending an SMS to the number."
-        : `Meta is calling ${row.phone_number} now. Nikki answers it, so the six digits will appear in that call's transcript on the Calls list within a minute.`,
-    });
-  } catch (e: any) {
-    console.error("[wa-register] request_code", e.message);
-    res.status(502).json({ error: e.message });
-  }
-});
+  } catch (e: any) { throw new WaStepError(502, e.message); }
+  return row.phone_number;
+}
 
-// 3. Verify, then register for messaging. Both must succeed to go active.
-app.post("/api/admin/whatsapp/:tenantId/verify-code", verifySuperAdmin, async (req: any, res) => {
-  const code = String(req.body?.code || "").replace(/\D/g, "");
-  if (code.length < 4) return res.status(400).json({ error: "Enter the code Meta read out" });
+async function waVerifyCode(tenantId: string, code: string) {
+  if (code.length < 4) throw new WaStepError(400, "Enter the code Meta read out");
   const { data: row } = await sb.from("tenant_whatsapp")
-    .select("phone_number_id").eq("tenant_id", req.params.tenantId).maybeSingle();
-  if (!row?.phone_number_id) return res.status(409).json({ error: "Add the number to the WABA first" });
-
+    .select("phone_number_id").eq("tenant_id", tenantId).maybeSingle();
+  if (!row?.phone_number_id) throw new WaStepError(409, "Add the number to the WABA first");
   try {
     await metaGraph(`${row.phone_number_id}/verify_code`, { code });
     // Registration is a separate step, and a number that is verified but not
@@ -1963,17 +1997,136 @@ app.post("/api/admin/whatsapp/:tenantId/verify-code", verifySuperAdmin, async (r
       messaging_product: "whatsapp",
       pin: process.env.META_WA_2FA_PIN || "000000",
     });
-    const { error } = await sb.from("tenant_whatsapp")
-      .update({ status: "active", verified_at: new Date().toISOString(), review_note: null })
-      .eq("tenant_id", req.params.tenantId);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, message: "Number is live — this business now sends WhatsApp from its own number." });
   } catch (e: any) {
-    console.error("[wa-register] verify", e.message);
     await sb.from("tenant_whatsapp")
-      .update({ review_note: e.message.slice(0, 300) }).eq("tenant_id", req.params.tenantId);
-    res.status(502).json({ error: e.message });
+      .update({ review_note: e.message.slice(0, 300) }).eq("tenant_id", tenantId);
+    throw new WaStepError(502, e.message);
   }
+  const { error } = await sb.from("tenant_whatsapp")
+    .update({ status: "active", verified_at: new Date().toISOString(), review_note: null })
+    .eq("tenant_id", tenantId);
+  if (error) throw new WaStepError(500, error.message);
+  _waSenderCache.delete(tenantId);
+}
+
+// The verification call is answered by Nikki, and the pipeline writes the
+// six digits it heard into that call's intent as "wa_otp_123456". Surface
+// the freshest one from the last half hour so the page can fill the box.
+async function waRecentOtp(tenantId: string): Promise<{ code: string; heard_at: string } | null> {
+  const since = new Date(Date.now() - 30 * 60_000).toISOString();
+  const { data } = await sb.from("calls").select("intent, created_at")
+    .eq("tenant_id", tenantId).like("intent", "wa_otp_%").gte("created_at", since)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const code = data?.intent?.replace("wa_otp_", "");
+  return code ? { code, heard_at: data.created_at } : null;
+}
+
+const waStepFail = (res: express.Response, e: any) =>
+  res.status(e instanceof WaStepError ? e.status : 500).json({ error: e.message });
+
+// 1. Add the tenant's assigned DID to our WABA as a new sender.
+app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (req: any, res) => {
+  try {
+    const r = await waAddNumber(req.params.tenantId, String(req.body?.display_name || "").trim());
+    res.json({ ok: true, ...r });
+  } catch (e: any) { console.error("[wa-register] add", e.message); waStepFail(res, e); }
+});
+
+// 2. Ask Meta to ring it and read the code out.
+app.post("/api/admin/whatsapp/:tenantId/request-code", verifySuperAdmin, async (req: any, res) => {
+  const method = String(req.body?.method || "VOICE").toUpperCase();
+  try {
+    const number = await waRequestCode(req.params.tenantId, method);
+    res.json({
+      ok: true,
+      message: method === "SMS"
+        ? "Meta is sending an SMS to the number."
+        : `Meta is calling ${number} now. Nikki answers it, so the six digits will appear in that call's transcript on the Calls list within a minute.`,
+    });
+  } catch (e: any) { console.error("[wa-register] request_code", e.message); waStepFail(res, e); }
+});
+
+// 3. Verify, then register for messaging. Both must succeed to go active.
+app.post("/api/admin/whatsapp/:tenantId/verify-code", verifySuperAdmin, async (req: any, res) => {
+  try {
+    await waVerifyCode(req.params.tenantId, String(req.body?.code || "").replace(/\D/g, ""));
+    res.json({ ok: true, message: "Number is live — this business now sends WhatsApp from its own number." });
+  } catch (e: any) { console.error("[wa-register] verify", e.message); waStepFail(res, e); }
+});
+
+// ── THE SAME THREE STEPS, SELF-SERVE ON THE CLIENT'S WHATSAPP PAGE ──
+// The client can see which number their customers are getting messages
+// from, and move to their own HeyNikki number without waiting on us. The
+// KYC gate from number-choice applies: a sender carries our WABA's
+// reputation.
+app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const [{ data: row }, { data: did }, { data: kyc }, otp] = await Promise.all([
+    sb.from("tenant_whatsapp")
+      .select("phone_number, display_name, status, verified_at, phone_number_id, review_note")
+      .eq("tenant_id", tenantId).maybeSingle(),
+    sb.from("dids").select("number").eq("tenant_id", tenantId)
+      .eq("status", "assigned").limit(1).maybeSingle(),
+    sb.from("kyc_documents").select("id").eq("tenant_id", tenantId)
+      .eq("status", "approved").limit(1).maybeSingle(),
+    waRecentOtp(tenantId),
+  ]);
+  // What Meta thinks of the number right now — the honest answer to "is it
+  // live", independent of our own status column.
+  let meta: any = null;
+  if (row?.phone_number_id) {
+    try {
+      const m = await metaGraph(`${row.phone_number_id}?fields=display_phone_number,verified_name,code_verification_status,status,quality_rating,name_status`);
+      meta = { number: m.display_phone_number, name: m.verified_name, verification: m.code_verification_status,
+               status: m.status, quality: m.quality_rating, name_status: m.name_status };
+    } catch { /* shown as unknown */ }
+  }
+  const platform = process.env.META_WA_PLATFORM_DISPLAY || "the HeyNikki platform number";
+  res.json({
+    kyc_approved: !!kyc,
+    heynikki_number: did?.number || null,
+    chosen: row?.phone_number || null,
+    display_name: row?.display_name || null,
+    status: row?.status || null,
+    verified_at: row?.verified_at || null,
+    review_note: row?.review_note || null,
+    on_waba: !!row?.phone_number_id,
+    sending_as: row?.status === "active" ? row.phone_number : platform,
+    sending_as_own: row?.status === "active",
+    otp,
+    meta,
+  });
+});
+
+app.post("/api/whatsapp/sender/add", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const { data: kyc } = await sb.from("kyc_documents").select("id")
+    .eq("tenant_id", tenantId).eq("status", "approved").limit(1).maybeSingle();
+  if (!kyc) return res.status(409).json({ error: "We'll enable this as soon as your KYC is approved." });
+  try {
+    const r = await waAddNumber(tenantId, String(req.body?.display_name || "").trim());
+    res.json({ ok: true, ...r });
+  } catch (e: any) { console.error("[wa-sender] add", e.message); waStepFail(res, e); }
+});
+
+app.post("/api/whatsapp/sender/request-code", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  try {
+    const number = await waRequestCode(tenantId, "VOICE");
+    res.json({ ok: true, message: `WhatsApp is calling ${number} now. Nikki answers it and picks up the code — it appears below within a minute.` });
+  } catch (e: any) { console.error("[wa-sender] request_code", e.message); waStepFail(res, e); }
+});
+
+app.post("/api/whatsapp/sender/verify", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  try {
+    await waVerifyCode(tenantId, String(req.body?.code || "").replace(/\D/g, ""));
+    res.json({ ok: true, message: "Your number is live — customers now get WhatsApp from it." });
+  } catch (e: any) { console.error("[wa-sender] verify", e.message); waStepFail(res, e); }
 });
 
 // ── WHICH NUMBER THIS BUSINESS WHATSAPPS FROM ─────────────────
@@ -4876,10 +5029,22 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     // error, a failed query is indistinguishable from "no such call" and the
     // completion update below is silently skipped.
     const { data: callRow, error: selErr } = await sb.from("calls")
-      .select("id, tenant_id, voice_profile_id, created_at, direction")
+      .select("id, tenant_id, voice_profile_id, created_at, direction, caller_number")
       .eq("livekit_room_id", fs_uuid)
       .single();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
+
+    // The number the WhatsApp goes to. Taken from the body only when it is a
+    // real mobile: the 13:46 hangup today arrived with caller_number "$1" (an
+    // unexpanded dialplan capture) and the missed-call WhatsApp was sent to
+    // the literal string. The calls row was written from the trusted inbound
+    // webhook, so it is the better source whenever the body is not a number.
+    const bodyCaller = String(caller_number ?? "").replace(/[^\d+]/g, "")
+      .match(/^(?:\+?91|0)?(\d{10})$/)?.[1];
+    const waCaller = bodyCaller || (callRow as any)?.caller_number || "";
+    if (!bodyCaller && caller_number) {
+      console.warn(`[FS Hangup] caller_number ${JSON.stringify(caller_number)} is not a number; using ${waCaller || "nothing"}`);
+    }
 
     // billsec from the dialplan's api_reporting_hook has now arrived as 0 or
     // absent three separate times (raw-body Buffer, api_hangup_hook firing
@@ -5012,10 +5177,10 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // the workflow ran green, reported success, and delivered nothing. This
       // path uses the approved missed_call_followup template on Meta, and
       // writes wa_dispatch_log itself.
-      if (vp?.fallback_wa_enabled !== false && callRow?.tenant_id) {
+      if (vp?.fallback_wa_enabled !== false && callRow?.tenant_id && /^\d{10}$/.test(waCaller)) {
         const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
           `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
-        await sendWhatsApp(caller_number, msg, callRow.tenant_id,
+        await sendWhatsApp(waCaller, msg, callRow.tenant_id,
           callRow.voice_profile_id, "missed_call", callRow.id, undefined,
           vp?.business_name || "our team");
       }
@@ -5026,7 +5191,7 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         // The owner wants to know now, not when they next open the dashboard.
         pushToTenant(callRow.tenant_id, {
           title: "Missed call",
-          body:  `${caller_number} rang and Nikki took a message.`,
+          body:  `${waCaller || "A withheld number"} rang and Nikki took a message.`,
           data:  { type: "missed_call", call_id: callRow.id },
         }).catch(() => {});
       }

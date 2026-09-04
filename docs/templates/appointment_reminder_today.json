@@ -1,0 +1,19 @@
+{
+  "name": "appointment_reminder_today",
+  "category": "UTILITY",
+  "language": "te",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "గుర్తు చేస్తున్నాము: {{1}} లో మీ appointment ఈరోజు {{2}} కి ఉంది.\n\nరాలేకపోతే ఈ message కి reply చేయండి, మేము వేరే time ఇస్తాము.",
+      "example": {
+        "body_text": [
+          [
+            "Ravi Clinic",
+            "8:30 PM"
+          ]
+        ]
+      }
+    }
+  ]
+}
