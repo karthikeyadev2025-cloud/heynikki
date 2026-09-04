@@ -1462,6 +1462,68 @@ app.post("/api/whatsapp/send-as-tenant", verifyJWT, async (req: any, res) => {
   res.json({ ok: true });
 });
 
+// ── Templates, as Meta has them ────────────────────────────────
+// The wa_templates table is a seed from August that drifted from the WABA:
+// it lists brochure_send (never existed on Meta), gives appointment_confirmed
+// three variables (Meta's takes one) and says "te" for templates approved as
+// "en". Every manual send from the dashboard failed against it. The WABA is
+// the only source that cannot drift, so the page lists what Meta lists.
+type MetaTemplate = { name: string; language: string; status: string; category: string;
+                      body_text: string; variables: string[] };
+let _metaTplCache: { at: number; list: MetaTemplate[] } | null = null;
+// What each {{n}} means, for the send dialog. Meta only numbers them.
+const META_TPL_VARS: Record<string, string[]> = {
+  appointment_confirmed_slot: ["Business name", "Date", "Time"],
+  appointment_reminder:       ["Business name", "Time"],
+  appointment_reminder_today: ["Business name", "Time"],
+  booking_incomplete_callback:["Business name"],
+  lead_brochure_details:      ["Business / service name"],
+  lead_capture_ack:           ["Business name"],
+  appointment_confirmed:      ["Business name"],
+  interested_lead_brochure:   ["Business name"],
+  missed_call_followup:       ["Business name"],
+};
+// Sent by the platform to the business owner, or Meta's sample — not
+// something a business sends to its customers by hand.
+const META_TPL_HIDDEN = /^(onboarding_|daily_business_summary$|hello_world$)/;
+
+async function metaTemplates(): Promise<MetaTemplate[]> {
+  if (_metaTplCache && Date.now() - _metaTplCache.at < 5 * 60_000) return _metaTplCache.list;
+  const token = process.env.META_WA_TOKEN || "";
+  const version = process.env.META_WA_API_VERSION || "v21.0";
+  const r = await fetch(`https://graph.facebook.com/${version}/${WABA_ID()}/message_templates` +
+    `?fields=name,language,status,category,components&limit=100`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8_000) });
+  const body: any = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body?.error?.message || `Meta HTTP ${r.status}`);
+  const list: MetaTemplate[] = (body.data || []).map((t: any) => {
+    const text = (t.components || []).find((c: any) => c.type === "BODY")?.text || "";
+    const n = new Set(Array.from(text.matchAll(/\{\{(\d+)\}\}/g), (m: any) => m[1])).size;
+    const labels = META_TPL_VARS[t.name] || [];
+    return {
+      name: t.name, language: t.language, status: String(t.status || "").toLowerCase(),
+      category: String(t.category || "").toLowerCase(), body_text: text,
+      variables: Array.from({ length: n }, (_, i) => labels[i] || `Value ${i + 1}`),
+    };
+  });
+  _metaTplCache = { at: Date.now(), list };
+  return list;
+}
+
+app.get("/api/whatsapp/templates", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  try {
+    const list = (await metaTemplates())
+      .filter(t => t.status === "approved" && !META_TPL_HIDDEN.test(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ templates: list });
+  } catch (e: any) {
+    console.error("[wa templates]", e.message);
+    res.status(502).json({ error: `Could not load templates from WhatsApp: ${e.message}` });
+  }
+});
+
 app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
@@ -1470,36 +1532,36 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
   if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
   if (!name) return res.status(400).json({ error: "template_name required" });
 
-  // Only templates this tenant can actually see — platform rows or its own.
-  const { data: tmpl } = await sb.from("wa_templates")
-    .select("name, tenant_id, language").eq("name", name).limit(1).maybeSingle();
-  if (!tmpl || (tmpl.tenant_id && tmpl.tenant_id !== tenantId)) {
-    return res.status(404).json({ error: "Template not found" });
+  // Checked against the WABA, not wa_templates (see metaTemplates above):
+  // the language must be the one Meta approved, and the parameter count
+  // must match exactly or Meta answers 132000 instead of delivering.
+  let tpl: MetaTemplate | undefined;
+  try {
+    tpl = (await metaTemplates()).find(t => t.name === name && t.status === "approved");
+  } catch (e: any) {
+    return res.status(502).json({ error: `Could not check the template with WhatsApp: ${e.message}` });
   }
-  // The language Meta approved the template under, which is what it must be
-  // sent as. This was hard-coded "te", and the wa_templates rows say "te"
-  // too, but missed_call_followup and the other platform templates are
-  // approved as "en" — every manual send from the dashboard came back
-  // "(#132001) Template name does not exist in the translation". The
-  // automated senders' map is the source of truth; the row is the fallback
-  // for tenant-submitted templates it does not list.
-  const knownLang = [...Object.values(WA_TEMPLATES), ...Object.values(WA_TEMPLATE_PREFERRED)]
-    .find(t => t.name === name)?.lang;
-  const lang = knownLang || tmpl.language || "te";
+  if (!tpl || META_TPL_HIDDEN.test(name)) {
+    return res.status(404).json({ error: "That template is not approved on WhatsApp" });
+  }
+  const lang = tpl.language;
 
-  const vars = req.body?.variables && typeof req.body.variables === "object"
-    ? Object.values(req.body.variables).map((v: any) => String(v).slice(0, 200))
-    : [];
+  // Sent in {{1}}, {{2}}… order whatever the keys were called.
+  const rawVars = req.body?.variables && typeof req.body.variables === "object" ? req.body.variables : {};
+  const vars = Object.keys(rawVars)
+    .sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0))
+    .map(k => String(rawVars[k] ?? "").trim().slice(0, 200));
+  if (vars.length !== tpl.variables.length || vars.some(v => !v)) {
+    return res.status(400).json({
+      error: `This template needs ${tpl.variables.length} value(s): ${tpl.variables.join(", ")}`,
+    });
+  }
   const sender = await resolveWaSender(tenantId);
   // (to, template, lang, params, senderId) — params and lang are not
   // interchangeable and a swapped call typechecks as string vs string[].
-  let result = await sendTemplateViaMeta(to, name, lang, vars, sender.phoneId);
-  // 132001 = no such template in that language. Try the other one before
-  // giving up: a template approved under the wrong code is still a template.
-  if (!result?.ok && /132001|does not exist/i.test(result?.error || "")) {
-    result = await sendTemplateViaMeta(to, name, lang === "te" ? "en" : "te", vars, sender.phoneId);
-  }
+  const result = await sendTemplateViaMeta(to, name, lang, vars, sender.phoneId);
   if (!result?.ok) {
+    console.error(`[wa manual] ${name} to ${to}: ${result?.error}`);
     return res.status(502).json({ error: result?.error || "WhatsApp rejected the template" });
   }
   await sb.from("wa_dispatch_log").insert({

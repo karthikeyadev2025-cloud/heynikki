@@ -56,15 +56,22 @@ export default function WhatsAppPage() {
         .select("tenant_id").eq("user_id", data.user.id).single();
       if (!tu) return;
 
+      // Templates come from WhatsApp itself, not the wa_templates table:
+      // that table was a seed that drifted (wrong languages, a template
+      // that never existed, wrong variable counts) and every send from it
+      // was refused by Meta.
+      const { data: { session } } = await sb.auth.getSession();
       const [tmpl, disp] = await Promise.all([
-        sb.from("wa_templates").select("*")
-          .or(`tenant_id.eq.${tu.tenant_id},tenant_id.is.null`)
-          .eq("status", "approved").order("name"),
+        fetch(`${API}/api/whatsapp/templates`,
+          { headers: { Authorization: `Bearer ${session?.access_token}` } })
+          .then(async r => { const j = await r.json().catch(() => ({})); return r.ok ? j : { error: j.error }; })
+          .catch(e => ({ error: e.message })),
         sb.from("wa_dispatch_log").select("*")
           .eq("tenant_id", tu.tenant_id)
           .order("sent_at", { ascending: false }).limit(50),
       ]);
-      setTemplates(tmpl.data || []);
+      if (tmpl.error) { setToast(tmpl.error); setTimeout(() => setToast(null), 6000); }
+      setTemplates((tmpl.templates || []).map((t: any) => ({ ...t, id: `${t.name}:${t.language}` })));
       setDispatch(disp.data || []);
       setLoading(false);
     });
@@ -212,13 +219,14 @@ export default function WhatsAppPage() {
                   borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 13 }} />
             </div>
 
-            {(modal.template.variables || []).map((v: string) => (
-              <div key={v} style={{ marginBottom: 12 }}>
+            {(modal.template.variables || []).map((label: string, i: number) => (
+              <div key={i} style={{ marginBottom: 12 }}>
                 <label style={{ color: C.mid, fontSize: 11, fontWeight: 600, display: "block", marginBottom: 6 }}>
-                  Variable: {`{{${v}}}`}
+                  {`{{${i + 1}}}`} · {label}
                 </label>
-                <input value={vars[v] || ""} onChange={e => setVars(p => ({ ...p, [v]: e.target.value }))}
-                  placeholder={`Enter value for ${v}`}
+                <input value={vars[String(i + 1)] || ""}
+                  onChange={e => setVars(p => ({ ...p, [String(i + 1)]: e.target.value }))}
+                  placeholder={label}
                   style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
                     borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 13 }} />
               </div>
