@@ -1966,6 +1966,12 @@ class NikkiAgent:
         self.end_call_requested: bool = False
         self._bot_byes: int = 0           # consecutive replies that were goodbyes
         self._emergency_said: bool = False
+        # Nikki said "we will call you back" and the caller accepted. Sticky:
+        # self.intent is recomputed from the caller's words every turn, so a
+        # promise made mid-call was gone by the time the row was closed — the
+        # 5 Sep 01:29 call ended as plain "enquiry" and the clinic never saw
+        # a callback to make.
+        self.callback_promised: bool = False
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         # Seed the phone from caller ID. The booking, the WhatsApp and the
@@ -2403,6 +2409,12 @@ class NikkiAgent:
                 elif self._bot_byes >= 3:
                     self.end_call_requested = True
                     log.info("ending call — Nikki has said goodbye %d turns running", self._bot_byes)
+
+            if (_BOT_CALLBACK_PROMISE_RE.search(response or "")
+                    and not (response or "").rstrip().endswith("?")):
+                if not self.callback_promised:
+                    log.info("callback promised — call will be filed as callback")
+                self.callback_promised = True
 
             self.history.append({"role": "assistant", "content": response})
             self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
@@ -3446,6 +3458,15 @@ _CALLER_BYE_RE = re.compile(
 # Nikki's own goodbye, in either script.
 _BOT_FAREWELL_RE = re.compile(
     r"\bbye\b|బై|good ?night|గుడ్ ?నైట్|ఉంటాను|ఉంటానండి|ఉంటా(?![\u0C00-\u0C7F])|call cut ch|cut chest",
+    re.I)
+
+# Nikki committing to a callback, as a statement: "కాల్ బ్యాక్ చేయిస్తానండి",
+# "మా టీమ్ మీకు callback చేస్తుంది", "will call you back". An offer
+# ("చేయమంటారా?") ends in a question mark and is excluded by the caller.
+_BOT_CALLBACK_PROMISE_RE = re.compile(
+    r"(కాల్ ?బ్యాక్|call ?back|callback)[^?]{0,40}?"
+    r"(చేయిస్తా|చేస్తా|చేస్తుంది|చేస్తారు|చేయిస్తుంది|చేయిస్తారు|ఇస్తా)"
+    r"|will (call|ring) (you )?back",
     re.I)
 
 
@@ -6007,6 +6028,14 @@ async def freeswitch_ws(
     # was answered by the ordinary inbound receptionist prompt, and the
     # script the business wrote was decoration.
     if campaign_id:
+        # Say who is calling before anything else. Without this a campaign
+        # call played the INBOUND greeting — a returning contact heard
+        # "మళ్ళీ కాల్ చేసినందుకు థాంక్యూ! చెప్పండి" on a call we placed
+        # (02:11 on 5 Sep) and answered with sixteen seconds of "Hello?".
+        _biz = profile.get("business_name") or "the business"
+        agent.greeting_override = (
+            f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
+            f"ఒక్క నిమిషం మాట్లాడొచ్చా?")
         try:
             camp = await db.get_campaign_script(campaign_id)
             if camp:
@@ -6659,11 +6688,17 @@ async def freeswitch_ws(
             r2_url = await _upload_to_r2(wav_bytes, agent.call_id or fs_uuid, profile["tenant_id"])
 
         # Finalize call record
+        # A promised callback outranks the keyword intent of the last turn
+        # (usually "enquiry" — the caller's closing "సరే" or "bye"), but not a
+        # booking or a transfer, which the dashboard already acts on.
+        final_intent = agent.intent
+        if getattr(agent, "callback_promised", False) and final_intent not in ("appointment", "transfer", "emergency"):
+            final_intent = "callback"
         updates = {
             "status":           "completed",
             "duration_seconds": duration,
             "transcript":       agent.transcript,
-            "intent":           agent.intent,
+            "intent":           final_intent,
         }
         if r2_url:
             # With a private bucket _upload_to_r2 returns the object key, so
