@@ -2056,11 +2056,30 @@ async function waAddNumber(tenantId: string, displayName: string) {
       cc: "91", phone_number: local, verified_name: displayName,
     });
   } catch (e: any) {
-    // The system user's token can message but not manage numbers until the
-    // WABA is assigned to it in Business Settings. Say that, not "(#200)".
-    const hint = /\(#200\)|Permissions error/i.test(e.message)
-      ? " — Meta refused: the HeyNikki system user needs Full control of the WhatsApp account in Business Settings › System users › Add assets."
-      : "";
+    // "(#200) Permissions error" means two different things here. Before
+    // the WABA was assigned to the system user, every number failed with
+    // it. On 5 Sep, with the system user holding full control (MANAGE), a
+    // real mobile got past this gate to Meta's "number in use" check while
+    // every Jio DID in our 86335020xx range still failed with #200 — Meta
+    // is refusing the NUMBER, not the token. Tell the two apart by asking
+    // Meta whether the token's user is assigned, so the message points at
+    // the actual problem.
+    let hint = "";
+    if (/\(#200\)|Permissions error/i.test(e.message)) {
+      let assigned = false;
+      try {
+        const bizId = (await metaGraph(`${WABA_ID()}?fields=owner_business_info`))
+          ?.owner_business_info?.id;
+        const me = (await metaGraph("me?fields=id"))?.id;
+        const users = bizId
+          ? (await metaGraph(`${WABA_ID()}/assigned_users?business=${bizId}&fields=id,tasks`))?.data || []
+          : [];
+        assigned = users.some((u: any) => u.id === me && (u.tasks || []).includes("MANAGE"));
+      } catch { /* fall through to the generic hint */ }
+      hint = assigned
+        ? ` — WhatsApp will not accept ${chosen} as a sender. Our access is fine (real mobile numbers pass this check); Meta is rejecting this virtual number itself. Try adding it by hand in WhatsApp Manager › Phone numbers to see Meta's reason, or use a mobile number for WhatsApp.`
+        : " — Meta refused: the HeyNikki system user needs Full control of the WhatsApp account in Business Settings › System users › Add assets.";
+    }
     throw new WaStepError(502, e.message + hint);
   }
   const { error } = await sb.from("tenant_whatsapp").upsert({
