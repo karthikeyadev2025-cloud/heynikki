@@ -71,6 +71,18 @@ public class HeyNikkiService extends Service {
     static boolean isRunning() { return running; }
     static String stateName() { return state; }
 
+    static boolean isEnabled(Context ctx) {
+        SharedPreferences p = ctx.getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
+        return p.getBoolean("enabled", false) && p.getString("token", null) != null;
+    }
+
+    /** Start the listener if the owner has it switched on and it is not up. */
+    static void startIfEnabled(Context ctx) {
+        if (!isEnabled(ctx) || running) return;
+        Intent i = new Intent(ctx, HeyNikkiService.class).setAction(ACTION_START);
+        if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i); else ctx.startService(i);
+    }
+
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override

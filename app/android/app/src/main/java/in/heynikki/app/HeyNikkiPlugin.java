@@ -4,7 +4,10 @@ import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -69,6 +72,7 @@ public class HeyNikkiPlugin extends Plugin {
         p.edit().putString("token", token).putString("apiBase", apiBase).putBoolean("enabled", true).apply();
         Intent i = new Intent(ctx, HeyNikkiService.class).setAction(HeyNikkiService.ACTION_START);
         if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i); else ctx.startService(i);
+        askToSkipBatteryOptimisation(ctx);
         JSObject r = new JSObject();
         r.put("running", true);
         call.resolve(r);
@@ -91,6 +95,20 @@ public class HeyNikkiPlugin extends Plugin {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
         ctx.startService(new Intent(ctx, HeyNikkiService.class).setAction(HeyNikkiService.ACTION_STOP));
         call.resolve();
+    }
+
+    /** Doze and vendor battery managers (vivo, Xiaomi…) kill background
+     *  services after a few minutes unless the app is exempted. One system
+     *  dialog; the user sees it once. */
+    private void askToSkipBatteryOptimisation(Context ctx) {
+        if (Build.VERSION.SDK_INT < 23) return;
+        PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+        if (pm.isIgnoringBatteryOptimizations(ctx.getPackageName())) return;
+        try {
+            Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                .setData(Uri.parse("package:" + ctx.getPackageName()));
+            getActivity().startActivity(i);
+        } catch (Exception ignored) {}
     }
 
     private boolean micGranted() {
