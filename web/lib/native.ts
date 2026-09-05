@@ -16,6 +16,7 @@ type Plugin = {
   stop(): Promise<{ running: boolean }>;
   status(): Promise<{ running: boolean; available: boolean; permission: "granted" | "denied" | "prompt" }>;
   requestPermission(): Promise<{ permission: "granted" | "denied" }>;
+  forget(): Promise<void>;
 };
 
 function cap(): any { return typeof window !== "undefined" ? (window as any).Capacitor : undefined; }
@@ -87,6 +88,8 @@ export async function forgetDevice(): Promise<void> {
     const raw = localStorage.getItem(DEVICE_KEY);
     localStorage.removeItem(DEVICE_KEY);
     await stopHeyNikki();
+    // Also wipe the token the native service keeps for restarts.
+    try { await plugin()?.forget?.(); } catch {}
     if (!raw) return;
     const { id } = JSON.parse(raw);
     const sb = createClient();

@@ -1,0 +1,14 @@
+{
+  "appId": "in.heynikki.app",
+  "appName": "Hey Nikki",
+  "webDir": "www",
+  "server": {
+    "url": "https://www.heynikki.in",
+    "androidScheme": "https",
+    "allowNavigation": ["www.heynikki.in", "api.heynikki.in", "*.supabase.co", "accounts.google.com"]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0B0F1A"
+  }
+}
