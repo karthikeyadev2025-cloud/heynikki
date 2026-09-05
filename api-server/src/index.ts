@@ -1053,11 +1053,13 @@ async function sarvamRestTts(text: string, langCode: string, apiKey: string): Pr
 }
 
 app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
-  const { audio_base64, mime_type, text, session_id, persona, stream } = req.body as {
+  const { audio_base64, mime_type, text, session_id, persona, stream, device } = req.body as {
     audio_base64?: string;
     mime_type?:    string;
     text?:         string;
     session_id?:   string;
+    // The phone app: allow "call amma" / "set an alarm" phone actions.
+    device?:       boolean;
     // "product" = landing-page assistant describing Hey Nikki itself.
     // Omitted = the simulated inbound-call demo.
     persona?:      string;
@@ -1216,6 +1218,20 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         heard_nothing: true,
         turn: turnNo,
       });
+    }
+
+    // ── 1c. Phone actions, app only ───────────────────────────────
+    if (device === true) {
+      const act = await detectDeviceAction(transcript);
+      if (act) {
+        console.log(`[device-action] ${act.action.type} (guest): ${transcript.slice(0, 60)}`);
+        const say = act.say || "సరే.";
+        return res.json({
+          transcript, reply: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav",
+          action: act.action, booking_confirmed: false,
+          turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+        });
+      }
     }
 
     // ── 2. Real LLM turn (pipeline owns session history) ─────────
@@ -6052,6 +6068,65 @@ async function rememberSpokenFact(tenantId: string, answer: string): Promise<str
   return clean || `అలాగే, గుర్తు పెట్టుకున్నాను.`;
 }
 
+// ── Phone actions ("Hey Nikki, call amma" / "wake me at six") ────────
+// The app can do three things the dashboard cannot: dial a contact from the
+// owner's own SIM, set an alarm, start a timer. Gemini turns the transcript
+// into one of those (or nothing); the phone matches the contact and fires
+// the intent. Only the app asks for this — the landing-page demo never does.
+export type DeviceAction =
+  | { type: "call";  name: string; name_variants: string[] }
+  | { type: "alarm"; hour: number; minute: number; label: string }
+  | { type: "timer"; seconds: number; label: string };
+
+// Cheap gate so ordinary questions never pay for a second model call.
+const DEVICE_HINT = /call|phone|dial|ring|కాల్|ఫోన్|డయల్|alarm|అలారం|wake|లేపు|లేప|timer|టైమర్|remind|గుర్తు|nidra|నిద్ర|morning|ఉదయం|గంటల|minute|నిమిష/i;
+
+async function detectDeviceAction(transcript: string): Promise<{ action: DeviceAction; say: string } | null> {
+  if (!transcript || !DEVICE_HINT.test(transcript)) return null;
+  if (!process.env.GEMINI_API_KEY) return null;
+  const now = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "long", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date());
+
+  const payload = {
+    system_instruction: { parts: [{ text:
+`You are Nikki, a phone assistant. Decide whether the user's utterance is a request to DO one of these things on their phone:
+- call: phone a person by name from their contacts ("amma ki call chey", "call Ravi", "రవికి ఫోన్ చెయ్")
+- alarm: set an alarm / wake them at a clock time ("6 ki lepu", "wake me at 6:30 tomorrow", "రేపు ఏడు గంటలకి అలారం పెట్టు")
+- timer: a countdown of minutes/seconds ("10 minutes timer", "పది నిమిషాల టైమర్") — "seconds" is the TOTAL length in seconds (10 minutes → 600, పది నిమిషాలు → 600)
+Anything else (questions, chit-chat, business questions) is "none".
+Current local time in India: ${now}.
+Rules: for an alarm return 24-hour hour/minute; when AM/PM is not said, a wake-up or "morning" means AM, "evening/night/సాయంత్రం/రాత్రి" means PM, otherwise choose the next sensible occurrence. For a call, "name" is the person as spoken, and "name_variants" is 3-6 short Latin-script spellings/nicknames a contacts list might use for that person (e.g. amma → ["amma","mom","mummy","mother","ammaa"]; nanna → ["nanna","dad","daddy","father","papa"]). Names in Telugu script must be transliterated to Latin.
+"say" is a short, warm spoken confirmation in the language of the utterance (Telugu script if Telugu, English if English), under 12 words, e.g. "సరే, అమ్మకి కాల్ చేస్తున్నాను." or "సరే, రేపు ఉదయం 6 గంటలకి అలారం పెట్టాను." For "none", say is "".
+Return only JSON: {"type":"call"|"alarm"|"timer"|"none","name":"","name_variants":[],"hour":0,"minute":0,"seconds":0,"label":"","say":""}` }] },
+    contents: [{ role: "user", parts: [{ text: transcript }] }],
+    generationConfig: { maxOutputTokens: 600, temperature: 0, responseMimeType: "application/json" },
+  };
+  try {
+    // Same call shape as gemini.ts (query-string key; retries once on a stall).
+    const g = await geminiGenerate(payload, { timeoutMs: 8_000 });
+    if (!g.ok) { console.warn(`[device-action] gemini ${g.status}: ${g.detail}`); return null; }
+    const o = g.data || {};   // geminiGenerate already parsed the JSON object
+    const say = String(o.say || "").trim();
+    if (o.type === "call" && o.name) {
+      const variants = Array.isArray(o.name_variants) ? o.name_variants.map((v: any) => String(v).trim()).filter(Boolean) : [];
+      return { action: { type: "call", name: String(o.name), name_variants: variants.slice(0, 8) }, say };
+    }
+    if (o.type === "alarm" && Number.isInteger(o.hour) && o.hour >= 0 && o.hour < 24) {
+      const minute = Number.isInteger(o.minute) ? Math.max(0, Math.min(59, o.minute)) : 0;
+      return { action: { type: "alarm", hour: o.hour, minute, label: String(o.label || "Hey Nikki") }, say };
+    }
+    if (o.type === "timer") {
+      const secs = Number(o.seconds) > 0 ? Number(o.seconds) : Number(o.minutes) > 0 ? Number(o.minutes) * 60 : 0;
+      if (secs > 0) return { action: { type: "timer", seconds: Math.min(86400, Math.round(secs)), label: String(o.label || "Hey Nikki") }, say };
+    }
+    return null;
+  } catch (e: any) {
+    console.warn("[device-action]", e.message);
+    return null;
+  }
+}
+
 async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
   const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
@@ -6173,7 +6248,7 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
 // The voice round trip — Sarvam STT → Gemini over this tenant's data →
 // Sarvam TTS — as a function, because the phone app (app.ts) asks the same
 // question with a device token instead of a Supabase JWT.
-async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string) {
+async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean } = {}) {
   const SARVAM_KEY = process.env.SARVAM_API_KEY!;
 
   // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
@@ -6193,6 +6268,17 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   const sttData = await sttResp.json() as any;
   const transcript: string = sttData.transcript || "";
   if (!transcript.trim()) throw new Error("Could not hear anything — please try again");
+
+  // ── 1b. From the phone: "call amma" / "wake me at six" never reach the
+  //        business brain — the phone does it and she just confirms.
+  if (opts.device) {
+    const act = await detectDeviceAction(transcript);
+    if (act) {
+      console.log(`[device-action] ${act.action.type}: ${transcript.slice(0, 60)}`);
+      const say = act.say || "సరే.";
+      return { transcript, answer: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav", action: act.action };
+    }
+  }
 
   // ── 2. Ask Gemini, scoped to this tenant's own business data ──
   const { contextJson } = await buildBusinessContext(tenantId);

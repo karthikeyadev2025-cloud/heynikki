@@ -39,8 +39,8 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         visible = this;
-        if (micGranted()) { HeyNikkiService.startIfEnabled(this); askBatteryOnce(); }
-        else askPermissionsOnce();
+        if (!micGranted()) askPermissionsOnce();
+        else if (!askPermissionsOnce2()) { HeyNikkiService.startIfEnabled(this); askBatteryOnce(); }
     }
 
     /** One system dialog per resume, so they arrive one after another rather
@@ -60,6 +60,18 @@ public class MainActivity extends BridgeActivity {
 
     private static final int REQ_FIRST_RUN = 7001;
 
+    /** Phones that granted the mic before phone actions existed: one more
+     *  dialog for contacts + calling. Returns true when a dialog is up. */
+    private boolean askPermissionsOnce2() {
+        SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
+        if (p.getBoolean("askedFirstRun2", false)) return false;
+        p.edit().putBoolean("askedFirstRun2", true).apply();
+        if (DeviceActions.has(this, Manifest.permission.CALL_PHONE) && DeviceActions.has(this, Manifest.permission.READ_CONTACTS)) return false;
+        ActivityCompat.requestPermissions(this,
+            new String[]{ Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE }, REQ_FIRST_RUN);
+        return true;
+    }
+
     private boolean micGranted() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
@@ -69,11 +81,14 @@ public class MainActivity extends BridgeActivity {
      *  pill can re-ask if it was refused. */
     private void askPermissionsOnce() {
         SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        if (p.getBoolean("askedFirstRun", false)) return;
-        p.edit().putBoolean("askedFirstRun", true).apply();
+        if (p.getBoolean("askedFirstRun2", false)) return;
+        p.edit().putBoolean("askedFirstRun2", true).apply();
         List<String> want = new ArrayList<>();
         want.add(Manifest.permission.RECORD_AUDIO);
         if (Build.VERSION.SDK_INT >= 33) want.add(Manifest.permission.POST_NOTIFICATIONS);
+        // "Hey Nikki, call amma" — contacts to find her, phone to ring her.
+        want.add(Manifest.permission.READ_CONTACTS);
+        want.add(Manifest.permission.CALL_PHONE);
         ActivityCompat.requestPermissions(this, want.toArray(new String[0]), REQ_FIRST_RUN);
     }
 

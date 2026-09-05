@@ -17,7 +17,7 @@ import crypto from "crypto";
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-type VoiceResult = { transcript: string; answer: string; audio_base64: string; audio_mime: string };
+type VoiceResult = { transcript: string; answer: string; audio_base64: string; audio_mime: string; action?: unknown };
 
 type Deps = {
   sb:               SupabaseClient;
@@ -25,7 +25,7 @@ type Deps = {
   apiLimiter:       any;
   getTenantId:      (userId: string) => Promise<string | null>;
   audit:            (action: string, ctx: any) => Promise<void>;
-  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string) => Promise<VoiceResult>;
+  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string, opts?: { device?: boolean }) => Promise<VoiceResult>;
   synthesize:       (text: string) => Promise<string>;   // base64 wav
 };
 
@@ -91,7 +91,7 @@ export function mountAppRoutes(app: Express, d: Deps) {
     const { audio_base64, mime_type } = req.body || {};
     if (!audio_base64) return res.status(400).json({ error: "audio_base64 required" });
     try {
-      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav");
+      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav", { device: true });
       res.json(out);
     } catch (e: any) {
       const msg = e?.message || "Voice query failed";

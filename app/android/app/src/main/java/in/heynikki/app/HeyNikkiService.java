@@ -219,6 +219,8 @@ public class HeyNikkiService extends Service {
             JSONObject out = ask(wav);
             String answer = out.optString("answer", out.optString("reply", ""));
             String b64 = out.optString("audio_base64", "");
+            JSONObject action = out.optJSONObject("action");
+            if (action != null) { runAction(action, answer, b64); return; }
             if (!b64.isEmpty()) {
                 setState("speaking", answer.isEmpty() ? "Nikki is answering" : answer);
                 hud.show("speaking", answer);
@@ -241,6 +243,59 @@ public class HeyNikkiService extends Service {
             hud.hide(2500);
             play(R.raw.chime);
         }
+    }
+
+    /** "Call amma" / "wake me at six": confirm in her voice, then do it. For
+     *  a call the contact is matched first so a miss is answered honestly
+     *  instead of after a promise. */
+    private void runAction(JSONObject action, String say, String sayB64) {
+        String type = action.optString("type", "");
+        try {
+            if ("call".equals(type)) {
+                DeviceActions.Contact who = DeviceActions.findContact(this, action);
+                if (who == null) {
+                    Log.i(TAG, "action call: no contact for " + action.optString("name"));
+                    setState("speaking", "No contact named " + action.optString("name"));
+                    hud.show("error", "No contact named “" + action.optString("name") + "”");
+                    play(R.raw.no_contact);
+                    hud.hide(2500);
+                    return;
+                }
+                Log.i(TAG, "action call: " + who.name);
+                setState("speaking", "Calling " + who.name);
+                hud.show("speaking", "Calling " + who.name + "…");
+                speak(say, sayB64);
+                if (!DeviceActions.call(this, who)) { play(R.raw.cant_do); }
+                hud.hide(1000);
+                return;
+            }
+            boolean ok;
+            if ("alarm".equals(type)) {
+                Log.i(TAG, "action alarm: " + action.optInt("hour") + ":" + action.optInt("minute"));
+                setState("speaking", say);
+                hud.show("speaking", say);
+                ok = DeviceActions.alarm(this, action);
+            } else if ("timer".equals(type)) {
+                Log.i(TAG, "action timer: " + action.optInt("seconds") + "s");
+                setState("speaking", say);
+                hud.show("speaking", say);
+                ok = DeviceActions.timer(this, action);
+            } else ok = false;
+            if (ok) speak(say, sayB64); else { hud.show("error", "Couldn't do that"); play(R.raw.cant_do); }
+            hud.hide(1500);
+        } catch (Exception e) {
+            Log.w(TAG, "action failed", e);
+            hud.show("error", "Couldn't do that");
+            play(R.raw.cant_do);
+            hud.hide(2000);
+        }
+    }
+
+    private void speak(String text, String b64) throws Exception {
+        if (b64 == null || b64.isEmpty()) return;
+        File tmp = new File(getCacheDir(), "answer.wav");
+        try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
+        play(tmp);
     }
 
     /** Energy-gated capture: waits up to 6 s for speech, then stops after
@@ -301,6 +356,7 @@ public class HeyNikkiService extends Service {
             }
             body.put("session_id", guestSession);
             body.put("persona", "product");
+            body.put("device", true);   // unlocks call / alarm / timer actions
         }
         HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
         c.setRequestMethod("POST");
