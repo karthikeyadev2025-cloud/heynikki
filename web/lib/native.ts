@@ -66,7 +66,10 @@ export async function startHeyNikki(): Promise<{ ok: boolean; reason?: string }>
     const { permission } = await p.requestPermission();
     if (permission !== "granted") return { ok: false, reason: "Microphone permission is needed for 'Hey Nikki'" };
   }
-  const token = await deviceToken();
+  // A device token lets her answer about this business; without one (not
+  // signed in, or the token table missing) she still runs as the guide.
+  let token = "";
+  try { token = await deviceToken(); } catch (e) { console.warn("[hey-nikki] no device token:", e); }
   const { running } = await p.start({ token, apiBase: API });
   return running ? { ok: true } : { ok: false, reason: "The listener did not start" };
 }

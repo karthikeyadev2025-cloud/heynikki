@@ -65,15 +65,18 @@ public class HeyNikkiService extends Service {
     private static volatile String state = "idle";
 
     private Thread worker;
+    private NikkiHud hud;
     private volatile boolean stopRequested = false;
     private PowerManager.WakeLock wakeLock;
 
     static boolean isRunning() { return running; }
     static String stateName() { return state; }
 
+    /** On by default from first launch; the owner can switch it off. A token
+     *  is not required — without one Nikki answers as the product guide. */
     static boolean isEnabled(Context ctx) {
         SharedPreferences p = ctx.getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        return p.getBoolean("enabled", false) && p.getString("token", null) != null;
+        return p.getBoolean("enabled", true);
     }
 
     /** Start the listener if the owner has it switched on and it is not up. */
@@ -89,12 +92,13 @@ public class HeyNikkiService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
         SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        if (ACTION_STOP.equals(action) || !p.getBoolean("enabled", false) || p.getString("token", null) == null) {
+        if (ACTION_STOP.equals(action) || !isEnabled(this)) {
             shutdown();
             return START_NOT_STICKY;
         }
         ensureChannel();
-        Notification n = buildNotification("Listening for “Hey Nikki”");
+        if (hud == null) hud = new NikkiHud(this);
+        Notification n = buildNotification(idleText());
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         else startForeground(NOTIF_ID, n);
         if (worker == null || !worker.isAlive()) {
@@ -114,6 +118,7 @@ public class HeyNikkiService extends Service {
     }
 
     private void shutdown() {
+        if (hud != null) hud.hide(0);
         stopRequested = true;
         running = false;
         state = "idle";
@@ -137,7 +142,7 @@ public class HeyNikkiService extends Service {
             stream = spotter.createStream("");
             rec = openMic();
             rec.startRecording();
-            setState("listening", "Listening for “Hey Nikki”");
+            setState("listening", idleText());
 
             short[] buf = new short[SAMPLE_RATE / 10]; // 100 ms
             float[] f = new float[buf.length];
@@ -154,7 +159,7 @@ public class HeyNikkiService extends Service {
                     rec.stop();
                     handleWake();
                     rec.startRecording();
-                    setState("listening", "Listening for “Hey Nikki”");
+                    setState("listening", idleText());
                 }
             }
         } catch (Throwable t) {
@@ -174,27 +179,34 @@ public class HeyNikkiService extends Service {
      *  the prompt we just played is not in the buffer. */
     private void handleWake() {
         setState("prompt", "చెప్పండి…");
+        hud.show("prompt", "");
         play(R.raw.chime);
         play(R.raw.cheppandi);
 
         setState("recording", "Listening to you…");
+        hud.show("recording", "");
         byte[] wav = recordQuestion();
-        if (wav == null) { play(R.raw.chime); return; }
+        if (wav == null) { hud.show("error", "Didn't catch that"); hud.hide(1200); play(R.raw.chime); return; }
 
         setState("thinking", "Nikki is thinking…");
+        hud.show("thinking", "");
         try {
             JSONObject out = ask(wav);
-            String answer = out.optString("answer", "");
+            String answer = out.optString("answer", out.optString("reply", ""));
             String b64 = out.optString("audio_base64", "");
             if (!b64.isEmpty()) {
                 setState("speaking", answer.isEmpty() ? "Nikki is answering" : answer);
+                hud.show("speaking", answer);
                 File tmp = new File(getCacheDir(), "answer.wav");
                 try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
                 play(tmp);
             }
+            hud.hide(1500);
         } catch (Exception e) {
             Log.w(TAG, "voice-query failed", e);
             setState("error", "Couldn't reach Nikki: " + e.getMessage());
+            hud.show("error", e.getMessage());
+            hud.hide(2500);
             play(R.raw.chime);
         }
     }
@@ -219,6 +231,7 @@ public class HeyNikkiService extends Service {
                 double rms = Math.sqrt(sum / n);
                 if (noiseFrames < 6) { noise += rms; noiseFrames++; if (noiseFrames == 6) noise /= 6; }
                 double thr = Math.max(350, (noiseFrames < 6 ? 350 : noise * 2.5));
+                hud.level((float) Math.min(1.0, rms / 3000.0));
                 for (int i = 0; i < n; i++) { pcm.write(buf[i] & 0xff); pcm.write((buf[i] >> 8) & 0xff); }
                 if (rms > thr) { speaking = true; silentMs = 0; }
                 else if (speaking) { silentMs += 50; if (silentMs >= 1200) break; }
@@ -232,20 +245,38 @@ public class HeyNikkiService extends Service {
         return wav(pcm.toByteArray());
     }
 
+    // Guest conversations ride the landing-page demo endpoint, which keeps a
+    // short history per session and caps turns; we rotate the session when
+    // it runs out or goes stale.
+    private String guestSession = null;
+    private long guestSessionAt = 0;
+
     private JSONObject ask(byte[] wav) throws Exception {
         SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        String token = p.getString("token", "");
+        String token = p.getString("token", null);
         String base = p.getString("apiBase", "https://api.heynikki.in");
         JSONObject body = new JSONObject();
         body.put("audio_base64", Base64.encodeToString(wav, Base64.NO_WRAP));
         body.put("mime_type", "audio/wav");
-        HttpURLConnection c = (HttpURLConnection) new URL(base + "/api/app/voice-query").openConnection();
+        String path;
+        if (token != null) {
+            path = "/api/app/voice-query";
+        } else {
+            path = "/api/public/voice-turn";
+            if (guestSession == null || System.currentTimeMillis() - guestSessionAt > 25 * 60_000L) {
+                guestSession = "app-" + java.util.UUID.randomUUID();
+                guestSessionAt = System.currentTimeMillis();
+            }
+            body.put("session_id", guestSession);
+            body.put("persona", "product");
+        }
+        HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
         c.setRequestMethod("POST");
         c.setConnectTimeout(15000);
         c.setReadTimeout(60000);
         c.setDoOutput(true);
         c.setRequestProperty("Content-Type", "application/json");
-        c.setRequestProperty("Authorization", "Device " + token);
+        if (token != null) c.setRequestProperty("Authorization", "Device " + token);
         try (OutputStream os = c.getOutputStream()) { os.write(body.toString().getBytes(StandardCharsets.UTF_8)); }
         int code = c.getResponseCode();
         InputStream is = code >= 400 ? c.getErrorStream() : c.getInputStream();
@@ -253,17 +284,23 @@ public class HeyNikkiService extends Service {
         byte[] b = new byte[8192]; int n;
         while ((n = is.read(b)) > 0) bo.write(b, 0, n);
         JSONObject out = new JSONObject(bo.toString("UTF-8"));
-        if (code == 401) {
-            // Token revoked/expired: stop answering until the owner signs in again.
-            p.edit().putBoolean("enabled", false).apply();
-            stopRequested = true;
+        if (code == 401 && token != null) {
+            // Token revoked/expired: fall back to the product guide until the
+            // owner signs in again.
+            p.edit().remove("token").apply();
             throw new Exception(out.optString("error", "Signed out"));
         }
         if (code >= 400) throw new Exception(out.optString("error", "HTTP " + code));
+        if (token == null && out.optInt("turns_left", 1) <= 0) guestSession = null;
         return out;
     }
 
     // ───────────────────────── helpers ─────────────────────────
+
+    private String idleText() {
+        boolean signedIn = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE).getString("token", null) != null;
+        return signedIn ? "Listening for “Hey Nikki”" : "Listening for “Hey Nikki” · sign in to ask about your business";
+    }
 
     private AudioRecord openMic() {
         int min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);

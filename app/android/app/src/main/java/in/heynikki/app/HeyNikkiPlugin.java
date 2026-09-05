@@ -65,11 +65,12 @@ public class HeyNikkiPlugin extends Plugin {
     public void start(PluginCall call) {
         String token = call.getString("token");
         String apiBase = call.getString("apiBase", "https://api.heynikki.in");
-        if (token == null || token.isEmpty()) { call.reject("token required"); return; }
         if (!micGranted()) { call.reject("Microphone permission not granted"); return; }
         Context ctx = getContext();
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        p.edit().putString("token", token).putString("apiBase", apiBase).putBoolean("enabled", true).apply();
+        SharedPreferences.Editor e = p.edit().putString("apiBase", apiBase).putBoolean("enabled", true);
+        if (token != null && !token.isEmpty()) e.putString("token", token);
+        e.apply();
         Intent i = new Intent(ctx, HeyNikkiService.class).setAction(HeyNikkiService.ACTION_START);
         if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i); else ctx.startService(i);
         askToSkipBatteryOptimisation(ctx);
@@ -88,13 +89,14 @@ public class HeyNikkiPlugin extends Plugin {
         call.resolve(r);
     }
 
-    /** Sign-out: drop the token so a restarted service cannot keep answering. */
+    /** Sign-out: drop the token. She keeps listening, as the product guide. */
     @PluginMethod
     public void forget(PluginCall call) {
         Context ctx = getContext();
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
-        ctx.startService(new Intent(ctx, HeyNikkiService.class).setAction(HeyNikkiService.ACTION_STOP));
-        call.resolve();
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("token").apply();
+        JSObject r = new JSObject();
+        r.put("running", HeyNikkiService.isRunning());
+        call.resolve(r);
     }
 
     /** Doze and vendor battery managers (vivo, Xiaomi…) kill background

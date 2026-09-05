@@ -108,7 +108,15 @@ export default function OwnerVoiceAssistant() {
   // which dies the moment the WebView sleeps.
   const native = isNativeApp();
   const [nativeMsg, setNativeMsg] = useState("");
-  useEffect(() => { if (native) heyNikkiRunning().then(r => setWakeOn(r)); }, [native]);
+  // In the app the listener is on from first launch; opening the dashboard
+  // signed in hands it this phone's device token so answers are about the
+  // owner's own business rather than the product guide.
+  useEffect(() => {
+    if (!native) return;
+    heyNikkiRunning().then(async r => {
+      if (r) { const s = await startHeyNikki(); setWakeOn(s.ok || r); } else setWakeOn(false);
+    });
+  }, [native]);
 
   const toggleWake = useCallback(() => {
     if (native) {
