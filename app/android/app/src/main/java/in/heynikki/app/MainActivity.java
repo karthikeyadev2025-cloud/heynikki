@@ -18,6 +18,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends BridgeActivity {
+    /** The activity currently on screen, if any — NikkiHud draws inside it
+     *  rather than as a system overlay when the app itself is open. */
+    static volatile MainActivity visible;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(HeyNikkiPlugin.class);
@@ -29,8 +33,12 @@ public class MainActivity extends BridgeActivity {
      *  the OS killed it, after a swipe-away). Android lets a mic service start
      *  from a visible activity, which is exactly this moment. */
     @Override
+    public void onPause() { if (visible == this) visible = null; super.onPause(); }
+
+    @Override
     public void onResume() {
         super.onResume();
+        visible = this;
         if (micGranted()) { HeyNikkiService.startIfEnabled(this); askBatteryOnce(); }
         else askPermissionsOnce();
     }

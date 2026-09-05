@@ -1128,12 +1128,26 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       // exists to sell, and it is the first thing a customer tries.
       sttForm.append("language_code", "unknown");
 
-      const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
-        method: "POST",
-        headers: { "api-subscription-key": SARVAM_KEY },
-        body: sttForm as any,
-      });
-      if (!sttResp.ok) throw new Error(`Sarvam STT ${sttResp.status}`);
+      // One retry on a transport error ("fetch failed": a dropped TLS
+      // handshake to Sarvam) — the caller is a person who just spoke and
+      // would otherwise hear an error chime for a blip we can absorb.
+      let sttResp: Response | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
+            method: "POST",
+            headers: { "api-subscription-key": SARVAM_KEY },
+            body: sttForm as any,
+            signal: AbortSignal.timeout(15_000),
+          });
+          break;
+        } catch (e: any) {
+          console.warn(`[voice-turn] STT attempt ${attempt + 1} failed: ${e.message}`);
+          if (attempt === 1) throw e;
+          await new Promise(r => setTimeout(r, 400));
+        }
+      }
+      if (!sttResp || !sttResp.ok) throw new Error(`Sarvam STT ${sttResp?.status}`);
       const sttData = await sttResp.json() as any;
       transcript = (sttData.transcript || "").trim();
       // Saarika reports what it detected. Speak the answer back in the same

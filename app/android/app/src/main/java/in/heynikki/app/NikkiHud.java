@@ -14,8 +14,11 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.view.WindowManager;
 import android.view.animation.LinearInterpolator;
 
@@ -35,6 +38,7 @@ public class NikkiHud {
     private final Runnable hideLater = this::hideNow;
     private WindowManager wm;
     private BarView view;
+    private ViewGroup host;   // set when the bar sits inside the app's own window
 
     NikkiHud(Context ctx) { this.ctx = ctx.getApplicationContext(); }
 
@@ -46,7 +50,6 @@ public class NikkiHud {
     void show(String mode, String text) {
         main.post(() -> {
             main.removeCallbacks(hideLater);
-            if (!allowed(ctx)) return;
             if (view == null) attach();
             if (view != null) view.set(mode, text);
         });
@@ -59,17 +62,34 @@ public class NikkiHud {
     void hide(long afterMs) { main.postDelayed(hideLater, afterMs); }
 
     private void hideNow() {
-        if (view != null && wm != null) { try { wm.removeView(view); } catch (Exception ignored) {} }
-        if (view != null) view.stop();
-        view = null;
+        if (view == null) return;
+        try {
+            if (host != null) host.removeView(view); else if (wm != null) wm.removeView(view);
+        } catch (Exception ignored) {}
+        view.stop();
+        view = null; host = null;
     }
 
     private void attach() {
+        float d = ctx.getResources().getDisplayMetrics().density;
+        // App in front: no permission needed, just sit on top of the WebView.
+        MainActivity a = MainActivity.visible;
+        if (a != null) {
+            try {
+                host = a.findViewById(android.R.id.content);
+                view = new BarView(ctx);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, (int) (150 * d), Gravity.BOTTOM);
+                host.addView(view, lp);
+                Log.i("HeyNikki", "hud: shown in app");
+                return;
+            } catch (Exception e) { Log.w("HeyNikki", "hud: in-app attach failed", e); view = null; host = null; }
+        }
+        if (!allowed(ctx)) { Log.w("HeyNikki", "hud: overlay permission missing"); return; }
         wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
         int type = Build.VERSION.SDK_INT >= 26
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             : WindowManager.LayoutParams.TYPE_PHONE;
-        float d = ctx.getResources().getDisplayMetrics().density;
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, (int) (150 * d), type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -78,7 +98,8 @@ public class NikkiHud {
             PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.BOTTOM;
         view = new BarView(ctx);
-        try { wm.addView(view, lp); } catch (Exception e) { view = null; }
+        try { wm.addView(view, lp); Log.i("HeyNikki", "hud: shown"); }
+        catch (Exception e) { Log.w("HeyNikki", "hud: addView failed", e); view = null; }
     }
 
     /** Five bars on a soft navy sheet with the brand gradient, a caption above. */

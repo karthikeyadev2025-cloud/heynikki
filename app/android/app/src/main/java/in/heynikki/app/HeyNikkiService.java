@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
@@ -18,6 +19,8 @@ import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Base64;
 import android.util.Log;
 
@@ -99,8 +102,17 @@ public class HeyNikkiService extends Service {
         ensureChannel();
         if (hud == null) hud = new NikkiHud(this);
         Notification n = buildNotification(idleText());
-        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-        else startForeground(NOTIF_ID, n);
+        try {
+            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+            else startForeground(NOTIF_ID, n);
+        } catch (Exception refused) {
+            // Android 14+: a microphone service may only start from a visible
+            // activity. Leave a one-tap way back instead of crashing.
+            Log.w(TAG, "foreground start refused", refused);
+            nudge(this, "Tap to switch Nikki back on");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (worker == null || !worker.isAlive()) {
             stopRequested = false;
             worker = new Thread(this::loop, "heynikki-listener");
@@ -146,9 +158,17 @@ public class HeyNikkiService extends Service {
 
             short[] buf = new short[SAMPLE_RATE / 10]; // 100 ms
             float[] f = new float[buf.length];
+            int silentFrames = 0;
             while (!stopRequested) {
                 int n = rec.read(buf, 0, buf.length);
                 if (n <= 0) continue;
+                // A service the OS restarted in the background gets a muted
+                // mic (pure zeros) on Android 11+. Ten seconds of that means
+                // nobody will ever be heard: hand over to the one-tap nudge.
+                int peak = 0;
+                for (int i = 0; i < n; i++) { int a = Math.abs(buf[i]); if (a > peak) peak = a; }
+                if (peak == 0) { if (++silentFrames >= 100) throw new IllegalStateException("microphone muted by the system"); }
+                else silentFrames = 0;
                 for (int i = 0; i < n; i++) f[i] = buf[i] / 32768f;
                 stream.acceptWaveform(n == f.length ? f : java.util.Arrays.copyOf(f, n), SAMPLE_RATE);
                 while (spotter.isReady(stream)) spotter.decode(stream);
@@ -157,6 +177,7 @@ public class HeyNikkiService extends Service {
                     Log.i(TAG, "wake word: " + r.getKeyword());
                     spotter.reset(stream);
                     rec.stop();
+                    buzz();
                     handleWake();
                     rec.startRecording();
                     setState("listening", idleText());
@@ -164,7 +185,11 @@ public class HeyNikkiService extends Service {
             }
         } catch (Throwable t) {
             Log.e(TAG, "listener died", t);
-            setState("error", "Listener stopped: " + t.getMessage());
+            // Whatever it was (permission pulled, muted mic, model missing),
+            // sitting here as a dead foreground service helps nobody.
+            nudge(this, "Nikki stopped listening — tap to switch her back on");
+            stopForeground(true);
+            stopSelf();
         } finally {
             try { if (rec != null) { rec.stop(); rec.release(); } } catch (Throwable ignored) {}
             try { if (stream != null) stream.release(); } catch (Throwable ignored) {}
@@ -200,8 +225,15 @@ public class HeyNikkiService extends Service {
                 File tmp = new File(getCacheDir(), "answer.wav");
                 try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
                 play(tmp);
+                hud.hide(1500);
+            } else {
+                // No speech came back (she didn't catch it, or a hold): show
+                // the text long enough to read and let the person try again.
+                setState("speaking", answer.isEmpty() ? "Didn't catch that" : answer);
+                hud.show("error", answer.isEmpty() ? "Didn't catch that — say “Hey Nikki” again" : answer);
+                hud.hide(3000);
+                play(R.raw.chime);
             }
-            hud.hide(1500);
         } catch (Exception e) {
             Log.w(TAG, "voice-query failed", e);
             setState("error", "Couldn't reach Nikki: " + e.getMessage());
@@ -229,8 +261,8 @@ public class HeyNikkiService extends Service {
                 double sum = 0;
                 for (int i = 0; i < n; i++) sum += (double) buf[i] * buf[i];
                 double rms = Math.sqrt(sum / n);
-                if (noiseFrames < 6) { noise += rms; noiseFrames++; if (noiseFrames == 6) noise /= 6; }
-                double thr = Math.max(350, (noiseFrames < 6 ? 350 : noise * 2.5));
+                if (noiseFrames < 6) { noise = noiseFrames == 0 ? rms : Math.min(noise, rms); noiseFrames++; }
+                double thr = Math.min(1500, Math.max(350, noise * 2.5));
                 hud.level((float) Math.min(1.0, rms / 3000.0));
                 for (int i = 0; i < n; i++) { pcm.write(buf[i] & 0xff); pcm.write((buf[i] >> 8) & 0xff); }
                 if (rms > thr) { speaking = true; silentMs = 0; }
@@ -281,9 +313,11 @@ public class HeyNikkiService extends Service {
         int code = c.getResponseCode();
         InputStream is = code >= 400 ? c.getErrorStream() : c.getInputStream();
         ByteArrayOutputStream bo = new ByteArrayOutputStream();
-        byte[] b = new byte[8192]; int n;
-        while ((n = is.read(b)) > 0) bo.write(b, 0, n);
-        JSONObject out = new JSONObject(bo.toString("UTF-8"));
+        if (is != null) { byte[] b = new byte[8192]; int n; while ((n = is.read(b)) > 0) bo.write(b, 0, n); }
+        JSONObject out;
+        try { out = new JSONObject(bo.toString("UTF-8")); }
+        catch (Exception notJson) { out = new JSONObject(); }
+        if (code == 429) throw new Exception("Too many questions right now — try again in a minute");
         if (code == 401 && token != null) {
             // Token revoked/expired: fall back to the product guide until the
             // owner signs in again.
@@ -361,14 +395,44 @@ public class HeyNikkiService extends Service {
     private void play(MediaPlayer mp) {
         if (mp == null) return;
         AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-        am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+        AudioFocusRequest focus = null;
+        if (Build.VERSION.SDK_INT >= 26) {
+            focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(assistantAttrs()).build();
+            am.requestAudioFocus(focus);
+        } else {
+            am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+        }
         CountDownLatch done = new CountDownLatch(1);
         mp.setOnCompletionListener(p -> done.countDown());
         mp.setOnErrorListener((p, w, e) -> { done.countDown(); return true; });
         mp.start();
         try { done.await(90, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
         mp.release();
-        am.abandonAudioFocus(null);
+        if (Build.VERSION.SDK_INT >= 26) am.abandonAudioFocusRequest(focus); else am.abandonAudioFocus(null);
+    }
+
+    /** A short tap on wake, like the assistants people already know. */
+    private void buzz() {
+        try {
+            Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE));
+            else v.vibrate(40);
+        } catch (Exception ignored) {}
+    }
+
+    /** A tappable notification that opens the app; MainActivity.onResume then
+     *  starts the listener from the foreground, which Android always allows. */
+    static void nudge(Context ctx, String text) {
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+        PendingIntent open = PendingIntent.getActivity(ctx, 2,
+            new Intent(ctx, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK), flags);
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+            ? new Notification.Builder(ctx, CHANNEL) : new Notification.Builder(ctx);
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(NOTIFICATION_SERVICE);
+        nm.notify(NOTIF_ID + 1, b.setContentTitle("Hey Nikki").setContentText(text)
+            .setSmallIcon(R.drawable.ic_stat_nikki).setContentIntent(open).setAutoCancel(true).build());
     }
     private static AudioAttributes assistantAttrs() {
         return new AudioAttributes.Builder()
@@ -378,6 +442,9 @@ public class HeyNikkiService extends Service {
 
     private void setState(String s, String text) {
         state = s;
+        Log.i(TAG, "state=" + s);
+        // Once she is up, any earlier "tap to switch back on" nudge is stale.
+        if ("listening".equals(s)) ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(NOTIF_ID + 1);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.notify(NOTIF_ID, buildNotification(text));
     }
