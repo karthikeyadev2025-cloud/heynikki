@@ -158,6 +158,19 @@ export default function WhatsAppPage() {
 
   useEffect(() => { loadInbox(); }, [loadInbox]);
 
+  // /whatsapp?to=<10 digits> — a lead's drawer sends people here when the
+  // 24-hour window is closed and only a template will reach them. Prefill
+  // the number and bring the template library into view.
+  useEffect(() => {
+    try {
+      const to = new URLSearchParams(window.location.search).get("to");
+      if (to && /^[6-9]\d{9}$/.test(to)) {
+        setToNumber(to);
+        setTimeout(() => document.getElementById("wa-templates")?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+      }
+    } catch { /* no window */ }
+  }, []);
+
   // Free text only reaches a person inside Meta's 24-hour window; outside it
   // Meta accepts the call and silently drops the message, which is worse
   // than refusing. Say which one applies before the customer types.
@@ -408,6 +421,7 @@ export default function WhatsAppPage() {
           </div>
 
           {/* Template Library */}
+          <div id="wa-templates" />
           <SectionTitle icon={<ClipboardList size={14} />}>Template Library</SectionTitle>
           {templates.length === 0 && (
             <Card style={{ marginBottom: 24 }}>

@@ -17,6 +17,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -254,7 +255,7 @@ function Dialer({ d, api, onDone, prefill }: {
     try {
       await api("/api/calls/disposition", { ctc_log_id: st.ctcId, disposition: key, notes });
       setSt({ phase: "idle" }); setNotes(""); setNum(""); onDone();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { toast.err(e.message); }
     setSaving("");
   }
 
@@ -584,7 +585,7 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
   async function outcome(id: string, key: string) {
     setBusy(key);
     try { await api("/api/calls/disposition", { ctc_log_id: id, disposition: key, notes }); setOpen(null); setNotes(""); onSaved(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { toast.err(e.message); }
     setBusy("");
   }
 

@@ -2,6 +2,7 @@
 "use client";
 import TeamCard from "../../components/TeamCard";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { VoiceProfile } from "../../lib/supabase";
@@ -44,8 +45,8 @@ function Label({ children }: { children: React.ReactNode }) {
 function FieldGroup({ children }: { children: React.ReactNode }) {
   return <div style={{ marginBottom: 16 }}>{children}</div>;
 }
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return <div style={{ background: C.surf, border: "1px solid " + C.bord,
+function Card({ children, style, className }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
+  return <div className={className} style={{ background: C.surf, border: "1px solid " + C.bord,
     borderRadius: 10, padding: 20, ...style }}>{children}</div>;
 }
 
@@ -266,10 +267,10 @@ export default function SetupPage() {
         body: JSON.stringify({ profile_id: profile?.id }),
       });
       const j = await r.json().catch(() => ({}));
-      if (r.ok) alert(j.message || "Calling you now — Nikki will answer.");
-      else alert(j.error || "Could not place the test call right now.");
+      if (r.ok) toast.ok(j.message || "Calling you now — Nikki will answer.");
+      else toast.err(j.error || "Could not place the test call right now.");
     } catch {
-      alert("Could not place the test call right now.");
+      toast.err("Could not place the test call right now.");
     } finally {
       setTestCalling(false);
     }
@@ -372,8 +373,9 @@ export default function SetupPage() {
           />
         </Card>
 
-        {/* Business details */}
-        <Card style={{ marginBottom: 16 }}>
+        {/* Business details — the inputs here carry no inline style; .nk-form
+            in globals.css gives them the same look as the rest of the page. */}
+        <Card className="nk-form" style={{ marginBottom: 16 }}>
           <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
             Business Details
           </div>

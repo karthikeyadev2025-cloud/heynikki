@@ -1,6 +1,7 @@
 // app/billing/page.tsx
 "use client";
 import { useState, useEffect } from "react";
+import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { Tenant, CallMinutes } from "../../lib/supabase";
@@ -197,7 +198,7 @@ export default function BillingPage() {
       if (!plan) return;
 
       if (typeof window === "undefined" || !(window as any).Razorpay) {
-        alert("Payment system is still loading — please try again in a moment.");
+        toast.err("Payment system is still loading — please try again in a moment.");
         return;
       }
 
@@ -220,7 +221,7 @@ export default function BillingPage() {
       });
       if (!createRes.ok) {
         const err = await createRes.json().catch(() => ({}));
-        alert(err.error || "Could not start checkout. Please try again.");
+        toast.err(err.error || "Could not start checkout. Please try again.");
         return;
       }
       const order = await createRes.json();
@@ -273,7 +274,7 @@ export default function BillingPage() {
       rzp.open();
     } catch (err) {
       console.error("[billing] checkout failed", err);
-      alert("Something went wrong starting checkout. Please try again.");
+      toast.err("Something went wrong starting checkout. Please try again.");
     } finally {
       setUpgrading(null);
     }

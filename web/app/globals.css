@@ -103,3 +103,93 @@ h1, h2, h3, .font-display {
 }
 .wwn-lines p.you   { color: #CBD5E1; }
 .wwn-lines p.nikki { color: #F1F5F9; }
+
+/* ── Dashboard shell ─────────────────────────────────────────────────────
+   The shell is inline-styled React; these are the pieces inline styles
+   cannot express: media queries, the off-canvas sidebar, and resets the
+   browser's UA sheet would otherwise leak into every page (underlined nav
+   links, Times-New-Roman inputs). Scoped to .nk-shell so the marketing
+   pages keep their own rules. */
+.nk-shell a { text-decoration: none; }
+.nk-shell button, .nk-shell input, .nk-shell select, .nk-shell textarea { font-family: inherit; }
+.nk-shell button { cursor: pointer; }
+.nk-shell button:disabled { cursor: not-allowed; }
+.nk-shell :focus-visible { outline: 2px solid #1D6FA5; outline-offset: 2px; }
+.nk-shell table { border-collapse: collapse; }
+.nk-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.fade-in { animation: nkFade 220ms ease; }
+@keyframes nkFade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.nk-side {
+  width: 220px; height: 100vh; height: 100dvh;
+  position: fixed; left: 0; top: 0; z-index: 60;
+  display: flex; flex-direction: column;
+  transition: transform 200ms ease;
+}
+.nk-main { margin-left: 220px; flex: 1; min-height: 100vh; min-width: 0; }
+.nk-page { padding: 24px; max-width: 1100px; }
+.nk-burger { display: none; }
+.nk-scrim { display: none; }
+@media (max-width: 900px) {
+  .nk-side { transform: translateX(-100%); box-shadow: none; }
+  .nk-side.open { transform: none; box-shadow: 0 0 40px rgba(15,23,42,0.25); }
+  .nk-main { margin-left: 0; }
+  .nk-page { padding: 14px; }
+  .nk-burger { display: inline-flex; }
+  .nk-scrim { display: block; position: fixed; inset: 0; background: rgba(15,23,42,0.4); z-index: 55; }
+  .nk-topbar { padding: 0 14px !important; }
+  .nk-hide-mobile { display: none !important; }
+}
+
+/* Toasts — one stack, bottom-centre, above drawers and modals. */
+.nk-toasts {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 10000;
+  width: min(420px, calc(100vw - 32px)); pointer-events: none;
+}
+.nk-toast {
+  pointer-events: auto;
+  background: #0F172A; color: #F8FAFC; border-radius: 10px;
+  padding: 11px 14px; font-size: 13px; line-height: 1.4;
+  box-shadow: 0 12px 32px rgba(15,23,42,0.35);
+  display: flex; align-items: flex-start; gap: 10px;
+  animation: nkToastIn 180ms ease;
+}
+.nk-toast.ok    { border-left: 4px solid #10B981; }
+.nk-toast.err   { border-left: 4px solid #EF4444; }
+.nk-toast.info  { border-left: 4px solid #1D6FA5; }
+.nk-toast button {
+  margin-left: auto; background: none; border: 0; color: #94A3B8; font-size: 14px; line-height: 1; padding: 0;
+}
+@keyframes nkToastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* Leads list — a grid on desktop, stacked cards on a phone. */
+.nk-leadrow {
+  display: grid; grid-template-columns: 22px minmax(180px, 1.3fr) minmax(160px, 1.4fr) 120px 90px auto;
+  gap: 12px; align-items: center; padding: 12px 14px;
+  border-top: 1px solid #E2E8F0; cursor: pointer; transition: background 120ms ease;
+}
+.nk-leadrow:first-child { border-top: 0; }
+.nk-leadrow:hover { background: #F6F8FB; }
+.nk-leadrow input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: #12457A; cursor: pointer; }
+.nk-leadhead { cursor: default; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #94A3B8; padding: 10px 14px; background: #F6F8FB; }
+.nk-leadhead:hover { background: #F6F8FB; }
+@media (max-width: 900px) {
+  .nk-leadhead { display: none; }
+  .nk-leadrow { grid-template-columns: 22px 1fr auto; grid-template-areas: "cb id act" "cb wants wants" "cb stage when"; gap: 8px 10px; }
+  .nk-leadrow > :nth-child(1) { grid-area: cb; align-self: start; margin-top: 12px; }
+  .nk-leadrow > :nth-child(2) { grid-area: id; }
+  .nk-leadrow > :nth-child(3) { grid-area: wants; }
+  .nk-leadrow > :nth-child(4) { grid-area: stage; }
+  .nk-leadrow > :nth-child(5) { grid-area: when; justify-self: end; }
+  .nk-leadrow > :nth-child(6) { grid-area: act; }
+}
+
+/* Plain form blocks (Setup › Business Details): inputs without inline styles. */
+.nk-form input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.nk-form textarea, .nk-form select {
+  width: 100%; box-sizing: border-box;
+  background: #F6F8FB; border: 1px solid #E2E8F0; border-radius: 8px;
+  padding: 9px 12px; font-size: 14px; color: #0F172A;
+}
+.nk-form input:focus, .nk-form textarea:focus, .nk-form select:focus { border-color: #1D6FA5; outline: none; box-shadow: 0 0 0 3px rgba(29,111,165,0.15); }

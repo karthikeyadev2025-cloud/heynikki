@@ -488,7 +488,7 @@ export default function CampaignsPage() {
   };
 
   return (
-    <Shell>
+    <Shell title="Campaigns">
       <div style={{ padding: 24, maxWidth: 1000 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: 8 }}>
           <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: 0 }}>

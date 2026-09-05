@@ -5,8 +5,9 @@ import { createClient } from "../lib/supabase";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, Menu, X } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
+import Toaster from "./Toast";
 import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
 
@@ -125,20 +126,25 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
     ? Math.max(0, Math.round(Number(tenant.credit_minutes)))
     : null;
 
+  // Under 900px the sidebar is off-canvas (see .nk-side in globals.css):
+  // before this it sat fixed at 220px on a 390px phone and the page lived
+  // in the 170px beside it.
   const Sidebar = () => (
-    <div style={{
-      width: 220, background: C.surf, borderRight: "1px solid " + C.bord,
-      display: "flex", flexDirection: "column", height: "100vh",
-      position: "fixed", left: 0, top: 0, zIndex: 40,
+    <div className={"nk-side" + (sideOpen ? " open" : "")} style={{
+      background: C.surf, borderRight: "1px solid " + C.bord,
     }}>
       {/* Logo — canonical NikkiLogo, same mark as the landing page and
           the favicon. This used to be a glowing green dot plus the bare
           word "Nikki", which shared nothing with the brand anywhere else
           on the site. */}
       <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid " + C.bord }}>
-        <a href="/dashboard" aria-label="HeyNikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
-          <NikkiLogo size={30} dark />
-        </a>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <a href="/dashboard" aria-label="HeyNikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
+            <NikkiLogo size={30} dark />
+          </a>
+          <button className="nk-burger" aria-label="Close menu" onClick={() => setSideOpen(false)}
+            style={{ background: "none", border: 0, color: C.mid, padding: 4 }}><X size={18} /></button>
+        </div>
         {tenant && (
           <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
             {tenant.name}
@@ -152,8 +158,8 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
           return (
-            <a key={item.href} href={item.href} style={{
-              display: "flex", alignItems: "center", gap: 10,
+            <a key={item.href} href={item.href} onClick={() => setSideOpen(false)} style={{
+              display: "flex", alignItems: "center", gap: 10, textDecoration: "none",
               padding: "9px 10px", borderRadius: 8, marginBottom: 2,
               background: active ? C.glow + "33" : "transparent",
               border: "1px solid " + (active ? C.glow + "44" : "transparent"),
@@ -200,30 +206,38 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   );
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div className="nk-shell" style={{ display: "flex", minHeight: "100vh", background: C.bg, color: C.txt }}>
       <Sidebar />
+      {sideOpen && <div className="nk-scrim" onClick={() => setSideOpen(false)} />}
       {/* Main content */}
-      <div style={{ marginLeft: 220, flex: 1, minHeight: "100vh", background: C.bg }}>
+      <div className="nk-main" style={{ background: C.bg }}>
         {/* Top bar */}
-        <div style={{
+        <div className="nk-topbar" style={{
           height: 56, borderBottom: "1px solid " + C.bord,
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 24px", background: C.surf, position: "sticky", top: 0, zIndex: 30,
+          padding: "0 24px", background: C.surf, position: "sticky", top: 0, zIndex: 30, gap: 10,
         }}>
-          <div style={{ color: C.txt, fontSize: 16, fontWeight: 800 }}>{title || "Dashboard"}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <button className="nk-burger" aria-label="Open menu" onClick={() => setSideOpen(true)}
+              style={{ background: "none", border: "1px solid " + C.bord, borderRadius: 8, color: C.txt, padding: 6, alignItems: "center" }}>
+              <Menu size={18} />
+            </button>
+            <div style={{ color: C.txt, fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title || "Dashboard"}</div>
+          </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <LiveCallBadge />
-            <div style={{ color: C.dim, fontSize: 12 }}>
+            <div className="nk-hide-mobile" style={{ color: C.dim, fontSize: 12 }}>
               {tenant?.name || "Loading..."}
             </div>
           </div>
         </div>
         {/* Page */}
-        <div style={{ padding: "24px", maxWidth: 1100 }} className="fade-in">
+        <div className="nk-page fade-in">
           {children}
         </div>
       </div>
       <OwnerVoiceAssistant />
+      <Toaster />
     </div>
   );
 }

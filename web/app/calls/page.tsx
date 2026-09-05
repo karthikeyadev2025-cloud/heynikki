@@ -360,6 +360,17 @@ export default function CallsPage() {
     const { data } = await q;
     setCalls(data || []);
     setLoading(false);
+    // Deep links from a lead's timeline: /calls?call=<id> opens that call.
+    // It may be older than the 100 rows above, so fetch it on its own.
+    try {
+      const want = new URLSearchParams(window.location.search).get("call");
+      if (want) {
+        const hit = (data || []).find((c: any) => c.id === want)
+          || (await sb.from("calls").select("*").eq("id", want).eq("tenant_id", tid).maybeSingle()).data;
+        if (hit) setSelected(hit as CallRecord);
+        window.history.replaceState({}, "", "/calls");
+      }
+    } catch { /* no window */ }
   }, [filter]);
 
   useEffect(() => {

@@ -114,7 +114,7 @@ export default function QualityPage() {
   );
 
   return (
-    <Shell>
+    <Shell title="Call Quality">
       <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
         <h1 style={{ fontSize: 24, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>Call quality</h1>
         <p style={{ color: C.mid, fontSize: 14, margin: "0 0 20px" }}>

@@ -133,7 +133,7 @@ export default function KnowledgePage() {
   };
 
   return (
-    <Shell>
+    <Shell title="Teach Nikki">
       <div style={{ padding: 24, maxWidth: 900 }}>
         <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>
           Teach Nikki

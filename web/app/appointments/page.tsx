@@ -221,7 +221,7 @@ export default function AppointmentsPage() {
   const pendingCount  = appts.filter(a => a.status === "pending").length;
 
   return (
-    <Shell>
+    <Shell title="Appointments">
       <div style={{ padding: 24, maxWidth: 960 }}>
         <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>
           Appointments
