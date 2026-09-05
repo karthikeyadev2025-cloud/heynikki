@@ -480,7 +480,7 @@ export default function LeadsPage() {
     <Shell title="Leads">
       {/* Disposition modal */}
       {dispModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)", zIndex: 999,
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)", zIndex: 10001,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
             borderRadius: 12, padding: 24, width: "min(440px, 100%)", boxShadow: "0 20px 60px #0008" }}>

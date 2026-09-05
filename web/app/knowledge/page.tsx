@@ -93,12 +93,17 @@ export default function KnowledgePage() {
         .filter(n => n.startsWith("asset:")).map(n => n.slice(6))));
       const names = new Map<string, string>();
       if (ids.length) {
-        const { data: assets } = await sb.from("tenant_assets").select("id, file_name, kind").in("id", ids);
-        for (const a of assets || []) names.set(a.id, a.file_name || a.kind || "upload");
+        const { data: assets } = await sb.from("tenant_assets").select("id, file_name, kind, created_at").in("id", ids);
+        for (const a of assets || []) {
+          // "brochure · 3 Sep" reads better than a phone camera's file name.
+          const when = a.created_at ? new Date(a.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "";
+          const kind = String(a.kind || "upload").replace(/_/g, " ");
+          names.set(a.id, when ? `${kind} · ${when}` : kind);
+        }
       }
       setEntries((data || []).map((r: any) => {
         const n = String(r.source_name || "");
-        return n.startsWith("asset:") ? { ...r, source_name: "From " + (names.get(n.slice(6)) || "upload") } : r;
+        return n.startsWith("asset:") ? { ...r, source_name: "From your " + (names.get(n.slice(6)) || "upload") } : r;
       }) as Entry[]);
     }
     setLoading(false);

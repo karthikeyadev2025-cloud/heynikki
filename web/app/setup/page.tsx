@@ -488,7 +488,7 @@ export default function SetupPage() {
             "Before they close their browser" — a website form, Facebook
             Lead Ad, or Google Form posts to this URL and Nikki can WhatsApp
             an instant ack and/or call them back within ~30 seconds. */}
-        <Card style={{ marginBottom: 20 }}>
+        <Card className="nk-form" style={{ marginBottom: 20 }}>
           <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
             Instant Lead Capture
           </div>
@@ -575,7 +575,7 @@ export default function SetupPage() {
           )}
         </Card>
 
-        <Card style={{ marginBottom: 20 }}>
+        <Card className="nk-form" style={{ marginBottom: 20 }}>
           <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
             Phone &amp; WhatsApp
           </div>

@@ -144,7 +144,7 @@ h1, h2, h3, .font-display {
 /* Toasts — one stack, bottom-centre, above drawers and modals. */
 .nk-toasts {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-  display: flex; flex-direction: column; gap: 8px; z-index: 10000;
+  display: flex; flex-direction: column; gap: 8px; z-index: 10010;
   width: min(420px, calc(100vw - 32px)); pointer-events: none;
 }
 .nk-toast {

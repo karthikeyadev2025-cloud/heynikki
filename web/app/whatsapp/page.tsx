@@ -219,7 +219,12 @@ export default function WhatsAppPage() {
     for (const d of dispatch) {
       const n = last10(d.to_number); if (!map.has(n)) continue;   // only people who have written back
       map.get(n)!.push({
-        id: "out:" + d.id, dir: "out", body: d.message_body || (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type),
+        id: "out:" + d.id, dir: "out",
+        // Manual template sends log "template:<name>" as the body — the text
+        // itself lives with Meta. Show it as a template card, not a slug.
+        body: /^template:/.test(d.message_body || "")
+          ? "📋 " + d.message_body.slice(9).replace(/_/g, " ") + " (template)"
+          : d.message_body || (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type),
         at: d.sent_at, status: d.status, label: d.message_type === "manual_reply" ? "you" : (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type) });
     }
     return Array.from(map.entries()).map(([number, msgs]) => {
