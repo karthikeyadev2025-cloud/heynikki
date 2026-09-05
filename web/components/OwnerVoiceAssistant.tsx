@@ -18,6 +18,7 @@
 "use client";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createClient } from "../lib/supabase";
+import { isNativeApp, startHeyNikki, stopHeyNikki, heyNikkiRunning } from "../lib/native";
 import { NIKKI } from "../lib/brand";
 import { Bot, Mic, Loader2, X, Square, Volume2 } from "lucide-react";
 
@@ -101,22 +102,40 @@ export default function OwnerVoiceAssistant() {
     recogRef.current = null;
   }, []);
 
+  // Inside the phone app the pill runs the phone's own listener — a
+  // foreground service with the mic open, screen off, "Hey Nikki" → she
+  // says చెప్పండి and answers out loud — not the browser's recognizer,
+  // which dies the moment the WebView sleeps.
+  const native = isNativeApp();
+  const [nativeMsg, setNativeMsg] = useState("");
+  useEffect(() => { if (native) heyNikkiRunning().then(r => setWakeOn(r)); }, [native]);
+
   const toggleWake = useCallback(() => {
+    if (native) {
+      if (wakeOn) { stopHeyNikki().then(() => setWakeOn(false)); return; }
+      startHeyNikki().then(r => {
+        setWakeOn(r.ok);
+        setNativeMsg(r.ok ? "" : (r.reason || "Could not start"));
+        if (!r.ok) setTimeout(() => setNativeMsg(""), 5000);
+      }).catch(e => { setNativeMsg(e?.message || "Could not start"); setTimeout(() => setNativeMsg(""), 5000); });
+      return;
+    }
     setWakeOn(on => {
       if (on) { stopWake(); return false; }
       const ok = startWake();
       return ok;
     });
-  }, [startWake, stopWake]);
+  }, [native, wakeOn, startWake, stopWake]);
 
   // The panel closing resumes the wake listener; unmount kills it.
   useEffect(() => {
+    if (native) return;
     if (wakeOn && !open && statusRef.current === "idle") {
       const t = setTimeout(() => { if (!openRef.current) startWake(); }, 500);
       return () => clearTimeout(t);
     }
-  }, [open, wakeOn, startWake]);
-  useEffect(() => () => stopWake(), [stopWake]);
+  }, [open, wakeOn, startWake, native]);
+  useEffect(() => () => { if (!native) stopWake(); }, [stopWake, native]);
 
   const startRecording = useCallback(async () => {
     setErrorMsg("");
@@ -327,8 +346,15 @@ export default function OwnerVoiceAssistant() {
           background: wakeOn ? C.grn : C.dim,
           boxShadow: wakeOn ? `0 0 0 3px rgba(16,185,129,0.2)` : "none",
         }} />
-        {wakeOn ? "\u201cHey Nikki\u201d on" : "\u201cHey Nikki\u201d wake"}
+        {wakeOn ? (native ? "\u201cHey Nikki\u201d always on" : "\u201cHey Nikki\u201d on") : "\u201cHey Nikki\u201d wake"}
       </button>
+      {nativeMsg && (
+        <div style={{ position: "fixed", bottom: 122, right: 24, zIndex: 9999, maxWidth: 260,
+          background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 10, padding: "8px 12px",
+          color: C.red, fontSize: 12, fontWeight: 600, boxShadow: "0 8px 24px rgba(15,23,42,0.12)" }}>
+          {nativeMsg}
+        </div>
+      )}
 
       <button
         onClick={toggle}

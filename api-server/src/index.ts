@@ -4134,6 +4134,7 @@ import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
+import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 
@@ -6155,6 +6156,63 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
 // audio/webm). Sarvam's REST STT endpoint auto-detects codec and
 // explicitly supports webm directly (confirmed via their own docs),
 // so no client-side re-encoding to WAV is needed.
+// The voice round trip — Sarvam STT → Gemini over this tenant's data →
+// Sarvam TTS — as a function, because the phone app (app.ts) asks the same
+// question with a device token instead of a Supabase JWT.
+async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string) {
+  const SARVAM_KEY = process.env.SARVAM_API_KEY!;
+
+  // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
+  const audioBuffer = Buffer.from(audio_base64, "base64");
+  const sttForm = new FormData();
+  const ext = (mime_type || "audio/webm").split("/")[1] || "webm";
+  sttForm.append("file", new Blob([audioBuffer], { type: mime_type || "audio/webm" }), `audio.${ext}`);
+  sttForm.append("model", "saaras:v3");
+  sttForm.append("language_code", "te-IN");
+
+  const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
+    method: "POST",
+    headers: { "api-subscription-key": SARVAM_KEY },
+    body: sttForm as any,
+  });
+  if (!sttResp.ok) throw new Error(`Sarvam STT error: ${sttResp.status}`);
+  const sttData = await sttResp.json() as any;
+  const transcript: string = sttData.transcript || "";
+  if (!transcript.trim()) throw new Error("Could not hear anything — please try again");
+
+  // ── 2. Ask Gemini, scoped to this tenant's own business data ──
+  const { contextJson } = await buildBusinessContext(tenantId);
+  const answer = await askGemini(transcript, contextJson, false);
+
+  // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
+  const audioOutBase64 = await synthesizeTelugu(answer);
+  return { transcript, answer, audio_base64: audioOutBase64, audio_mime: "audio/wav" };
+}
+
+// Non-telephony settings here (unlike the phone pipeline's 8kHz mulaw) —
+// this plays through a speaker or a browser <audio> element, so higher
+// quality output is worth it, and there's no 20-word truncation since this
+// is Q&A, not a live phone conversation with pacing constraints.
+async function synthesizeTelugu(text: string): Promise<string> {
+  const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
+    method: "POST",
+    headers: { "api-subscription-key": process.env.SARVAM_API_KEY!, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inputs: [text],
+      target_language_code: "te-IN",
+      speaker: "priya",
+      model: "bulbul:v3",
+      // No pitch/loudness — Bulbul V3 400s on both.
+      pace: 1.0,
+      speech_sample_rate: 22050,
+      enable_preprocessing: true,
+    }),
+  });
+  if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);
+  const ttsData = await ttsResp.json() as any;
+  return ttsData.audios?.[0] || "";
+}
+
 app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
   const { audio_base64, mime_type } = req.body as { audio_base64: string; mime_type: string };
 
@@ -6174,73 +6232,17 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
     return res.status(403).json({ error: "No tenant associated with this account" });
   }
 
-  const SARVAM_KEY = process.env.SARVAM_API_KEY!;
-
   try {
-    // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
-    const audioBuffer = Buffer.from(audio_base64, "base64");
-    const sttForm = new FormData();
-    const ext = (mime_type || "audio/webm").split("/")[1] || "webm";
-    sttForm.append("file", new Blob([audioBuffer], { type: mime_type || "audio/webm" }), `audio.${ext}`);
-    sttForm.append("model", "saaras:v3");
-    sttForm.append("language_code", "te-IN");
-
-    const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
-      method: "POST",
-      headers: { "api-subscription-key": SARVAM_KEY },
-      body: sttForm as any,
-    });
-    if (!sttResp.ok) throw new Error(`Sarvam STT error: ${sttResp.status}`);
-    const sttData = await sttResp.json() as any;
-    const transcript: string = sttData.transcript || "";
-
-    if (!transcript.trim()) {
-      return res.status(422).json({ error: "Could not hear anything — please try again" });
-    }
-
-    // ── 2. Ask Gemini, scoped to this tenant's own business data ──
-    const { contextJson } = await buildBusinessContext(tenantId);
-    const answer = await askGemini(transcript, contextJson, false);
-
-    // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
-    // Non-telephony settings here (unlike the phone pipeline's 8kHz
-    // mulaw) — this plays back through a normal browser <audio>
-    // element, so higher quality output is worth it, and there's no
-    // 20-word truncation since this is a dashboard Q&A tool, not a
-    // live phone conversation with pacing constraints.
-    const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": SARVAM_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: [answer],
-        target_language_code: "te-IN",
-        speaker: "priya",
-        model: "bulbul:v3",
-        // No pitch/loudness — Bulbul V3 400s on both.
-        pace: 1.0,
-        speech_sample_rate: 22050,
-        enable_preprocessing: true,
-      }),
-    });
-    if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);
-    const ttsData = await ttsResp.json() as any;
-    const audioOutBase64: string = ttsData.audios?.[0] || "";
-
-    res.json({
-      transcript,
-      answer,
-      audio_base64: audioOutBase64,
-      audio_mime: "audio/wav",
-    });
-
+    res.json(await tenantVoiceQuery(tenantId, audio_base64, mime_type));
   } catch (err: any) {
+    const msg = err?.message || "Voice query failed";
+    if (/hear anything/i.test(msg)) return res.status(422).json({ error: msg });
     console.error("[tenant voice-query]", err);
-    res.status(500).json({ error: err.message || "Voice query failed" });
+    res.status(500).json({ error: msg });
   }
 });
+
+mountAppRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, tenantVoiceQuery, synthesize: synthesizeTelugu });
 
 
 // ─────────────────────────────────────────────────────────────

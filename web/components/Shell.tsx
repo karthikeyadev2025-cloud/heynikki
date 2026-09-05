@@ -2,6 +2,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { createClient } from "../lib/supabase";
+import { forgetDevice } from "../lib/native";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
@@ -195,6 +196,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       {/* Logout */}
       <div style={{ padding: "0 8px 16px" }}>
         <button onClick={async () => {
+          await forgetDevice();          // the phone app's listener + token
           await createClient().auth.signOut();
           window.location.href = "/login";
         }} style={{

@@ -220,8 +220,11 @@ export default function DashboardPage() {
     sb.auth.getUser().then(async ({ data }) => {
       if (!data.user) { window.location.href = "/login"; return; }
       const { data: tu } = await sb.from("tenant_users")
-        .select("tenant_id").eq("user_id", data.user.id).single();
+        .select("tenant_id, role").eq("user_id", data.user.id).single();
       if (!tu) return;
+      // Seat members land on the Human Desk, not the owner console —
+      // Google sign-in and stale bookmarks both arrive here.
+      if (tu.role === "member" || tu.role === "support") { window.location.href = "/desk"; return; }
 
       setTenantId(tu.tenant_id);
       await fetchData(tu.tenant_id);

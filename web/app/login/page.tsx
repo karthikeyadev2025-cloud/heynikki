@@ -32,6 +32,19 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6, fontWeight: 700, letterSpacing: 0.5,
 };
 
+/** One app, one login — the role decides which desk opens.
+ *  owner/super_admin → Reception (owner console), member/support → Human Desk. */
+async function landingFor(sb: ReturnType<typeof createClient>): Promise<string> {
+  try {
+    const { data } = await sb.auth.getUser();
+    if (!data.user) return "/dashboard";
+    const { data: tu } = await sb.from("tenant_users").select("role").eq("user_id", data.user.id).single();
+    const role = tu?.role || "owner";
+    if (role === "member" || role === "support") return "/desk";
+    return "/dashboard";
+  } catch { return "/dashboard"; }
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,7 +79,7 @@ export default function LoginPage() {
     const sb = createClient();
     const { error: err } = await sb.auth.signInWithPassword({ email, password });
     if (err) { setError(err.message); setLoading(false); return; }
-    window.location.href = "/dashboard";
+    window.location.href = await landingFor(sb);
   };
 
   /** India E.164. Supabase wants the country code; people type ten digits. */
@@ -106,7 +119,7 @@ export default function LoginPage() {
     const sb = createClient();
     const { error: err } = await sb.auth.verifyOtp({ phone: p, token: otp.trim(), type: "sms" });
     if (err) { setError(err.message); setLoading(false); return; }
-    window.location.href = "/dashboard";
+    window.location.href = await landingFor(sb);
   };
 
   const handleGoogle = async () => {
