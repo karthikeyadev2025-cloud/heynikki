@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { installAuthDeepLink } from "../lib/native";
+import { installAuthDeepLink, isNativeApp } from "../lib/native";
 import { landingFor } from "../lib/landing";
 import { createClient } from "../lib/supabase";
 
@@ -9,6 +9,15 @@ import { createClient } from "../lib/supabase";
  *  the app was cold-started by it (the WebView then opens on the home
  *  page, not /login). No-op in a browser. */
 export default function NativeBridge() {
-  useEffect(() => { installAuthDeepLink(() => landingFor(createClient())); }, []);
+  useEffect(() => {
+    installAuthDeepLink(() => landingFor(createClient()));
+    // The app has no use for the marketing site: "/" means "take me to my
+    // desk" — login if there is no session, otherwise the role's landing.
+    if (!isNativeApp() || window.location.pathname !== "/") return;
+    const sb = createClient();
+    sb.auth.getSession().then(async ({ data }) => {
+      window.location.replace(data.session ? await landingFor(sb) : "/login");
+    });
+  }, []);
   return null;
 }
