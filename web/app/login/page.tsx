@@ -1,9 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
 import NikkiLogo from "../../components/NikkiLogo";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { isNativeApp, nativeGoogleSignIn, installAuthDeepLink } from "../../lib/native";
+import { landingFor } from "../../lib/landing";
 
 /**
  * Palette pulled onto the HeyNikki brand: the emerald-to-orange gradient the
@@ -32,20 +34,8 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6, fontWeight: 700, letterSpacing: 0.5,
 };
 
-/** One app, one login — the role decides which desk opens.
- *  owner/super_admin → Reception (owner console), member/support → Human Desk. */
-async function landingFor(sb: ReturnType<typeof createClient>): Promise<string> {
-  try {
-    const { data } = await sb.auth.getUser();
-    if (!data.user) return "/dashboard";
-    const { data: tu } = await sb.from("tenant_users").select("role").eq("user_id", data.user.id).single();
-    const role = tu?.role || "owner";
-    if (role === "member" || role === "support") return "/desk";
-    return "/dashboard";
-  } catch { return "/dashboard"; }
-}
-
 export default function LoginPage() {
+  useEffect(() => { installAuthDeepLink(() => landingFor(createClient())); }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   // Phone sign-in. Two steps in one component rather than a second page:
@@ -125,6 +115,13 @@ export default function LoginPage() {
   const handleGoogle = async () => {
     setError("");
     setGoogleLoading(true);
+    if (isNativeApp()) {
+      // Custom Tab round-trip; the deep-link listener finishes the sign-in.
+      const r = await nativeGoogleSignIn();
+      if (!r.ok) setError(r.error || "Google sign-in failed");
+      setGoogleLoading(false);
+      return;
+    }
     const sb = createClient();
     const { error: err } = await sb.auth.signInWithOAuth({
       provider: "google",

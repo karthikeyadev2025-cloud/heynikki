@@ -102,3 +102,49 @@ export async function forgetDevice(): Promise<void> {
     });
   } catch { /* best effort */ }
 }
+
+// ── Google sign-in from inside the app ───────────────────────────────
+// Google refuses OAuth inside a WebView, so the app opens the Supabase
+// OAuth URL in a Chrome Custom Tab and Supabase sends the PKCE code back
+// on our own scheme (in.heynikki.app://auth/callback). The WebView still
+// holds the code verifier cookie, so the exchange happens here as usual.
+export const NATIVE_AUTH_REDIRECT = "in.heynikki.app://auth/callback";
+
+export async function nativeGoogleSignIn(): Promise<{ ok: boolean; error?: string }> {
+  const c = cap();
+  const Browser = c?.Plugins?.Browser;
+  if (!Browser) return { ok: false, error: "Browser plugin missing" };
+  const sb = createClient();
+  const { data, error } = await sb.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: NATIVE_AUTH_REDIRECT, skipBrowserRedirect: true },
+  });
+  if (error || !data?.url) return { ok: false, error: error?.message || "No OAuth URL" };
+  await Browser.open({ url: data.url, presentationStyle: "popover" });
+  return { ok: true };
+}
+
+let deepLinkInstalled = false;
+/** Idempotent. Turns an incoming auth deep link into a session, then lands
+ *  the user on their desk. Safe to call on every page. */
+export function installAuthDeepLink(landing: () => Promise<string>): void {
+  if (deepLinkInstalled || !isNativeApp()) return;
+  const App = cap()?.Plugins?.App;
+  if (!App) return;
+  deepLinkInstalled = true;
+  const handle = async (url: string) => {
+    if (!url || !url.startsWith(NATIVE_AUTH_REDIRECT)) return;
+    try { await cap()?.Plugins?.Browser?.close?.(); } catch {}
+    const u = new URL(url.replace(NATIVE_AUTH_REDIRECT, "https://x/auth/callback"));
+    const code = u.searchParams.get("code");
+    const err = u.searchParams.get("error_description") || u.searchParams.get("error");
+    if (err) { alert("Google sign-in failed: " + err); return; }
+    if (!code) return;
+    const sb = createClient();
+    const { error } = await sb.auth.exchangeCodeForSession(code);
+    if (error) { alert("Sign-in failed: " + error.message); return; }
+    window.location.href = await landing();
+  };
+  App.addListener("appUrlOpen", (e: { url: string }) => { void handle(e.url); });
+  App.getLaunchUrl?.().then((r: { url?: string } | null) => { if (r?.url) void handle(r.url); }).catch(() => {});
+}

@@ -4,6 +4,7 @@ import Script from "next/script";
 import { Bricolage_Grotesque, Manrope, JetBrains_Mono, Noto_Sans_Telugu } from "next/font/google";
 import "./globals.css";
 import CookieBanner from "../components/CookieBanner";
+import NativeBridge from "../components/NativeBridge";
 
 // Typography system — replaces the previous system-font fallback stack,
 // which had zero distinctive character. Fraunces (warm, characterful
@@ -290,6 +291,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${bricolage.variable} ${manrope.variable} ${jetbrainsMono.variable} ${notoTelugu.variable}`}>
         <FetchResilience />
+        <NativeBridge />
         <Script
           id="heynikki-jsonld"
           type="application/ld+json"
