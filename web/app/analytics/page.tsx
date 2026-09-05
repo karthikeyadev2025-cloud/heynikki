@@ -395,7 +395,7 @@ export default function AnalyticsPage() {
           })()}
 
           {/* ── KPI Row ────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
             <KpiCard label="Total Calls"      value={totalCalls}         color={C.gbr}  />
             <KpiCard label="AI Handled"       value={aiHandled}          color={C.glow} sub={`${totalCalls ? Math.round(aiHandled/totalCalls*100) : 0}% auto-resolved`} />
             <KpiCard label="Appointments"     value={appointments}       color={C.grn}  sub={`${totalCalls ? Math.round(appointments/totalCalls*100) : 0}% booking rate`} />
@@ -431,7 +431,7 @@ export default function AnalyticsPage() {
           </Card>
 
           {/* ── Lead Funnel + CTC Dispositions ──────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
             <Card title="Lead Funnel" subtitle={`${leads.length} total leads · ${conversionRate}% conversion`}>
               {leadFunnelData.map((s, i) => (
                 <div key={s.stage} style={{ marginBottom: 10 }}>
@@ -499,7 +499,7 @@ export default function AnalyticsPage() {
           </div>
 
           {/* ── WhatsApp + Intent ────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
             <Card title="WhatsApp Dispatch Performance" subtitle={`${waSent} sent · ${waConversionRate}% delivered`}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
                 {[
