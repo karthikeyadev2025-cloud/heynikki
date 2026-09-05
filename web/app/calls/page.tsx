@@ -415,7 +415,8 @@ export default function CallsPage() {
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search by number, intent or status..."
-          style={{ maxWidth: 240 }} />
+          style={{ flex: "1 1 220px", maxWidth: 320, padding: "9px 12px", borderRadius: 8,
+                   border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: 13 }} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
@@ -472,6 +473,7 @@ export default function CallsPage() {
             )}
           </div>
         ) : (
+          <div className="nk-scroll">
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: C.hi }}>
@@ -525,6 +527,7 @@ export default function CallsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </Shell>

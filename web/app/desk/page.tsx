@@ -530,7 +530,7 @@ function TeamCalls({ d, onCallBack }: { d: Desk | null; onCallBack: (n: string) 
       {!d ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : rows.length === 0 ? (
         <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6 }}>
           No calls have reached the team in the last 7 days.{" "}
-          {d.routing_mode === "ai" ? "Nikki is answering everything — switch to Hybrid or Team on the right to see calls here." : "Calls that ring the seats' phones will show here, answered or missed."}
+          {d.routing_mode === "ai" ? "Nikki is answering everything — switch to Hybrid or Team under “Who answers” to see calls here." : "Calls that ring the seats' phones will show here, answered or missed."}
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>

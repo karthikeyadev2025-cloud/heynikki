@@ -86,7 +86,21 @@ export default function KnowledgePage() {
       .select("id, content, source_type, source_name, embedding, created_at")
       .order("created_at", { ascending: false });
     if (e) setError(e.message);
-    else setEntries((data || []) as Entry[]);
+    else {
+      // Facts pulled out of an upload are tagged "asset:<uuid>" — show the
+      // file they came from, not the id.
+      const ids = Array.from(new Set((data || []).map((r: any) => String(r.source_name || ""))
+        .filter(n => n.startsWith("asset:")).map(n => n.slice(6))));
+      const names = new Map<string, string>();
+      if (ids.length) {
+        const { data: assets } = await sb.from("tenant_assets").select("id, file_name, kind").in("id", ids);
+        for (const a of assets || []) names.set(a.id, a.file_name || a.kind || "upload");
+      }
+      setEntries((data || []).map((r: any) => {
+        const n = String(r.source_name || "");
+        return n.startsWith("asset:") ? { ...r, source_name: "From " + (names.get(n.slice(6)) || "upload") } : r;
+      }) as Entry[]);
+    }
     setLoading(false);
   }, []);
 

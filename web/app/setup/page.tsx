@@ -622,10 +622,71 @@ export default function SetupPage() {
           </FieldGroup>
         </Card>
 
+        {/* Bargaining is a profile setting; it used to sit inside the Save /
+            Test Call button row and squeezed both into slivers on a phone. */}
+        <Card className="nk-form" style={{ marginBottom: 20 }}>
+        {/* What she may agree to. Without this she either refuses to
+            discuss price — which sounds like a form, not a receptionist —
+            or improvises a discount nobody authorised. */}
+        <div>
+          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3 }}>
+            Bargaining
+          </div>
+          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+            Callers haggle. Tell Nikki exactly what she may agree to, and she will
+            never go past it — or leave this off and she will politely say the owner
+            decides pricing.
+          </div>
+
+          <label style={{ display: "flex", gap: 8, alignItems: "center",
+            fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
+            <input type="checkbox" checked={neg.enabled}
+              onChange={e => setNeg((n: any) => ({ ...n, enabled: e.target.checked }))} />
+            Let Nikki negotiate on price
+          </label>
+
+          {neg.enabled && (
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div>
+                <Label>The lowest you will ever accept</Label>
+                <input value={neg.floor_note}
+                  onChange={e => setNeg((n: any) => ({ ...n, floor_note: e.target.value }))}
+                  placeholder="e.g. ₹3,500 for a root canal — never less" />
+                <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                  In your own words. She never says this number aloud and never goes under it.
+                </div>
+              </div>
+              <div>
+                <Label>Most she may come down (%)</Label>
+                <input type="number" min={0} max={100} value={neg.max_discount_pct}
+                  onChange={e => setNeg((n: any) => ({ ...n, max_discount_pct: e.target.value }))}
+                  placeholder="10" style={{ maxWidth: 120 }} />
+              </div>
+              <div>
+                <Label>What she can offer instead of a discount</Label>
+                <input value={neg.offers}
+                  onChange={e => setNeg((n: any) => ({ ...n, offers: e.target.value }))}
+                  placeholder="free first consultation, home delivery, 3-month EMI" />
+                <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                  Comma separated. Most bargaining settles on one of these rather than money.
+                </div>
+              </div>
+              <div>
+                <Label>What she says when they agree</Label>
+                <input value={neg.close_line}
+                  onChange={e => setNeg((n: any) => ({ ...n, close_line: e.target.value }))}
+                  placeholder="అలాగే సార్, అదే rate కి fix చేస్తున్నాను." />
+              </div>
+            </div>
+          )}
+        </div>
+
+        </Card>
+
         {/* Actions */}
-        <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button type="submit" disabled={saving} style={{
-            flex: 1, background: C.glow, color: "#fff", border: "none",
+            flex: "1 1 200px", background: C.glow, color: "#fff", border: "none",
             borderRadius: 8, padding: "12px 0", fontSize: 14, fontWeight: 700,
             opacity: saving ? 0.7 : 1,
           }}>
@@ -637,63 +698,6 @@ export default function SetupPage() {
               ring. The button used to be enabled with a phone missing, so
               pressing it returned 409 and printed a console error while the
               field that fixes it sat higher up the same page. */}
-          {/* What she may agree to. Without this she either refuses to
-              discuss price — which sounds like a form, not a receptionist —
-              or improvises a discount nobody authorised. */}
-          <div style={{ marginTop: 22, paddingTop: 18, borderTop: `1px solid ${C.bord}` }}>
-            <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3 }}>
-              Bargaining
-            </div>
-            <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
-              Callers haggle. Tell Nikki exactly what she may agree to, and she will
-              never go past it — or leave this off and she will politely say the owner
-              decides pricing.
-            </div>
-
-            <label style={{ display: "flex", gap: 8, alignItems: "center",
-              fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
-              <input type="checkbox" checked={neg.enabled}
-                onChange={e => setNeg((n: any) => ({ ...n, enabled: e.target.checked }))} />
-              Let Nikki negotiate on price
-            </label>
-
-            {neg.enabled && (
-              <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                <div>
-                  <Label>The lowest you will ever accept</Label>
-                  <input value={neg.floor_note}
-                    onChange={e => setNeg((n: any) => ({ ...n, floor_note: e.target.value }))}
-                    placeholder="e.g. ₹3,500 for a root canal — never less" />
-                  <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
-                    In your own words. She never says this number aloud and never goes under it.
-                  </div>
-                </div>
-                <div>
-                  <Label>Most she may come down (%)</Label>
-                  <input type="number" min={0} max={100} value={neg.max_discount_pct}
-                    onChange={e => setNeg((n: any) => ({ ...n, max_discount_pct: e.target.value }))}
-                    placeholder="10" style={{ maxWidth: 120 }} />
-                </div>
-                <div>
-                  <Label>What she can offer instead of a discount</Label>
-                  <input value={neg.offers}
-                    onChange={e => setNeg((n: any) => ({ ...n, offers: e.target.value }))}
-                    placeholder="free first consultation, home delivery, 3-month EMI" />
-                  <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
-                    Comma separated. Most bargaining settles on one of these rather than money.
-                  </div>
-                </div>
-                <div>
-                  <Label>What she says when they agree</Label>
-                  <input value={neg.close_line}
-                    onChange={e => setNeg((n: any) => ({ ...n, close_line: e.target.value }))}
-                    placeholder="అలాగే సార్, అదే rate కి fix చేస్తున్నాను." />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ height: 16 }} />
           <button type="button" onClick={handleTestCall}
             disabled={testCalling || !profile || !ownerPhone.trim()} style={{
             padding: "12px 20px", background: "transparent", color: C.gbr,

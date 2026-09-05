@@ -602,6 +602,7 @@ export default function DashboardPage() {
               <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>Recent Calls</div>
               <a href="/calls" style={{ color: C.glow, fontSize: 12 }}>View all →</a>
             </div>
+            <div className="nk-scroll">
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
@@ -646,6 +647,7 @@ export default function DashboardPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
         </>
       )}

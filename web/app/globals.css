@@ -2,8 +2,8 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: #070B19;
-  color: #F8FAFC;
+  background: #F6F8FB;
+  color: #0F172A;
   font-family: var(--font-body), 'Noto Sans Telugu', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

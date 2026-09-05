@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Check, ClipboardCopy, Key, BarChart3, Clock, BookOpen } from "lucide-react";
@@ -155,15 +155,12 @@ export default function ApiKeysPage() {
     new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
   return (
-    <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, padding: 24 }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+    <Shell title="API keys">
+      <div style={{ maxWidth: 900 }}>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
           <div>
-            <Link href="/dashboard" style={{ color: J.textMid, fontSize: 13, textDecoration: "none" }}>
-              ← Dashboard
-            </Link>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: J.chandra, marginTop: 8 }}>
+            <h1 style={{ fontSize: 24, fontWeight: 900, color: J.chandra, margin: 0 }}>
               API Keys
             </h1>
             <p style={{ color: J.textMid, fontSize: 14, marginTop: 4 }}>
@@ -373,6 +370,6 @@ export default function ApiKeysPage() {
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/usage</code>
         </div>
       </div>
-    </div>
+    </Shell>
   );
 }

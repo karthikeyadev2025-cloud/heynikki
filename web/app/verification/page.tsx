@@ -126,6 +126,13 @@ export default function VerificationPage() {
 
       {err && <Note tone="err">{err}</Note>}
       {ok  && <Note tone="ok">{ok}</Note>}
+      {/* Say where they stand before asking for another file. */}
+      {ready && docs.some(d => d.status === "approved") && (
+        <Note tone="ok">Your business is verified — nothing more to upload unless we ask.</Note>
+      )}
+      {ready && !docs.some(d => d.status === "approved") && docs.some(d => d.status === "pending") && (
+        <Note tone="ok">Your document is with us for review — usually within one working day.</Note>
+      )}
 
       <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 10,
                     padding: 16, marginBottom: 18, maxWidth: 560 }}>
