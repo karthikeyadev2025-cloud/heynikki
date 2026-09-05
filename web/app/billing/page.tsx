@@ -371,6 +371,10 @@ export default function BillingPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 14 }}>
               {PLANS.map(plan => {
                 const isCurrent = tenant?.plan === plan.id;
+                // "Upgrade to Starter" on a Growth account was a lie; say
+                // which way the switch goes.
+                const rank = (id?: string | null) => PAID_PLANS.indexOf(String(id || ""));
+                const verb = rank(tenant?.plan) > rank(plan.id) && rank(plan.id) >= 0 ? "Switch to" : "Upgrade to";
                 const price = annual ? plan.annual : plan.price;
                 return (
                   <div key={plan.id} style={{
@@ -418,7 +422,7 @@ export default function BillingPage() {
                         borderRadius: 7, padding: "9px 0", fontSize: 12, fontWeight: 700,
                         opacity: (isCurrent || upgrading === plan.id) ? 0.7 : 1,
                       }}>
-                      {isCurrent ? "Current Plan" : upgrading === plan.id ? "Opening..." : `Upgrade to ${plan.name}`}
+                      {isCurrent ? "Current Plan" : upgrading === plan.id ? "Opening..." : `${verb} ${plan.name}`}
                     </button>
                   </div>
                 );

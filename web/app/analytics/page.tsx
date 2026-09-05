@@ -257,7 +257,14 @@ export default function AnalyticsPage() {
   const hourCounts = Array.from({ length: 24 }, (_, h) => ({
     hour: `${h}:00`,
     calls: calls.filter(c => c.created_at && istHour(c.created_at) === h).length,
-  })).filter(h => h.calls > 0 || [9,10,11,12,13,14,15,16,17,18].includes(parseInt(h.hour)));
+  }));
+  // A continuous window: from the first hour with a call (or 8:00) to the
+  // last (or 20:00). Dropping empty hours in the middle used to put 4:00
+  // beside 9:00 and made the busy stretch look adjacent to the quiet one.
+  const hoursWithCalls = hourCounts.map((h, i) => (h.calls > 0 ? i : -1)).filter(i => i >= 0);
+  const hFrom = Math.min(8, ...(hoursWithCalls.length ? [hoursWithCalls[0]] : [8]));
+  const hTo   = Math.max(20, ...(hoursWithCalls.length ? [hoursWithCalls[hoursWithCalls.length - 1]] : [20]));
+  const hourWindow = hourCounts.slice(hFrom, hTo + 1);
 
   const leadFunnelData = [
     { stage: "New",       count: newLeads,                       color: C.cyn  },
@@ -548,7 +555,7 @@ export default function AnalyticsPage() {
           {/* ── Peak Hours ─────────────────────────────────────── */}
           <Card title="Peak Call Hours" subtitle="When your customers call most (IST) — use to plan staff coverage">
             <ResponsiveContainer width="100%" height={140}>
-              <BarChart data={hourCounts} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <BarChart data={hourWindow} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 9 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: C.mid, fontSize: 10 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<Tooltip2 />} cursor={{ fill: C.hi + "88" }} />
