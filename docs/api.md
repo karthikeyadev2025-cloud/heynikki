@@ -39,7 +39,9 @@ Three things had to be added for the API path:
 1. **Consent.** `tickInstant` now treats `consent_declared` as consent
    alongside `consent_call_id` and the tenant's `skip_dnd_for_instant_leads`
    flag. The API refuses a request without `consent: true`, so a row carrying
-   the flag has an attestation on the record.
+   the flag has an attestation on the record. The column is added by
+   migration 048 — 019 put the same three columns on `outbound_campaigns`,
+   where consent describes an uploaded list rather than one call.
 2. **The recipient id reaches the pipeline.** `originateOutbound` takes a
    `recipientId` and sets the `recipient_id` channel variable; the dialplan
    (`infra/freeswitch/conf/dialplan/heynikki.xml`) appends `&recipient=` to

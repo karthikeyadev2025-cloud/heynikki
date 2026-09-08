@@ -8,9 +8,10 @@
 --   metadata.source = 'api_reminder', so the dispatcher, the hangup hook
 --   and the admin stall detector all keep working unchanged. The three
 --   columns below are what the API needs on top:
---     consent_declared  — was already there (019) but only ever read by
---                         the dashboard; the dispatcher now honours it,
---                         because the API caller attests consent per call.
+--     consent_declared  — added in 048. 019 put the same three columns on
+--                         outbound_campaigns, where consent is a property
+--                         of an uploaded list; an API-placed call has no
+--                         list, so the attestation belongs on the row.
 --     api_key_id        — which key placed the call, for the key's own
 --                         usage view and for revoking a key's pending work.
 --     reference         — the caller's own id for this call (their booking
