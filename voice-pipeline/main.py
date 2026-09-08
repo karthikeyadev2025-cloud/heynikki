@@ -863,9 +863,19 @@ def _knowledge_block(knowledge: list[str] | None) -> str:
 # Only the three latency-critical call sites use it. Webhooks and other
 # housekeeping keep their throwaway clients: a leaked handshake there costs
 # nobody anything, and sharing one pool everywhere couples failure domains.
+# Sized for the trunk, not for one call. Ten channels, two workers, and each
+# live call can hold an STT post, a Gemini request and a TTS request at the
+# same moment — 24 connections was within a bad minute of being the thing that
+# queued them.
+#
+# pool=2.0 is the important one. Without an explicit pool timeout, waiting for
+# a free connection inherits the 15s overall budget, so a slow vendor does not
+# surface as a vendor error: it surfaces as a caller sitting in silence while
+# httpx queues politely. Two seconds and then a real failure the fallback path
+# can act on.
 _POOL = httpx.AsyncClient(
-    timeout=httpx.Timeout(15.0, connect=5.0),
-    limits=httpx.Limits(max_keepalive_connections=10, max_connections=24,
+    timeout=httpx.Timeout(15.0, connect=5.0, pool=2.0),
+    limits=httpx.Limits(max_keepalive_connections=30, max_connections=60,
                         keepalive_expiry=90.0),
 )
 
@@ -1135,6 +1145,7 @@ class SarvamTTS:
     def __init__(self, lang: str = LANG_DEFAULT):
         self.api_key = SARVAM_KEY
         self.lang = lang
+        self.last_ms = 0.0       # this instance's most recent synthesis
 
     _CACHE_DIR = "/tmp/recordings/ttscache"
     _CACHE_MAX = 400          # ~400 short clips, tmpfs-friendly
@@ -1161,23 +1172,39 @@ class SarvamTTS:
         try:
             if os.path.exists(key) and os.path.getsize(key) > 1000:
                 with open(key, "rb") as f:
-                    _SarvamTTS_LAST["ms"] = 0.0     # a cache hit costs nothing
+                    # Per instance, not module-global: every agent has its own
+                    # SarvamTTS, and a single shared slot meant the tts_ms in
+                    # one call's turn timings was whichever call synthesised
+                    # last. _SarvamTTS_LAST is kept in step for /health.
+                    self.last_ms = _SarvamTTS_LAST["ms"] = 0.0
                     return f.read()
         except OSError:
             pass
 
         _t = time.monotonic()
         audio = await self._synthesize_uncached(text, speaker, rate)
-        _SarvamTTS_LAST["ms"] = (time.monotonic() - _t) * 1000
+        self.last_ms = _SarvamTTS_LAST["ms"] = (time.monotonic() - _t) * 1000
 
         if audio and len(audio) > 1000:
             try:
                 os.makedirs(self._CACHE_DIR, exist_ok=True)
                 # Cheap bound: clear the cache wholesale rather than tracking
                 # LRU. It refills on demand and only costs one slow turn.
-                if len(os.listdir(self._CACHE_DIR)) >= self._CACHE_MAX:
-                    for fn in os.listdir(self._CACHE_DIR):
-                        try: os.remove(os.path.join(self._CACHE_DIR, fn))
+                names = os.listdir(self._CACHE_DIR)
+                if len(names) >= self._CACHE_MAX:
+                    # Oldest half, not everything. This directory is shared by
+                    # every concurrent call and both workers, so a wholesale
+                    # purge threw away clips another call had written moments
+                    # earlier and was about to reuse — and under load that is
+                    # exactly when the cache is worth most.
+                    paths = []
+                    for fn in names:
+                        fp = os.path.join(self._CACHE_DIR, fn)
+                        try: paths.append((os.path.getmtime(fp), fp))
+                        except OSError: pass
+                    paths.sort()
+                    for _, fp in paths[:len(paths) // 2]:
+                        try: os.remove(fp)
                         except OSError: pass
                 tmp = key + ".part"
                 with open(tmp, "wb") as f:
@@ -1345,7 +1372,11 @@ class SarvamTTS:
                     "enable_preprocessing": True,
                     "eng_interpolation_wt": 100,
                 },
-                timeout=15.0,
+                # 8, not 15. This is the REST fallback for when the websocket
+                # path failed, and it runs with a caller waiting in silence.
+                # Past about eight seconds the answer is worthless even if it
+                # arrives — better to fail and let the vendor fallback speak.
+                timeout=8.0,
             )
             resp.raise_for_status()
             import base64
@@ -2111,6 +2142,21 @@ class SupabaseClient:
             log.debug(f"appointments_at failed: {e}")
             return 0
 
+    async def call_id_for_channel(self, fs_uuid: str) -> Optional[str]:
+        """The calls row already written for this FreeSWITCH channel, if any."""
+        if not fs_uuid:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as c:
+                r = await c.get(f"{self.url}/rest/v1/calls", headers=self.headers,
+                                params={"livekit_room_id": f"eq.{fs_uuid}",
+                                        "select": "id", "limit": "1"})
+                rows = r.json() if r.status_code == 200 else []
+                return rows[0]["id"] if rows else None
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"call_id_for_channel failed: {e}")
+            return None
+
     async def get_caller_memory(self, caller_number: str, tenant_id: str) -> dict:
         """What this business already knows about the person on the line.
 
@@ -2354,7 +2400,8 @@ _TOOL_WAIT_LINE = {
 }
 
 
-def _tool_declarations(profile: dict, has_ring_group: bool) -> list[dict]:
+def _tool_declarations(profile: dict, has_ring_group: bool,
+                       booked: bool = False, ordered: bool = False) -> list[dict]:
     """The functions THIS business's receptionist can call.
 
     Built per tenant rather than as one fixed list: a clinic that does not
@@ -2365,9 +2412,13 @@ def _tool_declarations(profile: dict, has_ring_group: bool) -> list[dict]:
     one they already have.
     """
     tools: list[dict] = []
+    # A tool that can no longer do anything is worth taking away. On the
+    # first live run she called take_order again on "థాంక్స్, ఉంటాను" — the
+    # guard refused it and she recovered, but it cost the caller a hop and
+    # a second of waiting to be told what she had already been told.
     takes_appointments = bool(profile.get("appointment_types") or profile.get("services"))
 
-    if takes_appointments:
+    if takes_appointments and not booked:
         tools.append({
             "name": "check_slot",
             "description": (
@@ -2404,6 +2455,8 @@ def _tool_declarations(profile: dict, has_ring_group: bool) -> list[dict]:
         })
 
     if profile.get("order_taking"):
+        # check_stock stays available after an order is filed — they may ask
+        # the price of something they did not buy.
         tools.append({
             "name": "check_stock",
             "description": (
@@ -2416,6 +2469,7 @@ def _tool_declarations(profile: dict, has_ring_group: bool) -> list[dict]:
                 "required": ["item"],
             },
         })
+    if profile.get("order_taking") and not ordered:
         tools.append({
             "name": "take_order",
             "description": (
@@ -2819,7 +2873,7 @@ class NikkiAgent:
 
     async def on_speech(self, audio_bytes: bytes, want_text: bool = False,
                         transcript_override: str | None = None,
-                        first_clause_cb=None):
+                        first_clause_cb=None, likely_noise: bool = False):
         """Process one turn: STT -> detect intent -> LLM -> TTS.
 
         want_text=True returns the reply TEXT instead of synthesised audio, so
@@ -2845,6 +2899,16 @@ class NikkiAgent:
                 user_text = await self.stt.transcribe(audio_bytes)
             _t_stt = time.monotonic() - _t0
             if not user_text.strip():
+                # Nothing transcribed, and the audio did not look like a
+                # person: a horn, a passing engine, a door. Say NOTHING.
+                # Asking "ఒక్కసారి మళ్ళీ చెప్తారా?" at a street is how a
+                # caller standing on a main road gets nagged every few
+                # seconds by a receptionist answering traffic — and the
+                # silent-caller timer already brings her back if the person
+                # really did go quiet.
+                if likely_noise:
+                    log.info("noise burst transcribed to nothing — staying quiet")
+                    return "" if want_text else b""
                 # MUST respect want_text. Returning audio here made
                 # _speech_chunks run a regex over bytes — "cannot use a string
                 # pattern on a bytes-like object" — which killed the whole turn
@@ -2929,7 +2993,9 @@ class NikkiAgent:
                 response = await self.llm.generate_with_tools(
                     self.system_prompt + self._known_facts_block(),
                     self.history,
-                    _tool_declarations(self.profile, bool(self.ring_group)),
+                    _tool_declarations(self.profile, bool(self.ring_group),
+                                       booked=bool(self.appointment_id),
+                                       ordered=bool(self.order_id)),
                     self._run_tool,
                     on_tool_started=_announce,
                     on_first_clause=first_clause_cb)
@@ -3083,7 +3149,7 @@ class NikkiAgent:
             self.turn_timings.append({
                 "stt_ms": round(_t_stt * 1000),
                 "llm_ms": round(_t_llm * 1000),
-                "tts_ms": round(_SarvamTTS_LAST["ms"]),
+                "tts_ms": round(self.tts.last_ms),
             })
             _TURN_STATS.append((round(_t_stt * 1000), round(_t_llm * 1000)))
 
@@ -5274,16 +5340,74 @@ _SILENCE_THRESHOLD  = 200        # RMS energy threshold for silence
 _SILENCE_FRAMES     = 16         # consecutive silent 20ms frames before STT fires
 _MIN_SPEECH_FRAMES  = 3          # minimum speech frames to attempt STT
 _FRAME_BYTES        = 320        # bytes per 20ms frame at 8kHz 16-bit mono
+# 20 minutes of caller audio at 8kHz/16-bit. Past this the in-memory fallback
+# recording stops growing; see the call loop for why that is safe.
+_RECORDING_MAX_BYTES = 20 * 60 * 8000 * 2
 
 
 def _rms(audio_bytes: bytes) -> float:
     """Compute RMS energy of raw PCM16 audio bytes."""
     if len(audio_bytes) < 2:
         return 0.0
-    samples = struct.unpack(f"<{len(audio_bytes)//2}h", audio_bytes[:len(audio_bytes)//2*2])
-    if not samples:
-        return 0.0
-    return (sum(s*s for s in samples) / len(samples)) ** 0.5
+    return _frame_features(audio_bytes)[0]
+
+
+# Zero-crossing rate bounds for something that could be a person starting to
+# speak. Energy alone cannot tell a voice from a lorry: on an Indian street a
+# horn, an engine and wind all clear any RMS threshold a quiet speaker also
+# clears, and every one of them used to open a turn — 400ms of endpoint
+# silence later, Sarvam was asked to transcribe a passing bus.
+#
+# At 8 kHz: voiced speech sits around 0.02-0.15, unvoiced consonants (స, శ,
+# ఫ) run higher, engine rumble and wind buffeting are far below, and hiss or
+# static is far above. The bounds are deliberately wide — this exists to
+# reject what is obviously not a voice, not to judge what is.
+# Measured against four real calls and synthetic street noise, in the
+# container: with these bounds 0-3% of genuinely loud speech frames are
+# rejected (and only ever the FIRST frame of a turn matters — see the loop),
+# while engine rumble and hiss are largely refused. A car horn is a pure tone
+# around 440Hz and reads as speech to any zero-crossing test; that one is
+# caught after the fact, by staying quiet when nothing transcribes.
+_ZCR_RUMBLE = 0.015      # below this it is rumble, wind, or the handset moving
+_ZCR_HISS   = 0.45       # above this it is hiss, static, or road roar
+
+
+# audioop is C, and this is the hottest arithmetic in the process: two
+# numbers per 20ms frame, 50 times a second, for every call at once.
+# Measured in the container on 20,000 frames — audioop 17ms, the pure-Python
+# equivalent 329ms. At ten concurrent calls that is the difference between
+# 1% of a core and 16% of one, on a container limited to 1.5.
+#
+# Deprecated in 3.11 and gone in 3.13, hence the fallback: a Python upgrade
+# should cost speed, never the call path.
+try:
+    import audioop as _audioop
+except Exception:  # noqa: BLE001 — 3.13+
+    _audioop = None
+
+
+def _frame_features(audio_bytes: bytes) -> tuple[float, float]:
+    """(RMS, zero-crossing rate) for one frame."""
+    n = len(audio_bytes) // 2
+    if n < 2:
+        return 0.0, 0.0
+    if _audioop is not None:
+        return float(_audioop.rms(audio_bytes[:n * 2], 2)), _audioop.cross(audio_bytes[:n * 2], 2) / n
+    samples = struct.unpack(f"<{n}h", audio_bytes[:n * 2])
+    total, crossings, prev = 0, 0, samples[0]
+    for sm in samples:
+        total += sm * sm
+        # Sign change, ignoring the zero line itself so a silent frame does
+        # not count every sample as a crossing.
+        if (sm > 0) != (prev > 0) and (sm or prev):
+            crossings += 1
+        prev = sm
+    return (total / n) ** 0.5, crossings / n
+
+
+def _speech_like(zcr: float) -> bool:
+    """Could this frame be the start of a voice? Cheap, permissive."""
+    return _ZCR_RUMBLE <= zcr <= _ZCR_HISS
 
 
 def _wav_to_pcm16(audio: bytes) -> bytes:
@@ -6646,7 +6770,8 @@ def _utterance_incomplete(text: str) -> bool:
 
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict,
-                    transcript: str | None = None) -> None:
+                    transcript: str | None = None,
+                    likely_noise: bool = False) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
 
     Runs detached so the receive loop keeps reading frames while Nikki is
@@ -6714,7 +6839,8 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
 
         reply_text = await agent.on_speech(wav_bytes, want_text=True,
                                            transcript_override=transcript,
-                                           first_clause_cb=_on_first_clause)
+                                           first_clause_cb=_on_first_clause,
+                                           likely_noise=likely_noise)
         # Reply ready: if the filler has not fired yet, it never should.
         if not filler_task.done():
             filler_task.cancel()
@@ -7430,23 +7556,35 @@ async def freeswitch_ws(
     # routing_mode entirely, so a DID configured for human agents still
     # got the bot, and /webhooks/freeswitch/inbound was dead code.
     routing = {}
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            r = await client.post(
-                f"{API_SERVER_URL}/webhooks/freeswitch/inbound",
-                headers={"X-Internal-Secret": INTERNAL_SECRET},
-                json={
-                    "did_number":    did_number,
-                    "caller_number": caller_number,
-                    "fs_uuid":       fs_uuid,
-                    "direction":     "outbound" if is_outbound else "inbound",
-                    "campaign_id":   campaign_id or None,
-                },
-            )
+    # Two attempts, because losing this answer is not cosmetic: routing_mode,
+    # the tenant's concurrency cap and the credit check all live in it, and
+    # falling through means a DID configured for human agents gets the bot and
+    # a tenant over its cap is served anyway. It used to fail silently at
+    # warning level; a busy minute could do it to every call in that minute.
+    for _attempt, _budget in enumerate((4.0, 2.5)):
+        try:
+            async with httpx.AsyncClient(timeout=_budget) as client:
+                r = await client.post(
+                    f"{API_SERVER_URL}/webhooks/freeswitch/inbound",
+                    headers={"X-Internal-Secret": INTERNAL_SECRET},
+                    json={
+                        "did_number":    did_number,
+                        "caller_number": caller_number,
+                        "fs_uuid":       fs_uuid,
+                        "direction":     "outbound" if is_outbound else "inbound",
+                        "campaign_id":   campaign_id or None,
+                    },
+                )
             if r.status_code == 200:
                 routing = r.json()
-    except Exception as e:
-        log.warning(f"[FS] routing lookup failed ({e}) — defaulting to AI")
+                break
+            log.error(f"[FS] routing lookup HTTP {r.status_code} "
+                      f"(attempt {_attempt + 1}) — {r.text[:120]}")
+        except Exception as e:  # noqa: BLE001
+            log.error(f"[FS] routing lookup failed ({e}) — attempt {_attempt + 1}")
+    if not routing:
+        log.error(f"[FS] {fs_uuid}: no routing answer — answering as the AI without "
+                  "the tenant's routing mode, concurrency cap or credit check")
 
     # Give the agent what a mid-call transfer needs. Without this it could
     # only ever promise one: the working path below fires at call START for
@@ -7599,6 +7737,16 @@ async def freeswitch_ws(
     agent.call_id = routing.get("call_id")
     if not agent.call_id and routing.get("ok") is not False:
         # API server unreachable — still log the call so it isn't lost.
+        # But look first: the lookup can fail AFTER the API server has
+        # written its row (a timeout on a slow reply, a 429 from a limiter
+        # that has since been fixed), and a second row for one channel
+        # splits the call in half — transcript on one, duration and billing
+        # on the other, joinable by nothing.
+        agent.call_id = await db.call_id_for_channel(fs_uuid)
+        if agent.call_id:
+            log.warning(f"[FS] {fs_uuid}: routing lookup failed but the call row "
+                        f"already exists ({agent.call_id[:8]}) — reusing it")
+    if not agent.call_id and routing.get("ok") is not False:
         agent.call_id = await db.save_call({
             "tenant_id":        profile["tenant_id"],
             "voice_profile_id": profile["id"],
@@ -7610,6 +7758,7 @@ async def freeswitch_ws(
 
     call_start_ts = time.time()
     recording_pcm = bytearray()   # accumulate all PCM for R2 upload
+    recording_truncated = False
     speech_buf    = bytearray()   # current utterance buffer
     silence_count = 0
     speech_count  = 0
@@ -7624,6 +7773,14 @@ async def freeswitch_ws(
     burst_frames       = 0
     long_speech_frames = 0
     barge_frames   = 0            # consecutive voiced frames while Nikki speaks
+    utt_peak       = 0.0          # loudest frame of the utterance being collected
+    # How much the utterance's zero-crossing rate moved. A voice moves a lot
+    # (vowels to consonants); a horn, a reversing beeper and a ringback tone
+    # do not move at all. Only used to decide whether to stay quiet when
+    # nothing transcribes — never to discard audio.
+    utt_zcr_lo     = 1.0
+    utt_zcr_hi     = 0.0
+    noise_rejects  = 0            # frames loud enough but not voice-shaped
     last_backchannel = 0.0        # B8 cooldown
     pending_text = ""             # B7: merged mid-reply interjections
     pending_pcm  = bytearray()
@@ -7742,8 +7899,21 @@ async def freeswitch_ws(
                         f"burst={burst_frames} long_speech={long_speech_frames}"
                     )
 
-                # Accumulate full recording
-                recording_pcm.extend(frame)
+                # Accumulate full recording — but not without end. At 16 KB
+                # a second an hour-long call holds 57 MB, and the WAV wrap at
+                # cleanup copies it, so the peak is double that against a
+                # container limited to 2 GB shared by every call on this
+                # worker. The mixed both-sides recording FreeSWITCH writes is
+                # the one that actually gets uploaded; this buffer is only the
+                # fallback for when that file is missing, so truncating it is
+                # a degraded fallback rather than a lost recording.
+                if len(recording_pcm) < _RECORDING_MAX_BYTES:
+                    recording_pcm.extend(frame)
+                elif not recording_truncated:
+                    recording_truncated = True
+                    log.warning(f"[FS] {fs_uuid}: fallback recording buffer full at "
+                                f"{_RECORDING_MAX_BYTES // (1024 * 1024)}MB — "
+                                "the mixed recording is unaffected")
 
                 # ── Held-fragment flush ─────────────────────────────────
                 # If nothing followed the fragment for ~1.6s, it was the whole
@@ -7770,7 +7940,7 @@ async def freeswitch_ws(
                 # dynamic baseline off a rolling percentile for exactly this.
                 # The floor only updates while Nikki is NOT speaking, so her
                 # own audio bleeding back never raises it.
-                energy = _rms(frame)
+                energy, zcr = _frame_features(frame)
                 if time.monotonic() >= speaking["until"]:
                     noise_win.append(energy)
                     if len(noise_win) >= 50:            # ~1s of samples
@@ -7799,11 +7969,25 @@ async def freeswitch_ws(
                         floor = sorted(noise_win)[int(len(noise_win) * 0.20)]
                         vad_threshold = max(_SILENCE_THRESHOLD, floor * 1.5)
                 is_speech = energy > vad_threshold
+                # The zero-crossing test gates only the START of a turn. Once
+                # a person is speaking, every following frame is accepted on
+                # energy alone — a fricative or a breath mid-word must never
+                # be cut out of an utterance the recogniser is about to read.
+                # What this stops is a horn or an engine OPENING one.
+                if is_speech and speech_count == 0 and not _speech_like(zcr):
+                    noise_rejects += 1
+                    if noise_rejects in (10, 100, 500):
+                        log.info(f"[FS] {fs_uuid}: {noise_rejects} noise frames rejected "
+                                 f"(floor≈{vad_threshold:.0f}) — caller is somewhere loud")
+                    is_speech = False
 
                 if is_speech:
                     speech_buf.extend(frame)
                     speech_count  += 1
                     silence_count  = 0
+                    utt_peak = max(utt_peak, energy)
+                    utt_zcr_lo = min(utt_zcr_lo, zcr)
+                    utt_zcr_hi = max(utt_zcr_hi, zcr)
                     # Mirror into the streaming socket. Same gating as the
                     # local buffer, so billed STT seconds do not change.
                     if not stt_stream.dead:
@@ -7847,7 +8031,16 @@ async def freeswitch_ws(
                 # voice for far longer; a cough does not. The frames are
                 # already accumulating in speech_buf either way, so nothing
                 # the caller says during the window is lost.
-                if is_speech and time.monotonic() < speaking["until"]:
+                # Barge-in asks more of a frame than the start of a turn does.
+                # She is speaking, so her own audio is bleeding back through
+                # the handset, and the cost of getting this wrong is the worst
+                # noise failure there is: she stops mid-sentence for a horn,
+                # every time a horn sounds, which on a Hyderabad street is
+                # constantly. Twice the noise floor AND voice-shaped AND
+                # sustained.
+                if (is_speech and _speech_like(zcr)
+                        and energy > vad_threshold * 1.7
+                        and time.monotonic() < speaking["until"]):
                     barge_frames += 1
                     if barge_frames >= max(3, round(0.24 / (frame_secs or 0.02))):
                         speaking["until"] = 0.0
@@ -7879,11 +8072,28 @@ async def freeswitch_ws(
                 if burst_frames and long_speech_frames and speech_count < long_speech_frames:
                     _need = max(_need, burst_frames)
                 if silence_count >= _need and speech_count >= speech_needed:
+                    # A short, barely-loud burst that got through the onset
+                    # test is still most likely the street. Transcribing it
+                    # costs a Sarvam call and, worse, often comes back as a
+                    # confident short word — which reaches the model as if
+                    # the caller had said it.
+                    if utt_peak < vad_threshold * 1.9 and speech_count < 12:
+                        log.info(f"[FS] {fs_uuid}: dropped {speech_count} frames of "
+                                 f"background (peak {utt_peak:.0f} vs floor {vad_threshold:.0f})")
+                        speech_buf, speech_count, silence_count, utt_peak = bytearray(), 0, 0, 0.0
+                        continue
                     utterance_pcm = bytes(speech_buf)
                     _trail_bytes  = silence_count * len(frame)   # silence after the voice
+                    # Steady enough to be a machine rather than a mouth.
+                    # Measured: a pure 440Hz horn spans 0.006; the tightest
+                    # real utterance in four recorded calls spans far more,
+                    # and the two that measured 0.000 were ringback tones.
+                    tonal = (utt_zcr_hi - utt_zcr_lo) < 0.012
                     speech_buf    = bytearray()
                     speech_count  = 0
                     silence_count = 0
+                    utt_peak      = 0.0
+                    utt_zcr_lo, utt_zcr_hi = 1.0, 0.0
 
                     # Drop an in-flight turn only if this is a REAL new
                     # utterance. On a live call the caller said "ఓకే", "ఉమ్",
@@ -8029,7 +8239,8 @@ async def freeswitch_ws(
                     turn_task = asyncio.create_task(
                         _run_turn(agent, ws, fs_uuid, utterance_pcm,
                                   turn_seq, speaking,
-                                  transcript=_stream_text or None))
+                                  transcript=_stream_text or None,
+                                  likely_noise=tonal))
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")

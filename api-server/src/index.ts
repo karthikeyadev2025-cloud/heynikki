@@ -118,7 +118,24 @@ app.set("trust proxy", 1);
 //                   bursts occasionally; Exotel may retry. Generous but bounded.
 //   apiLimiter    — generic protection for everything else. 300 req / 15 min / IP.
 const tightLimiter   = rateLimit({ windowMs: 15 * 60 * 1000, max:  30, standardHeaders: true, legacyHeaders: false });
-const webhookLimiter = rateLimit({ windowMs:      60 * 1000, max:  60, standardHeaders: true, legacyHeaders: false });
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false,
+  // OUR OWN COMPONENTS ARE NOT THE THREAT. FreeSWITCH and the voice
+  // pipeline reach this server over loopback, so every call on the
+  // platform shared one 60/minute bucket keyed on 127.0.0.1 — and a call
+  // spends at least two of those slots (inbound routing, then hangup).
+  // Past about thirty calls a minute the routing lookup started returning
+  // 429: the pipeline logged "defaulting to AI", a DID configured for
+  // human agents got the bot anyway, the per-tenant concurrency cap and
+  // the credit check were skipped, and a second calls row was written for
+  // the same call. Every one of those is a busy-hour-only failure, which
+  // is the worst kind to find.
+  //
+  // A caller holding INTERNAL_SECRET is already inside; rate-limiting it
+  // protects nothing. The limit stays for everyone else, which is who it
+  // was written for — Razorpay retries and unauthenticated junk.
+  skip: (req) => req.headers["x-internal-secret"] === INTERNAL_SECRET,
+});
 const apiLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
 // Fully unauthenticated (public landing page, no login) AND each
 // request costs real Sarvam API money — kept deliberately tight.
