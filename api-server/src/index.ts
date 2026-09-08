@@ -1094,6 +1094,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     return res.status(503).json({ error: "Voice service not configured" });
   }
 
+  const tStart = Date.now();
   try {
     // ── 1. Transcribe (auto-detecting STT) ───────────────────────
     let transcript = (text || "").trim();
@@ -1228,20 +1229,52 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     //        (never the receptionist demo persona — that one answers as
     //        the front desk of Hey Nikki Ltd and tries to book a demo).
     if (device === true) {
-      const act = await detectDeviceAction(transcript);
+      const tStt = Date.now();
+      const wantStream = (req.body as any).stream === true;
+      // The action detector only runs when the transcript looks like a
+      // phone command; the brain starts at the same time rather than
+      // after it, so a command costs no more wall-clock than a question.
+      const actP = detectDeviceAction(transcript);
+      const head = { transcript, audio_mime: "audio/mpeg", booking_confirmed: false, turn: turnNo, turns_left: Math.max(0, turnCap - turnNo) };
+      const streamer = wantStream ? new ReplyStreamer(res, head) : null;
+      // Sentences start synthesising as the model writes them, but nothing
+      // is written to the phone until the detector has said "not a command".
+      const brainP = appAssistantTurn(sessionId, transcript, detectedLang, streamer ? t => streamer.push(t) : undefined)
+        .catch(e => { console.warn("[app-assistant] failed:", e?.message || e); return null; });
+      const act = await actP;
+      if (streamer) {
+        if (act) {
+          console.log(`[device-action] ${act.action.type} (guest): ${transcript.slice(0, 60)}`);
+          await new ReplyStreamer(res, { ...head, action: act.action }).finish(act.say || "సరే.");
+          console.log(`[app-timing] stt=${tStt - tStart}ms action+tts=${Date.now() - tStt}ms total=${Date.now() - tStart}ms (stream)`);
+          return;
+        }
+        streamer.open();
+        const reply = (await brainP) || "క్షమించండి, మళ్ళీ చెప్తారా?";
+        const tBrain = Date.now();
+        await streamer.finish(reply);
+        console.log(`[app-assistant] ${sessionId.slice(0, 12)}: ${transcript.slice(0, 50)} → ${reply.slice(0, 50)}`);
+        console.log(`[app-timing] stt=${tStt - tStart}ms brain=${tBrain - tStt}ms tts=${Date.now() - tBrain}ms total=${Date.now() - tStart}ms (stream)`);
+        return;
+      }
       if (act) {
         console.log(`[device-action] ${act.action.type} (guest): ${transcript.slice(0, 60)}`);
         const say = act.say || "సరే.";
+        const audio = await synthesizeTelugu(say);
+        console.log(`[app-timing] stt=${tStt - tStart}ms action+tts=${Date.now() - tStt}ms total=${Date.now() - tStart}ms`);
         return res.json({
-          transcript, reply: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav",
+          transcript, reply: say, audio_base64: audio, audio_mime: "audio/wav",
           action: act.action, booking_confirmed: false,
           turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
         });
       }
-      const reply = await appAssistantTurn(sessionId, transcript, detectedLang);
+      const reply = (await brainP) || "క్షమించండి, మళ్ళీ చెప్తారా?";
+      const tBrain = Date.now();
+      const audio = await synthesizeTelugu(reply);
       console.log(`[app-assistant] ${sessionId.slice(0, 12)}: ${transcript.slice(0, 50)} → ${reply.slice(0, 50)}`);
+      console.log(`[app-timing] stt=${tStt - tStart}ms brain=${tBrain - tStt}ms tts=${Date.now() - tBrain}ms total=${Date.now() - tStart}ms`);
       return res.json({
-        transcript, reply, audio_base64: await synthesizeTelugu(reply), audio_mime: "audio/wav",
+        transcript, reply, audio_base64: audio, audio_mime: "audio/wav",
         booking_confirmed: false, turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
       });
     }
@@ -1463,6 +1496,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
     });
   } catch (err: any) {
     console.error("[voice-turn]", err.message);
+    if (res.headersSent) { try { res.write(JSON.stringify({ error: "Voice turn failed" }) + "\n"); } catch {} res.end(); return; }
     res.status(500).json({ error: "Voice turn failed" });
   }
 });
@@ -6088,7 +6122,7 @@ const APP_SESSIONS = new Map<string, { at: number; turns: { role: "user" | "mode
 const APP_SESSION_TTL_MS = 30 * 60_000;
 
 const APP_ASSISTANT_PROMPT = `You are Nikki, a warm, quick voice assistant living on this person's phone (the Hey Nikki app). They woke you by saying "Hey Nikki".
-You are spoken aloud through TTS, so: at most 2 short sentences, no lists, no markdown, no emojis, plain conversational language.
+You are spoken aloud through TTS, so: at most 2 short sentences, no lists, no markdown, no emojis, plain conversational language. Answer directly and stop — no filler like "Anything else I can help with?", no repeating the question. Write numbers as digits.
 Reply in the language they spoke — Telugu (in Telugu script, natural spoken Telugu with everyday English words as people use them) or English. Never mix scripts within a word.
 You can chat, answer general questions, do quick math, tell the date/time (given below), give simple advice, and explain Hey Nikki. You cannot browse the web or see their screen; if asked about live info (weather, news, live scores) say so briefly and suggest checking the phone.
 Phone actions like calling contacts, alarms and timers are handled separately — if they ask for one, just say you're on it.
@@ -6096,7 +6130,7 @@ If asked who you are or what you can do on this phone: you are Nikki, their voic
 
 ABOUT HEY NIKKI (what you are, when asked): Hey Nikki is an AI receptionist for Indian businesses — clinics, salons, real estate, shops. She answers the business phone 24x7 in Telugu, English and Hindi, books appointments, takes down leads, sends WhatsApp confirmations and follow-ups, guards missed calls, and can run outbound telecalling campaigns. Owners get a dashboard and a mobile app. Plans: Starter ₹1,999/month (200 minutes, 1 number, 1 person), Growth ₹4,999/month (600 minutes, 3 numbers, 3 people, WhatsApp follow-up, outbound campaigns), Scale ₹9,999/month (1,500 minutes, 10 numbers, 10 people, API access). There is a free trial with 100 minutes; sign up at heynikki.in. This person is not signed in — if they ask about "my business", "my calls" or "my appointments", tell them to sign in to the app and you'll be able to help with that.`;
 
-async function appAssistantTurn(sessionId: string, transcript: string, lang: string): Promise<string> {
+async function appAssistantTurn(sessionId: string, transcript: string, lang: string, onText?: (soFar: string) => void): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return "క్షమించండి, ఇప్పుడు సమాధానం చెప్పలేకపోతున్నాను.";
   for (const [k, v] of APP_SESSIONS) if (Date.now() - v.at > APP_SESSION_TTL_MS) APP_SESSIONS.delete(k);
@@ -6114,16 +6148,48 @@ async function appAssistantTurn(sessionId: string, transcript: string, lang: str
     contents,
     generationConfig: { maxOutputTokens: 400, temperature: 0.4 },
   };
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveGeminiModel()}:generateContent?key=${key}`;
-  const r = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload), signal: AbortSignal.timeout(12_000),
-  });
-  if (!r.ok) throw new Error(`Gemini ${r.status}`);
-  const j = await r.json() as any;
-  const parts: any[] = j.candidates?.[0]?.content?.parts || [];
-  const text = parts.filter(p => typeof p.text === "string").map(p => p.text).join(" ").trim()
-    .replace(/[*_#`]/g, "").replace(/\s+/g, " ");
+  const clean = (t: string) => t.replace(/[*_#`]/g, "").replace(/\s+/g, " ").trim();
+  let text = "";
+  if (onText) {
+    // Server-sent events: each event carries the next few words, so the
+    // first sentence can go to TTS while the model is still writing the second.
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveGeminiModel()}:streamGenerateContent?alt=sse&key=${key}`;
+    const r = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(12_000),
+    });
+    if (!r.ok || !r.body) throw new Error(`Gemini ${r.status}`);
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        try {
+          const j = JSON.parse(line.slice(5));
+          const parts: any[] = j.candidates?.[0]?.content?.parts || [];
+          text += parts.filter(p => typeof p.text === "string").map(p => p.text).join("");
+          onText(clean(text));
+        } catch { /* partial or keep-alive line */ }
+      }
+    }
+    text = clean(text);
+  } else {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveGeminiModel()}:generateContent?key=${key}`;
+    const r = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(12_000),
+    });
+    if (!r.ok) throw new Error(`Gemini ${r.status}`);
+    const j = await r.json() as any;
+    const parts: any[] = j.candidates?.[0]?.content?.parts || [];
+    text = clean(parts.filter(p => typeof p.text === "string").map(p => p.text).join(" "));
+  }
   const reply = text || "మళ్ళీ చెప్తారా?";
   sess.turns.push({ role: "user", text: transcript }, { role: "model", text: reply });
   APP_SESSIONS.set(sessionId, sess);
@@ -6311,8 +6377,98 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
 // The voice round trip — Sarvam STT → Gemini over this tenant's data →
 // Sarvam TTS — as a function, because the phone app (app.ts) asks the same
 // question with a device token instead of a Supabase JWT.
-async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean } = {}) {
+// ── Streaming replies for the phone app ──────────────────────────────
+// Bulbul takes ~0.25× real time, so a two-sentence Telugu answer (14 s of
+// audio) costs 3.5 s before the phone hears anything if it is synthesised
+// in one go. Instead the answer is cut into sentences as it arrives from
+// the model, every sentence is synthesised at once, and the app gets them
+// in order as newline-delimited JSON: the first line carries the transcript
+// and the first sentence's audio, later lines carry one sentence each, and
+// the last line is {"done":true}. The phone plays sentence 1 while 2 is
+// still being made — first sound ~1 s after the model's first sentence.
+function splitSentences(text: string): string[] {
+  const parts = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?।])\s+(?=\S)/);
+  const out: string[] = [];
+  for (const p of parts) {
+    // Glue tiny fragments ("సరే." / "Yes.") to a neighbour — a 0.5 s clip is
+    // not worth its own round trip and the gap between clips would show.
+    if (out.length && (p.length < 15 || out[out.length - 1].length < 15)) out[out.length - 1] += " " + p;
+    else out.push(p);
+  }
+  return out.filter(Boolean);
+}
+
+class ReplyStreamer {
+  private buffered = "";
+  private queue: Promise<string>[] = [];
+  private texts: string[] = [];
+  private headSent = false;
+  constructor(private res: express.Response, private head: Record<string, unknown>) {}
+
+  /** Feed the answer so far (cumulative text); complete sentences start synthesising. */
+  push(textSoFar: string) {
+    const fresh = textSoFar.slice(this.buffered.length);
+    if (!fresh) return;
+    this.buffered = textSoFar;
+    // Everything up to the last sentence end is final; the tail may still grow.
+    const m = this.buffered.match(/^([\s\S]*[.!?।])\s+(?=\S)/);
+    const settled = m ? m[1] : "";
+    if (settled.length > this.texts.join(" ").length) this.take(settled);
+  }
+  private take(settled: string) {
+    const already = this.texts.join(" ").length;
+    const chunk = settled.slice(already).trim();
+    if (!chunk) return;
+    for (const sent of splitSentences(chunk)) {
+      this.texts.push(sent);
+      this.queue.push(synthesizeTelugu(sent, "mp3").catch(e => { console.warn("[reply-stream] tts failed:", e?.message || e); return ""; }));
+    }
+  }
+  private line(o: Record<string, unknown>) { this.res.write(JSON.stringify(o) + "\n"); }
+
+  /** The first line goes out as soon as the transcript is known — the phone
+   *  learns what she heard (and that the answer is coming) while the model
+   *  is still thinking. Cloudflare also holds the headers until body bytes
+   *  flow, so this is what makes the response visible at all before TTS. */
+  open() {
+    if (this.headSent) return;
+    beginStream(this.res);
+    this.line(this.head);
+    this.headSent = true;
+  }
+
+  /** Whole answer known: flush the tail, then emit every clip in order. */
+  async finish(fullText: string) {
+    // When nothing has gone out yet (a phone action, a one-shot answer) the
+    // head can carry the text too, so the app has it before the first clip.
+    if (!this.headSent) this.head = { ...this.head, reply: fullText, answer: fullText };
+    this.open();
+    this.buffered = fullText;
+    const rest = fullText.slice(this.texts.join(" ").length).trim();
+    if (rest) for (const sent of splitSentences(rest)) {
+      this.texts.push(sent);
+      this.queue.push(synthesizeTelugu(sent, "mp3").catch(() => ""));
+    }
+    for (let i = 0; i < this.queue.length; i++) {
+      const b64 = await this.queue[i];
+      if (b64) this.line({ audio_base64: b64, text: this.texts[i], index: i });
+    }
+    this.line({ done: true, clips: this.queue.length, reply: fullText, answer: fullText });
+    this.res.end();
+  }
+}
+
+function beginStream(res: express.Response) {
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+}
+
+async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean; stream?: express.Response } = {}) {
   const SARVAM_KEY = process.env.SARVAM_API_KEY!;
+  const t0 = Date.now();
 
   // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
   const audioBuffer = Buffer.from(audio_base64, "base64");
@@ -6334,20 +6490,35 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 
   // ── 1b. From the phone: "call amma" / "wake me at six" never reach the
   //        business brain — the phone does it and she just confirms.
-  if (opts.device) {
-    const act = await detectDeviceAction(transcript);
-    if (act) {
-      console.log(`[device-action] ${act.action.type}: ${transcript.slice(0, 60)}`);
-      const say = act.say || "సరే.";
-      return { transcript, answer: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav", action: act.action };
+  const tStt = Date.now();
+  // The business context and the action detector both start now; the
+  // detector is a no-op unless the words look like a phone command.
+  const ctxP = buildBusinessContext(tenantId);
+  const act = opts.device ? await detectDeviceAction(transcript) : null;
+  if (act) {
+    console.log(`[device-action] ${act.action.type}: ${transcript.slice(0, 60)}`);
+    const say = act.say || "సరే.";
+    if (opts.stream) {
+      await new ReplyStreamer(opts.stream, { transcript, audio_mime: "audio/mpeg", action: act.action }).finish(say);
+      return null;
     }
+    return { transcript, answer: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav", action: act.action };
   }
 
+  const streamer = opts.stream ? new ReplyStreamer(opts.stream, { transcript, audio_mime: "audio/mpeg" }) : null;
+  streamer?.open();
+
   // ── 2. Ask Gemini, scoped to this tenant's own business data ──
-  const { contextJson } = await buildBusinessContext(tenantId);
+  const { contextJson } = await ctxP;
   const answer = await askGemini(transcript, contextJson, false, !!opts.device);
+  const tBrain = Date.now();
 
   // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
+  if (streamer) {
+    await streamer.finish(answer);
+    console.log(`[app-timing] tenant stt=${tStt - t0}ms brain=${tBrain - tStt}ms tts=${Date.now() - tBrain}ms total=${Date.now() - t0}ms`);
+    return null;
+  }
   const audioOutBase64 = await synthesizeTelugu(answer);
   return { transcript, answer, audio_base64: audioOutBase64, audio_mime: "audio/wav" };
 }
@@ -6356,7 +6527,7 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 // this plays through a speaker or a browser <audio> element, so higher
 // quality output is worth it, and there's no 20-word truncation since this
 // is Q&A, not a live phone conversation with pacing constraints.
-async function synthesizeTelugu(text: string): Promise<string> {
+async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Promise<string> {
   const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     headers: { "api-subscription-key": process.env.SARVAM_API_KEY!, "Content-Type": "application/json" },
@@ -6369,6 +6540,9 @@ async function synthesizeTelugu(text: string): Promise<string> {
       pace: 1.0,
       speech_sample_rate: 22050,
       enable_preprocessing: true,
+      // mp3 is a third of the bytes at the same sample rate; the phone app
+      // asks for it, the browser widget keeps wav.
+      ...(codec === "mp3" ? { output_audio_codec: "mp3" } : {}),
     }),
   });
   if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);

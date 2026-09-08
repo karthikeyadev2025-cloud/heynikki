@@ -25,7 +25,7 @@ type Deps = {
   apiLimiter:       any;
   getTenantId:      (userId: string) => Promise<string | null>;
   audit:            (action: string, ctx: any) => Promise<void>;
-  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string, opts?: { device?: boolean }) => Promise<VoiceResult>;
+  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string, opts?: { device?: boolean; stream?: Response }) => Promise<VoiceResult | null>;
   synthesize:       (text: string) => Promise<string>;   // base64 wav
 };
 
@@ -88,14 +88,17 @@ export function mountAppRoutes(app: Express, d: Deps) {
   // Same brain, same answer, same voice as the dashboard widget — only the
   // credential differs. Audio arrives as 16 kHz mono WAV from AudioRecord.
   app.post("/api/app/voice-query", verifyDevice, async (req: any, res) => {
-    const { audio_base64, mime_type } = req.body || {};
+    const { audio_base64, mime_type, stream } = req.body || {};
     if (!audio_base64) return res.status(400).json({ error: "audio_base64 required" });
     try {
-      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav", { device: true });
-      res.json(out);
+      // stream:true → newline-delimited JSON, one audio clip per sentence,
+      // so the phone starts speaking before the whole answer is synthesised.
+      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav", { device: true, stream: stream === true ? res : undefined });
+      if (out) res.json(out);
     } catch (e: any) {
       const msg = e?.message || "Voice query failed";
       console.error("[app voice-query]", msg);
+      if (res.headersSent) { try { res.write(JSON.stringify({ error: msg }) + "\n"); } catch {} res.end(); return; }
       res.status(/hear anything/i.test(msg) ? 422 : 500).json({ error: msg });
     }
   });

@@ -37,8 +37,10 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig;
 
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStreamReader;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -46,6 +48,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 
@@ -240,8 +243,11 @@ public class HeyNikkiService extends Service {
     private void handleWake() {
         setState("prompt", "చెప్పండి…");
         hud.show("prompt", "");
+        // A short chime and the mic is open — the spoken "చెప్పండి" cost a
+        // second on every wake. The TLS handshake to the API happens now, in
+        // the background, so the question does not pay for it later.
+        prewarm();
         play(R.raw.chime);
-        play(R.raw.cheppandi);
 
         boolean first = true;
         for (int turn = 0; turn <= MAX_FOLLOW_UPS && !stopRequested; turn++) {
@@ -257,36 +263,36 @@ public class HeyNikkiService extends Service {
             setState("thinking", "Nikki is thinking…");
             hud.show("thinking", "");
             try {
-                JSONObject out = ask(wav);
-                String heard = out.optString("transcript", "");
+                Reply rep = ask(wav);
+                String heard = rep.head.optString("transcript", "");
                 if (JUST_WAKE.matcher(heard.trim()).matches()) {
                     // She was called again mid-conversation: start over.
                     Log.i(TAG, "wake word repeated: " + heard);
+                    rep.close();
                     hud.show("prompt", "");
                     play(R.raw.cheppandi);
                     first = true;
                     continue;
                 }
-                String answer = out.optString("answer", out.optString("reply", ""));
-                String b64 = out.optString("audio_base64", "");
-                JSONObject action = out.optJSONObject("action");
+                hud.show("thinking", heard);
+                JSONObject action = rep.head.optJSONObject("action");
                 if (action != null) {
-                    boolean more = runAction(action, answer, b64);
+                    boolean more = runAction(action, rep);
                     if (!more) return; // a call took the screen; nothing to follow up on
-                } else if (!b64.isEmpty()) {
-                    setState("speaking", answer.isEmpty() ? "Nikki is answering" : answer);
-                    hud.show("speaking", answer);
-                    File tmp = new File(getCacheDir(), "answer.wav");
-                    try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
-                    play(tmp);
                 } else {
-                    // No speech came back (she didn't catch it, or a hold): show
-                    // the text long enough to read and let the person try again.
-                    setState("speaking", answer.isEmpty() ? "Didn't catch that" : answer);
-                    hud.show("error", answer.isEmpty() ? "Didn't catch that — say “Hey Nikki” again" : answer);
-                    hud.hide(3000);
-                    play(R.raw.chime);
-                    return;
+                    setState("speaking", "Nikki is answering");
+                    boolean spoke = playClips(rep);
+                    String answer = rep.answer;
+                    if (!spoke) {
+                        // No speech came back (she didn't catch it, or a hold): show
+                        // the text long enough to read and let the person try again.
+                        setState("speaking", answer.isEmpty() ? "Didn't catch that" : answer);
+                        hud.show("error", answer.isEmpty() ? "Didn't catch that — say “Hey Nikki” again" : answer);
+                        hud.hide(3000);
+                        play(R.raw.chime);
+                        return;
+                    }
+                    setState("speaking", answer);
                 }
             } catch (Exception e) {
                 Log.w(TAG, "voice-query failed", e);
@@ -306,8 +312,9 @@ public class HeyNikkiService extends Service {
     /** "Call amma" / "wake me at six": confirm in her voice, then do it. For
      *  a call the contact is matched first so a miss is answered honestly
      *  instead of after a promise. */
-    private boolean runAction(JSONObject action, String say, String sayB64) {
+    private boolean runAction(JSONObject action, Reply rep) {
         String type = action.optString("type", "");
+        String say = rep.head.optString("reply", "");
         try {
             if ("call".equals(type)) {
                 DeviceActions.Contact who = DeviceActions.findContact(this, action);
@@ -315,13 +322,14 @@ public class HeyNikkiService extends Service {
                     Log.i(TAG, "action call: no contact for " + action.optString("name"));
                     setState("speaking", "No contact named " + action.optString("name"));
                     hud.show("error", "No contact named “" + action.optString("name") + "”");
+                    rep.close();
                     play(R.raw.no_contact);
                     return true; // "who did you mean?" is a natural follow-up
                 }
                 Log.i(TAG, "action call: " + who.name);
                 setState("speaking", "Calling " + who.name);
                 hud.show("speaking", "Calling " + who.name + "…");
-                speak(say, sayB64);
+                playClips(rep);
                 if (!DeviceActions.call(this, who)) { play(R.raw.cant_do); hud.hide(1000); return true; }
                 hud.hide(1000);
                 return false;
@@ -338,7 +346,7 @@ public class HeyNikkiService extends Service {
                 hud.show("speaking", say);
                 ok = DeviceActions.timer(this, action);
             } else ok = false;
-            if (ok) speak(say, sayB64); else { hud.show("error", "Couldn't do that"); play(R.raw.cant_do); }
+            if (ok) playClips(rep); else { rep.close(); hud.show("error", "Couldn't do that"); play(R.raw.cant_do); }
             return true;
         } catch (Exception e) {
             Log.w(TAG, "action failed", e);
@@ -362,11 +370,26 @@ public class HeyNikkiService extends Service {
         } catch (Throwable t) { Log.w(TAG, "mic dump failed", t); }
     }
 
-    private void speak(String text, String b64) throws Exception {
-        if (b64 == null || b64.isEmpty()) return;
-        File tmp = new File(getCacheDir(), "answer.wav");
-        try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
-        play(tmp);
+    /** Plays the answer sentence by sentence as the clips arrive; the
+     *  second sentence is still downloading while the first is heard.
+     *  Returns false when there was nothing to play. */
+    private boolean playClips(Reply rep) {
+        boolean any = false;
+        int i = 0;
+        try {
+            for (;;) {
+                Object item = rep.clips.poll(30, TimeUnit.SECONDS);
+                if (item == null || item == Reply.END) break;
+                byte[] audio = (byte[]) item;
+                any = true;
+                hud.show("speaking", rep.answer);
+                File tmp = new File(getCacheDir(), "answer-" + (i++ % 2) + ".mp3");
+                try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(audio); }
+                play(tmp);
+            }
+        } catch (Exception e) { Log.w(TAG, "playback failed", e); }
+        finally { rep.close(); }
+        return any;
     }
 
     /** Energy-gated capture: waits up to waitMs for speech, then stops after
@@ -392,7 +415,7 @@ public class HeyNikkiService extends Service {
                 hud.level((float) Math.min(1.0, rms / 3000.0));
                 for (int i = 0; i < n; i++) { pcm.write(buf[i] & 0xff); pcm.write((buf[i] >> 8) & 0xff); }
                 if (rms > thr) { speaking = true; silentMs = 0; }
-                else if (speaking) { silentMs += 50; if (silentMs >= 1200) break; }
+                else if (speaking) { silentMs += 50; if (silentMs >= 900) break; }
                 else if (totalMs >= waitMs) return null; // nobody said anything
             }
             if (!speaking) return null;
@@ -409,13 +432,42 @@ public class HeyNikkiService extends Service {
     private String guestSession = null;
     private long guestSessionAt = 0;
 
-    private JSONObject ask(byte[] wav) throws Exception {
+    /** One answer from the server. The head line arrives as soon as she has
+     *  heard the question; audio clips (one per sentence, mp3) follow on the
+     *  queue while playback is already under way; END closes it. */
+    static final class Reply {
+        static final Object END = new Object();
+        final JSONObject head;
+        final LinkedBlockingQueue<Object> clips = new LinkedBlockingQueue<>();
+        volatile String answer = "";
+        volatile boolean drained = false;   // body fully read: the socket can go back to the pool
+        private final HttpURLConnection conn;
+        Reply(JSONObject head, HttpURLConnection conn) { this.head = head; this.conn = conn; }
+        void close() { if (!drained) try { conn.disconnect(); } catch (Throwable ignored) {} }
+    }
+
+    /** Opens the TLS connection to the API ahead of the question so the
+     *  handshake overlaps the recording; HttpURLConnection keeps it alive. */
+    private void prewarm() {
+        String base = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE).getString("apiBase", "https://api.heynikki.in");
+        new Thread(() -> {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(base + "/health").openConnection();
+                c.setConnectTimeout(5000); c.setReadTimeout(5000);
+                c.getResponseCode();
+                try (InputStream is = c.getInputStream()) { byte[] b = new byte[512]; while (is.read(b) > 0) {} }
+            } catch (Throwable ignored) {}
+        }, "nikki-prewarm").start();
+    }
+
+    private Reply ask(byte[] wav) throws Exception {
         SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
         String token = p.getString("token", null);
         String base = p.getString("apiBase", "https://api.heynikki.in");
         JSONObject body = new JSONObject();
         body.put("audio_base64", Base64.encodeToString(wav, Base64.NO_WRAP));
         body.put("mime_type", "audio/wav");
+        body.put("stream", true);   // sentence-by-sentence clips, see Reply
         String path;
         if (token != null) {
             path = "/api/app/voice-query";
@@ -436,24 +488,71 @@ public class HeyNikkiService extends Service {
         c.setDoOutput(true);
         c.setRequestProperty("Content-Type", "application/json");
         if (token != null) c.setRequestProperty("Authorization", "Device " + token);
+        long t0 = System.currentTimeMillis();
         try (OutputStream os = c.getOutputStream()) { os.write(body.toString().getBytes(StandardCharsets.UTF_8)); }
         int code = c.getResponseCode();
-        InputStream is = code >= 400 ? c.getErrorStream() : c.getInputStream();
-        ByteArrayOutputStream bo = new ByteArrayOutputStream();
-        if (is != null) { byte[] b = new byte[8192]; int n; while ((n = is.read(b)) > 0) bo.write(b, 0, n); }
-        JSONObject out;
-        try { out = new JSONObject(bo.toString("UTF-8")); }
-        catch (Exception notJson) { out = new JSONObject(); }
-        if (code == 429) throw new Exception("Too many questions right now — try again in a minute");
-        if (code == 401 && token != null) {
-            // Token revoked/expired: fall back to the product guide until the
-            // owner signs in again.
-            p.edit().remove("token").apply();
-            throw new Exception(out.optString("error", "Signed out"));
+        if (code >= 400) {
+            InputStream is = c.getErrorStream();
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            if (is != null) { byte[] b = new byte[8192]; int n; while ((n = is.read(b)) > 0) bo.write(b, 0, n); }
+            JSONObject out;
+            try { out = new JSONObject(bo.toString("UTF-8")); }
+            catch (Exception notJson) { out = new JSONObject(); }
+            if (code == 429) throw new Exception("Too many questions right now — try again in a minute");
+            if (code == 401 && token != null) {
+                // Token revoked/expired: fall back to the product guide until the
+                // owner signs in again.
+                p.edit().remove("token").apply();
+                throw new Exception(out.optString("error", "Signed out"));
+            }
+            throw new Exception(out.optString("error", "HTTP " + code));
         }
-        if (code >= 400) throw new Exception(out.optString("error", "HTTP " + code));
-        if (token == null && out.optInt("turns_left", 1) <= 0) guestSession = null;
-        return out;
+        String ct = String.valueOf(c.getContentType());
+        BufferedReader rd = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8), 1 << 16);
+        if (!ct.contains("ndjson")) {
+            // Plain JSON (an older server): the whole answer in one go.
+            StringBuilder sb = new StringBuilder(); char[] cb = new char[8192]; int n;
+            while ((n = rd.read(cb)) > 0) sb.append(cb, 0, n);
+            JSONObject out = new JSONObject(sb.toString());
+            if (out.has("error")) throw new Exception(out.optString("error"));
+            Reply rep = new Reply(out, c);
+            rep.answer = out.optString("answer", out.optString("reply", ""));
+            String b64 = out.optString("audio_base64", "");
+            if (!b64.isEmpty()) rep.clips.add(Base64.decode(b64, Base64.DEFAULT));
+            rep.clips.add(Reply.END);
+            rep.drained = true;
+            if (token == null && out.optInt("turns_left", 1) <= 0) guestSession = null;
+            return rep;
+        }
+        String first = rd.readLine();
+        if (first == null) throw new Exception("Empty answer");
+        JSONObject head = new JSONObject(first);
+        if (head.has("error")) throw new Exception(head.optString("error"));
+        Log.i(TAG, "heard in " + (System.currentTimeMillis() - t0) + "ms: " + head.optString("transcript"));
+        Reply rep = new Reply(head, c);
+        rep.answer = head.optString("reply", "");
+        if (token == null && head.optInt("turns_left", 1) <= 0) guestSession = null;
+        new Thread(() -> {
+            try {
+                String line;
+                while ((line = rd.readLine()) != null) {
+                    if (line.isEmpty()) continue;
+                    JSONObject j = new JSONObject(line);
+                    String b64 = j.optString("audio_base64", "");
+                    if (!b64.isEmpty()) {
+                        String text = j.optString("text", "");
+                        if (!text.isEmpty()) rep.answer = rep.answer.isEmpty() ? text : rep.answer + " " + text;
+                        rep.clips.add(Base64.decode(b64, Base64.DEFAULT));
+                        Log.i(TAG, "clip " + j.optInt("index") + " at " + (System.currentTimeMillis() - t0) + "ms");
+                    }
+                    if (j.has("reply")) rep.answer = j.optString("reply", rep.answer);
+                    if (j.has("error")) Log.w(TAG, "server: " + j.optString("error"));
+                    if (j.optBoolean("done")) { rep.drained = true; break; }
+                }
+            } catch (Exception e) { Log.w(TAG, "stream ended", e); }
+            finally { rep.clips.add(Reply.END); try { rd.close(); } catch (Exception ignored) {} }
+        }, "nikki-reply").start();
+        return rep;
     }
 
     // ───────────────────────── helpers ─────────────────────────
