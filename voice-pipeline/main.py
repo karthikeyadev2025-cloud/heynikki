@@ -667,6 +667,14 @@ def _now_ist() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
 
 
+def _part_of_day(hour: int) -> str:
+    if hour < 5:   return "the middle of the night"
+    if hour < 12:  return "morning"
+    if hour < 16:  return "afternoon"
+    if hour < 21:  return "evening"
+    return "late night"
+
+
 def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> str:
     """Inject business context into the frozen prompt template."""
     sku = profile.get("profile_sku", "standard")
@@ -695,6 +703,9 @@ def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> st
     # "tomorrow" falls on a day the business is shut — it told a caller with
     # toothache to come tomorrow, which was a Sunday, on a Mon-Sat clinic.
     weekday = _now_ist().strftime("%A")
+    # She wished someone "గుడ్ మార్నింగ్" at 00:16 on a callback. The clock
+    # was in the prompt; the model still needed the greeting spelled out.
+    part = _part_of_day(_now_ist().hour)
     open_t  = profile.get("open_time", "09:00")
     close_t = profile.get("close_time", "21:00")
     open_days = ", ".join(profile.get("open_days", ["Mon","Tue","Wed","Thu","Fri","Sat"]))
@@ -707,7 +718,7 @@ Business: {profile.get('business_name', 'Our Business')}
 Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
-Today: {now} ({weekday})
+Today: {now} ({weekday}) — it is {part} right now. Greet by the clock: "గుడ్ మార్నింగ్" only before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at night or before 05:00 say only "నమస్కారం" — never "good morning" at night.
 {_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}
 """ + _persona_for(_tenant_lang(profile)) + _PRICING_CACHE.get("text", "")
 
@@ -2078,6 +2089,14 @@ class NikkiAgent:
     )
     # Trailing politeness that is not part of the name.
     _NAME_TAIL = re.compile(r"\s*(?:గారు|అండి|అండీ|garu|andi)\s*$", re.I)
+    # "I don't need to give my name / details": a refusal, in either language.
+    _NAME_DECLINE_RE = re.compile(
+        r"(?:పేరు|details|డీటెయిల్స్|వివరాలు|name)[^.?!]{0,40}?"
+        r"(?:అవసరం\s*లేదు|వద్దు|చెప్పను|ఇవ్వను|అక్కర్లేదు|అనవసరం|"
+        r"not\s+(?:needed|necessary|required)|no\s+need|don'?t\s+(?:need|want)|won'?t\s+(?:give|tell))"
+        r"|(?:వద్దు|అవసరం\s*లేదు|అక్కర్లేదు)[^.?!]{0,20}?(?:పేరు|details|డీటెయిల్స్|వివరాలు|name)",
+        re.I,
+    )
 
     def _harvest_slots(self, text: str, from_caller: bool = True) -> None:
         """Pull durable facts out of a turn so they outlive the history window.
@@ -2107,7 +2126,16 @@ class NikkiAgent:
         # caller's name — which is what the lead for a real call now reads.
         # The phone is different and the assistant side is genuinely useful
         # there, because the model turns spoken digits into a real number.
-        if from_caller and not self.slots.get("name"):
+        # "నా పేరు కానీ నా details ఏం అవసరం లేదు" — they are refusing, not
+        # introducing themselves. The 5 Sep campaign call filed "కానీ నా
+        # details" as the caller's name from exactly that sentence and then
+        # asked, twice, whether to book under it. A refusal is remembered so
+        # she stops asking and books on the caller ID instead.
+        if from_caller and not self.slots.get("name") and self._NAME_DECLINE_RE.search(text or ""):
+            self.slots["name_declined"] = True
+            log.info("slot: caller declined to give a name")
+            return
+        if from_caller and not self.slots.get("name") and not self.slots.get("name_declined"):
             name = None
             m = self._NAME_RE.search(text or "")
             if m:
@@ -2157,9 +2185,15 @@ class NikkiAgent:
         support — on a live call it twice said "మీ appointment confirm అయింది"
         while holding no phone number at all.
         """
-        known = {k: v for k, v in self.slots.items() if v}
+        known = {k: v for k, v in self.slots.items() if v and k != "name_declined"}
         lines = []
         h = self.caller_history or {}
+        if self.slots.get("name_declined") and not self.slots.get("name"):
+            lines.append(
+                "\n\n[THE CALLER DECLINED TO GIVE THEIR NAME]"
+                "\nDo not ask for it again and do not invent one. Book and confirm "
+                "on their phone number alone; address them as అండి / సర్."
+            )
         # Not on an outbound leg. The history counts every call between this
         # number and the business, including the ones WE placed — on the 5 Sep
         # campaign call Nikki opened with "manam call cheyadam idi sixth time
@@ -2196,8 +2230,8 @@ class NikkiAgent:
             "\nNever invent a reason you lost their details, and never say the "
             "system failed to save something. If a fact is listed here, you "
             "have it. Only say the appointment is booked once the caller has "
-            "actually given you a name, a phone number, a service and a time "
-            "in this conversation — never before, and never twice."
+            "actually given you a name (unless they declined it), a phone number, "
+            "a service and a time in this conversation — never before, and never twice."
         )
         return "".join(lines)
 
@@ -4345,6 +4379,15 @@ _JUNK_NAME_WORDS = {
 }
 
 
+# Tokens that can sit next to a name in a sentence but never inside one.
+_NAME_STOP_TOKENS = {
+    "కానీ", "కాని", "నా", "మీ", "మా", "వాళ్ళ", "నేను", "మీరు", "ఏం", "ఏమీ", "ఇంకా",
+    "ఇంక", "అంటే", "కదా", "కూడా", "మళ్ళీ", "ఇప్పుడు", "వద్దు", "లేదు", "కాదు",
+    "details", "detail", "డీటెయిల్స్", "వివరాలు", "but", "and", "or", "the", "no",
+    "not", "need", "want", "give", "tell", "only", "just", "also", "again", "now",
+}
+
+
 def _is_junk_name(name: str) -> bool:
     """Is this a caller answering the question, or repeating it back?
 
@@ -4357,6 +4400,10 @@ def _is_junk_name(name: str) -> bool:
     if not low:
         return True
     if low in _JUNK_NAME_WORDS:
+        return True
+    # A conjunction, pronoun or particle inside the phrase means the regex
+    # grabbed the rest of a sentence ("పేరు కానీ నా details"), not a name.
+    if any(t.strip(".,!?") in _NAME_STOP_TOKENS for t in low.split()):
         return True
     if re.search(r"పేరు|\bname\b", low):
         return True
@@ -5029,7 +5076,9 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         if d.get("service"):
             patch["service"] = str(d["service"])[:120]
         name = d.get("caller_name") or agent.slots.get("name")
-        if name:
+        # The extractor reads the whole transcript and can file the same
+        # sentence fragment the live harvester is guarded against.
+        if name and not _is_junk_name(str(name)):
             patch["caller_name"] = str(name)[:120]
         if not patch:
             return
@@ -5979,6 +6028,7 @@ async def freeswitch_ws(
     direction:     str = "inbound",
     campaign_id:   str = "",
     onboarding:    str = "",
+    reason:        str = "",
 ):
     """
     FreeSWITCH mod_audio_stream WebSocket handler.
@@ -6002,6 +6052,7 @@ async def freeswitch_ws(
     log.info(f"[FS] Connected: did={did_number} caller={caller_number} "
              f"uuid={fs_uuid} direction={'outbound' if is_outbound else 'inbound'}"
              + (f" campaign={campaign_id}" if campaign_id else "")
+             + (f" reason={reason}" if reason else "")
              + (f" ONBOARDING tenant={onboarding}" if onboarding else ""))
 
     db      = SupabaseClient()
@@ -6097,16 +6148,35 @@ async def freeswitch_ws(
         # "why did you call me?", insisted the customer had called the
         # clinic. Say who is calling and why, and let them decline.
         _biz = profile.get("business_name") or "the business"
-        agent.greeting_override = (
-            f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
-            f"ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?")
-        agent.system_prompt += (
-            f"\n\nTHIS IS AN OUTBOUND CALL. You called the customer from {_biz}; "
-            "they did not call you. Never say or imply they called. If they ask "
-            "why you called, say it is a follow-up from the business and ask if "
-            "they need anything — an appointment, a callback. If they say they "
-            "are busy or not interested, thank them, say goodbye once and end "
-            "the call with END_CALL.")
+        _reason = (reason or "").strip().lower()
+        if _reason == "incomplete_booking":
+            # The scheduler's chase: they rang us, asked for an appointment
+            # and the call ended before a slot was fixed. Without this she
+            # opened with "calling about your health care" and the person
+            # asked three times who was speaking.
+            agent.greeting_override = (
+                f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
+                f"మీరు ఇంతకుముందు మాకు కాల్ చేసి అపాయింట్‌మెంట్ అడిగారు కదా, "
+                f"అది కన్ఫర్మ్ చేయడానికే కాల్ చేశాను. ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?")
+            agent.system_prompt += (
+                f"\n\nTHIS IS AN OUTBOUND CALLBACK from {_biz}. The customer phoned "
+                "the business earlier and asked for an appointment, but the call "
+                "ended before a date and time were fixed. You are ringing to finish "
+                "that booking: ask which day and time suits them, confirm, and offer "
+                "the WhatsApp confirmation. If they ask why you called, say exactly "
+                "that. If they are busy or no longer want it, thank them, say "
+                "goodbye once and end the call with END_CALL.")
+        else:
+            agent.greeting_override = (
+                f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
+                f"ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?")
+            agent.system_prompt += (
+                f"\n\nTHIS IS AN OUTBOUND CALL. You called the customer from {_biz}; "
+                "they did not call you. Never say or imply they called. If they ask "
+                "why you called, say it is a follow-up from the business and ask if "
+                "they need anything — an appointment, a callback. If they say they "
+                "are busy or not interested, thank them, say goodbye once and end "
+                "the call with END_CALL.")
 
     # ── Routing decision + call record (single source of truth) ──
     # The API server owns both: it resolves DID → tenant → routing_mode,

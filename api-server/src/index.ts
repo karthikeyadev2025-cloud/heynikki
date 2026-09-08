@@ -993,6 +993,7 @@ const publicVoiceLimiter = rateLimit({
 });
 
 const MAX_DEMO_TURNS = 14;
+const MAX_APP_TURNS = 60;
 const demoTurnCounts = new Map<string, { n: number; ts: number }>();
 
 function bumpDemoTurn(sessionId: string): number {
@@ -1077,7 +1078,10 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
   }
 
   const turnNo = bumpDemoTurn(sessionId);
-  if (turnNo > MAX_DEMO_TURNS) {
+  // The phone app holds real conversations (follow-ups without the wake
+  // word); the landing-page demo is the one that needs a short leash.
+  const turnCap = device === true ? MAX_APP_TURNS : MAX_DEMO_TURNS;
+  if (turnNo > turnCap) {
     return res.status(429).json({
       error: "demo_turn_limit",
       reply: "Demo lo intha varake matladagalanu. Real number meeda unlimited — sign up cheyandi!",
@@ -1220,7 +1224,9 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       });
     }
 
-    // ── 1c. Phone actions, app only ───────────────────────────────
+    // ── 1c. The phone app: actions first, then her own assistant brain
+    //        (never the receptionist demo persona — that one answers as
+    //        the front desk of Hey Nikki Ltd and tries to book a demo).
     if (device === true) {
       const act = await detectDeviceAction(transcript);
       if (act) {
@@ -1229,9 +1235,15 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         return res.json({
           transcript, reply: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav",
           action: act.action, booking_confirmed: false,
-          turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+          turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
         });
       }
+      const reply = await appAssistantTurn(sessionId, transcript, detectedLang);
+      console.log(`[app-assistant] ${sessionId.slice(0, 12)}: ${transcript.slice(0, 50)} → ${reply.slice(0, 50)}`);
+      return res.json({
+        transcript, reply, audio_base64: await synthesizeTelugu(reply), audio_mime: "audio/wav",
+        booking_confirmed: false, turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
+      });
     }
 
     // ── 2. Real LLM turn (pipeline owns session history) ─────────
@@ -1284,7 +1296,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       return res.json({
         transcript, reply: "", audio_base64: null, audio_mime: "audio/wav",
         hold: true, booking_confirmed: false, booking_summary: "",
-        turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+        turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
       });
     }
 
@@ -1371,7 +1383,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
         write({
           type: "meta", transcript, reply,
           booking_confirmed: bookingConfirmed, booking_summary: bookingSummary,
-          turn: turnNo, turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+          turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
         });
 
         let sent = 0;
@@ -1447,7 +1459,7 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       booking_confirmed: bookingConfirmed,
       booking_summary: bookingSummary,
       turn: turnNo,
-      turns_left: Math.max(0, MAX_DEMO_TURNS - turnNo),
+      turns_left: Math.max(0, turnCap - turnNo),
     });
   } catch (err: any) {
     console.error("[voice-turn]", err.message);
@@ -6068,6 +6080,56 @@ async function rememberSpokenFact(tenantId: string, answer: string): Promise<str
   return clean || `అలాగే, గుర్తు పెట్టుకున్నాను.`;
 }
 
+// ── The phone assistant's own brain (guest / not signed in) ──────────
+// On the phone she is a voice assistant, not the receptionist of the
+// landing-page demo: chit-chat, general questions, and everything about
+// Hey Nikki itself. Short history per app session so follow-ups work.
+const APP_SESSIONS = new Map<string, { at: number; turns: { role: "user" | "model"; text: string }[] }>();
+const APP_SESSION_TTL_MS = 30 * 60_000;
+
+const APP_ASSISTANT_PROMPT = `You are Nikki, a warm, quick voice assistant living on this person's phone (the Hey Nikki app). They woke you by saying "Hey Nikki".
+You are spoken aloud through TTS, so: at most 2 short sentences, no lists, no markdown, no emojis, plain conversational language.
+Reply in the language they spoke — Telugu (in Telugu script, natural spoken Telugu with everyday English words as people use them) or English. Never mix scripts within a word.
+You can chat, answer general questions, do quick math, tell the date/time (given below), give simple advice, and explain Hey Nikki. You cannot browse the web or see their screen; if asked about live info (weather, news, live scores) say so briefly and suggest checking the phone.
+Phone actions like calling contacts, alarms and timers are handled separately — if they ask for one, just say you're on it.
+If asked who you are or what you can do on this phone: you are Nikki, their voice assistant — you can chat and answer questions, call people from their contacts, set alarms and timers, and once they sign in, tell them about their business calls, leads and appointments. Do not describe the business product as what you yourself do unless they ask about Hey Nikki the product.
+
+ABOUT HEY NIKKI (what you are, when asked): Hey Nikki is an AI receptionist for Indian businesses — clinics, salons, real estate, shops. She answers the business phone 24x7 in Telugu, English and Hindi, books appointments, takes down leads, sends WhatsApp confirmations and follow-ups, guards missed calls, and can run outbound telecalling campaigns. Owners get a dashboard and a mobile app. Plans: Starter ₹1,999/month (200 minutes, 1 number, 1 person), Growth ₹4,999/month (600 minutes, 3 numbers, 3 people, WhatsApp follow-up, outbound campaigns), Scale ₹9,999/month (1,500 minutes, 10 numbers, 10 people, API access). There is a free trial with 100 minutes; sign up at heynikki.in. This person is not signed in — if they ask about "my business", "my calls" or "my appointments", tell them to sign in to the app and you'll be able to help with that.`;
+
+async function appAssistantTurn(sessionId: string, transcript: string, lang: string): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return "క్షమించండి, ఇప్పుడు సమాధానం చెప్పలేకపోతున్నాను.";
+  for (const [k, v] of APP_SESSIONS) if (Date.now() - v.at > APP_SESSION_TTL_MS) APP_SESSIONS.delete(k);
+  const sess = APP_SESSIONS.get(sessionId) || { at: Date.now(), turns: [] };
+  sess.at = Date.now();
+  const now = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(new Date());
+  const contents = [
+    ...sess.turns.slice(-8).map(t => ({ role: t.role, parts: [{ text: t.text }] })),
+    { role: "user", parts: [{ text: transcript }] },
+  ];
+  const payload = {
+    system_instruction: { parts: [{ text: `${APP_ASSISTANT_PROMPT}\nCurrent date and time in India: ${now}.\nThe user's detected language: ${lang || "unknown"}.` }] },
+    contents,
+    generationConfig: { maxOutputTokens: 400, temperature: 0.4 },
+  };
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${resolveGeminiModel()}:generateContent?key=${key}`;
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload), signal: AbortSignal.timeout(12_000),
+  });
+  if (!r.ok) throw new Error(`Gemini ${r.status}`);
+  const j = await r.json() as any;
+  const parts: any[] = j.candidates?.[0]?.content?.parts || [];
+  const text = parts.filter(p => typeof p.text === "string").map(p => p.text).join(" ").trim()
+    .replace(/[*_#`]/g, "").replace(/\s+/g, " ");
+  const reply = text || "మళ్ళీ చెప్తారా?";
+  sess.turns.push({ role: "user", text: transcript }, { role: "model", text: reply });
+  APP_SESSIONS.set(sessionId, sess);
+  return reply;
+}
+
 // ── Phone actions ("Hey Nikki, call amma" / "wake me at six") ────────
 // The app can do three things the dashboard cannot: dial a contact from the
 // owner's own SIM, set an alarm, start a timer. Gemini turns the transcript
@@ -6127,7 +6189,7 @@ Return only JSON: {"type":"call"|"alarm"|"timer"|"none","name":"","name_variants
   }
 }
 
-async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean): Promise<string> {
+async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean, onPhone = false): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
   const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
   const geminiModel = resolveGeminiModel();
@@ -6152,6 +6214,7 @@ write the fact as the business would want a customer to hear it. Only do this
 for durable facts about the business — never for a question, an instruction
 to you, or a one-off comment.
 ${isSuperAdmin ? "" : "Respond in Telugu, naturally and warmly, matching how a helpful assistant would speak to a business owner they know well."}
+${onPhone ? `You are speaking through the owner's phone as their voice assistant ("Hey Nikki"). If the question is not about the business at all — general knowledge, quick math, a chat, the date/time (now: ${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date())} in India) — answer it helpfully in the same language they spoke instead of saying the data lacks it. No lists or markdown; you are read aloud.` : ""}
 
 CURRENT BUSINESS DATA:
 ${contextJson}`
@@ -6282,7 +6345,7 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 
   // ── 2. Ask Gemini, scoped to this tenant's own business data ──
   const { contextJson } = await buildBusinessContext(tenantId);
-  const answer = await askGemini(transcript, contextJson, false);
+  const answer = await askGemini(transcript, contextJson, false, !!opts.device);
 
   // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
   const audioOutBase64 = await synthesizeTelugu(answer);

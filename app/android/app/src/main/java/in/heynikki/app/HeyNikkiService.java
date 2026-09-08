@@ -5,7 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
@@ -43,6 +46,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
+import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -71,6 +75,25 @@ public class HeyNikkiService extends Service {
     private NikkiHud hud;
     private volatile boolean stopRequested = false;
     private PowerManager.WakeLock wakeLock;
+
+    /** After she answers, the mic stays open this long for a follow-up
+     *  (no wake word needed), for up to this many extra turns. */
+    static final int FOLLOW_UP_WAIT_MS = 4000;
+    static final int MAX_FOLLOW_UPS = 6;
+    /** "Hey Nikki" said again inside the conversation: not a question. */
+    private static final Pattern JUST_WAKE = Pattern.compile(
+        "^[\\s\\p{Punct}]*(hey|hai|hi|హే|హాయ్|हे|हाय)?[\\s\\p{Punct}]*(nikki|nicky|niki|nikky|నిక్కీ|నిక్కి|निक्की|निकी)[\\s\\p{Punct}]*$",
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
+    // Debug builds keep the last 12 s of mic audio so the wake word can be
+    // tuned on the owner's real voice:
+    //   adb shell am broadcast -a in.heynikki.app.DUMP_MIC -p in.heynikki.app
+    //   adb shell run-as in.heynikki.app cat cache/mic_dump.wav > mic_dump.wav
+    static final String ACTION_DUMP_MIC = "in.heynikki.app.DUMP_MIC";
+    private final short[] ring = new short[SAMPLE_RATE * 12];
+    private volatile int ringPos = 0;
+    private volatile boolean ringFull = false;
+    private BroadcastReceiver dumpReceiver;
 
     static boolean isRunning() { return running; }
     static String stateName() { return state; }
@@ -113,6 +136,14 @@ public class HeyNikkiService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (dumpReceiver == null && (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            dumpReceiver = new BroadcastReceiver() {
+                @Override public void onReceive(Context c, Intent i) { dumpMic(); }
+            };
+            IntentFilter f = new IntentFilter(ACTION_DUMP_MIC);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(dumpReceiver, f, Context.RECEIVER_EXPORTED);
+            else registerReceiver(dumpReceiver, f);
+        }
         if (worker == null || !worker.isAlive()) {
             stopRequested = false;
             worker = new Thread(this::loop, "heynikki-listener");
@@ -123,6 +154,7 @@ public class HeyNikkiService extends Service {
 
     @Override
     public void onDestroy() {
+        if (dumpReceiver != null) { try { unregisterReceiver(dumpReceiver); } catch (Throwable ignored) {} dumpReceiver = null; }
         stopRequested = true;
         running = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -169,6 +201,7 @@ public class HeyNikkiService extends Service {
                 for (int i = 0; i < n; i++) { int a = Math.abs(buf[i]); if (a > peak) peak = a; }
                 if (peak == 0) { if (++silentFrames >= 100) throw new IllegalStateException("microphone muted by the system"); }
                 else silentFrames = 0;
+                for (int i = 0; i < n; i++) { ring[ringPos] = buf[i]; if (++ringPos == ring.length) { ringPos = 0; ringFull = true; } }
                 for (int i = 0; i < n; i++) f[i] = buf[i] / 32768f;
                 stream.acceptWaveform(n == f.length ? f : java.util.Arrays.copyOf(f, n), SAMPLE_RATE);
                 while (spotter.isReady(stream)) spotter.decode(stream);
@@ -199,56 +232,81 @@ public class HeyNikkiService extends Service {
         }
     }
 
-    /** The exchange after the wake word. The mic is stopped on entry and
-     *  restarted by the caller — we open a fresh recorder for the question so
-     *  the prompt we just played is not in the buffer. */
+    /** The conversation after the wake word. The mic is stopped on entry and
+     *  restarted by the caller — we open a fresh recorder for each question
+     *  so what she just played is not in the buffer. After every answer the
+     *  mic stays open a few seconds for a follow-up (no wake word needed):
+     *  say more and she continues, stay quiet and she goes back to sleep. */
     private void handleWake() {
         setState("prompt", "చెప్పండి…");
         hud.show("prompt", "");
         play(R.raw.chime);
         play(R.raw.cheppandi);
 
-        setState("recording", "Listening to you…");
-        hud.show("recording", "");
-        byte[] wav = recordQuestion();
-        if (wav == null) { hud.show("error", "Didn't catch that"); hud.hide(1200); play(R.raw.chime); return; }
-
-        setState("thinking", "Nikki is thinking…");
-        hud.show("thinking", "");
-        try {
-            JSONObject out = ask(wav);
-            String answer = out.optString("answer", out.optString("reply", ""));
-            String b64 = out.optString("audio_base64", "");
-            JSONObject action = out.optJSONObject("action");
-            if (action != null) { runAction(action, answer, b64); return; }
-            if (!b64.isEmpty()) {
-                setState("speaking", answer.isEmpty() ? "Nikki is answering" : answer);
-                hud.show("speaking", answer);
-                File tmp = new File(getCacheDir(), "answer.wav");
-                try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
-                play(tmp);
-                hud.hide(1500);
-            } else {
-                // No speech came back (she didn't catch it, or a hold): show
-                // the text long enough to read and let the person try again.
-                setState("speaking", answer.isEmpty() ? "Didn't catch that" : answer);
-                hud.show("error", answer.isEmpty() ? "Didn't catch that — say “Hey Nikki” again" : answer);
-                hud.hide(3000);
-                play(R.raw.chime);
+        boolean first = true;
+        for (int turn = 0; turn <= MAX_FOLLOW_UPS && !stopRequested; turn++) {
+            setState("recording", first ? "Listening to you…" : "Go on — or stay quiet to finish");
+            hud.show("recording", first ? "" : "Go on — or stay quiet to finish");
+            byte[] wav = recordQuestion(first ? 6000 : FOLLOW_UP_WAIT_MS);
+            if (wav == null) {
+                if (first) { hud.show("error", "Didn't catch that"); hud.hide(1200); play(R.raw.chime); }
+                else hud.hide(0); // conversation over, quietly
+                return;
             }
-        } catch (Exception e) {
-            Log.w(TAG, "voice-query failed", e);
-            setState("error", "Couldn't reach Nikki: " + e.getMessage());
-            hud.show("error", e.getMessage());
-            hud.hide(2500);
-            play(R.raw.chime);
+
+            setState("thinking", "Nikki is thinking…");
+            hud.show("thinking", "");
+            try {
+                JSONObject out = ask(wav);
+                String heard = out.optString("transcript", "");
+                if (JUST_WAKE.matcher(heard.trim()).matches()) {
+                    // She was called again mid-conversation: start over.
+                    Log.i(TAG, "wake word repeated: " + heard);
+                    hud.show("prompt", "");
+                    play(R.raw.cheppandi);
+                    first = true;
+                    continue;
+                }
+                String answer = out.optString("answer", out.optString("reply", ""));
+                String b64 = out.optString("audio_base64", "");
+                JSONObject action = out.optJSONObject("action");
+                if (action != null) {
+                    boolean more = runAction(action, answer, b64);
+                    if (!more) return; // a call took the screen; nothing to follow up on
+                } else if (!b64.isEmpty()) {
+                    setState("speaking", answer.isEmpty() ? "Nikki is answering" : answer);
+                    hud.show("speaking", answer);
+                    File tmp = new File(getCacheDir(), "answer.wav");
+                    try (FileOutputStream fo = new FileOutputStream(tmp)) { fo.write(Base64.decode(b64, Base64.DEFAULT)); }
+                    play(tmp);
+                } else {
+                    // No speech came back (she didn't catch it, or a hold): show
+                    // the text long enough to read and let the person try again.
+                    setState("speaking", answer.isEmpty() ? "Didn't catch that" : answer);
+                    hud.show("error", answer.isEmpty() ? "Didn't catch that — say “Hey Nikki” again" : answer);
+                    hud.hide(3000);
+                    play(R.raw.chime);
+                    return;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "voice-query failed", e);
+                setState("error", "Couldn't reach Nikki: " + e.getMessage());
+                hud.show("error", e.getMessage());
+                hud.hide(2500);
+                play(R.raw.chime);
+                return;
+            }
+            // Her answer is done: a soft tick says "still listening".
+            play(R.raw.tick);
+            first = false;
         }
+        hud.hide(0);
     }
 
     /** "Call amma" / "wake me at six": confirm in her voice, then do it. For
      *  a call the contact is matched first so a miss is answered honestly
      *  instead of after a promise. */
-    private void runAction(JSONObject action, String say, String sayB64) {
+    private boolean runAction(JSONObject action, String say, String sayB64) {
         String type = action.optString("type", "");
         try {
             if ("call".equals(type)) {
@@ -258,16 +316,15 @@ public class HeyNikkiService extends Service {
                     setState("speaking", "No contact named " + action.optString("name"));
                     hud.show("error", "No contact named “" + action.optString("name") + "”");
                     play(R.raw.no_contact);
-                    hud.hide(2500);
-                    return;
+                    return true; // "who did you mean?" is a natural follow-up
                 }
                 Log.i(TAG, "action call: " + who.name);
                 setState("speaking", "Calling " + who.name);
                 hud.show("speaking", "Calling " + who.name + "…");
                 speak(say, sayB64);
-                if (!DeviceActions.call(this, who)) { play(R.raw.cant_do); }
+                if (!DeviceActions.call(this, who)) { play(R.raw.cant_do); hud.hide(1000); return true; }
                 hud.hide(1000);
-                return;
+                return false;
             }
             boolean ok;
             if ("alarm".equals(type)) {
@@ -282,13 +339,27 @@ public class HeyNikkiService extends Service {
                 ok = DeviceActions.timer(this, action);
             } else ok = false;
             if (ok) speak(say, sayB64); else { hud.show("error", "Couldn't do that"); play(R.raw.cant_do); }
-            hud.hide(1500);
+            return true;
         } catch (Exception e) {
             Log.w(TAG, "action failed", e);
             hud.show("error", "Couldn't do that");
             play(R.raw.cant_do);
-            hud.hide(2000);
+            return true;
         }
+    }
+
+    /** Writes the ring buffer (last 12 s heard while waiting for the wake
+     *  word) to cache/mic_dump.wav. Debug builds only. */
+    private void dumpMic() {
+        try {
+            int len = ringFull ? ring.length : ringPos;
+            int start = ringFull ? ringPos : 0;
+            ByteArrayOutputStream pcm = new ByteArrayOutputStream(len * 2);
+            for (int i = 0; i < len; i++) { short v = ring[(start + i) % ring.length]; pcm.write(v & 0xff); pcm.write((v >> 8) & 0xff); }
+            File f = new File(getCacheDir(), "mic_dump.wav");
+            try (FileOutputStream fo = new FileOutputStream(f)) { fo.write(wav(pcm.toByteArray())); }
+            Log.i(TAG, "mic dump: " + f + " " + (len / SAMPLE_RATE) + "s");
+        } catch (Throwable t) { Log.w(TAG, "mic dump failed", t); }
     }
 
     private void speak(String text, String b64) throws Exception {
@@ -298,9 +369,9 @@ public class HeyNikkiService extends Service {
         play(tmp);
     }
 
-    /** Energy-gated capture: waits up to 6 s for speech, then stops after
+    /** Energy-gated capture: waits up to waitMs for speech, then stops after
      *  1.2 s of silence or 12 s total. Returns a 16 kHz mono WAV, or null. */
-    private byte[] recordQuestion() {
+    private byte[] recordQuestion(int waitMs) {
         AudioRecord rec = openMic();
         ByteArrayOutputStream pcm = new ByteArrayOutputStream();
         try {
@@ -322,7 +393,7 @@ public class HeyNikkiService extends Service {
                 for (int i = 0; i < n; i++) { pcm.write(buf[i] & 0xff); pcm.write((buf[i] >> 8) & 0xff); }
                 if (rms > thr) { speaking = true; silentMs = 0; }
                 else if (speaking) { silentMs += 50; if (silentMs >= 1200) break; }
-                else if (totalMs >= 6000) return null; // nobody said anything
+                else if (totalMs >= waitMs) return null; // nobody said anything
             }
             if (!speaking) return null;
         } finally {
@@ -389,7 +460,7 @@ public class HeyNikkiService extends Service {
 
     private String idleText() {
         boolean signedIn = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE).getString("token", null) != null;
-        return signedIn ? "Listening for “Hey Nikki”" : "Listening for “Hey Nikki” · sign in to ask about your business";
+        return signedIn ? "Listening for “Hey Nikki” / “Nikki”" : "Listening for “Hey Nikki” · sign in to ask about your business";
     }
 
     private AudioRecord openMic() {

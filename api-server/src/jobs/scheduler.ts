@@ -233,6 +233,12 @@ const INCOMPLETE_AFTER_MS   = 2 * 3600 * 1000;
 const INCOMPLETE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 
 export async function runIncompleteBookings(): Promise<number> {
+  // Daytime only: the WhatsApp goes out the moment this runs and the
+  // callback it queues dials as soon as the dispatcher's window allows.
+  // Neither belongs at 00:15 IST, which is when a 2-hour-old booking from a
+  // late-evening call used to come due.
+  const istHour = Number(new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(11, 13));
+  if (istHour < 9 || istHour >= 20) return 0;
   const now = Date.now();
   const { data, error } = await sb
     .from("appointments")
@@ -258,6 +264,15 @@ export async function runIncompleteBookings(): Promise<number> {
   let sent = 0;
 
   for (const a of byNumber.values()) {
+    // One chase per abandoned booking, ever. The per-day guard below only
+    // holds for 24 h, so a row that sat pending re-queued a callback every
+    // night until it aged out — the same person was rung at 00:01 and again
+    // at 00:15 the next night about a booking from five days earlier.
+    const { data: chased } = await sb.from("outbound_recipients")
+      .select("id").eq("tenant_id", a.tenant_id).eq("is_instant", true)
+      .eq("metadata->>appointment_id", a.id).limit(1);
+    if (chased?.length) continue;
+
     // Already chased this number today?
     const { data: recent } = await sb.from("wa_dispatch_log")
       .select("id")

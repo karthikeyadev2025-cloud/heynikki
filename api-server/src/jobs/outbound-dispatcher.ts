@@ -130,7 +130,8 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
   // Imported lazily: this module is also loaded by tooling that has no ESL
   // socket, and the import opens one on construction.
   const { fsl } = await import("../esl");
-  return fsl.originateOutbound(recipient.phone, cli, campaign?.id);
+  const reason = campaign ? "" : String(recipient.metadata?.source || "");
+  return fsl.originateOutbound(recipient.phone, cli, campaign?.id, 35, reason);
 }
 
 /**
@@ -492,7 +493,15 @@ async function tick(): Promise<void> {
 // tick() above (which is scoped per-campaign) never sees them.
 // Capped at 20 dispatches per tick (every 30s) so a burst of form
 // submissions can't overwhelm the trunk or a single tenant's concurrency.
+// Instant callbacks have no campaign window, so they used to dial whenever
+// the row appeared — a booking chase queued by the 15-minute scheduler at
+// 00:15 IST rang someone at 00:15 IST. Hold them to daytime hours; a row
+// that arrives at night keeps until the window opens.
+const INSTANT_WINDOW_START = "09:00";
+const INSTANT_WINDOW_END   = "20:30";
+
 async function tickInstant(): Promise<void> {
+  if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
   const { data: pending } = await sb.from("outbound_recipients")
     .select("*").eq("is_instant", true).eq("status", "pending")
     .or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`)
