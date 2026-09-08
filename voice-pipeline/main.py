@@ -1588,6 +1588,154 @@ class GeminiLLM:
                 return c + 1
         return 0
 
+    async def _stream_hop(self, payload: dict, headers: dict, on_first_clause) -> list[dict]:
+        """One streamed request; returns the candidate's parts.
+
+        Function calls arrive on the same stream as text, so the shape of
+        the turn is not known until the first non-empty part lands. Text is
+        forwarded clause-by-clause the moment it is separable; a functionCall
+        part suppresses that for the rest of the turn, because the words
+        after a lookup are not written yet.
+        """
+        url = self.base_url.replace(":generateContent", ":streamGenerateContent")
+        text, fired, calls, order = "", False, [], []
+        try:
+            async with _POOL.stream("POST", url, headers=headers,
+                                    params={"alt": "sse"}, json=payload,
+                                    timeout=12.0) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        j = json.loads(line[6:])
+                        parts = ((j.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                    except Exception:  # noqa: BLE001 — keepalives, finish chunks
+                        continue
+                    for part in parts:
+                        if part.get("functionCall"):
+                            calls.append(part["functionCall"])
+                            order.append(part)
+                        elif part.get("text"):
+                            text += part["text"]
+                    if text and not calls and not fired:
+                        cut = self._first_clause_cut(text)
+                        if cut:
+                            fired = True
+                            try:
+                                on_first_clause(text[:cut])
+                            except Exception as e:  # noqa: BLE001
+                                log.debug(f"first_clause_cb error: {e}")
+        except Exception as e:  # noqa: BLE001
+            # Batch the same request rather than losing the turn — the
+            # caller simply hears the whole reply at once.
+            log.warning(f"[tools] stream hop failed ({e}) — batching")
+            resp = await _POOL.post(self.base_url, headers=headers, json=payload, timeout=9.0)
+            resp.raise_for_status()
+            cand = (resp.json().get("candidates") or [{}])[0]
+            return (cand.get("content") or {}).get("parts") or []
+        if text:
+            order.append({"text": text})
+        return order
+
+    async def generate_with_tools(self, system_prompt: str, history: list[dict],
+                                 tools: list[dict], run_tool,
+                                 on_tool_started=None, on_first_clause=None,
+                                 max_hops: int = 3) -> str:
+        """One turn, with the model allowed to call functions first.
+
+        run_tool(name, args) -> dict is awaited for each call the model makes;
+        whatever it returns is handed straight back to the model as the
+        function's result. on_tool_started(name) fires once, before the first
+        query, so the caller can hear that she is looking something up
+        instead of a second and a half of nothing. on_first_clause(prefix)
+        is the ordinary streaming fast path, and fires only on a turn that
+        answers in words without calling anything.
+
+        Returns the final spoken text. On any failure it falls back to a plain
+        generate() — a tool outage must cost the caller a lookup, never a turn.
+        """
+        payload = self._payload(system_prompt, history)
+        payload["tools"] = [{"function_declarations": tools}]
+        # Deliberately not "any": she must be free to simply answer a
+        # question. Forcing a call is what makes an agent book an
+        # appointment for someone who asked what time you close.
+        payload["tool_config"] = {"function_calling_config": {"mode": "auto"}}
+        headers = {"Content-Type": "application/json", "x-goog-api-key": self.api_key}
+        announced = False
+
+        try:
+            for hop in range(max_hops):
+                # The FIRST hop streams. Most turns need no tool at all — a
+                # question about opening hours is still just a question — and
+                # on those the opening clause has to reach TTS while the rest
+                # is still generating, exactly as it does on the classic
+                # path. Losing that would make every tenant on tools mode a
+                # second slower on every ordinary sentence, which is a poor
+                # trade for a lookup they did not need.
+                if hop == 0 and on_first_clause is not None:
+                    parts = await self._stream_hop(payload, headers, on_first_clause)
+                else:
+                    resp = await _POOL.post(self.base_url, headers=headers, json=payload, timeout=9.0)
+                    resp.raise_for_status()
+                    cand = (resp.json().get("candidates") or [{}])[0]
+                    parts = (cand.get("content") or {}).get("parts") or []
+                calls = [p["functionCall"] for p in parts if p.get("functionCall")]
+
+                if not calls:
+                    text = "".join(p.get("text", "") for p in parts).strip()
+                    if text:
+                        return text
+                    # A hop that produced neither a call nor words. Asking
+                    # again with the same payload just burns the caller's
+                    # time; hand back to the plain path.
+                    log.warning("[tools] empty candidate — falling back to plain generate")
+                    break
+
+                if not announced and on_tool_started:
+                    announced = True
+                    try:
+                        on_tool_started(calls[0].get("name", ""))
+                    except Exception as e:  # noqa: BLE001
+                        log.debug(f"[tools] announce failed: {e}")
+
+                # The model's own turn has to go back verbatim, function
+                # calls included, or the next request has a result answering
+                # a call that is not in the transcript — a 400.
+                payload["contents"].append({"role": "model", "parts": parts})
+                results = []
+                for call in calls:
+                    name = call.get("name", "")
+                    args = call.get("args") or {}
+                    t0 = time.monotonic()
+                    try:
+                        out = await run_tool(name, args)
+                    except Exception as e:  # noqa: BLE001 — a broken tool is not a broken call
+                        log.exception(f"[tools] {name} raised")
+                        out = {"error": "that lookup failed", "detail": str(e)[:120]}
+                    log.info(f"[tools] {name}({json.dumps(args, ensure_ascii=False)[:160]}) "
+                             f"-> {json.dumps(out, ensure_ascii=False)[:200]} "
+                             f"[{round((time.monotonic() - t0) * 1000)}ms]")
+                    results.append({"functionResponse": {"name": name, "response": out}})
+                payload["contents"].append({"role": "user", "parts": results})
+            else:
+                log.warning(f"[tools] hit the {max_hops}-hop ceiling — answering without more tools")
+
+            # Out of hops, or an empty candidate: answer in words, with the
+            # tool results still in context.
+            payload.pop("tools", None)
+            payload.pop("tool_config", None)
+            resp = await _POOL.post(self.base_url, headers=headers, json=payload, timeout=8.0)
+            resp.raise_for_status()
+            cand = (resp.json().get("candidates") or [{}])[0]
+            text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []).strip()
+            if text:
+                return text
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[tools] turn failed ({type(e).__name__}: {e}) — plain generate")
+
+        return await self.generate(system_prompt, history)
+
     def _payload(self, system_prompt: str, history: list[dict],
                  temperature: float | None = None) -> dict:
         # 12 exchanges, not 4. A booking needs name, phone, service and time;
@@ -1895,6 +2043,134 @@ class SupabaseClient:
             log.error(f"Supabase save_appointment: {e}")
             return None
 
+    async def save_appointment_row(self, appt_data: dict) -> Optional[dict]:
+        """Insert and hand back the WHOLE row.
+
+        save_appointment returns only the id, which was enough while the
+        phone path wrote a bare pending row. A booking made by tool call is
+        confirmed on insert, and the database's own trigger stamps
+        booking_ref on exactly that transition (supabase/043) — so the number
+        the caller should hear only exists in the returned representation.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.post(
+                    f"{self.url}/rest/v1/appointments",
+                    headers={**self.headers, "Prefer": "return=representation"},
+                    json=appt_data,
+                )
+                if resp.status_code >= 300:
+                    log.error(f"save_appointment_row {resp.status_code}: {resp.text[:200]}")
+                    return None
+                data = resp.json()
+                return data[0] if data else None
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Supabase save_appointment_row: {e}")
+            return None
+
+    async def save_order(self, order: dict) -> Optional[str]:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.post(
+                    f"{self.url}/rest/v1/orders",
+                    headers={**self.headers, "Prefer": "return=representation"},
+                    json=order,
+                )
+                if resp.status_code >= 300:
+                    log.error(f"save_order {resp.status_code}: {resp.text[:200]}")
+                    return None
+                data = resp.json()
+                return data[0]["id"] if data else None
+        except Exception as e:  # noqa: BLE001
+            log.error(f"Supabase save_order: {e}")
+            return None
+
+    async def appointments_at(self, tenant_id: str, date: str, tm: str) -> int:
+        """How many bookings this business already has within the hour.
+
+        Told to the caller rather than enforced: no business has told us how
+        many people it can see at once, and turning someone away on a number
+        we invented is worse than a full waiting room.
+        """
+        if not tenant_id:
+            return 0
+        try:
+            hour = tm[:2]
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r = await client.get(
+                    f"{self.url}/rest/v1/appointments",
+                    headers={**self.headers, "Prefer": "count=exact"},
+                    params={"tenant_id": f"eq.{tenant_id}", "slot_date": f"eq.{date}",
+                            "slot_time": f"like.{hour}:*",
+                            "status": "in.(confirmed,pending)",
+                            "select": "id", "limit": "20"},
+                )
+                rows = r.json() if r.status_code == 200 else []
+                return len(rows) if isinstance(rows, list) else 0
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"appointments_at failed: {e}")
+            return 0
+
+    async def get_caller_memory(self, caller_number: str, tenant_id: str) -> dict:
+        """What this business already knows about the person on the line.
+
+        get_caller_history counts calls; this is the part that stops her
+        asking a returning customer for their address a third time. Their
+        last booking, their last order and the name they gave — the things a
+        shopkeeper would remember about a regular, and nothing else: a
+        receptionist who recites your history back at you is unsettling, not
+        impressive.
+
+        Returns {} on any failure. Being forgetful is a small loss.
+        """
+        digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+        if not digits or not tenant_id:
+            return {}
+        out: dict = {}
+        try:
+            async with httpx.AsyncClient(timeout=3.5) as c:
+                appts, orders = await asyncio.gather(
+                    c.get(f"{self.url}/rest/v1/appointments", headers=self.headers,
+                          params={"tenant_id": f"eq.{tenant_id}",
+                                  "caller_number": f"like.*{digits}",
+                                  "select": "caller_name,service,slot_date,slot_time,status,booking_ref",
+                                  "order": "created_at.desc", "limit": "3"}),
+                    c.get(f"{self.url}/rest/v1/orders", headers=self.headers,
+                          params={"tenant_id": f"eq.{tenant_id}",
+                                  "customer_phone": f"like.*{digits}",
+                                  "select": "customer_name,items,fulfilment,address,total,created_at",
+                                  "order": "created_at.desc", "limit": "3"}),
+                    return_exceptions=True,
+                )
+            rows = appts.json() if getattr(appts, "status_code", 0) == 200 else []
+            if isinstance(rows, list) and rows:
+                a = rows[0]
+                out["last_appointment"] = {k: a.get(k) for k in
+                                          ("slot_date", "slot_time", "service", "status", "booking_ref")
+                                          if a.get(k)}
+                out["appointments_count"] = len(rows)
+                if a.get("caller_name"):
+                    out["name"] = a["caller_name"]
+            rows = orders.json() if getattr(orders, "status_code", 0) == 200 else []
+            if isinstance(rows, list) and rows:
+                o = rows[0]
+                items = o.get("items") if isinstance(o.get("items"), list) else []
+                out["last_order"] = {
+                    "items": [f"{i.get('name')}" + (f" x{i.get('qty')}" if (i.get("qty") or 1) > 1 else "")
+                              for i in items[:5] if isinstance(i, dict) and i.get("name")],
+                    "fulfilment": o.get("fulfilment"),
+                    "when": str(o.get("created_at") or "")[:10],
+                }
+                out["orders_count"] = len(rows)
+                if o.get("address"):
+                    out["address"] = o["address"]
+                if o.get("customer_name") and not out.get("name"):
+                    out["name"] = o["customer_name"]
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"caller memory lookup failed: {e}")
+            return out
+        return out
+
     async def log_wa_dispatch(self, log_data: dict):
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1996,6 +2272,204 @@ async def send_whatsapp(to: str, message: str, wa_number: str, tenant_id: str):
 _TURN_STATS: "deque" = deque(maxlen=500)
 
 
+# ══════════════════════════════════════════════════════════════
+# TOOLS — what Nikki can actually DO, as opposed to say
+#
+# The original agent decided everything from keyword lists: _detect_intent
+# saw "book" and opened an appointment row, saw "delivery" and called it an
+# order. Keywords cannot separate "I want to book" from "about the booking I
+# made last week", so every confusion was fixed by adding another guard in
+# front of the last one.
+#
+# Here the model is given functions and chooses. Each one is wired to the
+# real tables, so "రేపు పది గంటలకి ఖాళీ ఉంది" is something she looked up
+# rather than something the prompt let her imply. Per-tenant, behind
+# voice_profiles.agent_mode = 'tools' (supabase/049), because this is the
+# hottest path in the product.
+#
+# Cost of a tool hop is one extra model round trip plus a query — roughly a
+# second and a half. That is why _run_tool announces itself through the
+# first-clause callback: the caller hears "ఒక్క సెకను, చూస్తున్నాను" and
+# then the answer, which is what a receptionist actually does when she
+# checks a diary. Silence for a second and a half is what sounds broken.
+# ══════════════════════════════════════════════════════════════
+
+_TOOLS_PROMPT = """
+
+[YOU CAN LOOK THINGS UP AND DO THINGS]
+You have functions. Use them instead of guessing, and instead of promising
+that someone else will check later.
+- Never say a time is free, or book anything, without calling check_slot first.
+- Never quote a price for an item without calling check_stock first.
+- book_appointment and take_order are commitments the business has to honour.
+  Call them only after the caller has agreed to the specific thing you read
+  back to them — not while they are still deciding, and not for someone asking
+  about a booking they already have.
+- The result of a function is the truth. If it says the shop is closed on
+  Sunday, the shop is closed on Sunday, whatever you assumed a moment ago.
+- If a function returns an error, say plainly that you could not check it
+  right now and offer a callback. Never invent the answer it did not give you.
+- Say nothing while a lookup runs; the caller already heard you say you are
+  checking.
+- To hang up, call end_call. Do not write END_CALL in what you say — that is
+  the old way of asking and it reaches the caller's ear as two English words.
+"""
+
+
+# "రవి గారు" is how the model writes a name it heard spoken politely, and
+# filing it that way puts the honorific on the appointment card, the WhatsApp
+# and the order slip. Strip it at the door.
+_HONORIFIC_RE = re.compile(
+    r"^\s*(?:mr|mrs|ms|miss|dr|doctor|శ్రీ|శ్రీమతి)\.?\s+|"
+    r"\s*(?:గారు|గారి|గారండి|garu|gaaru|ji|జీ|sir|madam|ma'am)\s*$",
+    re.I)
+
+
+def _clean_requested_time(value) -> str | None:
+    v = str(value or "").strip()[:80]
+    if not v or v.lower() in ("pickup", "delivery", "dine_in", "dine in", "unknown", "none"):
+        return None
+    return v
+
+
+def _clean_person_name(name: str | None) -> str:
+    n = str(name or "").strip()
+    for _ in range(2):          # "Dr Ravi garu" needs both ends
+        n = _HONORIFIC_RE.sub("", n).strip()
+    return n[:120]
+
+
+def _tools_enabled(profile: dict | None) -> bool:
+    return str((profile or {}).get("agent_mode") or "classic").lower() == "tools"
+
+
+# Tools that reach the database. The others answer from memory.
+_SLOW_TOOLS = {"check_slot", "book_appointment", "take_order", "transfer_to_human"}
+
+# Spoken while a tool runs. Not a stall — it is true, she is looking.
+_TOOL_WAIT_LINE = {
+    "te-IN": "ఒక్క సెకను, చూస్తున్నాను.",
+    "hi-IN": "एक सेकंड, देख रही हूँ.",
+    "en-IN": "One second, let me check.",
+}
+
+
+def _tool_declarations(profile: dict, has_ring_group: bool) -> list[dict]:
+    """The functions THIS business's receptionist can call.
+
+    Built per tenant rather than as one fixed list: a clinic that does not
+    sell anything must not be offered take_order, and a model given a tool
+    it cannot use will find an excuse to use it. Descriptions are written
+    for the model, and say when NOT to call the function — that is the half
+    that keeps a booking from being opened for someone who is asking about
+    one they already have.
+    """
+    tools: list[dict] = []
+    takes_appointments = bool(profile.get("appointment_types") or profile.get("services"))
+
+    if takes_appointments:
+        tools.append({
+            "name": "check_slot",
+            "description": (
+                "Check whether the business can see someone at a given date and time. "
+                "Call this BEFORE agreeing to any time — never say a slot is free "
+                "without calling it. Returns whether the business is open then and how "
+                "busy that slot already is."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "YYYY-MM-DD, resolved against today's date given in your instructions."},
+                    "time": {"type": "string", "description": "HH:MM in 24-hour form, e.g. 15:30."},
+                },
+                "required": ["date", "time"],
+            },
+        })
+        tools.append({
+            "name": "book_appointment",
+            "description": (
+                "Book the appointment. Call this ONLY after the caller has agreed to a "
+                "specific date and time and check_slot said it was possible. Do not call "
+                "it when the caller is asking about an appointment they already have, "
+                "asking prices, or thinking aloud about days. One call per conversation."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date":    {"type": "string", "description": "YYYY-MM-DD"},
+                    "time":    {"type": "string", "description": "HH:MM 24-hour"},
+                    "service": {"type": "string", "description": "What they are coming for, in the words they used."},
+                    "name":    {"type": "string", "description": "The caller's name, if they have given it. Omit rather than invent."},
+                },
+                "required": ["date", "time"],
+            },
+        })
+
+    if profile.get("order_taking"):
+        tools.append({
+            "name": "check_stock",
+            "description": (
+                "Look up one item on the shop's list: its price, and whether it is "
+                "available today. Call this whenever the caller asks for something by "
+                "name, before quoting any price."),
+            "parameters": {
+                "type": "object",
+                "properties": {"item": {"type": "string", "description": "The item as the caller said it."}},
+                "required": ["item"],
+            },
+        })
+        tools.append({
+            "name": "take_order",
+            "description": (
+                "File the order. Call this ONLY after you have read the whole order back "
+                "with the total and the caller has agreed to it. Returns the order number "
+                "to read out to them."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "description": "Everything they are buying.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name":  {"type": "string"},
+                                "qty":   {"type": "integer"},
+                                "notes": {"type": "string", "description": "Anything they asked for about this item, e.g. less spicy."},
+                            },
+                            "required": ["name", "qty"],
+                        },
+                    },
+                    "fulfilment":     {"type": "string", "enum": ["pickup", "delivery", "dine_in"]},
+                    "address":        {"type": "string", "description": "Full delivery address with landmark. Required for delivery."},
+                    "requested_time": {"type": "string", "description": "When they want it, in their own words."},
+                    "name":           {"type": "string", "description": "The caller's name if given."},
+                },
+                "required": ["items", "fulfilment"],
+            },
+        })
+
+    if has_ring_group:
+        tools.append({
+            "name": "transfer_to_human",
+            "description": (
+                "Put the caller through to a person at the business. Call this when they "
+                "ask for a human, when they are angry, or when they need something you "
+                "genuinely cannot do. Returns whether anyone could be reached — if not, "
+                "say so honestly and offer a callback."),
+            "parameters": {"type": "object", "properties": {
+                "reason": {"type": "string", "description": "Why, in a few words. For the business's records."}}},
+        })
+
+    tools.append({
+        "name": "end_call",
+        "description": (
+            "Hang up. Call this only after both sides have said goodbye, or when the "
+            "caller has asked you to end the call. Never call it while a question is "
+            "unanswered."),
+        "parameters": {"type": "object", "properties": {}},
+    })
+    return tools
+
+
 class NikkiAgent:
     """Complete Telugu voice agent session handler."""
 
@@ -2047,6 +2521,18 @@ class NikkiAgent:
         # reason as callback_promised) and, once filed, the row it became.
         self.order_seen: bool = False
         self.order_id: Optional[str] = None
+        # Filled by the take_order tool, so the call-end notifier can send
+        # the WhatsApp and fire the webhook for a row that already exists
+        # instead of extracting the same order from the transcript twice.
+        self.order_reference: str = ""
+        self.order_row: Optional[dict] = None
+        self.booking_ref: str = ""
+        # What this business already knows about the caller (get_caller_memory).
+        self.caller_memory: dict = {}
+        # Tool mode: which tools ran this call, and whether one of them asked
+        # to hang up. The request is gated exactly like the END_CALL sentinel.
+        self.tools_used: list = []
+        self._tool_wants_end: bool = False
         # Set when this leg is a reminder call placed over the public API:
         # {"recipient_id", "message", "purpose"}. _report_reminder_result
         # reads it at cleanup.
@@ -2068,6 +2554,12 @@ class NikkiAgent:
         self.transcript  : list[dict] = []
         self.knowledge   : list[str] = list(knowledge or [])
         self.system_prompt = build_system_prompt(profile, self.knowledge)
+        # voice_profiles.agent_mode (supabase/049). Read once: a tenant
+        # flipping it mid-call would change the shape of the conversation
+        # halfway through.
+        self.use_tools: bool = _tools_enabled(profile)
+        if self.use_tools:
+            self.system_prompt += _TOOLS_PROMPT
 
         # Voice speaker based on profile SKU
         # NOTE: must be real bulbul:v2 speaker IDs — see SKU_VOICE in
@@ -2282,6 +2774,31 @@ class NikkiAgent:
                 " digits and ask if WhatsApp should go to this number."
                 " Only if they say to use a DIFFERENT number do you ask for one."
             )
+        # What the business already knows about them from earlier visits.
+        # Deliberately short, and explicitly NOT a script: a receptionist who
+        # recites your history back at you is unsettling. It exists so she
+        # can offer rather than interrogate — "అదే address కేనా?" instead of
+        # asking a regular customer where they live for the fourth time.
+        m = self.caller_memory or {}
+        if m and not getattr(self, "is_outbound", False):
+            mem = ["\n\n[WHAT THIS BUSINESS ALREADY KNOWS ABOUT THEM]"]
+            la = m.get("last_appointment") or {}
+            if la.get("slot_date"):
+                mem.append(f"\n- Last appointment: {la.get('slot_date')} {la.get('slot_time') or ''}"
+                           f"{' for ' + la['service'] if la.get('service') else ''}"
+                           f" ({la.get('status') or 'booked'})")
+            lo = m.get("last_order") or {}
+            if lo.get("items"):
+                mem.append(f"\n- Last order ({lo.get('when') or 'earlier'}): "
+                           f"{', '.join(lo['items'])} — {lo.get('fulfilment') or 'unknown'}")
+            if m.get("address"):
+                mem.append(f"\n- Address used last time: {m['address']}")
+            if len(mem) > 1:
+                mem.append(
+                    "\nUse this to OFFER, never to recite: 'అదే address కేనా?', "
+                    "'మళ్ళీ అదే తీసుకుంటారా?'. Do not list their history back at "
+                    "them, and do not assume they want the same thing again.")
+                lines.extend(mem)
         lines.append("\n\n[FACTS ALREADY COLLECTED — never ask for these again]")
         for k, v in known.items():
             lines.append(f"\n- {k}: {v}")
@@ -2395,10 +2912,31 @@ class NikkiAgent:
                 log.info(f"LLM (transfer): {msg}")
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
-            # Generate response
-            response = await self.llm.generate(
-                self.system_prompt + self._known_facts_block(), self.history,
-                first_clause_cb=first_clause_cb)
+            # Generate response. In tools mode the model may look something
+            # up first — see _tool_declarations. A turn that needs no tool
+            # streams exactly as before, so ordinary questions are no slower;
+            # a turn that does spends about a second and a half on the
+            # lookup, and what covers that gap is honest — she says she is
+            # checking, because she is.
+            if self.use_tools:
+                def _announce(tool_name: str) -> None:
+                    # Only for the ones that actually go somewhere. check_stock
+                    # reads the catalogue already in memory and returns in under
+                    # a millisecond; saying "one second, let me check" in front
+                    # of it adds a second of speech to cover nothing.
+                    if first_clause_cb and tool_name in _SLOW_TOOLS:
+                        first_clause_cb(_TOOL_WAIT_LINE.get(self.lang, _TOOL_WAIT_LINE["te-IN"]))
+                response = await self.llm.generate_with_tools(
+                    self.system_prompt + self._known_facts_block(),
+                    self.history,
+                    _tool_declarations(self.profile, bool(self.ring_group)),
+                    self._run_tool,
+                    on_tool_started=_announce,
+                    on_first_clause=first_clause_cb)
+            else:
+                response = await self.llm.generate(
+                    self.system_prompt + self._known_facts_block(), self.history,
+                    first_clause_cb=first_clause_cb)
             _t_llm = time.monotonic() - _t0 - _t_stt
             log.info(f"LLM: {response}")
 
@@ -2466,6 +3004,13 @@ class NikkiAgent:
                     log.info("reply promised a connect that cannot happen — replaced")
 
             response, wants_end = _split_end_sentinel(response)
+            # A tool call asking to hang up is the same request in a
+            # different costume, and gets the same scrutiny: ending a call
+            # early is irreversible, and the model is not the one who pays
+            # for it.
+            if self._tool_wants_end:
+                self._tool_wants_end = False
+                wants_end = True
             if wants_end:
                 # The model does not get to decide this on its own. Ending a
                 # call is irreversible and the cost of doing it early — a
@@ -2545,8 +3090,13 @@ class NikkiAgent:
             self.expect_dictation = bool(re.search(
                 r"నంబర్|ఫోన్|number|mobile|మొబైల్|digits", response, re.I))
 
-            # If appointment booked, handle async (don't delay audio)
-            if self.intent == "appointment" and self._booking_actually_requested(user_text):
+            # If appointment booked, handle async (don't delay audio).
+            # Not in tools mode: there the booking is written by
+            # book_appointment, when the caller has actually agreed to a
+            # time, and this keyword path would open a second bare row
+            # beside it the moment anyone said the word "appointment".
+            if (not self.use_tools and self.intent == "appointment"
+                    and self._booking_actually_requested(user_text)):
                 # Keep a reference: asyncio holds only a weak one, so an
                 # unreferenced task can be garbage-collected mid-await and
                 # the booking silently lost on a fast hangup.
@@ -2760,6 +3310,224 @@ class NikkiAgent:
         if any(w in text_lower for w in appt_words):      return "appointment"
         if any(w in text_lower for w in callback_words):  return "callback"
         return "enquiry"
+
+    # ── TOOLS ────────────────────────────────────────────────────────
+    # One dispatcher and one small method per tool. Each returns a plain
+    # dict that goes back to the model verbatim, so what she says next is
+    # constrained by what the database actually said. Errors are returned,
+    # never raised: a failed lookup should cost the caller a sentence
+    # ("ఒక్క నిమిషం, మా టీమ్ చెక్ చేస్తారు"), not the turn.
+
+    async def _run_tool(self, name: str, args: dict) -> dict:
+        fn = {
+            "check_slot":        self._tool_check_slot,
+            "book_appointment":  self._tool_book_appointment,
+            "check_stock":       self._tool_check_stock,
+            "take_order":        self._tool_take_order,
+            "transfer_to_human": self._tool_transfer,
+            "end_call":          self._tool_end_call,
+        }.get(name)
+        if not fn:
+            log.warning(f"[tools] model asked for unknown tool {name!r}")
+            return {"error": f"no such tool: {name}"}
+        self.tools_used.append(name)
+        return await fn(args or {})
+
+    def _parse_slot(self, args: dict) -> tuple[str, str, str]:
+        """(date, time, error). Both in the shapes the columns expect."""
+        date = str(args.get("date") or "").strip()
+        tm   = str(args.get("time") or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            return "", "", "date must be YYYY-MM-DD"
+        # "9:30" is what a model writes as often as "09:30".
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", tm)
+        if not m or int(m.group(1)) > 23:
+            return "", "", "time must be HH:MM in 24-hour form"
+        tm = f"{int(m.group(1)):02d}:{m.group(2)}"
+        try:
+            when = datetime.strptime(f"{date} {tm}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return "", "", "that is not a real date"
+        now = _now_ist().replace(tzinfo=None)
+        if when < now - timedelta(minutes=5):
+            return "", "", "that time is in the past"
+        if when > now + timedelta(days=180):
+            return "", "", "that is more than six months away"
+        return date, tm, ""
+
+    async def _tool_check_slot(self, args: dict) -> dict:
+        date, tm, err = self._parse_slot(args)
+        if err:
+            return {"can_book": False, "reason": err}
+        p = self.profile or {}
+        day = datetime.strptime(date, "%Y-%m-%d").strftime("%a")
+        open_days = [str(d)[:3] for d in (p.get("open_days") or
+                     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])]
+        if open_days and day not in open_days:
+            return {"can_book": False, "reason": f"the business is closed on {day}",
+                    "open_days": open_days}
+        open_t, close_t = p.get("open_time") or "09:00", p.get("close_time") or "21:00"
+        if not (str(open_t)[:5] <= tm <= str(close_t)[:5]):
+            return {"can_book": False,
+                    "reason": f"outside working hours ({open_t}-{close_t})",
+                    "open_time": open_t, "close_time": close_t}
+        # How full that hour already is. Not a hard cap — no business has
+        # told us how many people it can see at once, and refusing a caller
+        # on a number we invented is worse than a busy waiting room. It is
+        # said out loud instead, which is what a receptionist does.
+        booked = await self.db.appointments_at(p.get("tenant_id"), date, tm)
+        return {"can_book": True, "date": date, "time": tm,
+                "already_booked_around_then": booked,
+                "note": ("busy — offer it, but mention there are others at that time"
+                         if booked >= 3 else "free")}
+
+    async def _tool_book_appointment(self, args: dict) -> dict:
+        if self.appointment_id:
+            return {"already_booked": True, "reference": self.booking_ref or "",
+                    "note": "this call already has a booking — do not make another"}
+        date, tm, err = self._parse_slot(args)
+        if err:
+            return {"booked": False, "reason": err}
+        name = _clean_person_name(args.get("name") or self.slots.get("name"))
+        if name and _is_junk_name(name):
+            name = ""
+        service = str(args.get("service") or self.slots.get("service") or "").strip()[:120]
+        row = await self.db.save_appointment_row({
+            "tenant_id":        self.profile["tenant_id"],
+            "voice_profile_id": self.profile["id"],
+            "call_id":          self.call_id,
+            "caller_number":    self.caller_num,
+            "caller_name":      name or None,
+            "service":          service or None,
+            "slot_date":        date,
+            "slot_time":        tm,
+            # Confirmed, not pending: unlike the keyword path this row is
+            # written because the caller agreed to a specific time, and the
+            # booking-number trigger only stamps a confirmed row.
+            "status":           "confirmed",
+        })
+        if not row:
+            return {"booked": False, "reason": "the diary could not be written to just now"}
+        self.appointment_id = row.get("id")
+        self.booking_ref    = row.get("booking_ref") or ""
+        self.intent = "appointment"
+        self.slots["date"], self.slots["time"] = date, tm
+        if name:
+            self.slots["name"] = name
+        if service:
+            self.slots["service"] = service
+        log.info(f"[tools] booked {self.appointment_id} {date} {tm} ref={self.booking_ref or '-'}")
+        return {"booked": True, "date": date, "time": tm,
+                "reference": self.booking_ref or None,
+                "whatsapp": "a confirmation will be sent to their number after the call",
+                "note": "tell them it is confirmed, read the booking number if there is one"}
+
+    async def _tool_check_stock(self, args: dict) -> dict:
+        item = str(args.get("item") or "").strip()
+        cat = _catalogue_items(self.profile or {})
+        if not item:
+            return {"error": "no item given"}
+        hit = None
+        n = re.sub(r"[^a-z0-9]", "", item.lower())
+        for it in cat:
+            c = re.sub(r"[^a-z0-9]", "", str(it.get("name") or "").lower())
+            if c and (c == n or c in n or n in c):
+                hit = it
+                break
+        if not hit:
+            return {"found": False, "item": item,
+                    "closest": [str(i.get("name")) for i in cat[:6]],
+                    "note": "not on the list — say so and offer what is"}
+        return {"found": True, "name": hit.get("name"),
+                "price": hit.get("price"), "unit": hit.get("unit"),
+                "available_today": hit.get("available", True) is not False}
+
+    async def _tool_take_order(self, args: dict) -> dict:
+        if self.order_id:
+            return {"already_taken": True, "reference": self.order_reference,
+                    "note": "this call already has an order — do not file another"}
+        cat = _catalogue_items(self.profile or {})
+        items, total, priced = [], 0.0, True
+        for raw in (args.get("items") or [])[:30]:
+            if not isinstance(raw, dict):
+                continue
+            nm = str(raw.get("name") or "").strip()[:120]
+            if not nm:
+                continue
+            try:
+                qty = max(1, min(999, int(raw.get("qty") or 1)))
+            except (TypeError, ValueError):
+                qty = 1
+            price = _price_of(cat, nm)
+            if price is None:
+                priced = False
+            else:
+                total += price * qty
+            line = {"name": nm, "qty": qty, "unit_price": price}
+            if raw.get("notes"):
+                line["notes"] = str(raw["notes"])[:200]
+            items.append(line)
+        if not items:
+            return {"taken": False, "reason": "no items — ask them what they want"}
+
+        fulfilment = str(args.get("fulfilment") or "unknown").strip().lower()
+        if fulfilment not in ("pickup", "delivery", "dine_in"):
+            fulfilment = "unknown"
+        address = str(args.get("address") or self.slots.get("address") or "").strip()[:500]
+        if fulfilment == "delivery" and not address:
+            return {"taken": False, "reason": "delivery needs a full address — ask for it"}
+        name = _clean_person_name(args.get("name") or self.slots.get("name"))
+        if name and _is_junk_name(name):
+            name = ""
+        reference = _order_reference()
+        row = {
+            "tenant_id":        self.profile["tenant_id"],
+            "voice_profile_id": self.profile["id"],
+            "call_id":          self.call_id,
+            "reference":        reference,
+            "customer_phone":   _valid_mobile(self.caller_num) or (self.caller_num or "")[-15:],
+            "customer_name":    name or None,
+            "items":            items,
+            "total":            round(total, 2) if priced and total > 0 else None,
+            "fulfilment":       fulfilment,
+            "address":          address or None,
+            # The model filled this with "pickup" on the first live run —
+            # answering the wrong question with the previous field's value.
+            "requested_time":   _clean_requested_time(args.get("requested_time")),
+        }
+        order_id = await self.db.save_order(row)
+        if not order_id:
+            return {"taken": False, "reason": "the order could not be saved just now"}
+        self.order_id = order_id
+        self.order_reference = reference
+        self.order_row = row
+        self.order_seen = True
+        self.intent = "order"
+        if address:
+            self.slots["address"] = address
+        log.info(f"[tools] order {reference} — {len(items)} item(s), total={row['total']}")
+        return {"taken": True, "reference": reference, "total": row["total"],
+                "items": items, "fulfilment": fulfilment,
+                "note": ("read the order number back and say a WhatsApp is coming"
+                         if row["total"] is not None else
+                         "the total is not known — say the shop will confirm the price")}
+
+    async def _tool_transfer(self, args: dict) -> dict:
+        reason = str(args.get("reason") or "")[:120]
+        line = await self._handle_transfer(prefix_spoken=True)
+        if self.transfer_requested:
+            self.intent = "transfer"
+            log.info(f"[tools] transfer armed ({reason})")
+            return {"connecting": True, "note": "say you are connecting them now, in one short line"}
+        # Nobody to ring, or the trunk cannot dial out. _handle_transfer's
+        # own words are the honest version; hand them over rather than
+        # letting the model invent a promise we cannot keep.
+        return {"connecting": False, "tell_caller": line,
+                "note": "there is nobody to connect them to — say this and offer a callback"}
+
+    async def _tool_end_call(self, args: dict) -> dict:
+        self._tool_wants_end = True
+        return {"ok": True, "note": "say one short goodbye and nothing else"}
 
     async def _handle_transfer(self, prefix_spoken: bool = False):
         """Ask for a real transfer, or say plainly that there is nobody to ring.
@@ -5091,6 +5859,43 @@ async def _spool_janitor() -> None:
 
 
 
+async def _send_appointment_confirmation(agent, fs_uuid: str, appt_id: str,
+                                         slot: dict) -> bool:
+    """The WhatsApp that tells the caller when they are actually expected.
+
+    Both booking paths end here — the tool call that books mid-conversation
+    and the post-call enrichment that reads the slot out of the transcript.
+    One sender, so nobody gets two confirmations for one appointment.
+    """
+    prof = agent.profile or {}
+    sent = False
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            r = await c.post(
+                f"{API_SERVER_URL}/api/whatsapp/appointment-confirm",
+                headers={"X-Internal-Secret": INTERNAL_SECRET},
+                json={
+                    "caller_number":    agent.caller_num,
+                    "business_name":    prof.get("business_name") or "",
+                    "slot_date":        slot.get("slot_date"),
+                    "slot_time":        slot.get("slot_time"),
+                    "service":          slot.get("service"),
+                    "tenant_id":        prof.get("tenant_id"),
+                    "voice_profile_id": prof.get("id"),
+                    "call_id":          agent.call_id,
+                    "appointment_id":   appt_id,
+                })
+            log.info(f"[FS] {fs_uuid}: appointment confirmation sent ({r.status_code})")
+            sent = r.status_code == 200
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: appointment confirmation failed: {e}")
+    try:
+        await agent.db.update_call(agent.call_id, {"appointment_created": True, "wa_sent": sent})
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: could not flag call as booked: {e}")
+    return sent
+
+
 async def _enrich_appointment(agent, fs_uuid: str) -> None:
     """Fill in an appointment's date, time and service after the call.
 
@@ -5110,7 +5915,21 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
     available and the caller has already hung up.
     """
     appt_id = getattr(agent, "appointment_id", None)
-    if not appt_id or not GEMINI_KEY:
+    if not appt_id:
+        return
+    # A booking made by book_appointment is already complete and already
+    # confirmed — the caller agreed to that date and time out loud, and the
+    # database stamped a booking number on it. Re-reading the transcript here
+    # could only overwrite it with a worse guess (a day the caller mentioned
+    # and rejected, say). Send the confirmation and stop.
+    if getattr(agent, "use_tools", False):
+        await _send_appointment_confirmation(agent, fs_uuid, appt_id, {
+            "slot_date": (agent.slots or {}).get("date"),
+            "slot_time": (agent.slots or {}).get("time"),
+            "service":   (agent.slots or {}).get("service"),
+        })
+        return
+    if not GEMINI_KEY:
         return
     turns = [t for t in (agent.transcript or []) if t.get("content")]
     if len(turns) < 3:
@@ -5188,45 +6007,14 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
         # time have been read out of the whole transcript, so the message
         # the customer receives actually confirms their appointment instead
         # of reading "Date: soon, Time: TBD".
+        # _send_appointment_confirmation also flags the CALL as having
+        # produced a booking. Only the early path in _book_appointment used
+        # to do that, and it returns before reaching that line whenever the
+        # slot is not known yet — the normal case, because the caller names a
+        # time after the row is opened. So a booking made this way was
+        # invisible to every count that reads calls.appointment_created.
         if patch.get("slot_date") or patch.get("slot_time"):
-            sent = False
-            try:
-                async with httpx.AsyncClient(timeout=8.0) as c:
-                    r = await c.post(
-                        f"{API_SERVER_URL}/api/whatsapp/appointment-confirm",
-                        headers={"X-Internal-Secret": INTERNAL_SECRET},
-                        json={
-                            "caller_number":    agent.caller_num,
-                            "business_name":    agent.profile.get("business_name") or "",
-                            "slot_date":        patch.get("slot_date"),
-                            "slot_time":        patch.get("slot_time"),
-                            "service":          patch.get("service"),
-                            "tenant_id":        agent.profile["tenant_id"],
-                            "voice_profile_id": agent.profile["id"],
-                            "call_id":          agent.call_id,
-                            "appointment_id":   appt_id,
-                        })
-                    log.info(f"[FS] {fs_uuid}: confirmation sent after enrichment ({r.status_code})")
-                    sent = r.status_code == 200
-            except Exception as e:  # noqa: BLE001
-                log.warning(f"[FS] {fs_uuid}: post-enrichment confirmation failed: {e}")
-
-            # Mark the CALL as having produced a booking. Only the early path
-            # in _book_appointment did this, and it returns before reaching
-            # that line whenever the slot is not known yet — which is the
-            # normal case, because the caller usually names a time after the
-            # booking row is opened. So a booking made this way was invisible
-            # to every count that reads calls.appointment_created:
-            # /api/admin analytics, the owner dashboard, month_appointments.
-            # The 20:56 call had a confirmed appointment row and a delivered
-            # WhatsApp while the call still read appointment_created = false.
-            try:
-                await agent.db.update_call(agent.call_id, {
-                    "appointment_created": True,
-                    "wa_sent": sent,
-                })
-            except Exception as e:  # noqa: BLE001
-                log.warning(f"[FS] {fs_uuid}: could not flag call as booked: {e}")
+            await _send_appointment_confirmation(agent, fs_uuid, appt_id, patch)
     except Exception as e:  # noqa: BLE001 - never break cleanup
         log.warning(f"[FS] {fs_uuid}: appointment enrich failed: {e}")
 
@@ -5404,7 +6192,17 @@ def _price_of(catalogue: list[dict], name: str) -> float | None:
 async def _extract_order(agent, fs_uuid: str, caller_number: str, cfg: dict) -> None:
     """File the order this call produced, if it produced one."""
     profile = agent.profile or {}
-    if not profile.get("order_taking") or not GEMINI_KEY:
+    if not profile.get("order_taking"):
+        return
+    # In tools mode the order was filed by take_order the moment the caller
+    # agreed to it — with the items she actually read back, not a second
+    # reading of the transcript. Nothing left to extract; the customer still
+    # needs their WhatsApp and the business still needs its webhook.
+    if agent.order_id and agent.order_row:
+        await _notify_order(agent, fs_uuid, agent.order_id, agent.order_reference,
+                            agent.order_row, cfg)
+        return
+    if not GEMINI_KEY:
         return
     turns = [t for t in (agent.transcript or []) if t.get("content")]
     if len(turns) < 3:
@@ -5528,8 +6326,21 @@ async def _extract_order(agent, fs_uuid: str, caller_number: str, cfg: dict) -> 
         log.error(f"[order] {fs_uuid}: insert returned nothing")
         return
     agent.order_id = order_id
+    agent.order_reference = reference
+    agent.order_row = order
     log.info(f"[order] {fs_uuid}: {reference} — {len(items)} item(s), total={order['total']}")
+    await _notify_order(agent, fs_uuid, order_id, reference, order, cfg)
 
+
+async def _notify_order(agent, fs_uuid: str, order_id: str, reference: str,
+                        order: dict, cfg: dict) -> None:
+    """Tell the customer and the business about an order that now exists.
+
+    Shared by both paths: the tool call that files it mid-conversation, and
+    the post-call extraction that files it from the transcript. One place, so
+    a customer cannot be sent two confirmations for one order — or none.
+    """
+    profile = agent.profile or {}
     try:
         await agent.db.update_call(agent.call_id, {"intent": "order"})
     except Exception as e:  # noqa: BLE001
@@ -5558,13 +6369,13 @@ async def _extract_order(agent, fs_uuid: str, caller_number: str, cfg: dict) -> 
         "tenant_id":       profile.get("tenant_id"),
         "call_id":         agent.call_id,
         "business_name":   profile.get("business_name", ""),
-        "customer_phone":  order["customer_phone"],
-        "customer_name":   order["customer_name"],
-        "items":           items,
-        "total":           order["total"],
-        "fulfilment":      fulfilment,
-        "address":         order["address"],
-        "requested_time":  order["requested_time"],
+        "customer_phone":  order.get("customer_phone"),
+        "customer_name":   order.get("customer_name"),
+        "items":           order.get("items"),
+        "total":           order.get("total"),
+        "fulfilment":      order.get("fulfilment"),
+        "address":         order.get("address"),
+        "requested_time":  order.get("requested_time"),
     }, cfg)
 
 
@@ -6850,11 +7661,25 @@ async def freeswitch_ws(
         # very first sentence, which is where it actually lands.
         try:
             await _refresh_pricing()
-            agent.caller_history = await db.get_caller_history(
-                caller_number, (profile or {}).get("id", ""))
+            # Two lookups, one round trip's worth of waiting: how many times
+            # they have rung, and what they last asked this business for.
+            agent.caller_history, agent.caller_memory = await asyncio.gather(
+                db.get_caller_history(caller_number, (profile or {}).get("id", "")),
+                db.get_caller_memory(caller_number, (profile or {}).get("tenant_id", "")),
+            )
             if agent.caller_history.get("previous_calls"):
                 log.info(f"[FS] {fs_uuid}: returning caller — "
                          f"{agent.caller_history['previous_calls']} previous call(s)")
+            # Seed the slots, so the facts block lists them under "never ask
+            # for these again" — which is the line that actually stops her
+            # asking a regular for their address for the third time.
+            _mem = agent.caller_memory or {}
+            if _mem.get("name") and not agent.slots.get("name") and not _is_junk_name(str(_mem["name"])):
+                agent.slots["name"] = _mem["name"]
+            if _mem.get("address"):
+                agent.slots["address"] = _mem["address"]
+            if _mem:
+                log.info(f"[FS] {fs_uuid}: caller memory {json.dumps(_mem, ensure_ascii=False)[:200]}")
         except Exception as e:  # noqa: BLE001
             log.debug(f"[FS] caller history skipped: {e}")
 

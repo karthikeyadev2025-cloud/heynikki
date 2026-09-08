@@ -125,6 +125,7 @@ export default function SetupPage() {
     auto_call_new_leads:     false,
     skip_dnd_for_instant_leads: false,
     order_taking:            false,
+    agent_mode:              "classic",
   });
 
   // Pulled out of the effect so applying a brochure draft can re-run it.
@@ -174,6 +175,7 @@ export default function SetupPage() {
           auto_call_new_leads:     vp.auto_call_new_leads ?? false,
           skip_dnd_for_instant_leads: vp.skip_dnd_for_instant_leads ?? false,
           order_taking:            (vp as any).order_taking ?? false,
+          agent_mode:              (vp as any).agent_mode ?? "classic",
         });
         const rows = Array.isArray((vp as any).catalogue) ? (vp as any).catalogue : [];
         setCat(rows.map((r: any) => ({
@@ -235,6 +237,7 @@ export default function SetupPage() {
       auto_call_new_leads:     form.auto_call_new_leads,
       skip_dnd_for_instant_leads: form.skip_dnd_for_instant_leads,
       order_taking:            form.order_taking,
+      agent_mode:              form.agent_mode,
       // The price list Nikki quotes from and totals against — same round
       // trip as every other voice_profiles column on this page.
       catalogue:               catalogueForSave(cat),
@@ -802,6 +805,52 @@ export default function SetupPage() {
               </div>
             </div>
           )}
+        </Card>
+
+        {/* ── How Nikki decides ──
+            The switch between the original keyword agent and the one that
+            calls functions against the live tables. Deliberately the last
+            thing on the page and deliberately opt-in: it changes how every
+            call is handled, so a business should turn it on knowing that,
+            not find it already on. */}
+        <Card className="nk-form" style={{ marginBottom: 20 }}>
+          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3,
+            display: "flex", alignItems: "center", gap: 8 }}>
+            <Settings size={15} /> How Nikki decides
+            <span style={{ background: C.gbr + "22", color: C.gbr, fontSize: 10,
+              fontWeight: 800, letterSpacing: ".05em", padding: "2px 7px",
+              borderRadius: 5 }}>BETA</span>
+          </div>
+          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 12, lineHeight: 1.55 }}>
+            Normally Nikki works from the words a caller uses. Switched to <em>Checks
+            before answering</em>, she looks in your diary and your price list during
+            the call — so &ldquo;ten o&apos;clock is free&rdquo; is something she checked, not
+            something she assumed, and the booking is written when the caller agrees to
+            a time rather than when they first say the word.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[
+              { v: "classic", t: "Answers from the conversation",
+                d: "The original. Fastest, and what every call uses today." },
+              { v: "tools",   t: "Checks before answering",
+                d: "Slower by about a second when she looks something up. Fewer wrong answers." },
+            ].map(o => (
+              <label key={o.v} style={{
+                display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
+                background: form.agent_mode === o.v ? C.hi : "transparent",
+                border: `1px solid ${form.agent_mode === o.v ? C.glow + "66" : C.bord}`,
+                borderRadius: 9, padding: 10,
+              }}>
+                <input type="radio" name="agent_mode" checked={form.agent_mode === o.v}
+                  onChange={() => setForm(f => ({ ...f, agent_mode: o.v }))}
+                  style={{ marginTop: 2 }} />
+                <span>
+                  <span style={{ display: "block", color: C.txt, fontSize: 13.5, fontWeight: 700 }}>{o.t}</span>
+                  <span style={{ display: "block", color: C.dim, fontSize: 11.5, marginTop: 2 }}>{o.d}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </Card>
 
         {/* Actions */}

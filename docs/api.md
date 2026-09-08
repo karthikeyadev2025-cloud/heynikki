@@ -102,3 +102,50 @@ O/0, I/1, S/5 or B/8 — they get read out on the phone.
 | 403 | Valid key, missing scope; the body lists `required` and `granted`. |
 | 409 | `opted_out`, `duplicate`, `no_number`, or a call already being dialled. |
 | 429 | Rate limited. |
+
+## How Nikki decides (agent_mode)
+
+`voice_profiles.agent_mode` (migration 049) picks the turn engine:
+
+- **`classic`** — the original. `_detect_intent` matches keyword lists; the
+  reply is one streamed model call.
+- **`tools`** — the model is given functions and chooses. `_tool_declarations`
+  builds the list per tenant (no `take_order` for a business that does not
+  sell, no `transfer_to_human` without a ring group), `generate_with_tools`
+  runs the hops, and `NikkiAgent._run_tool` executes them against the tables.
+
+Tools: `check_slot`, `book_appointment`, `check_stock`, `take_order`,
+`transfer_to_human`, `end_call`.
+
+Three things about the loop are load-bearing:
+
+1. **The first hop streams.** Most turns need no tool, and on those the
+   opening clause has to reach TTS while the rest generates, exactly as on
+   the classic path. `_stream_hop` watches the same stream for text and for
+   `functionCall` parts; a function call suppresses the fast path for that
+   turn, because the words after a lookup are not written yet.
+2. **A lookup is announced, not hidden.** `_SLOW_TOOLS` (the ones that go to
+   the database) fire the first-clause callback with "ఒక్క సెకను,
+   చూస్తున్నాను" — measured 1.8–3.4 s for a tool turn against 0.8 s for a
+   plain one, and silence for two seconds is what sounds broken.
+   `check_stock` reads the catalogue already in memory and is not announced.
+3. **Writes are idempotent per call.** `book_appointment` and `take_order`
+   refuse a second row and tell the model one already exists. In tools mode
+   the keyword booking path is skipped entirely, `_enrich_appointment` sends
+   the confirmation without re-extracting (the caller agreed to that slot out
+   loud), and `_extract_order` notifies for the row the tool wrote instead of
+   filing a second one.
+
+Both booking paths now end at `_send_appointment_confirmation`, and both
+order paths at `_notify_order` — one sender each, so nobody gets two
+confirmations for one thing, or none.
+
+## Caller memory
+
+`get_caller_memory(phone, tenant)` runs at call start, beside
+`get_caller_history`, and reads this caller's last appointment, last order
+and the name and address they gave. It seeds `slots` (so the facts block
+lists them under "never ask for these again") and adds a short block to the
+prompt that says to *offer*, not recite: "అదే address కేనా?" rather than
+asking a regular where they live for the fourth time. Runs in both modes;
+returns `{}` on any failure, because forgetfulness is a small loss.
