@@ -6,7 +6,7 @@ import { forgetDevice } from "../lib/native";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, Menu, X } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import Toaster from "./Toast";
 import NikkiLogo from "./NikkiLogo";
@@ -25,6 +25,7 @@ const NAV_ITEMS = [
   { href: "/calls",       icon: Phone,         label: "All Calls"   },
   { href: "/leads",       icon: Users,         label: "Leads"       },
   { href: "/appointments",icon: Calendar,      label: "Appointments"},
+  { href: "/orders",      icon: ShoppingBag,   label: "Orders"      },
   { href: "/campaigns",   icon: Megaphone,     label: "Campaigns"   },
   { href: "/analytics",   icon: BarChart3,     label: "Analytics"   },
   { href: "/quality",     icon: Gauge,         label: "Call Quality"},

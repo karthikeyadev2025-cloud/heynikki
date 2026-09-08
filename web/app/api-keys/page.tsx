@@ -34,8 +34,13 @@ interface ApiKey {
 // every /api/v1 route is a GET and no webhook subscription endpoint exists,
 // so granting them was a promise the key could not keep.
 const AVAILABLE_SCOPES = [
-  { id: "calls.read",         label: "Read calls",            hint: "GET /api/v1/calls, /api/v1/calls/:id", recommended: true },
+  { id: "calls.read",         label: "Read calls",            hint: "GET /api/v1/calls, /api/v1/calls/:id, /api/v1/calls/outbound", recommended: true },
   { id: "appointments.read",  label: "Read appointments",     hint: "GET /api/v1/appointments",             recommended: true },
+  { id: "orders.read",        label: "Read orders",           hint: "GET /api/v1/orders — orders Nikki took on the phone", recommended: true },
+  // The two write scopes. Kept off by default on purpose: one of them
+  // spends credits and rings a real person's phone.
+  { id: "calls.write",        label: "Place outbound calls",  hint: "POST /api/v1/calls/outbound — Nikki rings a customer and delivers your message. Uses call credits." },
+  { id: "orders.write",       label: "Update orders",         hint: "PATCH /api/v1/orders/:id — move an order to preparing, ready, delivered" },
 ];
 
 export default function ApiKeysPage() {
@@ -363,7 +368,7 @@ export default function ApiKeysPage() {
         {/* Docs link */}
         <div style={{ marginTop: 32, padding: 16, background: J.vault, borderRadius: 10,
                       border: `1px solid ${J.border}`, fontSize: 13, color: J.textMid }}>
-          <BookOpen size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} /> API documentation: <a href="https://docs.heynikki.in/api" style={{ color: J.mercury }}>docs.heynikki.in/api</a>
+          <BookOpen size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} /> API documentation: <a href="/developers" style={{ color: J.mercury }}>heynikki.in/developers</a>
           {" · "}Endpoints: <code style={{ color: J.chandra }}>GET /api/v1/calls</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/calls/:id</code>,
           {" "}<code style={{ color: J.chandra }}>GET /api/v1/appointments</code>,

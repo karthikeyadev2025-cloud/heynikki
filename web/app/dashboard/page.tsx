@@ -48,6 +48,7 @@ function IntentBadge({ intent }: { intent: string | null | undefined }) {
     appointment:    [C.grn + "22",  C.grn],
     enquiry:        [C.cyn + "22",  C.cyn],
     callback:       [C.gold + "22", C.gold],
+    order:          [C.gold + "22", C.gold],
     transfer:       [C.gbr + "22",  C.gbr],
     emergency:      [C.red + "22",  C.red],
     unknown:        [C.dim + "22",  C.dim],

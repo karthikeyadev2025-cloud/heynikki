@@ -1,0 +1,21 @@
+{
+  "name": "order_confirmed",
+  "category": "UTILITY",
+  "language": "te",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "నమస్కారం! {{1}} లో మీ order confirm అయింది.\n\n🔖 Order no: {{2}}\n🧾 {{3}}\n💰 మొత్తం: {{4}}\n\nఏమైనా మార్చాలంటే ఈ message కి reply చేయండి. ధన్యవాదాలు! 🙏",
+      "example": {
+        "body_text": [
+          [
+            "Paradise Mess",
+            "ORD-7K3Q",
+            "Chicken Biryani x2, Mirchi ka Salan",
+            "₹560"
+          ]
+        ]
+      }
+    }
+  ]
+}

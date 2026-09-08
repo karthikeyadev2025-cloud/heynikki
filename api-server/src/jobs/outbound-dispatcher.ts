@@ -20,6 +20,7 @@
  * that DON'T have explicit consent.
  */
 import { createClient } from "@supabase/supabase-js";
+import { notifyApiCallback, API_CALL_SOURCE } from "../api-callbacks";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -131,7 +132,7 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
   // socket, and the import opens one on construction.
   const { fsl } = await import("../esl");
   const reason = campaign ? "" : String(recipient.metadata?.source || "");
-  return fsl.originateOutbound(recipient.phone, cli, campaign?.id, 35, reason);
+  return fsl.originateOutbound(recipient.phone, cli, campaign?.id, 35, reason, recipient.id);
 }
 
 /**
@@ -520,7 +521,12 @@ async function tickInstant(): Promise<void> {
     // skip_dnd_for_instant_leads is a weaker claim than that, so a row
     // carrying real call consent does not also need the tenant flag —
     // otherwise a caller who asked to be rung back is blocked as unscrubbed.
-    const consented = !!r.consent_call_id || !!profile?.skip_dnd_for_instant_leads;
+    // consent_declared is the third: a call placed over the public API,
+    // where the business's own software attests — per call, on the record
+    // — that this customer asked to be reminded. The API refuses a request
+    // without that attestation, so a row with the flag has it on file.
+    const consented = !!r.consent_call_id || !!r.consent_declared
+      || !!profile?.skip_dnd_for_instant_leads;
 
     await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
     const { blocked, reason } = await scrubDnd(r.phone, consented);
@@ -529,6 +535,7 @@ async function tickInstant(): Promise<void> {
         status: "blocked_dnd", scrubbed_at: new Date().toISOString(),
         dnd_blocked: true, metadata: { ...r.metadata, scrub_reason: reason },
       }).eq("id", r.id);
+      if (r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
       continue;
     }
 
@@ -566,6 +573,9 @@ async function tickInstant(): Promise<void> {
         next_attempt_at: retry ? new Date(Date.now() + TRUNK_RETRY_MS).toISOString() : null,
         metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
       }).eq("id", r.id);
+      // A call the API asked for and we could not place is a result the
+      // caller is waiting on — only a final failure, a retry is still ours.
+      if (!retry && r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
       continue;
     }
     void recordTrunkState(true);

@@ -24,7 +24,7 @@ export default function robots(): MetadataRoute.Robots {
           // is client-side. Each of these directories also carries a
           // layout.tsx exporting NOINDEX (lib/seo.ts) as a belt-and-braces
           // meta tag — keep the two lists identical.
-          "/dashboard", "/leads", "/calls", "/appointments", "/campaigns",
+          "/dashboard", "/leads", "/calls", "/appointments", "/orders", "/campaigns",
           "/analytics", "/whatsapp", "/knowledge", "/verification", "/setup",
           "/billing", "/api-keys", "/admin", "/quality",
           // Login and password flows (the latter carry single-use tokens in

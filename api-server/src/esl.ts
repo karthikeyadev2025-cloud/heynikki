@@ -248,7 +248,14 @@ export class FreeSwitchESL {
     timeoutSec = 35,
     // Why we are ringing them ("incomplete_booking", "lead_capture"); the
     // pipeline opens the call with that instead of a generic follow-up.
-    callReason = ""
+    callReason = "",
+    // The outbound_recipients row this leg belongs to. An API-placed
+    // reminder call carries its message in that row, and the pipeline
+    // needs it BEFORE the first word — the dispatcher only writes
+    // metadata.fs_uuid after originate returns, which is after the
+    // pipeline has already connected, so looking the row up by channel
+    // UUID would race. Handed over as a channel variable instead.
+    recipientId = ""
   ): Promise<string> {
     const clean = (n: string) => n.replace(/[^0-9+]/g, "");
     const customer = clean(customerNumber);
@@ -281,6 +288,7 @@ export class FreeSwitchESL {
       `originate_timeout=${timeoutSec}`,
       campaignId ? `campaign_id=${campaignId}` : `campaign_id=`,
       `call_reason=${callReason.replace(/[^a-z_]/gi, "")}`,
+      `recipient_id=${recipientId.replace(/[^0-9a-f-]/gi, "")}`,
       `outbound_call=true`,
       // The answered leg is streamed to the SAME pipeline handler inbound
       // calls use, and that handler resolves the tenant's voice profile from

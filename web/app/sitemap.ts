@@ -26,6 +26,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${BASE}/about`,       lastModified: now, changeFrequency: "weekly",  priority: 0.9 },
     { url: `${BASE}/for/clinics`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
     { url: `${BASE}/for/real-estate`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    // The API reference. Public on purpose: a developer evaluating whether
+    // Nikki can be driven from their own software should be able to read
+    // the endpoints before they sign up.
+    { url: `${BASE}/developers`,    lastModified: now, changeFrequency: "monthly", priority: 0.7 },
     { url: `${BASE}/contact`,       lastModified: now, changeFrequency: "monthly", priority: 0.7 },
     { url: `${BASE}/signup`,        lastModified: now, changeFrequency: "monthly", priority: 0.6 },
     // /login is deliberately absent: it is noindex (see lib/seo.ts) and

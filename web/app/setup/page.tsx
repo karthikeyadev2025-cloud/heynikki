@@ -10,7 +10,7 @@ import { NIKKI } from "../../lib/brand";
 import AgentDraftBox from "../../components/AgentDraftBox";
 import BrochureUpload from "../../components/BrochureUpload";
 import ScriptAndMenu from "../../components/ScriptAndMenu";
-import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings } from "lucide-react";
+import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings, ShoppingBag, Trash2 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -50,8 +50,28 @@ function Card({ children, style, className }: { children: React.ReactNode; style
     borderRadius: 10, padding: 20, ...style }}>{children}</div>;
 }
 
+// One line of the shop's price list as it is being edited. `price` is a
+// string while typing — a half-typed "12" must not become the number 12 and
+// then re-render as something the owner did not write. It becomes a number
+// on save, and a row with no name is not an item at all, so it is dropped.
+type CatRow = { name: string; price: string; unit: string; available: boolean };
+const BLANK_ROW: CatRow = { name: "", price: "", unit: "", available: true };
+
+function catalogueForSave(rows: CatRow[]) {
+  return rows
+    .map(r => ({ name: r.name.trim(), price: r.price.trim(), unit: r.unit.trim(), available: r.available }))
+    .filter(r => r.name)
+    .map(r => ({
+      name: r.name,
+      ...(r.price !== "" && isFinite(Number(r.price)) ? { price: Number(r.price) } : {}),
+      ...(r.unit ? { unit: r.unit } : {}),
+      available: r.available,
+    }));
+}
+
 export default function SetupPage() {
   const [neg, setNeg] = useState<any>({ enabled: false, floor_note: "", max_discount_pct: "", offers: "", close_line: "" });
+  const [cat, setCat] = useState<CatRow[]>([]);
   const [ownerPhone, setOwnerPhone] = useState("");
   const [phoneMsg, setPhoneMsg]     = useState("");
   const [tenantId, setTenantId]       = useState<string | null>(null);
@@ -104,6 +124,7 @@ export default function SetupPage() {
     auto_whatsapp_new_leads: true,
     auto_call_new_leads:     false,
     skip_dnd_for_instant_leads: false,
+    order_taking:            false,
   });
 
   // Pulled out of the effect so applying a brochure draft can re-run it.
@@ -152,7 +173,15 @@ export default function SetupPage() {
           auto_whatsapp_new_leads: vp.auto_whatsapp_new_leads ?? true,
           auto_call_new_leads:     vp.auto_call_new_leads ?? false,
           skip_dnd_for_instant_leads: vp.skip_dnd_for_instant_leads ?? false,
+          order_taking:            (vp as any).order_taking ?? false,
         });
+        const rows = Array.isArray((vp as any).catalogue) ? (vp as any).catalogue : [];
+        setCat(rows.map((r: any) => ({
+          name: r?.name || "",
+          price: r?.price == null ? "" : String(r.price),
+          unit: r?.unit || "",
+          available: r?.available !== false,
+        })));
       }
     });
   }, []);
@@ -205,6 +234,10 @@ export default function SetupPage() {
       auto_whatsapp_new_leads: form.auto_whatsapp_new_leads,
       auto_call_new_leads:     form.auto_call_new_leads,
       skip_dnd_for_instant_leads: form.skip_dnd_for_instant_leads,
+      order_taking:            form.order_taking,
+      // The price list Nikki quotes from and totals against — same round
+      // trip as every other voice_profiles column on this page.
+      catalogue:               catalogueForSave(cat),
       status:            "active",
     };
 
@@ -228,6 +261,12 @@ export default function SetupPage() {
     }
 
     if (err) { setError(err.message); setSaving(false); return; }
+    // What was stored is what should be on screen: a half-filled row was
+    // dropped on the way to the database and must not sit here looking saved.
+    setCat(catalogueForSave(cat).map(r => ({
+      name: r.name, price: r.price == null ? "" : String(r.price),
+      unit: r.unit || "", available: r.available,
+    })));
     setSaved(true);
     setSaving(false);
     setTimeout(() => setSaved(false), 3000);
@@ -681,6 +720,88 @@ export default function SetupPage() {
           )}
         </div>
 
+        </Card>
+
+        {/* ── Orders ──
+            The shop's price list, and the switch that lets Nikki sell from
+            it. Kept next to Bargaining because both are about money: what
+            things cost, and how far she may bend on it. */}
+        <Card className="nk-form" style={{ marginBottom: 20 }}>
+          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3,
+            display: "flex", alignItems: "center", gap: 8 }}>
+            <ShoppingBag size={15} /> Orders
+          </div>
+          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+            Nikki takes orders on the phone — she reads the price list below, totals
+            the order, reads it back and sends a WhatsApp confirmation. Everything she
+            takes shows up on your <a href="/orders" style={{ color: C.glow }}>Orders</a> page.
+          </div>
+
+          <label style={{ display: "flex", gap: 8, alignItems: "center",
+            fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
+            <input type="checkbox" checked={form.order_taking}
+              onChange={e => setForm(f => ({ ...f, order_taking: e.target.checked }))} />
+            Let Nikki take orders on calls
+          </label>
+
+          {form.order_taking && (
+            <div style={{ marginTop: 14 }}>
+              <Label>Your price list</Label>
+              <div style={{ color: C.dim, fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>
+                Leave a price blank if it changes daily — Nikki will take the order and
+                say you will confirm the price. Untick <em>Available</em> for something
+                you are out of and she will say &ldquo;not today&rdquo; instead of never having heard of it.
+              </div>
+
+              {cat.length === 0 && (
+                <div style={{ color: C.dim, fontSize: 12, marginBottom: 10 }}>
+                  Nothing on the list yet — add your first item below.
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {cat.map((row, i) => (
+                  <div key={i} style={{
+                    display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+                    background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 9, padding: 8,
+                  }}>
+                    <input value={row.name} placeholder="Chicken Biryani"
+                      onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
+                      style={{ flex: "2 1 150px", minWidth: 0 }} />
+                    <input value={row.price} type="number" min={0} step="1" placeholder="₹ price"
+                      onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, price: e.target.value } : r))}
+                      style={{ flex: "1 1 90px", minWidth: 0 }} />
+                    <input value={row.unit} placeholder="plate"
+                      onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, unit: e.target.value } : r))}
+                      style={{ flex: "1 1 80px", minWidth: 0 }} />
+                    <label style={{ display: "flex", alignItems: "center", gap: 6,
+                      fontSize: 12, color: C.mid, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      <input type="checkbox" checked={row.available}
+                        onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, available: e.target.checked } : r))} />
+                      Available
+                    </label>
+                    <button type="button" aria-label={`Remove ${row.name || "item"}`}
+                      onClick={() => setCat(cs => cs.filter((_, j) => j !== i))}
+                      style={{ background: "transparent", border: `1px solid ${C.bord}`,
+                        borderRadius: 7, color: C.red, padding: "6px 8px", display: "flex" }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button type="button" onClick={() => setCat(cs => [...cs, { ...BLANK_ROW }])}
+                style={{ marginTop: 10, background: "transparent", color: C.gbr,
+                  border: `1px solid ${C.glow}66`, borderRadius: 8,
+                  padding: "8px 16px", fontSize: 13, fontWeight: 700 }}>
+                + Add item
+              </button>
+
+              <div style={{ color: C.dim, fontSize: 11, marginTop: 10 }}>
+                Saved with the rest of this page — press <strong>Save &amp; Go Live</strong> below.
+              </div>
+            </div>
+          )}
         </Card>
 
         {/* Actions */}

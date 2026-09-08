@@ -766,6 +766,9 @@ const WA_TEMPLATES: Record<string, { name: string; lang: string }> = {
   // approved the message is accepted by the API and dropped at delivery.
   booking_incomplete: { name: "booking_incomplete_callback", lang: "te" },
   lead_capture_ack: { name: "lead_capture_ack",     lang: "te" },
+  // Order taken on a call (047). Business, order number, items, total.
+  // Submission text in docs/whatsapp-templates.md; NOT YET SUBMITTED.
+  order_confirmation: { name: "order_confirmed",    lang: "te" },
 };
 
 // interested_lead_brochure is APPROVED but registered as MARKETING, so it is
@@ -1722,6 +1725,47 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
     await sb.from("appointments").update({ wa_confirmed: true }).eq("id", appointment_id)
       .then(r => r.error && console.error("[confirm] wa_confirmed:", r.error.message));
   }
+  res.json({ ok });
+});
+
+// Order confirmation — the pipeline files the order after the call and
+// then asks for this. Mirrors appointment-confirm: template outside the
+// 24-hour window, free text carrying the itemised list when it is open.
+app.post("/api/whatsapp/order-confirm", verifyInternal, async (req, res) => {
+  const { customer_phone, business_name, tenant_id, voice_profile_id, call_id, order_id } = req.body;
+  if (!customer_phone || !tenant_id || !order_id) {
+    return res.status(400).json({ error: "customer_phone, tenant_id, order_id required" });
+  }
+  const { data: o } = await sb.from("orders")
+    .select("reference, items, total, fulfilment, address, requested_time")
+    .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
+  if (!o) return res.status(404).json({ error: "order not found" });
+
+  const items: any[] = Array.isArray(o.items) ? o.items : [];
+  const lines = items.map(i => `• ${i.name}${i.qty > 1 ? ` × ${i.qty}` : ""}`).join("\n");
+  const summary = items.map(i => `${i.name}${i.qty > 1 ? ` x${i.qty}` : ""}`).join(", ");
+  const total = o.total != null ? `₹${Number(o.total).toLocaleString("en-IN")}` : "at the counter";
+  const how = o.fulfilment === "delivery" ? `🛵 Delivery${o.address ? ": " + o.address : ""}`
+            : o.fulfilment === "pickup"   ? "🛍️ Pickup"
+            : o.fulfilment === "dine_in"  ? "🍽️ Dine-in" : "";
+  const message = `నమస్కారం! మీ order ${business_name} లో confirm అయింది.\n\n` +
+    `🔖 Order no: ${o.reference}\n${lines}\n💰 Total: ${total}\n` +
+    (how ? `${how}\n` : "") + (o.requested_time ? `⏰ ${o.requested_time}\n` : "") +
+    `\nధన్యవాదాలు! 🙏`;
+
+  // Body params are capped at 60 characters each by Meta.
+  const ok = await sendWhatsApp(customer_phone, message, tenant_id, voice_profile_id,
+    "order_confirmation", call_id, undefined, business_name,
+    [(business_name || "us").slice(0, 60), o.reference, summary.slice(0, 60), total.slice(0, 60)]);
+  if (ok) {
+    await sb.from("orders").update({ wa_confirmed: true }).eq("id", order_id)
+      .then(r => r.error && console.error("[order-confirm] wa_confirmed:", r.error.message));
+  }
+  pushToTenant(tenant_id, {
+    title: "New order",
+    body:  `${o.reference}: ${summary.slice(0, 80)} — ${total}`,
+    data:  { type: "order", order_id },
+  }).catch(() => {});
   res.json({ ok });
 });
 
@@ -4213,6 +4257,7 @@ import { mountDeskRoutes } from "./desk";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
+import { notifyApiCallback, publicOutboundCall, API_CALL_SOURCE } from "./api-callbacks";
 
 // MUST be mounted BEFORE outbound.ts. Express matches routes in registration
 // order, and outbound.ts also defines /api/campaigns/:id/start and /pause —
@@ -4290,6 +4335,12 @@ async function verifyApiKey(req: any, res: any, next: any) {
   next();
 }
 
+// Every scope a route checks. The dashboard's key page offers the same
+// list; /developers documents it.
+const API_SCOPES = [
+  "calls.read", "calls.write", "appointments.read", "orders.read", "orders.write",
+];
+
 // Scope checker — pass to routes that require specific permissions
 function requireScope(...needed: string[]) {
   return (req: any, res: any, next: any) => {
@@ -4345,6 +4396,202 @@ app.get("/api/v1/calls",
   }
 );
 
+// ─── Outbound calls over the API ──────────────────────────────
+// A customer's own software (their booking system, their CRM) asks Nikki
+// to ring someone and say something: "your appointment is tomorrow at
+// 10", "your order is ready". The request becomes an instant
+// outbound_recipients row with metadata.source = "api_reminder", so the
+// dispatcher dials it inside calling hours exactly as it dials a
+// web-form lead, the hangup hook closes it, and the pipeline — which
+// reads the row by id before the first word — delivers the message and
+// records how it went. See api-callbacks.ts for what the caller hears back.
+const OUTBOUND_PURPOSES = ["reminder", "follow_up", "custom"] as const;
+const OUTBOUND_LANGS    = ["te", "en", "hi"] as const;
+const CALLING_HOURS     = "09:00–20:30 IST";
+
+function normaliseIndianMobile(raw: unknown): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  const ten = digits.length === 10 ? digits
+            : (digits.length === 12 && digits.startsWith("91")) ? digits.slice(2)
+            : (digits.length === 11 && digits.startsWith("0"))  ? digits.slice(1) : null;
+  if (!ten || !/^[6-9]\d{9}$/.test(ten)) return null;
+  return `+91${ten}`;
+}
+
+app.post("/api/v1/calls/outbound",
+  verifyApiKey, publicApiLimiter, requireScope("calls.write"),
+  async (req: any, res) => {
+    const tenantId: string = req.apiAuth.tenantId;
+    const b = req.body || {};
+    const bad = (field: string, msg: string) => res.status(400).json({ error: msg, field });
+
+    const phone = normaliseIndianMobile(b.phone);
+    if (!phone) return bad("phone", "phone must be an Indian mobile number (10 digits, or +91…)");
+    const message = String(b.message ?? "").trim();
+    if (!message) return bad("message", "message is required — what should Nikki tell them?");
+    if (message.length > 500) return bad("message", "message must be 500 characters or fewer");
+    const purpose = b.purpose == null ? "reminder" : String(b.purpose);
+    if (!(OUTBOUND_PURPOSES as readonly string[]).includes(purpose)) {
+      return bad("purpose", `purpose must be one of ${OUTBOUND_PURPOSES.join(", ")}`);
+    }
+    const language = b.language == null ? "te" : String(b.language);
+    if (!(OUTBOUND_LANGS as readonly string[]).includes(language)) {
+      return bad("language", `language must be one of ${OUTBOUND_LANGS.join(", ")}`);
+    }
+    const name = b.name == null ? null : String(b.name).trim().slice(0, 80) || null;
+    const reference = b.reference == null ? null : String(b.reference).trim().slice(0, 120) || null;
+    let notBefore: string | null = null;
+    if (b.not_before != null) {
+      const t = new Date(String(b.not_before));
+      if (Number.isNaN(t.getTime())) return bad("not_before", "not_before must be an ISO-8601 timestamp");
+      if (t.getTime() > Date.now() + 30 * 86_400_000) return bad("not_before", "not_before must be within the next 30 days");
+      notBefore = t.toISOString();
+    }
+    let callbackUrl: string | null = null;
+    if (b.callback_url != null && String(b.callback_url).trim()) {
+      let u: URL;
+      try { u = new URL(String(b.callback_url)); } catch { return bad("callback_url", "callback_url must be an absolute URL"); }
+      if (u.protocol !== "https:") return bad("callback_url", "callback_url must use https");
+      callbackUrl = u.toString();
+    }
+    const callbackSecret = b.callback_secret == null ? null : String(b.callback_secret).slice(0, 200) || null;
+    if (callbackSecret && !callbackUrl) return bad("callback_secret", "callback_secret needs a callback_url");
+    let apiMetadata: Record<string, unknown> = {};
+    if (b.metadata != null) {
+      if (typeof b.metadata !== "object" || Array.isArray(b.metadata)) return bad("metadata", "metadata must be a JSON object");
+      if (JSON.stringify(b.metadata).length > 2048) return bad("metadata", "metadata must be 2 KB or smaller");
+      apiMetadata = b.metadata;
+    }
+    // TRAI: an unsolicited call to a number we have not scrubbed is the
+    // fault that gets a trunk suspended. The caller attests, per request,
+    // that this person asked to be contacted; the flag is stored on the
+    // row and is what lets the dispatcher skip third-party scrubbing.
+    if (b.consent !== true) {
+      return bad("consent", "consent must be true — confirm this customer asked to be contacted by the business");
+    }
+
+    const plan = await planAllows(tenantId, "outbound_campaigns");
+    if (!plan.ok) return res.status(402).json({ error: plan.msg, code: "plan_upgrade_required" });
+
+    const { data: did } = await sb.from("dids").select("number")
+      .eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle();
+    if (!did) return res.status(409).json({ error: "This business has no phone number yet — calls need a number to dial out from", code: "no_number" });
+
+    const { data: optOut } = await sb.from("outbound_opt_outs").select("phone")
+      .eq("tenant_id", tenantId).eq("phone", phone).maybeSingle();
+    if (optOut) return res.status(409).json({ error: "This number has asked not to be called", code: "opted_out" });
+
+    // The same reminder queued twice — a retrying client — should not ring
+    // someone twice. Ten minutes covers a client's retry loop; a genuine
+    // second message to the same person later in the day still goes.
+    const { data: dupe } = await sb.from("outbound_recipients").select("id")
+      .eq("tenant_id", tenantId).eq("phone", phone).eq("is_instant", true)
+      .in("status", ["pending", "scrubbing", "queued", "in_progress"])
+      .eq("metadata->>source", API_CALL_SOURCE)
+      .gte("created_at", new Date(Date.now() - 10 * 60_000).toISOString())
+      .limit(1).maybeSingle();
+    if (dupe) return res.status(409).json({ error: "A call to this number is already queued", code: "duplicate", id: dupe.id });
+
+    const now = new Date().toISOString();
+    const { data: row, error } = await sb.from("outbound_recipients").insert({
+      tenant_id:        tenantId,
+      campaign_id:      null,
+      is_instant:       true,
+      phone,
+      first_name:       name,
+      status:           "pending",
+      next_attempt_at:  notBefore,
+      consent_declared: true,
+      consent_at:       now,
+      api_key_id:       req.apiAuth.apiKeyId,
+      reference,
+      metadata: {
+        source: API_CALL_SOURCE, message, purpose, language, reference,
+        callback_url: callbackUrl, callback_secret: callbackSecret,
+        api_metadata: apiMetadata, api_key_id: req.apiAuth.apiKeyId,
+      },
+    }).select("*").single();
+    if (error || !row) {
+      console.error("[api/v1] outbound insert failed:", error?.message);
+      return res.status(500).json({ error: "Could not queue the call" });
+    }
+    await audit("api.outbound_call", { tenantId, resource: row.id, req,
+      metadata: { api_key_id: req.apiAuth.apiKeyId, phone, purpose, reference } });
+    res.status(202).json({
+      ...publicOutboundCall(row),
+      calling_hours: CALLING_HOURS,
+      note: notBefore
+        ? `Will be dialled after ${notBefore}, inside ${CALLING_HOURS}.`
+        : `Will be dialled within a minute, inside ${CALLING_HOURS}; a request outside those hours waits for 09:00.`,
+    });
+  }
+);
+
+// GET /api/v1/calls/outbound?status=queued|calling|completed|failed|blocked&reference=&limit=&cursor=
+app.get("/api/v1/calls/outbound",
+  verifyApiKey, publicApiLimiter, requireScope("calls.read"),
+  async (req: any, res) => {
+    const limit = Math.min(parseInt((req.query.limit as string) || "50", 10) || 50, 200);
+    let q = sb.from("outbound_recipients").select("*")
+      .eq("tenant_id", req.apiAuth.tenantId)
+      .eq("metadata->>source", API_CALL_SOURCE)
+      .order("created_at", { ascending: false })
+      .limit(limit + 1);
+    const status = String(req.query.status || "");
+    const map: Record<string, string[]> = {
+      queued:    ["pending", "scrubbing", "queued"],
+      calling:   ["in_progress"],
+      completed: ["completed"],
+      failed:    ["failed"],
+      blocked:   ["blocked_dnd", "opted_out"],
+    };
+    if (status) {
+      if (!map[status]) return res.status(400).json({ error: `status must be one of ${Object.keys(map).join(", ")}` });
+      q = q.in("status", map[status]);
+    }
+    if (req.query.reference) q = q.eq("reference", String(req.query.reference));
+    if (req.query.cursor)    q = q.lt("created_at", String(req.query.cursor));
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    const has_more = (data?.length || 0) > limit;
+    const rows = has_more ? data!.slice(0, limit) : (data || []);
+    res.json({
+      items:       rows.map(publicOutboundCall),
+      has_more,
+      next_cursor: has_more ? rows[rows.length - 1].created_at : null,
+    });
+  }
+);
+
+app.get("/api/v1/calls/outbound/:id",
+  verifyApiKey, publicApiLimiter, requireScope("calls.read"),
+  async (req: any, res) => {
+    const { data } = await sb.from("outbound_recipients").select("*")
+      .eq("tenant_id", req.apiAuth.tenantId).eq("id", req.params.id)
+      .eq("metadata->>source", API_CALL_SOURCE).maybeSingle();
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json(publicOutboundCall(data));
+  }
+);
+
+// DELETE /api/v1/calls/outbound/:id — withdraw a call that has not been dialled yet.
+app.delete("/api/v1/calls/outbound/:id",
+  verifyApiKey, publicApiLimiter, requireScope("calls.write"),
+  async (req: any, res) => {
+    const { data, error } = await sb.from("outbound_recipients")
+      .update({ status: "failed", outcome: "cancelled_by_api" })
+      .eq("tenant_id", req.apiAuth.tenantId).eq("id", req.params.id)
+      .eq("metadata->>source", API_CALL_SOURCE)
+      .in("status", ["pending", "queued"])
+      .select("*").maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(409).json({ error: "Not found, or already being dialled" });
+    res.json(publicOutboundCall(data));
+  }
+);
+
+// Registered AFTER the /calls/outbound routes above: Express matches in
+// order, and this pattern would otherwise swallow "outbound" as an id.
 // GET /api/v1/calls/:id — full call detail including transcript
 app.get("/api/v1/calls/:id",
   verifyApiKey, publicApiLimiter, requireScope("calls.read"),
@@ -4398,6 +4645,55 @@ app.get("/api/v1/usage",
       seconds_used:    seconds,
       minutes_used:    Math.ceil(seconds / 60),
     });
+  }
+);
+
+// ─── Orders ───────────────────────────────────────────────────
+// GET /api/v1/orders?status=&from=&to=&limit=&cursor=
+app.get("/api/v1/orders",
+  verifyApiKey, publicApiLimiter, requireScope("orders.read"),
+  async (req: any, res) => {
+    const limit = Math.min(parseInt((req.query.limit as string) || "50", 10) || 50, 200);
+    let q = sb.from("orders").select("*")
+      .eq("tenant_id", req.apiAuth.tenantId)
+      .order("created_at", { ascending: false })
+      .limit(limit + 1);
+    if (req.query.status) q = q.eq("status", String(req.query.status));
+    if (req.query.from)   q = q.gte("created_at", String(req.query.from));
+    if (req.query.to)     q = q.lte("created_at", String(req.query.to));
+    if (req.query.cursor) q = q.lt("created_at", String(req.query.cursor));
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    const has_more = (data?.length || 0) > limit;
+    const items = has_more ? data!.slice(0, limit) : (data || []);
+    res.json({ items, has_more, next_cursor: has_more ? items[items.length - 1].created_at : null });
+  }
+);
+
+app.get("/api/v1/orders/:id",
+  verifyApiKey, publicApiLimiter, requireScope("orders.read"),
+  async (req: any, res) => {
+    const { data } = await sb.from("orders").select("*")
+      .eq("tenant_id", req.apiAuth.tenantId).eq("id", req.params.id).maybeSingle();
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json(data);
+  }
+);
+
+// PATCH /api/v1/orders/:id — the kitchen/shop system moves an order along.
+const ORDER_STATUSES = ["new", "confirmed", "preparing", "ready", "delivered", "cancelled"];
+app.patch("/api/v1/orders/:id",
+  verifyApiKey, publicApiLimiter, requireScope("orders.write"),
+  async (req: any, res) => {
+    const status = String(req.body?.status || "");
+    if (!ORDER_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of ${ORDER_STATUSES.join(", ")}`, field: "status" });
+    const patch: Record<string, unknown> = { status };
+    if (req.body?.notes != null) patch.notes = String(req.body.notes).slice(0, 1000);
+    const { data, error } = await sb.from("orders").update(patch)
+      .eq("tenant_id", req.apiAuth.tenantId).eq("id", req.params.id).select("*").maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json(data);
   }
 );
 
@@ -4615,8 +4911,12 @@ app.post("/api/keys/mine", verifyJWT, async (req: any, res) => {
   const name = String(req.body?.name || "").trim();
   if (name.length < 3) return res.status(400).json({ error: "Give the key a name (3+ characters)" });
 
-  const scopes = Array.isArray(req.body?.scopes)
+  // Only scopes a route actually checks. A typo used to be stored and
+  // silently granted nothing; now it is refused so the owner sees it.
+  const scopes: string[] = Array.isArray(req.body?.scopes)
     ? req.body.scopes.filter((x: any) => typeof x === "string").slice(0, 12) : [];
+  const unknown = scopes.filter(s => !API_SCOPES.includes(s));
+  if (unknown.length) return res.status(400).json({ error: `Unknown scope: ${unknown.join(", ")}`, known: API_SCOPES });
 
   // The page offered an expiry and this route dropped it, so every key
   // was permanent whatever the owner picked. Accepted as an ISO date in
@@ -5453,10 +5753,19 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         })
         .eq("metadata->>fs_uuid", fs_uuid)
         .eq("status", "in_progress")
-        .select("id, campaign_id");
+        .select("id, campaign_id, metadata");
       if (recipErr) console.error("[FS Hangup] recipient close failed:", recipErr.message);
       else if (recip?.length) {
         console.log(`[FS Hangup] closed campaign recipient ${recip[0].id} (${answered ? "answered" : "no conversation"})`);
+        // A call placed over the public API owes its caller a callback.
+        // Held for a moment: the pipeline is writing the transcript and
+        // judging whether the reminder landed (metadata.result) in its own
+        // cleanup, which starts when the socket closes — about now — and
+        // the callback should carry that verdict rather than arrive first.
+        if ((recip[0] as any).metadata?.source === API_CALL_SOURCE) {
+          const rid = recip[0].id;
+          setTimeout(() => { notifyApiCallback(sb, rid).catch(e => console.error("[api-callback]", e)); }, 12_000);
+        }
       }
 
       // ── Spend the minute ────────────────────────────────────────

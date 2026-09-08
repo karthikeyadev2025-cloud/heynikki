@@ -14,7 +14,7 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-// Intents are enquiry/appointment/callback/transfer/emergency/unknown, but
+// Intents are enquiry/appointment/order/callback/transfer/emergency/unknown, but
 // legacy rows also carry `wa_otp_<code>` (a WhatsApp verification call
 // surfaced through the pipeline). That is an internal marker, not a
 // caller intent, so it is shown as a readable label and never raw.
@@ -27,7 +27,7 @@ function intentLabel(intent: string | null | undefined): string {
 function IntentBadge({ intent }: { intent: string | null | undefined }) {
   const map: Record<string, string> = {
     appointment: C.grn, enquiry: C.cyn, callback: C.gold,
-    transfer: C.gbr, emergency: C.red, unknown: C.dim,
+    transfer: C.gbr, emergency: C.red, unknown: C.dim, order: C.gold,
     "WhatsApp OTP": C.cyn,
   };
   const label = intentLabel(intent);

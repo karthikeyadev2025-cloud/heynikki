@@ -719,8 +719,65 @@ Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
 Today: {now} ({weekday}) — it is {part} right now. Greet by the clock: "గుడ్ మార్నింగ్" only before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at night or before 05:00 say only "నమస్కారం" — never "good morning" at night.
-{_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}
+{_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}{_order_block(profile)}
 """ + _persona_for(_tenant_lang(profile)) + _PRICING_CACHE.get("text", "")
+
+
+_ORDER_WORDS = ("order", "ఆర్డర్", "ఆర్డరు", "parcel", "పార్సిల్", "పార్సెల్",
+                "delivery", "డెలివరీ", "takeaway", "take away", "టేక్ అవే",
+                "home delivery", "హోమ్ డెలివరీ")
+
+
+def _catalogue_items(profile: dict) -> list[dict]:
+    """The business's price list, as typed in Setup — only rows with a name."""
+    items = profile.get("catalogue") or []
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:  # noqa: BLE001
+            items = []
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict) and str(it.get("name") or "").strip():
+            out.append(it)
+    return out
+
+
+def _order_block(profile: dict) -> str:
+    """What to do when this business takes orders on the phone.
+
+    A mess, a sweet shop, a pharmacy: the caller wants things, not a slot.
+    Without a catalogue she can only say "I'll pass it on"; with one she
+    quotes, totals, reads back and confirms — and the order is filed after
+    the call by _extract_order, the way an appointment is filled in.
+    """
+    if not profile.get("order_taking"):
+        return ""
+    items = _catalogue_items(profile)
+    lines = []
+    for it in items[:80]:
+        name  = str(it["name"]).strip()
+        price = it.get("price")
+        unit  = str(it.get("unit") or "").strip()
+        tag   = "" if it.get("available", True) else " (NOT available today)"
+        p = f" — ₹{price}" + (f"/{unit}" if unit else "") if price not in (None, "") else ""
+        lines.append(f"  - {name}{p}{tag}")
+    menu = "\n".join(lines) if lines else "  (no price list given — take the order, say the shop will confirm the price)"
+    return (
+        "\n[TAKING ORDERS] This business takes orders on the phone. Menu / price list:\n"
+        f"{menu}\n"
+        "When the caller wants to order:\n"
+        "1. Get each item and quantity. Offer only what is on the list; if they ask for "
+        "something not on it, say so and suggest the nearest item. Never invent a price.\n"
+        "2. Ask: pickup, or home delivery? For delivery, take the full address and the "
+        "landmark. Ask when they want it if they have not said.\n"
+        "3. Ask their name (once — do not ask again if they already said it).\n"
+        "4. Read the whole order back with the total in rupees and ask them to confirm. "
+        "Say the total as digits words, e.g. 'మొత్తం ఐదు వందల యాభై రూపాయలు'.\n"
+        "5. Once they say yes: tell them it is confirmed, that a WhatsApp with the order "
+        "will come to this number, thank them, say goodbye once and end with END_CALL.\n"
+        "Do not book an appointment for an order. Do not ask for their phone number — you have it.\n"
+    )
 
 
 def _negotiation_block(policy: dict | None) -> str:
@@ -1986,6 +2043,14 @@ class NikkiAgent:
         # 5 Sep 01:29 call ended as plain "enquiry" and the clinic never saw
         # a callback to make.
         self.callback_promised: bool = False
+        # An order was asked for at some point in this call (sticky, same
+        # reason as callback_promised) and, once filed, the row it became.
+        self.order_seen: bool = False
+        self.order_id: Optional[str] = None
+        # Set when this leg is a reminder call placed over the public API:
+        # {"recipient_id", "message", "purpose"}. _report_reminder_result
+        # reads it at cleanup.
+        self.api_reminder: Optional[dict] = None
         self.slots       : dict = {"name": None, "phone": None,
                                    "service": None, "when": None}
         # Seed the phone from caller ID. The booking, the WhatsApp and the
@@ -2301,6 +2366,8 @@ class NikkiAgent:
 
             # Intent detection (keyword based, fast, no extra LLM call)
             self.intent = self._detect_intent(user_text)
+            if self.intent == "order":
+                self.order_seen = True      # sticky, like callback_promised
 
             # A medical emergency gets one fixed line, first, before any
             # model call: the number to ring, then the transfer. The 4 Sep
@@ -2606,6 +2673,8 @@ class NikkiAgent:
             return i
         if self.appointment_id:
             return "appointment"
+        if getattr(self, "order_id", None) or getattr(self, "order_seen", False):
+            return "order"
         if i == "transfer" or self.handed_to_human:
             return "transfer"
         if getattr(self, "callback_promised", False):
@@ -2683,6 +2752,11 @@ class NikkiAgent:
 
         if any(w in text_lower for w in emergency_words): return "emergency"
         if any(w in text_lower for w in transfer_words):  return "transfer"
+        # Only for a business that takes orders — "delivery time" on a
+        # clinic's line is not an order. Checked before appointments because
+        # "time" is an appointment word and every order has a time.
+        if (self.profile or {}).get("order_taking") and any(w in text_lower for w in _ORDER_WORDS):
+            return "order"
         if any(w in text_lower for w in appt_words):      return "appointment"
         if any(w in text_lower for w in callback_words):  return "callback"
         return "enquiry"
@@ -4996,6 +5070,18 @@ async def _spool_janitor() -> None:
             for f in spool.glob("greet_*.wav.part"):
                 try: f.unlink()
                 except OSError: pass
+            # Cached greetings are keyed on the greeting TEXT, which used to
+            # be one string per tenant. A reminder call placed over the API
+            # says something different every time, so this cache now grows
+            # by one file per call and nothing ever removed them. A week is
+            # far longer than any greeting is reused; the cost of a miss is
+            # one re-synthesis of a line the tenant hears daily.
+            for f in spool.glob("greet_*.wav"):
+                try:
+                    if f.stat().st_mtime < time.time() - 7 * 86400:
+                        f.unlink(); removed += 1
+                except OSError:
+                    pass
             if removed:
                 log.info(f"spool janitor: removed {removed} stale clip(s)")
         except asyncio.CancelledError:
@@ -5143,6 +5229,343 @@ async def _enrich_appointment(agent, fs_uuid: str) -> None:
                 log.warning(f"[FS] {fs_uuid}: could not flag call as booked: {e}")
     except Exception as e:  # noqa: BLE001 - never break cleanup
         log.warning(f"[FS] {fs_uuid}: appointment enrich failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════
+# CALLS PLACED OVER THE PUBLIC API
+#
+# A business's own software asks us to ring a customer and say something —
+# "your appointment is tomorrow at 10", "your medicine is ready". The
+# request is an outbound_recipients row; these two functions are the call
+# itself: what she opens with, and what the caller's software is told
+# afterwards (api-server/src/api-callbacks.ts delivers that verdict).
+# ══════════════════════════════════════════════════════════════
+_REMINDER_RESPONSES = ("confirmed", "reschedule", "cancel", "unclear", "not_reached")
+
+
+async def _fetch_recipient(db, recipient_id: str) -> dict | None:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.get(f"{db.url}/rest/v1/outbound_recipients",
+                            headers=db.headers,
+                            params={"id": f"eq.{recipient_id}",
+                                    "select": "id,first_name,phone,metadata", "limit": "1"})
+            rows = r.json()
+            return rows[0] if rows else None
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[api-call] recipient {recipient_id[:8]} fetch failed: {e}")
+        return None
+
+
+async def _prepare_api_reminder(agent, profile: dict, recipient_id: str) -> None:
+    """Open the call with what the business asked us to say.
+
+    The message is the whole point of the call, so it is spoken FIRST, in
+    the greeting, rather than left for the model to remember to mention:
+    an outbound call has a few seconds before the person decides it is a
+    nuisance, and "hello, this is X from Y" followed by silence is what
+    loses them.
+    """
+    row = await _fetch_recipient(agent.db, recipient_id)
+    md = (row or {}).get("metadata") or {}
+    message = str(md.get("message") or "").strip()
+    if not message:
+        log.warning(f"[api-call] {recipient_id[:8]}: no message on the row — generic outbound greeting")
+        return
+    biz  = profile.get("business_name") or "the business"
+    who  = _assistant_name(profile)
+    name = str((row or {}).get("first_name") or "").strip()
+    hello = f"హలో {name} గారు," if name else "హలో,"
+    agent.greeting_override = (
+        f"{hello} {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. {message} "
+        f"ఇది తెలియజేయడానికే కాల్ చేశాను.")
+    agent.api_reminder = {"recipient_id": recipient_id, "message": message,
+                          "purpose": str(md.get("purpose") or "reminder")}
+    agent.system_prompt += (
+        f"\n\nTHIS IS A REMINDER CALL you placed on behalf of {biz}. The customer did "
+        f"NOT call you. The one thing you rang to say is:\n  \"{message}\"\n"
+        "You have already said it in your opening line. From here:\n"
+        "- If they acknowledge it, confirm briefly, ask if they need anything else, "
+        "and end the call with END_CALL. Do not repeat the message twice.\n"
+        "- If they did not catch it, say it again, simply.\n"
+        "- Answer questions about the business from the information above. If you do "
+        "not know, say the team will call back — never invent a detail.\n"
+        "- If they want to reschedule or cancel, say you have noted it and the team "
+        "will confirm. Do not promise a specific new time unless they agree one.\n"
+        "- If they are busy or annoyed, apologise once, say goodbye and END_CALL.\n"
+        "Keep it short. This call should last under a minute.")
+    log.info(f"[api-call] {recipient_id[:8]}: reminder prepared ({len(message)} chars)")
+
+
+async def _report_reminder_result(agent, fs_uuid: str, duration: int) -> None:
+    """Judge whether the reminder actually landed, and file it on the row.
+
+    The caller's software gets this as `result` in the completion callback.
+    A call that connected is not the same as a message that was received —
+    a voicemail, a wrong number and a person saying "yes, got it" all look
+    identical from billsec alone.
+    """
+    info = getattr(agent, "api_reminder", None)
+    if not info:
+        return
+    rid = info["recipient_id"]
+    verdict = {"delivered": False, "customer_response": "not_reached", "note": ""}
+    turns = [t for t in (agent.transcript or []) if t.get("content")]
+    caller_turns = [t for t in turns if t.get("role") != "assistant"]
+
+    if caller_turns and GEMINI_KEY:
+        dialogue = "\n".join(
+            f"{'AGENT' if t.get('role') == 'assistant' else 'CUSTOMER'}: {str(t['content'])[:300]}"
+            for t in turns)[:8000]
+        prompt = (
+            "An automated assistant rang a customer to deliver ONE message. Judge how it went.\n"
+            f"THE MESSAGE: {info['message']}\n\n"
+            "Return ONLY minified JSON:\n"
+            '{"delivered":true|false,"customer_response":"confirmed|reschedule|cancel|unclear|not_reached",'
+            '"note":"one short sentence in English"}\n\n'
+            "delivered is true only if a human clearly heard the message. "
+            "confirmed = they acknowledged or agreed. reschedule / cancel = they asked to change "
+            "or cancel whatever the message was about. unclear = a person spoke but their answer "
+            "settles nothing. not_reached = voicemail, wrong number, or nobody understood.\n\n"
+            f"TRANSCRIPT:\n{dialogue}")
+        try:
+            model = resolve_gemini_model()
+            async with httpx.AsyncClient(timeout=20.0) as c:
+                r = await c.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}",
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}})
+            m = re.search(r"\{[\s\S]*\}", r.json()["candidates"][0]["content"]["parts"][0]["text"]) \
+                if r.status_code == 200 else None
+            if m:
+                d = json.loads(m.group(0))
+                resp = str(d.get("customer_response") or "unclear").strip().lower()
+                verdict = {
+                    "delivered": bool(d.get("delivered")),
+                    "customer_response": resp if resp in _REMINDER_RESPONSES else "unclear",
+                    "note": str(d.get("note") or "")[:300],
+                }
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[api-call] {rid[:8]}: result extraction failed: {e}")
+            verdict["note"] = "result could not be judged"
+            verdict["customer_response"] = "unclear"
+    elif caller_turns:
+        # No model key: the customer spoke, so somebody heard it. Say only that.
+        verdict = {"delivered": True, "customer_response": "unclear", "note": "the customer spoke; not judged"}
+
+    verdict["spoke_seconds"] = duration
+    # Merge, never replace: the hangup hook writes duration_seconds and the
+    # callback stamps into this same jsonb column a few seconds from now.
+    row = await _fetch_recipient(agent.db, rid)
+    md = dict((row or {}).get("metadata") or {})
+    md["result"] = verdict
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            await c.patch(f"{agent.db.url}/rest/v1/outbound_recipients",
+                          headers=agent.db.headers, params={"id": f"eq.{rid}"},
+                          json={"metadata": md})
+        log.info(f"[api-call] {rid[:8]}: result {verdict['customer_response']} "
+                 f"(delivered={verdict['delivered']})")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[api-call] {rid[:8]}: result write failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ORDERS
+#
+# Written after the call, from the whole transcript, exactly like
+# _enrich_appointment — an LLM call mid-conversation would sit on the
+# caller's critical path, and the read-back at the end of the call is what
+# actually confirms the order, so nothing before it is worth filing.
+# ══════════════════════════════════════════════════════════════
+_ORDER_REF_ALPHABET = "ACDEFGHJKLMNPQRTUVWXY3479"       # no O/0, I/1, S/5, B/8
+
+
+def _order_reference() -> str:
+    return "ORD-" + "".join(secrets.choice(_ORDER_REF_ALPHABET) for _ in range(4))
+
+
+def _price_of(catalogue: list[dict], name: str) -> float | None:
+    """The shop's own price for an item the model named, matched loosely."""
+    n = re.sub(r"[^a-z0-9]", "", str(name).lower())
+    if not n:
+        return None
+    for it in catalogue:
+        c = re.sub(r"[^a-z0-9]", "", str(it.get("name") or "").lower())
+        if c and (c == n or c in n or n in c):
+            try:
+                return float(it.get("price"))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+async def _extract_order(agent, fs_uuid: str, caller_number: str, cfg: dict) -> None:
+    """File the order this call produced, if it produced one."""
+    profile = agent.profile or {}
+    if not profile.get("order_taking") or not GEMINI_KEY:
+        return
+    turns = [t for t in (agent.transcript or []) if t.get("content")]
+    if len(turns) < 3:
+        return
+    # Cheap gate before an LLM call: an order was either asked for in words
+    # the detector knows, or the whole call was about something else.
+    if not getattr(agent, "order_seen", False):
+        return
+
+    catalogue = _catalogue_items(profile)
+    menu = "\n".join(
+        f"- {it['name']}" + (f" (₹{it['price']})" if it.get("price") not in (None, "") else "")
+        for it in catalogue[:80]) or "(no price list)"
+    dialogue = "\n".join(
+        f"{'AGENT' if t.get('role') == 'assistant' else 'CUSTOMER'}: {str(t['content'])[:300]}"
+        for t in turns)[:8000]
+    prompt = (
+        "Extract the ORDER the customer placed on this phone call. Return ONLY minified JSON:\n"
+        '{"confirmed":true|false,"items":[{"name":"string","qty":1,"unit_price":null,"notes":null}],'
+        '"fulfilment":"pickup|delivery|dine_in|unknown","address":null,"customer_name":null,'
+        '"requested_time":null,"notes":null}\n\n'
+        f"The shop sells:\n{menu}\n\n"
+        "Rules:\n"
+        "- confirmed is true ONLY if the customer agreed to the order after it was read back "
+        "to them. Someone who asked prices and hung up has NOT ordered; filing that as an order "
+        "sends a shop cooking food nobody is coming for.\n"
+        "- Use the shop's own item names above wherever the customer clearly meant one of them.\n"
+        "- qty is a whole number, at least 1. unit_price only if a price was actually said.\n"
+        "- address only for delivery, as the customer gave it. requested_time as they said it "
+        "(\"7 PM\", \"ఇప్పుడే\"), not resolved to a date.\n"
+        "- null for anything not actually said.\n\n"
+        f"TRANSCRIPT:\n{dialogue}")
+    try:
+        model = resolve_gemini_model()
+        async with httpx.AsyncClient(timeout=25.0) as c:
+            r = await c.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}})
+        if r.status_code != 200:
+            log.warning(f"[order] {fs_uuid}: gemini {r.status_code}")
+            return
+        m = re.search(r"\{[\s\S]*\}", r.json()["candidates"][0]["content"]["parts"][0]["text"])
+        if not m:
+            return
+        d = json.loads(m.group(0))
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[order] {fs_uuid}: extraction failed: {e}")
+        return
+
+    raw_items = d.get("items") if isinstance(d.get("items"), list) else []
+    items, total, priced = [], 0.0, True
+    for it in raw_items[:30]:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()[:120]
+        if not name:
+            continue
+        try:
+            qty = max(1, min(999, int(float(it.get("qty") or 1))))
+        except (TypeError, ValueError):
+            qty = 1
+        price = None
+        try:
+            if it.get("unit_price") not in (None, ""):
+                price = round(float(it["unit_price"]), 2)
+        except (TypeError, ValueError):
+            price = None
+        # The shop's list beats what the model heard: a misheard price on a
+        # confirmation the customer keeps is a dispute at the counter.
+        listed = _price_of(catalogue, name)
+        if listed is not None:
+            price = listed
+        if price is None:
+            priced = False
+        else:
+            total += price * qty
+        row = {"name": name, "qty": qty, "unit_price": price}
+        if it.get("notes"):
+            row["notes"] = str(it["notes"])[:200]
+        items.append(row)
+
+    if not d.get("confirmed") or not items:
+        log.info(f"[order] {fs_uuid}: no confirmed order "
+                 f"(confirmed={bool(d.get('confirmed'))}, items={len(items)})")
+        return
+
+    fulfilment = str(d.get("fulfilment") or "unknown").strip().lower()
+    if fulfilment not in ("pickup", "delivery", "dine_in", "unknown"):
+        fulfilment = "unknown"
+    name = d.get("customer_name") or (agent.slots or {}).get("name")
+    if name and _is_junk_name(str(name)):
+        name = None
+    reference = _order_reference()
+    order = {
+        "tenant_id":        profile.get("tenant_id"),
+        "voice_profile_id": profile.get("id"),
+        "call_id":          agent.call_id,
+        "reference":        reference,
+        "customer_phone":   _valid_mobile(caller_number) or (caller_number or "")[-15:],
+        "customer_name":    str(name)[:120] if name else None,
+        "items":            items,
+        "total":            round(total, 2) if priced and total > 0 else None,
+        "fulfilment":       fulfilment,
+        "address":          str(d["address"])[:500] if d.get("address") else None,
+        "requested_time":   str(d["requested_time"])[:80] if d.get("requested_time") else None,
+        "notes":            str(d["notes"])[:1000] if d.get("notes") else None,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as c:
+            resp = await c.post(f"{agent.db.url}/rest/v1/orders",
+                                headers={**agent.db.headers, "Prefer": "return=representation"},
+                                json=order)
+            rows = resp.json() if resp.status_code < 300 else []
+            order_id = rows[0]["id"] if rows else None
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[order] {fs_uuid}: insert failed: {e}")
+        return
+    if not order_id:
+        log.error(f"[order] {fs_uuid}: insert returned nothing")
+        return
+    agent.order_id = order_id
+    log.info(f"[order] {fs_uuid}: {reference} — {len(items)} item(s), total={order['total']}")
+
+    try:
+        await agent.db.update_call(agent.call_id, {"intent": "order"})
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[order] {fs_uuid}: call intent update failed: {e}")
+
+    # WhatsApp first — the customer is waiting on it, and the automation
+    # webhook is a business's own integration that can take its time.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(f"{API_SERVER_URL}/api/whatsapp/order-confirm",
+                             headers={"X-Internal-Secret": INTERNAL_SECRET},
+                             json={"customer_phone":   order["customer_phone"],
+                                   "business_name":    profile.get("business_name") or "",
+                                   "tenant_id":        profile.get("tenant_id"),
+                                   "voice_profile_id": profile.get("id"),
+                                   "call_id":          agent.call_id,
+                                   "order_id":         order_id})
+            log.info(f"[order] {fs_uuid}: confirmation sent ({r.status_code})")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[order] {fs_uuid}: confirmation failed: {e}")
+
+    await _fire_automation_webhook("order-created", {
+        "_tenant_webhook": profile.get("automation_webhook_url"),
+        "order_id":        order_id,
+        "reference":       reference,
+        "tenant_id":       profile.get("tenant_id"),
+        "call_id":         agent.call_id,
+        "business_name":   profile.get("business_name", ""),
+        "customer_phone":  order["customer_phone"],
+        "customer_name":   order["customer_name"],
+        "items":           items,
+        "total":           order["total"],
+        "fulfilment":      fulfilment,
+        "address":         order["address"],
+        "requested_time":  order["requested_time"],
+    }, cfg)
 
 
 async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
@@ -6029,6 +6452,11 @@ async def freeswitch_ws(
     campaign_id:   str = "",
     onboarding:    str = "",
     reason:        str = "",
+    # The outbound_recipients row this leg was dialled for (API-placed
+    # calls). Comes through a channel variable and the dialplan URL, because
+    # the dispatcher writes metadata.fs_uuid only after originate returns —
+    # by which time this handler is already talking.
+    recipient:     str = "",
 ):
     """
     FreeSWITCH mod_audio_stream WebSocket handler.
@@ -6166,6 +6594,12 @@ async def freeswitch_ws(
                 "the WhatsApp confirmation. If they ask why you called, say exactly "
                 "that. If they are busy or no longer want it, thank them, say "
                 "goodbye once and end the call with END_CALL.")
+        elif _reason == "api_reminder" and recipient:
+            # A call the business's own software asked for over the public
+            # API: "tell this person this". The message lives on the
+            # recipient row; without it she would open with the generic
+            # follow-up below and never say what she rang to say.
+            await _prepare_api_reminder(agent, profile, recipient.strip())
         else:
             agent.greeting_override = (
                 f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
@@ -6885,6 +7319,8 @@ async def freeswitch_ws(
         # delay it.
         await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
         await _enrich_appointment(agent, fs_uuid)
+        await _extract_order(agent, fs_uuid, caller_number, cfg)
+        await _report_reminder_result(agent, fs_uuid, duration)
         await _surface_wa_otp(agent, fs_uuid, caller_number, did_number)
 
 

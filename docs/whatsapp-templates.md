@@ -221,3 +221,45 @@ curl -s -X POST "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_I
   -H "Authorization: Bearer $META_WA_TOKEN" -H "Content-Type: application/json" \
   -d @docs/templates/appointment_confirmed_slot.json
 ```
+
+## 9. `order_confirmed` · te · UTILITY — NOT YET SUBMITTED
+
+Migration 047 lets a business take orders on the phone (a mess, a sweet
+shop, a pharmacy). The order is filed after the call and the customer is
+sent a confirmation — which for a phone order is the only written record
+either side has, so it matters more here than a booking confirmation does.
+The caller phoned us, which does not open the 24-hour window, so free text
+is accepted by Meta and dropped at delivery. Until this is approved the
+send falls through to free text and the itemised message reaches only
+customers who have messaged the business recently.
+
+| Field | Value |
+|---|---|
+| Name | `order_confirmed` |
+| Category | **Utility** |
+| Language | Telugu (`te`) |
+| Header / Footer / Buttons | none |
+
+Body — `{{1}}` business name, `{{2}}` order number, `{{3}}` items, `{{4}}` total:
+
+```
+నమస్కారం! {{1}} లో మీ order confirm అయింది.
+
+🔖 Order no: {{2}}
+🧾 {{3}}
+💰 మొత్తం: {{4}}
+
+ఏమైనా మార్చాలంటే ఈ message కి reply చేయండి. ధన్యవాదాలు! 🙏
+```
+
+Samples: `Paradise Mess` · `ORD-7K3Q` · `Chicken Biryani x2, Mirchi ka Salan` · `₹560`
+
+Body parameters are capped at 60 characters each by Meta, so the item list
+is truncated at 60 in `/api/whatsapp/order-confirm`; the full itemised list
+rides in the free-text message that follows when the window is open.
+
+```
+curl -s -X POST "https://graph.facebook.com/$META_WA_API_VERSION/$META_WA_WABA_ID/message_templates" \
+  -H "Authorization: Bearer $META_WA_TOKEN" -H "Content-Type: application/json" \
+  -d @docs/templates/order_confirmed.json
+```
