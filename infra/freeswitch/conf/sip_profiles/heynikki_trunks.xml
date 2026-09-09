@@ -34,9 +34,15 @@
     <!-- G.711 only. The pipeline cannot decode G.729 — if Jio offers
          it, decline rather than negotiate it. -->
     <param name="codec-prefs"            value="PCMU,PCMA"/>
-    <!-- Jio sold 10 channels. Cap below the contracted number so we
-         fail our own calls rather than have Jio reject them, and so a
-         runaway loop can't burn the whole trunk. -->
+    <!-- Jio sold 10 channels. A sofia gateway has NO channel-cap
+         parameter — this comment claimed a cap that did not exist here,
+         and call eleven was refused by Jio's SBC as a generic
+         NORMAL_TEMPORARY_FAILURE, indistinguishable from a dead trunk.
+         The cap now lives where it can be counted: esl.ts asks
+         `show channels count` before every originate and stops outbound
+         at TRUNK_OUTBOUND_CEILING (8 of 10), leaving two channels for
+         people ringing in. This is the rate limit, which is a different
+         thing and does belong here. -->
     <param name="calls-per-second"       value="3"/>
   </gateway>
 

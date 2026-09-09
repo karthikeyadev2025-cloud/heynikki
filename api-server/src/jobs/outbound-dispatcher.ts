@@ -170,6 +170,21 @@ function isTrunkFault(reason: string): boolean {
 }
 
 /**
+ * The trunk is FULL, which is not the same as broken.
+ *
+ * esl.ts refuses to originate once outbound is using its share of the ten
+ * channels, so inbound callers always have room. That refusal must not be
+ * filed as a trunk fault: recordTrunkState(false) is read by the voice
+ * pipeline for six hours and makes Nikki stop offering to connect people to
+ * a person — so a busy five minutes would degrade every live conversation.
+ * It must not burn a retry either; nothing is wrong, and the same call will
+ * go through as soon as a channel frees.
+ */
+function isTrunkBusy(reason: string): boolean {
+  return reason.includes("trunk busy");
+}
+
+/**
  * The trunk understood us and said the NUMBER is wrong. Nobody's phone
  * rang, so no missed-call WhatsApp — but nothing will change by tomorrow
  * either, so no retry. On 2026-09-04 every campaign call hit this because
@@ -187,6 +202,8 @@ function isDeadNumber(reason: string): boolean {
 // about two hours, long enough to ride out congestion and short enough that
 // a real outage shows up as failed rows an operator can see.
 const TRUNK_RETRY_MS  = 15 * 60 * 1000;
+// A full trunk clears in the time one call takes, not in fifteen minutes.
+const TRUNK_BUSY_RETRY_MS = 90 * 1000;
 const TRUNK_MAX_TRIES = 8;
 
 /**
@@ -425,6 +442,17 @@ async function tick(): Promise<void> {
       } catch (e: any) {
         const reason = String(e?.message || e).slice(0, 120);
 
+        if (isTrunkBusy(reason)) {
+          console.warn(`[dispatcher] ${reason} — ${r.phone} waits for a free channel`);
+          await sb.from("outbound_recipients").update({
+            status:          "queued",
+            outcome:         reason,
+            attempts:        r.attempts || 0,
+            next_attempt_at: new Date(Date.now() + TRUNK_BUSY_RETRY_MS).toISOString(),
+          }).eq("id", r.id);
+          continue;
+        }
+
         if (isTrunkFault(reason)) {
           void recordTrunkState(false, reason);
           // The phone never rang, so this is not a missed call: no WhatsApp,
@@ -554,6 +582,16 @@ async function tickInstant(): Promise<void> {
       fsUuid = await dispatchCall(r, null);
     } catch (e: any) {
       const reason = String(e?.message || e).slice(0, 120);
+      if (isTrunkBusy(reason)) {
+        console.warn(`[dispatcher] ${reason} — instant callback to ${r.phone} waits`);
+        await sb.from("outbound_recipients").update({
+          status:          "pending",
+          outcome:         reason,
+          attempts:        r.attempts || 0,
+          next_attempt_at: new Date(Date.now() + TRUNK_BUSY_RETRY_MS).toISOString(),
+        }).eq("id", r.id);
+        continue;
+      }
       const fault  = isTrunkFault(reason);
       void recordTrunkState(!fault, fault ? reason : undefined);
       // A trunk fault is our problem, not the lead's: keep the row pending

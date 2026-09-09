@@ -879,6 +879,27 @@ _POOL = httpx.AsyncClient(
                         keepalive_expiry=90.0),
 )
 
+# The breakers stop us hammering a provider that is already down. They were
+# written months ago, exported through /health, and never actually consulted:
+# every turn of every call still paid the full timeout to a dead vendor
+# before failing over, so an outage cost each caller ten seconds of silence
+# per turn rather than one. Wired in below at the three call sites.
+#
+# Only INFRASTRUCTURE failures count — a timeout, a connection error, a 5xx,
+# a 429. A 400 is our own bad request and will fail identically forever; a
+# breaker that trips on it would take the vendor away over our own bug.
+from app.circuit_breaker import (sarvam_stt_breaker, sarvam_tts_breaker,
+                                 gemini_breaker)
+
+
+def _is_infra_failure(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError,
+                        httpx.RemoteProtocolError, httpx.PoolTimeout)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", 0)
+    return status >= 500 or status == 429
+
+
 _SARVAM_402_AT: float = 0.0   # last time Sarvam said 402 — /health shows it
 _TTS_VENDOR: str = "sarvam"   # which vendor last spoke; /health shows it
 
@@ -892,6 +913,12 @@ class SarvamSTT:
         self.base_url = "https://api.sarvam.ai/speech-to-text"
 
     async def transcribe(self, audio_bytes: bytes) -> str:
+        # Sarvam is already known to be down: skip the ten-second wait and
+        # go where we would have ended up anyway. One caller pays the
+        # timeout that opens the circuit; the rest do not.
+        if not sarvam_stt_breaker.allow_request():
+            log.warning("[breaker] sarvam_stt OPEN — straight to the fallback")
+            return await self._google_fallback(audio_bytes)
         try:
             resp = await _POOL.post(
                 self.base_url,
@@ -913,8 +940,11 @@ class SarvamSTT:
             )
             resp.raise_for_status()
             data = resp.json()
+            sarvam_stt_breaker.record_success()
             return data.get("transcript", "")
         except httpx.HTTPError as e:
+            if _is_infra_failure(e):
+                sarvam_stt_breaker.record_failure()
             if "402" in str(e):
                 # Out of Sarvam credits. This is an OUTAGE, not an error to
                 # absorb quietly: every caller on every tenant is now deaf.
@@ -929,10 +959,14 @@ class SarvamSTT:
             return ""
 
     async def _google_fallback(self, audio_bytes: bytes) -> str:
-        """Google Cloud STT Chirp 2 — fallback for Sarvam failures."""
-        # The real calls that exposed this had ?key= — EMPTY — in the log:
-        # the fallback has never once worked, and each attempt added ~400ms
-        # of guaranteed 403 to a turn that was already failing.
+        """Google Cloud STT — fallback for Sarvam failures.
+
+        Verified working 9 Sep 2026: with GOOGLE_STT_KEY now set, a real
+        8kHz Telugu clip came back correctly transcribed. Before that the
+        key was empty and every attempt added ~400ms of guaranteed 403 to a
+        turn that was already failing — which is why the comment here used
+        to say the fallback had never once worked. It does now.
+        """
         if not os.environ.get("GOOGLE_STT_KEY"):
             return ""
         try:
@@ -1343,10 +1377,20 @@ class SarvamTTS:
         # REST floor into ~300ms end to end for a short chunk. REST stays as
         # the fallback and as the browser path (22050 works fine there and a
         # web turn is not latency-critical to the same degree).
+        if not sarvam_tts_breaker.allow_request():
+            log.warning("[breaker] sarvam_tts OPEN — speaking with the fallback voice")
+            return await self._fallback_tts(text, rate)
+
         if rate == 8000:
             try:
-                return await self._synthesize_ws(text, speaker, rate)
+                audio = await self._synthesize_ws(text, speaker, rate)
+                sarvam_tts_breaker.record_success()
+                return audio
             except Exception as e:  # noqa: BLE001
+                # The websocket failing is a real signal about Sarvam, and it
+                # is the path every phone call takes — without counting it the
+                # breaker could never open on the phone path at all.
+                sarvam_tts_breaker.record_failure()
                 log.warning(f"[ttsws] fell back to REST: {e}")
 
         try:
@@ -1389,8 +1433,11 @@ class SarvamTTS:
             if _TTS_VENDOR != "sarvam":
                 log.critical(f"TTS RECOVERED — back on sarvam from {_TTS_VENDOR}")
                 _TTS_VENDOR = "sarvam"
+            sarvam_tts_breaker.record_success()
             return base64.b64decode(audio_b64)
         except httpx.HTTPError as e:
+            if _is_infra_failure(e):
+                sarvam_tts_breaker.record_failure()
             if "402" in str(e):
                 global _SARVAM_402_AT
                 _SARVAM_402_AT = time.time()
@@ -1560,11 +1607,13 @@ class GeminiLLM:
         caller's critical path. Falls back to the batch request on any
         streaming error; the callback simply never fires and the turn
         proceeds exactly as before."""
-        if first_clause_cb is not None:
+        if first_clause_cb is not None and gemini_breaker.allow_request():
             try:
                 return await self._generate_streaming(
                     system_prompt, history, temperature, first_clause_cb)
             except Exception as e:  # noqa: BLE001
+                if _is_infra_failure(e):
+                    gemini_breaker.record_failure()
                 log.warning(f"Gemini stream failed ({e}) — batch fallback")
         return await self._generate_batch(system_prompt, history, temperature)
 
@@ -1601,6 +1650,7 @@ class GeminiLLM:
             text = text.replace(vendor, "our system")
         if text.strip():
             self._consecutive_failures = 0
+            gemini_breaker.record_success()
             return text.strip()
         raise RuntimeError("empty stream")
 
@@ -1763,6 +1813,8 @@ class GeminiLLM:
             if text:
                 return text
         except Exception as e:  # noqa: BLE001
+            if _is_infra_failure(e):
+                gemini_breaker.record_failure()
             log.warning(f"[tools] turn failed ({type(e).__name__}: {e}) — plain generate")
 
         return await self.generate(system_prompt, history)
@@ -1830,6 +1882,12 @@ class GeminiLLM:
     async def _generate_batch(self, system_prompt: str, history: list[dict],
                               temperature: float | None = None) -> str:
         payload = self._payload(system_prompt, history, temperature)
+        # Thirteen seconds of retry ladder against a model that is not
+        # answering is thirteen seconds of a caller holding a silent phone.
+        # Once the circuit is open, go to the fallback immediately.
+        if not gemini_breaker.allow_request():
+            log.warning("[breaker] gemini OPEN — answering from the fallback")
+            return await self._openai_fallback(system_prompt, history)
         try:
             # x-goog-api-key works for BOTH key formats, so no branching.
             # The previous code sent AQ./IQ./EQ. keys as Authorization: Bearer,
@@ -1891,8 +1949,11 @@ class GeminiLLM:
                     for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI"]:
                         text = text.replace(vendor, "our system")
                     self._consecutive_failures = 0
+                    gemini_breaker.record_success()
                     return text
         except httpx.HTTPError as e:
+            if _is_infra_failure(e):
+                gemini_breaker.record_failure()
             log.error(f"Gemini error: {e} — trying GPT-4o-mini fallback")
             return await self._openai_fallback(system_prompt, recent)
         except Exception as e:
@@ -1924,8 +1985,47 @@ class GeminiLLM:
             return "క్షమించండి, ఇంకా వినిపించలేదు. కొంచెం నెమ్మదిగా చెప్తారా?"
         return "క్షమించండి, నాకు సరిగ్గా వినిపించలేదు. మళ్ళీ చెప్తారా?"
 
+    # A SECOND Gemini model, on the same key. Measured 8 Sep: the OpenAI
+    # fallback below has never been able to run — OPENAI_API_KEY is not set
+    # on this deployment — so "Gemini is down" meant every caller got
+    # _stall_reply's "say that again" for the rest of the outage. A different
+    # model string is routed differently at Google's end and costs nothing to
+    # try, and it is the same key that is already working for everything else.
+    #
+    # flash-lite-latest, not a full flash tier: the tiers that think before
+    # answering burn maxOutputTokens on thinking and return replies cut off
+    # mid-word (see the model notes on base_url). A fallback that truncates
+    # is not a fallback.
+    _ALT_MODEL = "gemini-flash-lite-latest"
+
+    async def _gemini_alt(self, system_prompt: str, history: list) -> str:
+        try:
+            payload = self._payload(system_prompt, history)
+            url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+                   f"{self._ALT_MODEL}:generateContent")
+            resp = await _POOL.post(
+                url, headers={"Content-Type": "application/json",
+                              "x-goog-api-key": self.api_key},
+                json=payload, timeout=6.0)
+            resp.raise_for_status()
+            cand = (resp.json().get("candidates") or [{}])[0]
+            text = "".join(p.get("text", "")
+                           for p in (cand.get("content") or {}).get("parts") or []).strip()
+            if text:
+                log.warning(f"[fallback] answered with {self._ALT_MODEL}")
+                for vendor in ["Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo",
+                               "supabase", "OpenAI"]:
+                    text = text.replace(vendor, "our system")
+                return text
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[fallback] {self._ALT_MODEL} failed too: {e}")
+        return ""
+
     async def _openai_fallback(self, system_prompt: str, history: list) -> str:
-        """GPT-4o-mini fallback if Gemini fails."""
+        """The other model, then GPT-4o-mini, then an honest apology."""
+        alt = await self._gemini_alt(system_prompt, history)
+        if alt:
+            return alt
         try:
             openai_key = os.environ.get("OPENAI_API_KEY", "")
             if not openai_key:

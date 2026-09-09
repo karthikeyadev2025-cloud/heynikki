@@ -42,6 +42,14 @@ function parseESLResponse(raw: string): Record<string, string> {
 }
 
 // ── Low-level ESL command sender ─────────────────────────────
+// What Jio actually sold, and how much of it outbound may use. Two channels
+// are held back for inbound: a business whose own customers get congestion
+// because our reminder run filled the trunk has been made worse off by the
+// product. Env-overridable for the day the contract changes.
+const TRUNK_CHANNELS = parseInt(process.env.TRUNK_MAX_CHANNELS || "10", 10);
+const TRUNK_OUTBOUND_CEILING = Math.max(
+  1, parseInt(process.env.TRUNK_OUTBOUND_CEILING || String(TRUNK_CHANNELS - 2), 10));
+
 async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
   if (!FS_PASSWORD) {
     throw new Error("FREESWITCH_ESL_PASSWORD is not set — refusing to connect to ESL");
@@ -241,6 +249,32 @@ export class FreeSwitchESL {
    * origination_caller_id_number MUST be a DID we actually own. A spoofed CLI
    * on an Indian trunk gets the trunk suspended, not just the call rejected.
    */
+  /**
+   * How many legs the trunk is carrying right now.
+   *
+   * Jio sold ten channels and nothing local enforced it: call eleven was
+   * refused by the carrier's SBC, which arrives here as a generic
+   * NORMAL_TEMPORARY_FAILURE indistinguishable from a dead trunk — so a
+   * busy hour looked exactly like an outage, and the dispatcher's trunk
+   * retry ladder ran against a trunk that was simply full.
+   *
+   * Counted rather than configured, because a sofia gateway has no channel
+   * cap parameter — the number lives in `show channels`.
+   */
+  async channelsInUse(): Promise<number> {
+    try {
+      const out = await eslCommand("api show channels count", 4000);
+      const m = out.match(/(\d+)\s+total/i);
+      return m ? parseInt(m[1], 10) : 0;
+    } catch (e: any) {
+      // Never block a call on a failed count: an unknown number is not a
+      // full trunk, and refusing to dial because we could not ask is worse
+      // than letting Jio refuse the eleventh call as it does today.
+      console.warn("[esl] channel count failed:", e?.message || e);
+      return 0;
+    }
+  }
+
   async originateOutbound(
     customerNumber: string,
     callerIdNumber: string,
@@ -277,6 +311,17 @@ export class FreeSwitchESL {
     // below, because the pipeline resolves the tenant's voice profile from
     // it and a 91-prefixed lookup would find no profile — the call would
     // connect and then have nobody to be.
+    // Leave room for people ringing IN. Inbound is a customer who chose to
+    // call a business; outbound is a reminder that can wait five minutes,
+    // and an outbound burst that fills the trunk makes the business
+    // uncontactable — the one failure a receptionist product cannot have.
+    const inUse = await this.channelsInUse();
+    if (inUse >= TRUNK_OUTBOUND_CEILING) {
+      throw new Error(
+        `SWITCH_CONGESTION: trunk busy, ${inUse}/${TRUNK_CHANNELS} channels in use ` +
+        `(outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
+    }
+
     const sipCli = wireCli(cli);
 
     const vars = [
