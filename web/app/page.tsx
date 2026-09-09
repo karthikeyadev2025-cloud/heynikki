@@ -21,6 +21,8 @@ import NikkiLogo from "../components/NikkiLogo";
 import {
   Phone, Users, ShieldCheck, MessageCircle, Languages,
   Clock, ArrowRight, Plus, Minus, IndianRupee,
+  ShoppingBag, CalendarCheck, PhoneOutgoing, BookUser,
+  Terminal, Smartphone, LayoutDashboard, Volume2,
 } from "lucide-react";
 
 const C = {
@@ -133,9 +135,9 @@ export default function Home() {
 
           <nav className="v2-nav" aria-label="Primary">
             <a href="#how">How it works</a>
-            <a href="#features">Features</a>
+            <a href="#features">What she does</a>
+            <a href="#yours">Your side</a>
             <a href="#roi">ROI</a>
-            <a href="#security">Security</a>
             <a href="#pricing">Pricing</a>
           </nav>
 
@@ -160,8 +162,8 @@ export default function Home() {
 
             <p className="v2-lede">
               Nikki answers your business number in real Telugu — books the appointment,
-              captures the number, sends the WhatsApp. Not a phonetic impression of
-              Telugu. The actual language your customers call you in.
+              takes the order, sends the WhatsApp. Not a phonetic impression of Telugu.
+              The actual language your customers call you in.
             </p>
 
             <div className="v2-actions">
@@ -189,7 +191,8 @@ export default function Home() {
 
         <footer className="v2-stats">
           <span className="v2-stat"><Languages size={15} /> Telugu, Hindi or English — Tenglish understood</span>
-          <span className="v2-stat"><Clock size={15} /> Live within a business day of KYC</span>
+          <span className="v2-stat"><CalendarCheck size={15} /> Books from your real diary</span>
+          <span className="v2-stat"><ShoppingBag size={15} /> Takes orders from your price list</span>
           <span className="v2-stat"><MessageCircle size={15} /> Confirmed on WhatsApp</span>
         </footer>
       </div>
@@ -295,6 +298,148 @@ export default function Home() {
         </ol>
       </Section>
 
+      {/* ══ WHAT SHE DOES ═══════════════════════════════════
+          The nav has always had a "Features" link and there has
+          never been a section behind it. There is now — and it is
+          a list of what she does on a call, not a list of nouns.
+          Every line here is something built and running. ══════ */}
+      <Section id="features" bg={C.card}>
+        <Eyebrow>What she does</Eyebrow>
+        <h2 style={{
+          fontFamily: D, fontSize: "clamp(30px, 4vw, 46px)", lineHeight: 1.1,
+          letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 12px", color: C.ink,
+        }}>
+          A receptionist, not a menu.
+        </h2>
+        <p style={{ fontSize: 16.5, color: C.textMid, maxWidth: 600, lineHeight: 1.65, margin: "0 0 46px" }}>
+          Nobody presses 1 for sales. She listens, works out what the caller wants,
+          and does it — the way the person at your front desk would on a good day.
+        </p>
+
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(268px, 1fr))",
+          gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden",
+        }}>
+          {[
+            {
+              icon: CalendarCheck, t: "Books the appointment",
+              d: "She checks your diary before she agrees to a time, so \u201cten o\u2019clock is free\u201d is something she looked up. The booking number is read out on the call and lands in your dashboard.",
+            },
+            {
+              icon: ShoppingBag, t: "Takes the order",
+              d: "Type your price list once. She quotes from it, asks pickup or delivery, takes the address, reads the whole order back with the total, and sends the WhatsApp when they agree.",
+            },
+            {
+              icon: BookUser, t: "Remembers your regulars",
+              d: "A customer who ordered last week is not asked for their address again \u2014 she offers it. \u201cAd\u0113 address k\u0113n\u0101?\u201d Nothing recited back at them; just not asked twice.",
+            },
+            {
+              icon: Users, t: "Hands over to a person",
+              d: "\u201cManishitho matladali\u201d and the call transfers to your telecaller on the same line. No callback, no second number, and the transcript is waiting when it ends.",
+            },
+            {
+              icon: PhoneOutgoing, t: "Rings people back",
+              d: "Appointment reminders, \u201cyour order is ready\u201d, the enquiry nobody returned. She calls, says it in their language, and tells you what they said back.",
+            },
+            {
+              icon: MessageCircle, t: "Confirms on WhatsApp",
+              d: "The booking, the order, the reminder \u2014 written down, on the app they already use, before they have put the phone down.",
+            },
+            {
+              icon: Volume2, t: "Hears people on a noisy street",
+              d: "Half your callers are on a main road. She tells a voice from a horn, does not stop mid-sentence for a passing lorry, and does not ask the traffic to repeat itself.",
+            },
+            {
+              icon: ShieldCheck, t: "Says she is an AI",
+              d: "Every call opens with the disclosure TRAI requires, and she never claims to be a person when asked. Callers keep talking \u2014 the booking is done in under a minute.",
+            },
+          ].map(({ icon: Icon, t, d }) => (
+            <div key={t} style={{ background: C.card, padding: "28px 24px" }}>
+              <Icon size={19} color={C.teal} strokeWidth={1.7} />
+              <h3 style={{
+                fontFamily: D, fontSize: 19, lineHeight: 1.3, fontWeight: 650,
+                margin: "14px 0 8px", color: C.ink, letterSpacing: "-0.02em",
+              }}>{t}</h3>
+              <p style={{ fontSize: 14.5, lineHeight: 1.65, color: C.textMid, margin: 0 }}>{d}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* ══ SHE CHECKS FIRST ════════════════════════════════
+          The one thing that separates this from a chatbot with a
+          phone number, so it gets its own band and a real
+          transcript rather than an adjective. ══════════════ */}
+      <Section id="checks">
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+          gap: "clamp(30px, 5vw, 58px)", alignItems: "center",
+        }}>
+          <div>
+            <Eyebrow>Why she gets it right</Eyebrow>
+            <h2 style={{
+              fontFamily: D, fontSize: "clamp(30px, 4vw, 46px)", lineHeight: 1.1,
+              letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 16px", color: C.ink,
+            }}>
+              She looks it up.<br />She doesn&rsquo;t guess.
+            </h2>
+            <p style={{ fontSize: 16.5, lineHeight: 1.7, color: C.textMid, margin: "0 0 18px" }}>
+              An AI that invents a free slot costs you more than a missed call: someone
+              turns up expecting to be seen. So before Nikki agrees to a time she reads
+              your diary, and before she quotes a price she reads your list.
+            </p>
+            <p style={{ fontSize: 16.5, lineHeight: 1.7, color: C.textMid, margin: 0 }}>
+              If the shop is shut on Sunday, she says so — because the answer came from
+              your own settings, not from a sentence that sounded right.
+            </p>
+          </div>
+
+          <div style={{
+            background: C.ink, borderRadius: 16, padding: "26px 24px", color: "#fff",
+            border: `1px solid ${C.ink}`, boxShadow: "0 18px 40px rgba(11,31,51,0.16)",
+          }}>
+            <div style={{
+              fontFamily: M, fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase",
+              color: "rgba(255,255,255,0.4)", marginBottom: 18,
+            }}>
+              A real exchange
+            </div>
+            {[
+              { who: "Caller", tone: C.marigold, text: "\u0c30\u0c47\u0c2a\u0c41 \u0c09\u0c26\u0c2f\u0c02 \u0c2a\u0c26\u0c3f \u0c17\u0c02\u0c1f\u0c32\u0c15\u0c3f appointment \u0c26\u0c4a\u0c30\u0c41\u0c15\u0c41\u0c24\u0c41\u0c02\u0c26\u0c3e?" },
+              { who: "Nikki", tone: C.live, text: "\u0c05\u0c35\u0c41\u0c28\u0c02\u0c21\u0c3f, \u0c30\u0c47\u0c2a\u0c41 \u0c09\u0c26\u0c2f\u0c02 \u0c2a\u0c26\u0c3f \u0c17\u0c02\u0c1f\u0c32\u0c15\u0c3f \u0c16\u0c3e\u0c33\u0c40\u0c17\u0c3e \u0c09\u0c02\u0c26\u0c02\u0c21\u0c3f. \u0c2a\u0c46\u0c1f\u0c4d\u0c1f\u0c2e\u0c02\u0c1f\u0c3e\u0c30\u0c3e?" },
+            ].map((line, i) => (
+              <div key={line.who}>
+                {i === 1 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 9, margin: "14px 0",
+                    fontFamily: M, fontSize: 11.5, color: "rgba(255,255,255,0.45)",
+                  }}>
+                    <span aria-hidden style={{ width: 14, height: 1, background: "rgba(255,255,255,0.2)" }} />
+                    reads the diary · 10:00 tomorrow · free
+                  </div>
+                )}
+                <div style={{ marginBottom: i === 0 ? 0 : 0 }}>
+                  <div style={{
+                    fontFamily: M, fontSize: 10.5, letterSpacing: "0.12em",
+                    textTransform: "uppercase", color: line.tone, marginBottom: 6,
+                  }}>{line.who}</div>
+                  <div style={{ fontSize: 15.5, lineHeight: 1.65, color: "rgba(255,255,255,0.9)" }}>
+                    {line.text}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{
+              marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)",
+              fontSize: 13.5, lineHeight: 1.6, color: "rgba(255,255,255,0.55)",
+            }}>
+              She said it was free because she read the diary. Then she wrote the booking,
+              with a number the caller can quote back to you.
+            </div>
+          </div>
+        </div>
+      </Section>
+
       {/* ══ TWO BRAINS ══════════════════════════════════════ */}
       <Section bg={C.ink} style={{ color: "#fff" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "clamp(30px, 5vw, 60px)", alignItems: "center" }}>
@@ -336,6 +481,71 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+      </Section>
+
+      {/* ══ YOUR SIDE ═══════════════════════════════════════
+          Everything above is what the CALLER experiences. This is
+          what the owner gets, and it is now a real product surface
+          rather than a table of rows. ══════════════════════ */}
+      <Section id="yours" bg={C.card}>
+        <Eyebrow>Your side of it</Eyebrow>
+        <h2 style={{
+          fontFamily: D, fontSize: "clamp(30px, 4vw, 46px)", lineHeight: 1.1,
+          letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 12px", color: C.ink,
+        }}>
+          Ask your own phone how the day went.
+        </h2>
+        <p style={{ fontSize: 16.5, color: C.textMid, maxWidth: 620, lineHeight: 1.65, margin: "0 0 46px" }}>
+          Every call, booking and order lands in one place. You do not have to read it —
+          you can just ask, in Telugu, and tell her what to do about it.
+        </p>
+
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(272px, 1fr))", gap: 18,
+        }}>
+          {[
+            {
+              icon: LayoutDashboard, t: "The dashboard",
+              d: "Calls with recordings and transcripts, the diary, leads scored by how interested they sounded, orders waiting, and what it all cost. Exportable, deletable, yours.",
+              link: null,
+            },
+            {
+              icon: Smartphone, t: "\u201cHey Nikki\u201d on your phone",
+              d: "The Android app keeps listening with the screen off. Say her name and ask \u2014 today\u2019s numbers, who to ring back \u2014 without unlocking anything.",
+              link: null,
+            },
+            {
+              icon: Phone, t: "Tell her to act",
+              d: "\u201cRing that customer back and say the report is ready.\u201d She sets it up and asks you to confirm before any phone rings \u2014 she never dials on her own say-so.",
+              link: null,
+            },
+            {
+              icon: Terminal, t: "Or drive it from your own software",
+              d: "A REST API for the calls she places and the orders she takes, with a signed webhook when each call finishes. Your booking system can ask her to ring somebody.",
+              link: { href: "/developers", label: "Read the API docs" },
+            },
+          ].map(({ icon: Icon, t, d, link }) => (
+            <div key={t} style={{
+              background: C.paper, border: `1px solid ${C.line}`, borderRadius: 14,
+              padding: "24px 22px", display: "flex", flexDirection: "column", gap: 10,
+            }}>
+              <Icon size={19} color={C.teal} strokeWidth={1.7} />
+              <h3 style={{
+                fontFamily: D, fontSize: 19, lineHeight: 1.3, fontWeight: 650,
+                margin: 0, color: C.ink, letterSpacing: "-0.02em",
+              }}>{t}</h3>
+              <p style={{ fontSize: 14.5, lineHeight: 1.65, color: C.textMid, margin: 0, flex: 1 }}>{d}</p>
+              {link && (
+                <a href={link.href} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, marginTop: 2,
+                  color: C.teal, fontSize: 14, fontWeight: 600, textDecoration: "none",
+                }}>
+                  {link.label} <ArrowRight size={14} />
+                </a>
+              )}
+            </div>
+          ))}
         </div>
       </Section>
 
@@ -647,6 +857,22 @@ export default function Home() {
               a: "Ask her and she tells you — Nikki says she is an AI assistant whenever a caller asks, and never claims to be a person. In practice callers keep talking anyway, because the booking gets done in under a minute.",
             },
             {
+              q: "Can she take orders, not just bookings?",
+              a: "Yes. Type your price list in Setup and she sells from it \u2014 quotes only your prices, asks pickup or delivery, takes the address, reads the whole order back with the total, and sends a WhatsApp confirmation once the customer agrees. The order appears on your Orders page while the call is still ending.",
+            },
+            {
+              q: "Can she call people, or only answer?",
+              a: "Both. She rings customers back with appointment reminders, \u201cyour order is ready\u201d, or a follow-up on an enquiry \u2014 inside the hours TRAI allows, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
+            },
+            {
+              q: "Can my own software talk to it?",
+              a: "Yes \u2014 there is a REST API with scoped keys. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
+            },
+            {
+              q: "My customers call from the roadside. Will she hear them?",
+              a: "That case was built for, not hoped about. She tells a voice from a horn or an engine, does not stop mid-sentence when a lorry passes, and stays quiet rather than asking the traffic to repeat itself. If she genuinely cannot hear someone, she says so once and offers a callback.",
+            },
+            {
               q: "Who can hear my call recordings?",
               a: "You. Recordings are encrypted and stored against your account only — no other business on the platform can reach them. Export your calls to CSV, delete a recording from the dashboard, or ask us to delete everything.",
             },
@@ -721,7 +947,7 @@ export default function Home() {
             © {new Date().getFullYear()} Hey Nikki · Hyderabad
           </span>
           <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
-            {["Privacy", "Terms", "Refund Policy", "Contact"].map((l) => (
+            {["Developers", "Pricing", "About", "Privacy", "Terms", "Refund Policy", "Contact"].map((l) => (
               <a key={l} href={`/${l.toLowerCase().replace(/ /g, "-")}`} style={{
                 fontSize: 13, color: "rgba(255,255,255,0.5)", textDecoration: "none",
               }}>{l}</a>

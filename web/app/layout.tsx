@@ -49,8 +49,8 @@ export const metadata: Metadata = {
   // pointing at it hands Google a URL that is not the one it can fetch.
   metadataBase: new URL("https://www.heynikki.in"),
   title: "HeyNikki — Telugu AI Receptionist for Indian Businesses",
-  description: "Your business never misses a call. HeyNikki is a Telugu AI receptionist and telecaller for Indian small businesses — it answers your phone in Telugu, Hindi or English 24/7, books appointments, captures leads and follows up on WhatsApp. A call answering service without the call centre.",
-  keywords: "Telugu AI receptionist, Telugu call answering service, AI telecaller, virtual receptionist Hyderabad, Telugu voice AI, missed call service, AI call centre India, appointment booking bot Telugu, telecaller software, HeyNikki, heynikki.in",
+  description: "Your business never misses a call. HeyNikki is a Telugu AI receptionist and telecaller for Indian small businesses — it answers in Telugu, Hindi or English 24/7, books appointments from your real diary, takes phone orders from your price list, rings customers back, and confirms everything on WhatsApp. A call answering service without the call centre.",
+  keywords: "Telugu AI receptionist, Telugu call answering service, AI telecaller, virtual receptionist Hyderabad, Telugu voice AI, missed call service, AI call centre India, appointment booking bot Telugu, phone order taking, voice AI API India, telecaller software, HeyNikki, heynikki.in",
   authors: [{ name: "Nikki Technologies" }],
   alternates: {
     canonical: "https://www.heynikki.in",
@@ -165,7 +165,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         applicationCategory: "BusinessApplication",
         operatingSystem: "Web, Android, iOS",
         description:
-          "AI receptionist that answers your business calls in Telugu, Hindi and English, books appointments and confirms on WhatsApp.",
+          "AI receptionist that answers your business calls in Telugu, Hindi and English, books appointments from your live diary, takes phone orders from your price list, rings customers back with reminders, and confirms on WhatsApp.",
         inLanguage: ["te", "hi", "en"],
         publisher: { "@id": "https://heynikki.in/#org" },
         offers: [
@@ -193,6 +193,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             acceptedAnswer: {
               "@type": "Answer",
               text: "Really Telugu. The speech model is trained on Telugu, not on English text spelled out phonetically. It handles Telangana and coastal Andhra differences, and switches to Hindi or English the moment your caller does.",
+            },
+          },
+          {
+            "@type": "Question",
+            name: "Can she take orders, not just bookings?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "Yes. Type your price list in Setup and she sells from it — quotes only your prices, asks pickup or delivery, takes the address, reads the whole order back with the total, and sends a WhatsApp confirmation once the customer agrees. The order appears on your Orders page while the call is still ending.",
+            },
+          },
+          {
+            "@type": "Question",
+            name: "Can she call people, or only answer?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "Both. She rings customers back with appointment reminders, order-ready messages, or a follow-up on an enquiry — inside the hours TRAI allows, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
+            },
+          },
+          {
+            "@type": "Question",
+            name: "Can my own software talk to it?",
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: "Yes — there is a REST API with scoped keys. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
             },
           },
           {
