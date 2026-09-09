@@ -46,12 +46,20 @@ public class NikkiHud {
         return Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(ctx);
     }
 
+    // Last resort. Every state change reschedules it, so it only ever fires
+    // when nothing has happened for a very long time — which means whatever
+    // was driving the bar is gone, and a glowing bar over a silent phone is
+    // worse than no bar at all. The voice loop has its own, tighter timeouts;
+    // this is for the failure nobody predicted.
+    private static final long MAX_VISIBLE_MS = 45_000;
+
     /** Show (or update) the bar. mode: prompt | recording | thinking | speaking | error */
     void show(String mode, String text) {
         main.post(() -> {
             main.removeCallbacks(hideLater);
             if (view == null) attach();
             if (view != null) view.set(mode, text);
+            main.postDelayed(hideLater, MAX_VISIBLE_MS);
         });
     }
 
@@ -59,7 +67,12 @@ public class NikkiHud {
     void level(float v) { main.post(() -> { if (view != null) view.level = v; }); }
 
     /** Hide after a short beat so the last state (the answer) is readable. */
-    void hide(long afterMs) { main.postDelayed(hideLater, afterMs); }
+    void hide(long afterMs) {
+        main.post(() -> {
+            main.removeCallbacks(hideLater);      // drop the watchdog and any earlier hide
+            main.postDelayed(hideLater, afterMs);
+        });
+    }
 
     private void hideNow() {
         if (view == null) return;

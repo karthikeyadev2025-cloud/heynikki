@@ -189,6 +189,10 @@ export default function WakeWordNikki() {
           session_id: sessionRef.current,
           persona: "product",       // she talks about Hey Nikki, nothing else
         }),
+        // fetch waits forever by default, so a stalled request left this
+        // stuck on "thinking" — on the landing page, in front of somebody
+        // deciding whether the product works.
+        signal: AbortSignal.timeout(30_000),
       });
       if (r.status === 429) { setError("Demo limit reached for this session."); teardown(); return; }
       if (!r.ok) throw new Error(String(r.status));
@@ -202,7 +206,15 @@ export default function WakeWordNikki() {
         const el = audioRef.current ?? new Audio();
         audioRef.current = el;
         el.src = `data:${d.audio_mime || "audio/wav"};base64,${d.audio_base64}`;
-        await new Promise<void>(res => { el.onended = () => res(); el.onerror = () => res(); el.play().catch(() => res()); });
+        // onended is not guaranteed — a clip the browser will not decode, a
+        // backgrounded tab — and this await had nothing under it.
+        await new Promise<void>(res => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; res(); } };
+          el.onended = finish; el.onerror = finish;
+          window.setTimeout(finish, 60_000);
+          el.play().catch(finish);
+        });
       }
     } catch {
       setError("Nikki could not answer just now.");

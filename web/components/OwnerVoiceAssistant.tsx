@@ -33,6 +33,19 @@ const C = {
 
 type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
 
+// A person is sitting looking at this. Past half a minute the honest thing
+// is to say it did not work, not to keep the dots moving.
+const ASK_TIMEOUT_MS = 30_000;
+const SPEAK_CAP_MS   = 60_000;
+
+function askError(e: any): string {
+  const name = String(e?.name || "");
+  if (name === "TimeoutError" || name === "AbortError") {
+    return "That took too long — check your connection and ask again.";
+  }
+  return e?.message || "Something went wrong — please try again.";
+}
+
 export default function OwnerVoiceAssistant() {
   const [open, setOpen]     = useState(false);
   const [status, setStatus] = useState<Status>("idle");
@@ -57,6 +70,19 @@ export default function OwnerVoiceAssistant() {
   const recogRef       = useRef<any>(null);
   const wakeStopRef    = useRef(false);
   const restartRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Last resort, the same idea as the phone app's overlay watchdog: if a
+  // busy state has not moved on well after everything above should have
+  // timed out, something failed in a way nobody predicted. Say so rather
+  // than spin.
+  useEffect(() => {
+    if (status !== "thinking" && status !== "speaking") return;
+    const t = setTimeout(() => {
+      setStatus("error");
+      setErrorMsg("Nikki stopped responding — please ask again.");
+    }, status === "thinking" ? ASK_TIMEOUT_MS + 5_000 : SPEAK_CAP_MS + 5_000);
+    return () => clearTimeout(t);
+  }, [status]);
   const statusRef      = useRef<Status>("idle");
   const openRef        = useRef(false);
   useEffect(() => { statusRef.current = status; }, [status]);
@@ -186,6 +212,10 @@ export default function OwnerVoiceAssistant() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ audio_base64: audioBase64, mime_type: blob.type }),
+        // Without this the panel could sit on "ఆలోచిస్తున్నాము..." until the
+        // tab was closed: fetch has no timeout of its own, so a stalled
+        // request is indistinguishable from a slow one, forever.
+        signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
       });
 
       if (!res.ok) {
@@ -204,7 +234,7 @@ export default function OwnerVoiceAssistant() {
       }
     } catch (e: any) {
       setStatus("error");
-      setErrorMsg(e.message || "Something went wrong — please try again.");
+      setErrorMsg(askError(e));
     }
   };
 
@@ -224,6 +254,7 @@ export default function OwnerVoiceAssistant() {
         method: "POST",
         headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
+        signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
@@ -232,7 +263,7 @@ export default function OwnerVoiceAssistant() {
       setStatus("idle");
     } catch (e: any) {
       setStatus("error");
-      setErrorMsg(e.message || "Something went wrong — please try again.");
+      setErrorMsg(askError(e));
     }
   };
 
@@ -240,9 +271,19 @@ export default function OwnerVoiceAssistant() {
     setStatus("speaking");
     const audio = new Audio(`data:${mime};base64,${audioBase64}`);
     audioElRef.current = audio;
-    audio.onended = () => setStatus("idle");
-    audio.onerror = () => setStatus("idle");
-    audio.play().catch(() => setStatus("idle"));
+    // onended does not always arrive — a clip the browser cannot seek in, a
+    // tab backgrounded mid-answer — and without a floor under it the panel
+    // stayed on "speaking" with nothing playing.
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; setStatus("idle"); } };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.onloadedmetadata = () => {
+      const ms = Number.isFinite(audio.duration) ? audio.duration * 1000 + 1500 : SPEAK_CAP_MS;
+      window.setTimeout(finish, Math.min(SPEAK_CAP_MS, ms));
+    };
+    window.setTimeout(finish, SPEAK_CAP_MS);
+    audio.play().catch(finish);
   };
 
   const toggle = () => {

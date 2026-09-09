@@ -158,6 +158,10 @@ public class HeyNikkiService extends Service {
     @Override
     public void onDestroy() {
         if (dumpReceiver != null) { try { unregisterReceiver(dumpReceiver); } catch (Throwable ignored) {} dumpReceiver = null; }
+        // The bar is a view attached to the window, not part of this service's
+        // lifecycle — so when the service went away it stayed on screen, glowing,
+        // with nothing behind it. Reported as "Nikki hanging on screen".
+        if (hud != null) hud.hide(0);
         stopRequested = true;
         running = false;
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
@@ -215,7 +219,18 @@ public class HeyNikkiService extends Service {
                     rec.stop();
                     buzz();
                     handleWake();
-                    rec.startRecording();
+                    // Something else may have taken the microphone while she
+                    // was talking — a call arriving mid-answer is the ordinary
+                    // case. One re-open before giving up, because the old code
+                    // treated it as fatal and stopped listening for good.
+                    try {
+                        rec.startRecording();
+                    } catch (Throwable t) {
+                        Log.w(TAG, "mic did not resume — reopening", t);
+                        try { rec.release(); } catch (Throwable ignored) {}
+                        rec = openMic();
+                        rec.startRecording();
+                    }
                     setState("listening", idleText());
                 }
             }
@@ -223,6 +238,7 @@ public class HeyNikkiService extends Service {
             Log.e(TAG, "listener died", t);
             // Whatever it was (permission pulled, muted mic, model missing),
             // sitting here as a dead foreground service helps nobody.
+            if (hud != null) hud.hide(0);
             nudge(this, "Nikki stopped listening — tap to switch her back on");
             stopForeground(true);
             stopSelf();
@@ -241,6 +257,24 @@ public class HeyNikkiService extends Service {
      *  mic stays open a few seconds for a follow-up (no wake word needed):
      *  say more and she continues, stay quiet and she goes back to sleep. */
     private void handleWake() {
+        try {
+            conversation();
+        } catch (Throwable t) {
+            // Anything at all: the mic held by a phone call, a codec fault, a
+            // permission pulled mid-sentence. This used to propagate into the
+            // listener loop, which treated it as fatal — so one busy
+            // microphone stopped the wake word for good AND left the bar on
+            // screen with no thread behind it.
+            Log.w(TAG, "conversation failed", t);
+            hud.show("error", "Couldn't hear you just then");
+            hud.hide(1800);
+        } finally {
+            // Belt and braces: whatever happened, the bar goes.
+            hud.hide(2500);
+        }
+    }
+
+    private void conversation() {
         setState("prompt", "చెప్పండి…");
         hud.show("prompt", "");
         // A short chime and the mic is open — the spoken "చెప్పండి" cost a
@@ -378,7 +412,11 @@ public class HeyNikkiService extends Service {
         int i = 0;
         try {
             for (;;) {
-                Object item = rep.clips.poll(30, TimeUnit.SECONDS);
+                // 15s for the first sentence, 10s for each one after. The
+                // server's own budget for a whole turn is well under either;
+                // past that it is not coming, and thirty seconds of a glowing
+                // bar over a silent phone is the visible half of this bug.
+                Object item = rep.clips.poll(any ? 10 : 15, TimeUnit.SECONDS);
                 if (item == null || item == Reply.END) break;
                 byte[] audio = (byte[]) item;
                 any = true;
@@ -484,7 +522,9 @@ public class HeyNikkiService extends Service {
         HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
         c.setRequestMethod("POST");
         c.setConnectTimeout(15000);
-        c.setReadTimeout(60000);
+        // 25s, not 60. This is a person standing there waiting; a minute of
+        // silence is indistinguishable from the app being broken.
+        c.setReadTimeout(25000);
         c.setDoOutput(true);
         c.setRequestProperty("Content-Type", "application/json");
         if (token != null) c.setRequestProperty("Authorization", "Device " + token);
@@ -564,8 +604,16 @@ public class HeyNikkiService extends Service {
 
     private AudioRecord openMic() {
         int min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        return new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
+        AudioRecord rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SAMPLE_RATE * 2));
+        // Another app holding the microphone — a call, a recorder, another
+        // assistant — hands back an UNINITIALIZED recorder, and startRecording()
+        // on it throws IllegalStateException with no explanation of why.
+        if (rec.getState() != AudioRecord.STATE_INITIALIZED) {
+            try { rec.release(); } catch (Throwable ignored) {}
+            throw new IllegalStateException("microphone is busy — another app has it");
+        }
+        return rec;
     }
 
     private KeywordSpotterConfig kwsConfig() {
@@ -633,7 +681,17 @@ public class HeyNikkiService extends Service {
         mp.setOnCompletionListener(p -> done.countDown());
         mp.setOnErrorListener((p, w, e) -> { done.countDown(); return true; });
         mp.start();
-        try { done.await(90, TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
+        // Wait for the clip, not for a minute and a half. A truncated mp3 can
+        // leave MediaPlayer firing neither completion nor error, and the old
+        // 90-second ceiling meant the bar sat on "speaking" long after the
+        // phone had gone quiet. The clip's own length plus a beat is the real
+        // budget; the cap is only for a duration it refuses to report.
+        long budget = 15_000;
+        try {
+            int ms = mp.getDuration();
+            if (ms > 0) budget = Math.min(60_000, ms + 2_000);
+        } catch (Throwable ignored) {}
+        try { done.await(budget, TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) {}
         mp.release();
         if (Build.VERSION.SDK_INT >= 26) am.abandonAudioFocusRequest(focus); else am.abandonAudioFocus(null);
     }

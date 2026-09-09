@@ -6724,11 +6724,19 @@ function splitSentences(text: string): string[] {
   return out.filter(Boolean);
 }
 
+// A person is standing there holding a phone. These are the outer bounds of
+// how long that is reasonable, and they exist so that every failure ends in
+// something the client can act on rather than in silence.
+const STREAM_DEADLINE_MS = 30_000;
+const CLIP_TIMEOUT_MS    = 12_000;
+
 class ReplyStreamer {
   private buffered = "";
   private queue: Promise<string>[] = [];
   private texts: string[] = [];
   private headSent = false;
+  private ended = false;
+  private deadline: NodeJS.Timeout | null = null;
   constructor(private res: express.Response, private head: Record<string, unknown>) {}
 
   /** Feed the answer so far (cumulative text); complete sentences start synthesising. */
@@ -6761,6 +6769,24 @@ class ReplyStreamer {
     beginStream(this.res);
     this.line(this.head);
     this.headSent = true;
+    // A response that never ends is worse than an error: the client cannot
+    // tell it apart from a slow answer, so it waits out its own timeout with
+    // the assistant visibly "thinking". Whatever happens upstream, this
+    // connection closes.
+    this.deadline = setTimeout(() => {
+      if (this.ended) return;
+      console.warn("[reply-stream] deadline hit — closing the stream");
+      this.end({ done: true, clips: 0, error: "timeout", reply: this.buffered, answer: this.buffered });
+    }, STREAM_DEADLINE_MS);
+  }
+
+  /** Terminate exactly once. */
+  private end(last: Record<string, unknown>) {
+    if (this.ended) return;
+    this.ended = true;
+    if (this.deadline) clearTimeout(this.deadline);
+    try { this.line(last); } catch { /* client already gone */ }
+    try { this.res.end(); } catch { /* ditto */ }
   }
 
   /** Whole answer known: flush the tail, then emit every clip in order. */
@@ -6776,11 +6802,16 @@ class ReplyStreamer {
       this.queue.push(synthesizeTelugu(sent, "mp3").catch(() => ""));
     }
     for (let i = 0; i < this.queue.length; i++) {
-      const b64 = await this.queue[i];
+      if (this.ended) return;          // deadline fired while we waited
+      // Per clip, not just per request: one sentence that will not synthesise
+      // must not hold back the sentences behind it, which are already made.
+      const b64 = await Promise.race([
+        this.queue[i],
+        new Promise<string>(r => setTimeout(() => r(""), CLIP_TIMEOUT_MS)),
+      ]);
       if (b64) this.line({ audio_base64: b64, text: this.texts[i], index: i });
     }
-    this.line({ done: true, clips: this.queue.length, reply: fullText, answer: fullText });
-    this.res.end();
+    this.end({ done: true, clips: this.queue.length, reply: fullText, answer: fullText });
   }
 }
 
@@ -6856,6 +6887,11 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Promise<string> {
   const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
+    // node's fetch waits indefinitely by default. A hung Sarvam request
+    // meant the NDJSON stream never reached its `done` line, and the phone
+    // sat on "thinking" until its own read timeout — the visible half of
+    // which is a glowing bar over a silent handset.
+    signal: AbortSignal.timeout(12_000),
     headers: { "api-subscription-key": process.env.SARVAM_API_KEY!, "Content-Type": "application/json" },
     body: JSON.stringify({
       inputs: [text],
