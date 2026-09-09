@@ -149,3 +149,35 @@ lists them under "never ask for these again") and adds a short block to the
 prompt that says to *offer*, not recite: "అదే address కేనా?" rather than
 asking a regular where they live for the fourth time. Runs in both modes;
 returns `{}` on any failure, because forgetfulness is a small loss.
+
+## The owner's assistant (dashboard)
+
+`api-server/src/owner-tools.ts`. The panel in the dashboard used to be a
+read-only oracle: handed a blob of today's numbers and asked to talk about
+them. It now has tools, in two kinds, and the split is the whole design.
+
+**Read tools run immediately** — `day_calls`, `list_orders`,
+`list_appointments`, `list_leads`, `missed_calls`, `find_customer`. Each
+returns both a small JSON result for the model and a `card` for the panel,
+so she can say "two people worth ringing" out loud while the actual rows
+render beside her. Looking something up is free and reversible.
+
+**Write tools never run when called** — `call_customer_back`,
+`set_order_status`, `cancel_appointment`. They store a pending action and
+return `{ confirm: { id, label, description, danger } }`; the panel renders
+a button; `POST /api/tenant/assistant/confirm { id }` is what actually does
+it. These ring a real customer's phone or cancel their booking, and the
+instruction arrives through a speech recogniser working on Telugu in a noisy
+shop — "cancel Ravi's appointment" and "Ravi's appointment?" are one bad
+transcription apart. The guarantee lives in the executor, not in the prompt:
+a write tool's handler only ever calls `propose()`.
+
+Pending actions expire after five minutes and are single-use. A confirm
+button that has been sitting on a screen for an hour is not consent to ring
+somebody now.
+
+Scoping: the tools are given only when there is one tenant to act on. The
+platform-wide admin view (`/api/admin/voice-query` with no tenant) keeps the
+old read-only answer, and the phone app (`device: true`) does too — it can
+render neither a card nor a confirm button, and an action nobody can confirm
+is worse than no action at all.

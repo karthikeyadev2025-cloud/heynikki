@@ -4275,6 +4275,7 @@ import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 import { notifyApiCallback, publicOutboundCall, API_CALL_SOURCE } from "./api-callbacks";
+import { makeOwnerAssistant } from "./owner-tools";
 
 // MUST be mounted BEFORE outbound.ts. Express matches routes in registration
 // order, and outbound.ts also defines /api/campaigns/:id/start and /pause —
@@ -6663,13 +6664,25 @@ app.post("/api/admin/voice-query", verifyJWT, async (req: any, res) => {
 
   try {
     const { contextJson, queries, activeChannels } = await buildBusinessContext(targetTenantId);
-    let answer = await askGemini(question, contextJson, isSuperAdmin);
+    let answer: string;
+    let cards, confirm;
+    // The owner of one business gets the tools: they can be shown their own
+    // rows and offered their own actions. The platform-wide admin view has
+    // no single tenant to act on, so it keeps the read-only answer.
+    if (targetTenantId) {
+      const turn = await ownerAssistant.runOwnerTurn(targetTenantId, question, contextJson);
+      answer = turn.answer; cards = turn.cards; confirm = turn.confirm;
+    } else {
+      answer = await askGemini(question, contextJson, isSuperAdmin);
+    }
     // A super admin is looking at someone else's data; only the business's
     // own people may add to that business's knowledge.
     if (!isSuperAdmin && targetTenantId) answer = await rememberSpokenFact(targetTenantId, answer);
 
     res.json({
       answer,
+      cards,
+      confirm,
       context: {
         today_calls: queries.today_calls.length,
         today_appointments: queries.today_appointments.length,
@@ -6867,7 +6880,18 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 
   // ── 2. Ask Gemini, scoped to this tenant's own business data ──
   const { contextJson } = await ctxP;
-  const answer = await askGemini(transcript, contextJson, false, !!opts.device);
+  let cards, confirm;
+  let answer: string;
+  if (opts.device) {
+    // The phone app cannot render a card or hold a confirm button, and an
+    // action nobody can confirm is worse than no action: she would say she
+    // was about to ring someone and then never do it.
+    answer = await askGemini(transcript, contextJson, false, true);
+  } else {
+    const turn = await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson);
+    answer = turn.answer; cards = turn.cards; confirm = turn.confirm;
+    answer = await rememberSpokenFact(tenantId, answer);
+  }
   const tBrain = Date.now();
 
   // ── 3. Synthesize the Telugu answer (Sarvam Bulbul v3) ──
@@ -6877,7 +6901,7 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
     return null;
   }
   const audioOutBase64 = await synthesizeTelugu(answer);
-  return { transcript, answer, audio_base64: audioOutBase64, audio_mime: "audio/wav" };
+  return { transcript, answer, audio_base64: audioOutBase64, audio_mime: "audio/wav", cards, confirm };
 }
 
 // Non-telephony settings here (unlike the phone pipeline's 8kHz mulaw) —
@@ -6942,6 +6966,16 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
 });
 
 mountAppRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, tenantVoiceQuery, synthesize: synthesizeTelugu });
+
+// The owner's assistant, and the one route that actually performs what it
+// proposed. Everything it can do is in owner-tools.ts.
+const ownerAssistant = makeOwnerAssistant({
+  sb,
+  geminiKey: process.env.GEMINI_API_KEY!,
+  resolveGeminiModel,
+  sendWhatsApp,
+});
+ownerAssistant.mountRoutes(app, verifyJWT, getTenantId);
 
 
 // ─────────────────────────────────────────────────────────────
