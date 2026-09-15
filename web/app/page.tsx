@@ -139,6 +139,7 @@ export default function Home() {
             <a href="#yours">Your side</a>
             <a href="#roi">ROI</a>
             <a href="#pricing">Pricing</a>
+            <a href="#security">Security</a>
           </nav>
 
           <a className="v2-btn v2-btn-solid v2-header-cta" href="/signup">Get a number</a>
@@ -1027,7 +1028,11 @@ export default function Home() {
           font-size:15.5px; font-weight:600; letter-spacing:-.01em;
         }
         .v2-logo-suffix { color:var(--muted); }
-        .v2-nav { display:none; gap:26px; }
+        /* Six links now that Security is back in the nav. The gap tightens
+           with the viewport so the sixth one costs the header nothing at the
+           768px breakpoint where the nav first appears, and is back to 26px
+           by the time there is room for it. */
+        .v2-nav { display:none; gap:clamp(16px,2.4vw,26px); }
         .v2-nav a {
           color:var(--muted); text-decoration:none; font-size:14px;
           transition:color .18s ease;
