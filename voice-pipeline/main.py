@@ -3926,24 +3926,109 @@ class NikkiAgent:
 
 
 # ── BROWSER WIDGET SESSION STORE ─────────────────────────────
-# In-memory session map: session_id → NikkiAgent instance.
-# Cleared after 30 minutes of inactivity. Separate from phone calls.
-import time as _time
-_widget_sessions: dict[str, tuple[NikkiAgent, float]] = {}
+# Widget session state lives on the shared spool, NOT in a process-local
+# dict. The dict this replaces was correct on one worker and wrong on two.
+#
+# The container runs `uvicorn --workers 2` (root Dockerfile). A phone call
+# is safe there — it is a WebSocket pinned to one worker for its lifetime,
+# which is exactly what that Dockerfile comment says. A widget turn is not:
+# every turn is an independent HTTP POST, accepted by whichever worker gets
+# there first. So roughly every other turn found an empty dict, built a
+# fresh NikkiAgent and answered the visitor with no memory of what they had
+# just said — while browser_chat's own docstring promised the opposite.
+#
+# /tmp/recordings is a volume shared by both workers (and by FreeSWITCH);
+# the TTS disk cache above already depends on precisely that. One small
+# JSON per session is enough here. Turns within a session are strictly
+# sequential — a visitor speaks, waits for the reply, speaks again — so two
+# workers never write the same file at once, and the atomic .part +
+# os.replace below means a reader never sees a half-written one.
+#
+# Only `history` crosses turns. NikkiAgent.__init__ is pure CPU (it builds a
+# system prompt and picks a voice from the profile, no I/O), so rebuilding
+# the agent per request costs nothing — and is what the old code already did
+# on every cache miss.
+#
+# This is shared-host, not shared-cluster. If the pipeline is ever run as
+# more than one container behind a load balancer, this needs Redis or a
+# table; there is no Redis in the stack today (see docker-compose's
+# AP_REDIS_TYPE note) and adding one for a landing-page widget is not worth
+# the operational surface.
+_WIDGET_DIR  = "/tmp/recordings/widgetsessions"
+_WIDGET_TTL  = 1800.0     # 30 minutes idle, unchanged
+_WIDGET_MAX  = 400        # files — bounds tmpfs the way _CACHE_MAX does
+_WIDGET_KEEP = 40         # history entries stored; GeminiLLM reads 24
 
-def _get_or_create_widget_session(session_id: str, profile: dict) -> NikkiAgent:
-    now = _time.time()
-    # Expire sessions older than 30 minutes
-    expired = [k for k, (_, ts) in _widget_sessions.items() if now - ts > 1800]
-    for k in expired:
-        del _widget_sessions[k]
-    if session_id in _widget_sessions:
-        agent, _ = _widget_sessions[session_id]
-        _widget_sessions[session_id] = (agent, now)
-        return agent
-    agent = NikkiAgent(profile, "web_visitor")
-    _widget_sessions[session_id] = (agent, now)
-    return agent
+
+def _widget_path(session_id: str) -> str:
+    # Hashed, never the raw id: session_id arrives in the body of an
+    # unauthenticated POST, and interpolating that straight into a path is
+    # how you get "../../etc/anything" written by the save below.
+    h = hashlib.sha1(session_id.encode("utf-8")).hexdigest()
+    return os.path.join(_WIDGET_DIR, f"{h}.json")
+
+
+def _widget_load(session_id: str) -> tuple[list, int]:
+    """This session's history and its lifetime entry count.
+
+    Returns empty for a session that is new, expired, or unreadable. A
+    half-written or corrupt file is treated as new on purpose: answering
+    with lost context is bad, and failing the turn outright is worse.
+    """
+    try:
+        p = _widget_path(session_id)
+        if time.time() - os.path.getmtime(p) > _WIDGET_TTL:
+            return [], 0
+        with open(p, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return list(d.get("history") or []), int(d.get("total") or 0)
+    except (OSError, ValueError, TypeError):
+        return [], 0
+
+
+def _widget_save(session_id: str, history: list, total: int) -> None:
+    """Persist the tail of the history. `total` is every entry this session
+    has ever appended, so the turn number stays right across a trim."""
+    try:
+        os.makedirs(_WIDGET_DIR, exist_ok=True)
+        _widget_sweep()
+        p = _widget_path(session_id)
+        tmp = p + ".part"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"history": history[-_WIDGET_KEEP:], "total": total}, f)
+        os.replace(tmp, p)     # atomic: never serve a half-written session
+    except (OSError, TypeError) as e:
+        # A dropped session costs this visitor their context, not the reply.
+        log.warning(f"[widget] session save failed: {e}")
+
+
+def _widget_sweep() -> None:
+    """Drop expired sessions, and cap the directory like the TTS cache.
+    One small file per live visitor, so the listdir stays cheap."""
+    try:
+        names = os.listdir(_WIDGET_DIR)
+    except OSError:
+        return
+    now = time.time()
+    live = []
+    for fn in names:
+        fp = os.path.join(_WIDGET_DIR, fn)
+        try:
+            mtime = os.path.getmtime(fp)
+        except OSError:
+            continue
+        if now - mtime > _WIDGET_TTL:
+            try: os.remove(fp)
+            except OSError: pass
+        else:
+            live.append((mtime, fp))
+    # Oldest half, matching the TTS cache: a wholesale purge would throw away
+    # sessions another worker is mid-conversation with.
+    if len(live) >= _WIDGET_MAX:
+        live.sort()
+        for _, fp in live[:len(live) // 2]:
+            try: os.remove(fp)
+            except OSError: pass
 
 
 # ── FASTAPI ROUTES ────────────────────────────────────────
@@ -4639,7 +4724,12 @@ async def browser_chat(req: BrowserChatRequest):
         except Exception as e:
             log.warning(f"[widget] profile lookup failed: {e}")
 
-    agent = _get_or_create_widget_session(req.session_id, profile)
+    # History comes from the shared spool, so a follow-up turn is answered
+    # with context whichever worker accepts it. The agent itself is rebuilt
+    # per turn — nothing on it but `history` outlives the request.
+    agent = NikkiAgent(profile, "web_visitor")
+    stored, total = _widget_load(req.session_id)
+    agent.history = stored
 
     # ── System prompt ────────────────────────────────────────────
     # This is where "sounds like a bot reading a script" is won or lost.
@@ -4688,7 +4778,16 @@ async def browser_chat(req: BrowserChatRequest):
     # transcript would have the model referring back to it later.
     if not is_call_start:
         agent.history.append({"role": "user", "content": req.text})
+        total += 1
     agent.history.append({"role": "assistant", "content": response_text})
+    total += 1
+
+    # Persist here, before the booking split and _clean_for_speech below
+    # mutate response_text — the stored transcript is the raw model output,
+    # exactly as the in-process version stored it. Doing it at this one
+    # point also covers both of this handler's return paths, including the
+    # hold-sentinel early return.
+    _widget_save(req.session_id, agent.history, total)
 
     # Detect booking confirmation
     booking_confirmed = "BOOKING_CONFIRMED:" in response_text
@@ -4708,7 +4807,11 @@ async def browser_chat(req: BrowserChatRequest):
         return {"response": "", "spoken_text": "", "hold": True,
                 "audio_b64": None, "booking_confirmed": False,
                 "booking_summary": "", "intent": agent.intent,
-                "turn": len(agent.history) // 2}
+                # `total`, not len(agent.history): the stored history is
+                # capped, so its length stops being the turn number once a
+                # long session trims. Same value as before for every session
+                # short enough that no trim has happened.
+                "turn": total // 2}
 
     # Belt-and-braces cleanup before this reaches a text-to-speech engine.
     # The prompt forbids emoji and markdown, but models drift, and every
@@ -4758,7 +4861,7 @@ async def browser_chat(req: BrowserChatRequest):
         "booking_confirmed": booking_confirmed,
         "booking_summary": booking_summary,
         "intent": agent.intent,
-        "turn": len(agent.history) // 2,
+        "turn": total // 2,
     }
 
 

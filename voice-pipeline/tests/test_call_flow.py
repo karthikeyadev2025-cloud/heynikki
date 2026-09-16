@@ -17,7 +17,7 @@ before every deploy.
 Anything needing the network is marked `live` and skipped by default:
     ... -m live      to include them
 """
-import sys, os, asyncio, wave, io, struct
+import sys, os, time, asyncio, wave, io, struct
 import pytest
 
 # /app is where the container mounts the pipeline; the parent of tests/ is
@@ -530,3 +530,96 @@ def test_dids_route_to_the_right_business():
     a, b = asyncio.get_event_loop().run_until_complete(go())
     assert a and a["business_name"] == "Hey Nikki"
     assert b and "Nila" in b["business_name"]
+
+
+# ── widget sessions survive the second worker ─────────────────────────────
+# The pipeline runs `uvicorn --workers 2`. A phone call is a WebSocket
+# pinned to one worker, but every widget turn is a separate HTTP POST that
+# either worker may accept — so session state held in a process-local dict
+# was lost on roughly every other turn. These tests pin the contract that
+# replaced it: the store is on disk, shared, and survives a different
+# process reading it.
+@pytest.fixture
+def widget_dir(tmp_path, monkeypatch):
+    d = tmp_path / "widgetsessions"
+    monkeypatch.setattr(main, "_WIDGET_DIR", str(d))
+    return str(d)
+
+
+def test_widget_history_survives_a_different_process(widget_dir):
+    """The actual two-worker bug: worker A answers turn 1, worker B answers
+    turn 2. B must see what the visitor told A."""
+    import subprocess
+    # Worker A — a genuinely separate interpreter, not another function call.
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import os,sys; sys.path.insert(0, os.environ['PIPE_DIR']);"
+         "import main;"
+         "main._WIDGET_DIR = os.environ['WDIR'];"
+         "main._widget_save('visitor-1', [{'role':'user','content':'నా పేరు రమేష్'},"
+         "{'role':'assistant','content':'చెప్పండి రమేష్ గారు'}], 2)"],
+        env={**os.environ, "WDIR": widget_dir,
+             "PIPE_DIR": os.path.dirname(os.path.abspath(main.__file__))},
+        capture_output=True, text=True, timeout=120,
+    )
+    assert child.returncode == 0, child.stderr[-2000:]
+
+    # Worker B — this process, which never saw that conversation.
+    history, total = main._widget_load("visitor-1")
+    assert total == 2
+    assert [h["content"] for h in history] == ["నా పేరు రమేష్", "చెప్పండి రమేష్ గారు"]
+
+
+def test_widget_unknown_session_is_empty(widget_dir):
+    assert main._widget_load("never-seen") == ([], 0)
+
+
+def test_widget_session_id_cannot_escape_the_directory(widget_dir):
+    """session_id arrives in an unauthenticated POST body. It is hashed, so
+    a traversal attempt writes one file inside the store and nothing else."""
+    main._widget_save("../../../../tmp/pwned", [{"role": "user", "content": "x"}], 1)
+    assert not os.path.exists("/tmp/pwned")
+    names = os.listdir(widget_dir)
+    assert len(names) == 1 and names[0].endswith(".json")
+    # and it still round-trips
+    assert main._widget_load("../../../../tmp/pwned")[1] == 1
+
+
+def test_widget_expired_session_reads_empty(widget_dir):
+    main._widget_save("stale", [{"role": "user", "content": "x"}], 1)
+    p = main._widget_path("stale")
+    old = time.time() - main._WIDGET_TTL - 60
+    os.utime(p, (old, old))
+    assert main._widget_load("stale") == ([], 0)
+
+
+def test_widget_corrupt_file_reads_empty_not_raises(widget_dir):
+    """A half-written file must cost this visitor their context, not the
+    reply — the turn still has to be answered."""
+    os.makedirs(widget_dir, exist_ok=True)
+    with open(main._widget_path("broken"), "w") as f:
+        f.write('{"history": [{"role"')
+    assert main._widget_load("broken") == ([], 0)
+
+
+def test_widget_history_is_capped_but_turn_number_is_not(widget_dir):
+    """A long session trims its stored history; `total` is what the turn
+    number is derived from, so it must keep counting past the cap."""
+    long_history = [{"role": "user", "content": str(i)} for i in range(200)]
+    main._widget_save("chatty", long_history, 200)
+    history, total = main._widget_load("chatty")
+    assert len(history) == main._WIDGET_KEEP
+    assert total == 200
+    # the tail is what was kept — the LLM reads the most recent turns
+    assert history[-1]["content"] == "199"
+
+
+def test_widget_sweep_removes_expired_and_keeps_live(widget_dir):
+    main._widget_save("live-one", [{"role": "user", "content": "a"}], 1)
+    main._widget_save("dead-one", [{"role": "user", "content": "b"}], 1)
+    dead = main._widget_path("dead-one")
+    old = time.time() - main._WIDGET_TTL - 60
+    os.utime(dead, (old, old))
+    main._widget_sweep()
+    assert not os.path.exists(dead)
+    assert os.path.exists(main._widget_path("live-one"))
