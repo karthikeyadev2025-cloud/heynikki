@@ -58,7 +58,7 @@ export default function VerificationPage() {
     const { data, error } = await sb.from("kyc_documents")
       .select("id, doc_type, file_name, status, review_note, created_at")
       .eq("tenant_id", tu.tenant_id).order("created_at", { ascending: false });
-    // The table ships in migration 017; say so plainly rather than showing
+    // The table ships in migration 017b; say so plainly rather than showing
     // an empty list that looks like nothing was ever uploaded.
     if (error) setErr(error.message.includes("does not exist")
       ? "Verification isn't switched on yet — please contact support."

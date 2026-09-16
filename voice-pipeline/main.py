@@ -713,7 +713,7 @@ def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> st
     # CHECK constraint limiting it to standard/clinic/real_estate/premium
     # (supabase/001_schema.sql:48), so "heynikki" is rejected at the DB.
     # Keyed on business_name until a migration widens that constraint —
-    # see supabase/016_heynikki_profile_sku.sql.
+    # see supabase/016a_heynikki_profile_sku.sql.
     _bn = (profile.get("business_name") or "").strip().lower()
     if _bn == "hey nikki":
         sku = "heynikki"

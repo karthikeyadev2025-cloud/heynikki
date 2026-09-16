@@ -5345,7 +5345,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     }
 
     // The Setup page has written missed_call_guard_enabled/_seconds to the
-    // voice profile since migration 016 and nothing read them: the ring
+    // voice profile since migration 016b and nothing read them: the ring
     // timeout came from platform_config alone, so a business that set 30
     // seconds still rang out at 20 and could not turn the guard off. The
     // tenant's value wins; the platform value is the default.

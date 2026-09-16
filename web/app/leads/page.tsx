@@ -46,7 +46,7 @@ type Lead = {
   call_count: number;
   last_contacted_at: string;
   created_at: string;
-  // Added by migration 017 and unused by any screen until now.
+  // Added by migration 017a and unused by any screen until now.
   tenant_id: string;
   assigned_to: string | null;
   deal_value_paise: number | null;

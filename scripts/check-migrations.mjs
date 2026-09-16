@@ -23,6 +23,34 @@ import { dirname, join } from "node:path";
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "supabase");
 const findings = [];
 
+// ── Two files may not claim the same number ──
+//
+// 016 and 017 each had two files for months. Nothing broke, because the
+// apply order happened to fall out of the filenames alphabetically and the
+// dependencies happened to agree with that — but "happened to" is the
+// whole problem: the order was luck, not a decision, and any runner
+// written against these files would have had to guess. Prose in the code
+// that said "migration 017" could not say which one it meant.
+//
+// Where a number genuinely covers two files, suffix them (016a, 016b) so
+// the pair stays visible and the order is explicit.
+{
+  const byNumber = new Map();
+  for (const f of readdirSync(DIR).filter(n => n.endsWith(".sql"))) {
+    const m = /^(\d+)([a-z]?)_/.exec(f);
+    if (!m) { findings.push(`${f}: name must start with NNN_ or NNNx_`); continue; }
+    const key = m[1] + m[2];              // "016a" and "016b" are distinct
+    if (!byNumber.has(key)) byNumber.set(key, []);
+    byNumber.get(key).push(f);
+  }
+  for (const [key, files] of byNumber) {
+    if (files.length > 1) {
+      findings.push(`duplicate migration number ${key}: ${files.sort().join(", ")} — ` +
+        `suffix them (${key}a, ${key}b) so the apply order is explicit`);
+    }
+  }
+}
+
 for (const file of readdirSync(DIR).filter(n => n.endsWith(".sql")).sort()) {
   const body = readFileSync(join(DIR, file), "utf8");
 
