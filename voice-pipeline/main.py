@@ -114,8 +114,6 @@ API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nikki")
-
-
 GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 # GEMINI_MODEL is an operator setting and any value not listed here is used
@@ -272,12 +270,21 @@ WHAT IT DOES (state only these):
   has their history on screen.
 - 24/7 including Sundays and festivals. She acknowledges in about half a
   second and answers fully in a couple more.
+- CALLS OUT TOO: rings the business's customers with appointment reminders,
+  "your order is ready", or a follow-up on an enquiry — only to people who
+  gave consent, inside TRAI calling hours — and reports what they said.
+  Outbound campaigns plus WhatsApp follow-up. So if asked "can you call my
+  customers?", the answer is YES, to customers who agreed to hear from them.
+  NEVER say it only answers incoming calls.
+- It does NOT negotiate prices, and it is not "connected to Google" — do not
+  claim integrations that are not on this list.
 - Keep your existing number — forward or port it. Live the same day.
   (NOT "in 60 seconds" — a number is assigned after verification, and the
   landing page stopped promising instant go-live for the same reason.)
 
-PRICING: the live catalogue is injected below under [CURRENT PRICING].
-Quote ONLY from it. Never quote a figure that is not there, never say
+PRICING: the live catalogue is injected at the very end under [REFERENCE —
+internal price list]. Quote ONLY from it, in words, never as a list. If that
+block is missing, say the team will send prices on WhatsApp. Never quote a figure that is not there, never say
 "unlimited" — plans are metered by minutes — and never add plans together
 (see the arithmetic rule above). GST is extra on everything.
 
@@ -748,9 +755,43 @@ Business: {profile.get('business_name', 'Our Business')}
 Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
-Today: {now} ({weekday}) — it is {part} right now. Greet by the clock: "గుడ్ మార్నింగ్" only before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at night or before 05:00 say only "నమస్కారం" — never "good morning" at night.
+Today: {now} ({weekday}) — it is {part} right now. If a [CALL ALREADY OPENED] note appears below, the opening has been said — never greet or introduce yourself again. Any time greeting you do use must match the clock: "గుడ్ మార్నింగ్" only before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at night or before 05:00 say only "నమస్కారం" — never "good morning" at night.
 {_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}{_order_block(profile)}
-""" + _persona_for(_tenant_lang(profile)) + _PRICING_CACHE.get("text", "")
+""" + _persona_for(_tenant_lang(profile)) + (
+        # Hey Nikki's OWN tariff. It was appended for every tenant, so a
+        # clinic's caller asking "ఎంత అవుతుంది?" could be quoted Rs 1,999/month.
+        _PRICING_CACHE.get("text", "") if sku == "heynikki" else "")
+
+
+def _business_context_block(profile: dict, knowledge: list[str] | None = None) -> str:
+    """The facts a prompt that is not build_system_prompt still needs.
+
+    A campaign call replaced the whole system prompt with the script, so the
+    model on that call did not know the business's name, hours, services,
+    what it had been taught, or even today's date — asked "when are you open
+    tomorrow?" it guessed, and "tomorrow" had no date to resolve against.
+    """
+    now = _now_ist()
+    open_days = ", ".join(profile.get("open_days") or ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+    return (
+        "\n\n[BUSINESS CONTEXT — use it to answer questions; the goal above still leads]\n"
+        f"Your name: {_assistant_name(profile)}\n"
+        f"Business: {profile.get('business_name') or 'Our Business'}\n"
+        f"Working Hours: {open_days}, {profile.get('open_time') or '09:00'} – "
+        f"{profile.get('close_time') or '21:00'}\n"
+        f"Services: {', '.join(profile.get('services') or []) or 'General services'}\n"
+        f"Appointment Types: {', '.join(profile.get('appointment_types') or []) or 'General appointment'}\n"
+        f"Today: {now.strftime('%Y-%m-%d %H:%M')} ({now.strftime('%A')}) — it is "
+        f"{_part_of_day(now.hour)} right now.\n"
+        f"{_knowledge_block(knowledge)}")
+
+
+_LANGUAGE_RULE = {
+    "te-IN": "- Speak Telugu with natural English words mixed in, as Hyderabad speaks.",
+    "hi-IN": "- Speak Hindi with natural English words mixed in, as people speak on the phone. Never Telugu.",
+    "bn-IN": "- Speak Bengali with natural English words mixed in, as people speak on the phone. Never Telugu.",
+    "en-IN": "- Speak simple, warm Indian English. Never Telugu.",
+}
 
 
 _ORDER_WORDS = ("order", "ఆర్డర్", "ఆర్డరు", "parcel", "పార్సిల్", "పార్సెల్",
@@ -1009,8 +1050,11 @@ class SarvamSTT:
                         "config": {
                             "encoding": "LINEAR16",
                             "sampleRateHertz": 8000,
-                            "languageCode": "te-IN",
-                            "alternativeLanguageCodes": ["en-IN"],
+                            # The tenant's language. Hard-coded te-IN made
+                            # the fallback transcribe a Bengali or Hindi
+                            # caller as Telugu gibberish.
+                            "languageCode": self.lang,
+                            "alternativeLanguageCodes": ([] if self.lang == "en-IN" else ["en-IN"]),
                             # NOT chirp_2. Chirp and Chirp 2 exist only on the
                             # v2 API, which is a different host, needs a
                             # recognizer resource, and does not accept API keys
@@ -1074,6 +1118,11 @@ class SarvamStreamingSTT:
         # means a network stall can never block the loop handling barge-in.
         self._q: "asyncio.Queue" = asyncio.Queue(maxsize=600)
         self._flush_evt = asyncio.Event()
+        # finish_turn is called from the frame loop AND from the detached
+        # short-utterance classifier. Unserialised, one call cleared the
+        # other's flush event and reset the segments it was about to read:
+        # one flush's words came back as the other's turn, or as nothing.
+        self._finish_lock = asyncio.Lock()
         self.dead = False
 
     async def start(self) -> bool:
@@ -1155,8 +1204,19 @@ class SarvamStreamingSTT:
                 log.warning(f"[sttws] send loop ended ({e}) — batch fallback")
             self.dead = True
 
-    async def finish_turn(self, timeout: float = 1.2) -> str:
-        """Flush, wait briefly for the final segment, return + reset."""
+    async def finish_turn(self, timeout: float = 1.2, discard: bool = False) -> str:
+        """Flush, wait briefly for the final segment, return + reset.
+
+        discard=True is for audio that was fed but judged not to be a turn
+        (background noise): its words are flushed out and thrown away, so
+        they do not open the caller's NEXT turn.
+        """
+        if self.dead or not self._ws:
+            return ""
+        async with self._finish_lock:
+            return await self._finish_turn_locked(timeout, discard)
+
+    async def _finish_turn_locked(self, timeout: float, discard: bool) -> str:
         if self.dead or not self._ws:
             return ""
         try:
@@ -1166,6 +1226,13 @@ class SarvamStreamingSTT:
             self._q.put_nowait(self._FLUSH)
             try:
                 await asyncio.wait_for(self._flush_evt.wait(), timeout=timeout)
+                if discard:
+                    # No grace drain: anything arriving after this belongs
+                    # to whatever the caller says next.
+                    n = len(self._segments)
+                    log.info(f"[sttws] discarded {n} segment(s) of non-turn audio")
+                    del self._segments[:n]
+                    return ""
                 # Grace drain: a caller's LAST word often rides a segment that
                 # finalises a beat after the first flush response — observed
                 # live as "సోమవారం సరే నా పేరు." with the name itself arriving
@@ -1522,7 +1589,7 @@ class SarvamTTS:
         return b""
 
     async def _google_tts(self, text: str, rate: int = 8000) -> bytes:
-        """Google Cloud TTS, te-IN. Uses an API key, so it needs no service
+        """Google Cloud TTS, in the tenant's language. Uses an API key, so it needs no service
         account — and the same key works for the STT fallback if both APIs
         are enabled on the project, which is one key to obtain rather than
         two."""
@@ -1534,9 +1601,11 @@ class SarvamTTS:
             params={"key": key},
             json={
                 "input": {"text": text[:2400]},
-                # Standard-A is the female te-IN voice, the closest match to
-                # the bulbul speakers used everywhere else.
-                "voice": {"languageCode": "te-IN", "name": "te-IN-Standard-A"},
+                # Standard-A is the female voice in each of these languages,
+                # the closest match to the bulbul speakers used everywhere
+                # else. It was te-IN for every tenant, so a Hindi reply was
+                # read out by a Telugu voice.
+                "voice": {"languageCode": self.lang, "name": f"{self.lang}-Standard-A"},
                 "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": rate},
             },
             timeout=12.0,
@@ -1554,12 +1623,18 @@ class SarvamTTS:
         return audio
 
     async def _azure_fallback(self, text: str) -> bytes:
-        """Azure te-IN-ShrutiNeural — TTS fallback."""
+        """Azure neural voice in the tenant's language — TTS fallback."""
         try:
+            from xml.sax.saxutils import escape as _xml_escape
             azure_key    = os.environ.get("AZURE_SPEECH_KEY", "")
             azure_region = os.environ.get("AZURE_SPEECH_REGION", "centralindia")
-            ssml = f"""<speak version='1.0' xml:lang='te-IN'>
-  <voice name='te-IN-ShrutiNeural'>{text}</voice>
+            # Per language: te-IN-ShrutiNeural for everyone read Hindi and
+            # Bengali in a Telugu voice. The text is escaped because SSML is
+            # XML — "Sai & Sons" was a 400 and the caller heard nothing.
+            voice = _AZURE_VOICE.get(self.lang, _AZURE_VOICE["te-IN"])
+            lang = self.lang if self.lang in _AZURE_VOICE else "te-IN"
+            ssml = f"""<speak version='1.0' xml:lang='{lang}'>
+  <voice name='{voice}'>{_xml_escape(text)}</voice>
 </speak>"""
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
@@ -1576,6 +1651,10 @@ class SarvamTTS:
         except Exception as e:
             log.error(f"Azure TTS fallback failed: {e}")
         return b""
+
+
+_AZURE_VOICE = {"te-IN": "te-IN-ShrutiNeural", "hi-IN": "hi-IN-SwaraNeural",
+                "bn-IN": "bn-IN-TanishaaNeural", "en-IN": "en-IN-NeerjaNeural"}
 
 
 # ── GEMINI LLM ───────────────────────────────────────────
@@ -1917,7 +1996,10 @@ class GeminiLLM:
         # Once the circuit is open, go to the fallback immediately.
         if not gemini_breaker.allow_request():
             log.warning("[breaker] gemini OPEN — answering from the fallback")
-            return await self._openai_fallback(system_prompt, history)
+            # skip_alt: the "second model" is the same Google host on the
+            # same key. With the breaker open every turn still paid its 6s
+            # timeout before the caller heard anything at all.
+            return await self._openai_fallback(system_prompt, history, skip_alt=True)
         try:
             # x-goog-api-key works for BOTH key formats, so no branching.
             # The previous code sent AQ./IQ./EQ. keys as Authorization: Bearer,
@@ -1985,7 +2067,13 @@ class GeminiLLM:
             if _is_infra_failure(e):
                 gemini_breaker.record_failure()
             log.error(f"Gemini error: {e} — trying GPT-4o-mini fallback")
-            return await self._openai_fallback(system_prompt, recent)
+            # `history`, not `recent`: `recent` only exists inside _payload,
+            # so every Gemini 4xx/5xx raised NameError here and the fallback
+            # models never ran — the caller heard the stall line instead.
+            # If this failure is the one that opened the breaker, the alt
+            # model on the same host is not worth another 6s either.
+            return await self._openai_fallback(
+                system_prompt, history, skip_alt=not gemini_breaker.allow_request())
         except Exception as e:
             log.error(f"Gemini unexpected: {e}")
 
@@ -2051,9 +2139,10 @@ class GeminiLLM:
             log.warning(f"[fallback] {self._ALT_MODEL} failed too: {e}")
         return ""
 
-    async def _openai_fallback(self, system_prompt: str, history: list) -> str:
+    async def _openai_fallback(self, system_prompt: str, history: list,
+                               skip_alt: bool = False) -> str:
         """The other model, then GPT-4o-mini, then an honest apology."""
-        alt = await self._gemini_alt(system_prompt, history)
+        alt = "" if skip_alt else await self._gemini_alt(system_prompt, history)
         if alt:
             return alt
         try:
@@ -2191,6 +2280,11 @@ class SupabaseClient:
             log.error(f"Supabase update_call: {e}")
 
     async def save_appointment(self, appt_data: dict) -> Optional[str]:
+        # Why the last insert failed, as (HTTP status, body); 0 for a network
+        # error. The booking path needs to tell "the status constraint
+        # rejected 'pending'" apart from a timeout that may have written the
+        # row anyway — see _handle_appointment_booking.
+        self.last_appointment_error = (0, "")
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
@@ -2198,10 +2292,30 @@ class SupabaseClient:
                     headers={**self.headers, "Prefer": "return=representation"},
                     json=appt_data
                 )
+                if resp.status_code >= 300:
+                    self.last_appointment_error = (resp.status_code, resp.text[:400])
+                    log.error(f"Supabase save_appointment {resp.status_code}: {resp.text[:200]}")
+                    return None
                 data = resp.json()
                 return data[0]["id"] if data else None
         except Exception as e:
+            self.last_appointment_error = (0, str(e)[:400])
             log.error(f"Supabase save_appointment: {e}")
+            return None
+
+    async def appointment_for_call(self, call_id: Optional[str]) -> Optional[str]:
+        """The appointment row already written for this call, if any."""
+        if not call_id:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as c:
+                r = await c.get(f"{self.url}/rest/v1/appointments", headers=self.headers,
+                                params={"call_id": f"eq.{call_id}", "select": "id",
+                                        "order": "created_at.asc", "limit": "1"})
+                rows = r.json() if r.status_code == 200 else []
+                return rows[0]["id"] if rows else None
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"appointment_for_call failed: {e}")
             return None
 
     async def save_appointment_row(self, appt_data: dict) -> Optional[dict]:
@@ -2520,12 +2634,22 @@ def _tools_enabled(profile: dict | None) -> bool:
 
 
 # Tools that reach the database. The others answer from memory.
+def _say(lang: str, te: str, hi: str = "", bn: str = "", en: str = "") -> str:
+    """A fixed spoken line in the tenant's language; Telugu when no variant.
+
+    These lines never pass through the model, so a Hindi or Bengali tenant's
+    caller heard them in Telugu."""
+    return {"hi-IN": hi, "bn-IN": bn, "en-IN": en}.get(lang) or te
+
+
 _SLOW_TOOLS = {"check_slot", "book_appointment", "take_order", "transfer_to_human"}
 
 # Spoken while a tool runs. Not a stall — it is true, she is looking.
 _TOOL_WAIT_LINE = {
     "te-IN": "ఒక్క సెకను, చూస్తున్నాను.",
     "hi-IN": "एक सेकंड, देख रही हूँ.",
+    # Missing, so a Bengali tenant's caller heard the Telugu line.
+    "bn-IN": "এক সেকেন্ড, দেখছি।",
     "en-IN": "One second, let me check.",
 }
 
@@ -3051,14 +3175,20 @@ class NikkiAgent:
                     # times at people speaking perfectly clearly — the honest
                     # move is one apology and a promised callback, once.
                     log.error("STT failed 3x this call — apologising instead of looping")
-                    msg = ("క్షమించండి అండి, లైన్‌లో టెక్నికల్ సమస్య ఉంది. "
-                           "మీ నంబర్ నోట్ అయింది, మా టీమ్ మీకు కాల్ బ్యాక్ చేస్తుంది.")
+                    msg = _say(self.lang,
+                               "క్షమించండి అండి, లైన్‌లో టెక్నికల్ సమస్య ఉంది. "
+                               "మీ నంబర్ నోట్ అయింది, మా టీమ్ మీకు కాల్ బ్యాక్ చేస్తుంది.",
+                               hi="माफ़ कीजिए, लाइन में तकनीकी समस्या है। आपका नंबर नोट हो गया है, हमारी टीम आपको वापस कॉल करेगी।",
+                               bn="দুঃখিত, লাইনে একটা সমস্যা হচ্ছে। আপনার নম্বর নোট করা হয়েছে, আমাদের টিম আপনাকে কল ব্যাক করবে।",
+                               en="Sorry, there's a technical problem on the line. I've noted your number and our team will call you back.")
                     self._stt_failures = -100    # say it once, then stay quiet
                 elif self._stt_failures < 0:
                     return "" if want_text else b""
                 else:
                     log.info("STT returned nothing — asking the caller to repeat")
-                    msg = "ఒక్కసారి మళ్ళీ చెప్తారా?"
+                    msg = _say(self.lang, "ఒక్కసారి మళ్ళీ చెప్తారా?",
+                               hi="एक बार फिर से बताएँगे?", bn="আরেকবার বলবেন?",
+                               en="Could you say that once more?")
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
             log.info(f"STT: {user_text}")
@@ -3072,11 +3202,21 @@ class NikkiAgent:
                 log.info(f"phantom turn ignored: {user_text!r}")
                 return "" if want_text else b""
             self._harvest_slots(user_text)
-            self.transcript.append({"role": "user", "content": user_text, "ts": datetime.now().isoformat()})
+            # Timezone-aware UTC. The container has no TZ, so a naive
+            # datetime.now() was UTC with no offset, and anything reading the
+            # transcript as local time put every turn 5h30m in the past.
+            self.transcript.append({"role": "user", "content": user_text, "ts": datetime.now(timezone.utc).isoformat()})
             self.history.append({"role": "user", "content": user_text})
 
             # Intent detection (keyword based, fast, no extra LLM call)
             self.intent = self._detect_intent(user_text)
+            # An onboarding interview is Nikki asking a business owner about
+            # their business. "We take appointments", "call the manager",
+            # "accident cases come to us" are answers, not requests: without
+            # this the owner was put through to their own ring group, read
+            # the 108 line, and had bookings opened in their own diary.
+            if getattr(self, "onboarding_tenant", None):
+                self.intent = "enquiry"
             if self.intent == "order":
                 self.order_seen = True      # sticky, like callback_promised
 
@@ -3087,14 +3227,18 @@ class NikkiAgent:
             if (self.intent == "emergency" and self._is_medical()
                     and self._emergency_is_real(user_text)):
                 self._emergency_said = True
-                msg = ("వెంటనే 108 కి కాల్ చేయండి అండి, అంబులెన్స్ వస్తుంది. "
-                       "మిమ్మల్ని ఇప్పుడే మా స్టాఫ్ కి కనెక్ట్ చేస్తున్నాను.")
+                msg = _say(self.lang,
+                           "వెంటనే 108 కి కాల్ చేయండి అండి, అంబులెన్స్ వస్తుంది. "
+                           "మిమ్మల్ని ఇప్పుడే మా స్టాఫ్ కి కనెక్ట్ చేస్తున్నాను.",
+                           hi="तुरंत 108 पर कॉल कीजिए, एम्बुलेंस आएगी। मैं आपको अभी हमारे स्टाफ़ से जोड़ रही हूँ।",
+                           bn="এখনই 108-এ ফোন করুন, অ্যাম্বুলেন্স আসবে। আপনাকে এখনই আমাদের স্টাফের সাথে যুক্ত করছি।",
+                           en="Please call 108 right now for an ambulance. I'm connecting you to our staff.")
                 self.intent = "transfer"
                 extra = await self._handle_transfer(prefix_spoken=True)
                 if extra:
                     msg = msg + " " + extra
                 self.history.append({"role": "assistant", "content": msg})
-                self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now().isoformat()})
+                self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now(timezone.utc).isoformat()})
                 log.info(f"LLM (emergency): {msg}")
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
@@ -3102,9 +3246,25 @@ class NikkiAgent:
             if self.intent == "transfer":
                 msg = await self._handle_transfer()
                 self.history.append({"role": "assistant", "content": msg})
-                self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now().isoformat()})
+                self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now(timezone.utc).isoformat()})
                 log.info(f"LLM (transfer): {msg}")
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
+
+            # The streamed opening clause is spoken before the reply is
+            # finished, so it has to pass the same guards the reply does —
+            # see _first_clause_hold_reason. A held clause is simply not
+            # spoken early; _run_turn then speaks the filtered reply whole.
+            _raw_clause_cb = first_clause_cb
+            if _raw_clause_cb is not None:
+                _known = _known_numbers(self.profile, self.knowledge)
+
+                def first_clause_cb(prefix: str) -> None:  # noqa: F811
+                    why = _first_clause_hold_reason(prefix, user_text, _prev_bot,
+                                                    self.lang, _known)
+                    if why:
+                        log.info(f"[b2] first clause held ({why}) — speaking the full reply instead")
+                        return
+                    _raw_clause_cb(prefix)
 
             # Generate response. In tools mode the model may look something
             # up first — see _tool_declarations. A turn that needs no tool
@@ -3118,8 +3278,8 @@ class NikkiAgent:
                     # reads the catalogue already in memory and returns in under
                     # a millisecond; saying "one second, let me check" in front
                     # of it adds a second of speech to cover nothing.
-                    if first_clause_cb and tool_name in _SLOW_TOOLS:
-                        first_clause_cb(_TOOL_WAIT_LINE.get(self.lang, _TOOL_WAIT_LINE["te-IN"]))
+                    if _raw_clause_cb and tool_name in _SLOW_TOOLS:
+                        _raw_clause_cb(_TOOL_WAIT_LINE.get(self.lang, _TOOL_WAIT_LINE["te-IN"]))
                 response = await self.llm.generate_with_tools(
                     self.system_prompt + self._known_facts_block(),
                     self.history,
@@ -3136,16 +3296,54 @@ class NikkiAgent:
             _t_llm = time.monotonic() - _t0 - _t_stt
             log.info(f"LLM: {response}")
 
+            # Deterministic anti-loop backstop. Prompt rules are advisory and a
+            # small model still repeats itself: on a live call Nikki demanded
+            # the caller's phone number six times in a row, in near-identical
+            # words, while he was telling her she was not making sense. Compare
+            # against the last thing she said and regenerate once if it is
+            # essentially the same sentence.
+            #
+            # Runs HERE, before any of the output guards below, so a retry goes
+            # through exactly the same filtering as a first answer. It used to
+            # run last and swap the reply in raw: no END_CALL split (the caller
+            # heard "END CALL"), no bare-sentinel check, no register fixes, no
+            # number or doctor-presence guard.
+            prev = next((h["content"] for h in reversed(self.history)
+                         if h.get("role") == "assistant"), "")
+            if prev and response:
+                _cmp, _ = _drop_repeated_question(
+                    _enforce_register(response, self.lang)[0], prev)
+                sim = difflib.SequenceMatcher(None, prev.strip(), _cmp.strip()).ratio()
+                if sim > 0.72:
+                    log.info(f"anti-loop: reply {sim:.0%} similar to previous — regenerating")
+                    # self.history ends on the user turn being answered — the
+                    # discarded reply has not been appended yet. A trailing
+                    # model turn is a hard 400 from Gemini: "Requests ending
+                    # with a model turn are not supported."
+                    retry = await self.llm.generate(
+                        self.system_prompt + self._known_facts_block() +
+                        "\n\nYou JUST said: \"" + prev + "\"\n"
+                        "Do not say that again, and do not ask for the same thing "
+                        "again. Respond to what the caller actually just said, in "
+                        "one short sentence.",
+                        self.history)
+                    if retry and retry.strip():
+                        response = retry
+                        log.info(f"LLM (retry): {response}")
+                    else:
+                        log.warning("anti-loop: regenerate returned nothing — "
+                                    "keeping the original reply")
+
             # A bare shouted token is never speech. "TRANSFER_CALL" on the
             # 4 Sep call went to TTS as two English words and the caller was
             # not transferred.
             if _BARE_SENTINEL_RE.match(response or ""):
                 tok = response.upper()
-                if "TRANSFER" in tok or "HUMAN" in tok:
+                if ("TRANSFER" in tok or "HUMAN" in tok) and not getattr(self, "onboarding_tenant", None):
                     self.intent = "transfer"
                     msg = await self._handle_transfer()
                     self.history.append({"role": "assistant", "content": msg})
-                    self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now().isoformat()})
+                    self.transcript.append({"role": "assistant", "content": msg, "ts": datetime.now(timezone.utc).isoformat()})
                     log.info(f"LLM (transfer via bare sentinel {response!r}): {msg}")
                     return msg if want_text else await self.tts.synthesize(msg, self.voice)
                 if "END" in tok and self.appointment_id:
@@ -3163,6 +3361,7 @@ class NikkiAgent:
             # the corrected line is what the caller hears, what the owner
             # reads in the transcript, and what the model sees as its own
             # previous turn — which stops it re-using the banned phrasing.
+            response = _scrub_vendors(response)
             response, _reg_hits = _enforce_register(response, self.lang)
             if _reg_hits:
                 log.warning("register filter rewrote %d banned phrase(s): %s",
@@ -3188,7 +3387,7 @@ class NikkiAgent:
             # She promised to connect them. Make it true: the transfer runs
             # after this line is spoken, exactly as if they had asked for
             # staff by name.
-            if _CONNECT_PROMISE_RE.search(response):
+            if _CONNECT_PROMISE_RE.search(response) and not getattr(self, "onboarding_tenant", None):
                 self.intent = "transfer"
                 honest = await self._handle_transfer(prefix_spoken=True)
                 if self.transfer_requested:
@@ -3262,7 +3461,7 @@ class NikkiAgent:
                 self.callback_promised = True
 
             self.history.append({"role": "assistant", "content": response})
-            self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now().isoformat()})
+            self.transcript.append({"role": "assistant", "content": response, "ts": datetime.now(timezone.utc).isoformat()})
 
             # Did she just ask for a number? Then the NEXT turn is dictation:
             # a caller reading out a mobile number pauses mid-way ("తొమ్మిది
@@ -3292,6 +3491,7 @@ class NikkiAgent:
             # time, and this keyword path would open a second bare row
             # beside it the moment anyone said the word "appointment".
             if (not self.use_tools and self.intent == "appointment"
+                    and not getattr(self, "routing_degraded", False)
                     and self._booking_actually_requested(user_text)):
                 # Keep a reference: asyncio holds only a weak one, so an
                 # unreferenced task can be garbage-collected mid-await and
@@ -3301,49 +3501,6 @@ class NikkiAgent:
                 self._bg_tasks.add(_t)
                 _t.add_done_callback(self._bg_tasks.discard)
 
-            # Deterministic anti-loop backstop. Prompt rules are advisory and a
-            # small model still repeats itself: on a live call Nikki demanded
-            # the caller's phone number six times in a row, in near-identical
-            # words, while he was telling her she was not making sense. Compare
-            # against the last thing she said and regenerate once if it is
-            # essentially the same sentence.
-            prev = next((h["content"] for h in reversed(self.history[:-1])
-                         if h.get("role") == "assistant"), "")
-            if prev and response:
-                sim = difflib.SequenceMatcher(None, prev.strip(), response.strip()).ratio()
-                if sim > 0.72:
-                    log.info(f"anti-loop: reply {sim:.0%} similar to previous — regenerating")
-                    # self.history[:-1], NOT self.history. The reply we are about
-                    # to discard was appended above, so self.history ends on an
-                    # assistant turn, and Gemini answers that with a hard 400:
-                    # "Requests ending with a model turn are not supported."
-                    # (reproduced against the live API; a LEADING model turn,
-                    # which the 24-turn window slice can produce, is accepted —
-                    # only a trailing one is fatal.) This regenerate is a second
-                    # attempt at the SAME user turn, so the discarded reply has
-                    # to come off the end before we re-ask.
-                    retry = await self.llm.generate(
-                        self.system_prompt + self._known_facts_block() +
-                        "\n\nYou JUST said: \"" + prev + "\"\n"
-                        "Do not say that again, and do not ask for the same thing "
-                        "again. Respond to what the caller actually just said, in "
-                        "one short sentence.",
-                        self.history[:-1])
-                    if retry and retry.strip():
-                        response = retry
-                        log.info(f"LLM (retry): {response}")
-                        # Overwrite the discarded reply that was recorded above.
-                        # Leaving it desyncs context from what the caller actually
-                        # heard, and the next anti-loop check would then compare
-                        # against a sentence that was never spoken — which is the
-                        # loop this whole block exists to break.
-                        self.history[-1]["content"] = response
-                        self.transcript[-1]["content"] = response
-                        self._harvest_slots(response, from_caller=False)
-                    else:
-                        log.warning("anti-loop: regenerate returned nothing — "
-                                    "keeping the original reply")
-
             if want_text:
                 return response
             audio = await self.tts.synthesize(response, self.voice)
@@ -3351,7 +3508,9 @@ class NikkiAgent:
 
         except Exception as e:
             log.exception(f"on_speech error: {e}")   # stack, not just the message
-            msg = "క్షమించండి, ఒక్కసారి మళ్ళీ చెప్తారా?"
+            msg = _say(getattr(self, "lang", LANG_DEFAULT), "క్షమించండి, ఒక్కసారి మళ్ళీ చెప్తారా?",
+                       hi="माफ़ कीजिए, एक बार फिर से बताएँगे?", bn="দুঃখিত, আরেকবার বলবেন?",
+                       en="Sorry, could you say that once more?")
             return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
     async def save_recording(self, raw_audio_bytes: bytes) -> Optional[str]:
@@ -3483,11 +3642,12 @@ class NikkiAgent:
         # then "ట్రాన్స్ఫర్ చేస్తా అన్నారు"; none of them fired, and he was
         # instead quoted the price of the Human CRM Seat. Transliterations are
         # what land here, not English words.
-        transfer_words = [
-            "human", "person", "manager", "staff", "real", "transfer",
-            "హ్యూమన్", "హ్యుమన్", "ట్రాన్స్ఫర్", "ట్రాన్స్‌ఫర్", "స్టాఫ్",
-            "మేనేజర్", "వేరే", "నిజంగా", "మనిషి", "మనిషితో", "మాట్లాడాలి",
-        ]
+        #
+        # A request for a person, not any sentence containing one of these
+        # words. Bare substrings — "real", "person", "వేరే", "నిజంగా",
+        # "మాట్లాడాలి" — put "వేరే రోజు ఉందా?" (is another day free?) and every
+        # "real estate" caller through to the ring group, and "human" matched
+        # Hey Nikki's own "Human CRM Seat" product on the sales line.
         appt_words     = ["appointment","appt","book","schedule","date","time","booking","అపాయింట్మెంట్","బుక్"]
         callback_words = ["call back","callback","later","తర్వాత","మళ్ళీ"]
         # Telugu first — that is the script the recogniser returns.
@@ -3497,7 +3657,7 @@ class NikkiAgent:
                           "స్పృహ","రక్తం కారు","రక్తస్రావం","పాయిజన్","విషం"]
 
         if any(w in text_lower for w in emergency_words): return "emergency"
-        if any(w in text_lower for w in transfer_words):  return "transfer"
+        if _TRANSFER_REQUEST_RE.search(text_lower):       return "transfer"
         # Only for a business that takes orders — "delivery time" on a
         # clinic's line is not an order. Checked before appointments because
         # "time" is an appointment word and every order has a time.
@@ -3753,8 +3913,12 @@ class NikkiAgent:
                     break
         if not self.ring_group:
             # Never claim a transfer we cannot make.
-            return ("క్షమించండి, ఇప్పుడు staff అందుబాటులో లేరు. "
-                    "మీ number చెప్తే మా team మీకు callback చేస్తుంది.")
+            return _say(self.lang,
+                        "క్షమించండి, ఇప్పుడు staff అందుబాటులో లేరు. "
+                        "మీ number చెప్తే మా team మీకు callback చేస్తుంది.",
+                        hi="माफ़ कीजिए, अभी स्टाफ़ उपलब्ध नहीं है। अपना नंबर बताइए, हमारी टीम आपको वापस कॉल करेगी।",
+                        bn="দুঃখিত, এখন স্টাফ নেই। আপনার নম্বরটা বলুন, আমাদের টিম আপনাকে কল ব্যাক করবে।",
+                        en="Sorry, our staff aren't available right now. Tell me your number and our team will call you back.")
         if not self._outbound_ok():
             # The trunk cannot place calls (Jio, since 2 Sep). A transfer
             # would ring out to Jio's English "service not available"
@@ -3764,12 +3928,14 @@ class NikkiAgent:
             log.warning("transfer skipped — outbound trunk marked down")
             self.intent = "callback"
             self._fire_missed_call_followup()
-            return ("క్షమించండి అండి, ఇప్పుడు స్టాఫ్ లైన్ కనెక్ట్ కావడం లేదు. "
-                    "మీ నంబర్ నోట్ చేశాను, మా టీమ్ మీకు వెంటనే కాల్ బ్యాక్ చేస్తుంది.")
+            return _TRANSFER_FAILED_LINE.get(self.lang, _TRANSFER_FAILED_LINE["te-IN"])
         self.transfer_requested = True
         if prefix_spoken:
             return ""
-        return "ఒక్క నిమిషం అండి, మా staff కి connect చేస్తున్నాను."
+        return _say(self.lang, "ఒక్క నిమిషం అండి, మా staff కి connect చేస్తున్నాను.",
+                    hi="एक मिनट, मैं आपको हमारे स्टाफ़ से जोड़ रही हूँ।",
+                    bn="এক মিনিট, আপনাকে আমাদের স্টাফের সাথে যুক্ত করছি।",
+                    en="One moment, I'm connecting you to our staff.")
 
     def _outbound_ok(self) -> bool:
         """False while the outbound dispatcher has the trunk marked down.
@@ -3877,7 +4043,22 @@ class NikkiAgent:
             # booking would vanish silently — the worst possible failure for
             # the one thing this product exists to do. Fall back to the old
             # value and say so loudly.
-            if not appt_id:
+            #
+            # ONLY on that constraint failure. Any None used to trigger it — a
+            # timeout whose insert had in fact landed, a network blip, an RLS
+            # error — writing a second, CONFIRMED row with no slot beside the
+            # pending one. Check for a row on this call first.
+            _status, _body = getattr(self.db, "last_appointment_error", (0, ""))
+            _existing = None if appt_id else await self.db.appointment_for_call(self.call_id)
+            if _existing:
+                log.warning(f"appointment insert reported failure but row {_existing[:8]} "
+                            "exists for this call — reusing it")
+                appt_id = _existing
+            elif not appt_id and not (_status == 400 and "check constraint" in _body.lower()
+                                      and "status" in _body.lower()):
+                log.error(f"appointment insert failed ({_status}: {_body[:160]}) — "
+                          "not retrying as confirmed")
+            elif not appt_id:
                 log.critical(
                     "appointment insert rejected with status='pending' — "
                     "apply supabase/041_tenant_language.sql. Falling back to "
@@ -4288,6 +4469,12 @@ def _is_hold_sentinel(text: str) -> bool:
 # English right after their appointment is booked.
 _END_CALL_RE = re.compile(
     r"[\s\[\]<>(){}*_.,!?-]*END[\s_-]?CALL[\s\[\]<>(){}*_.,!?-]*$", re.I)
+# The same token anywhere else in the reply. The trailing form above was the
+# only one handled, so "మంచిది అండి END_CALL మళ్ళీ కలుద్దాం" went to TTS whole
+# and _clean_for_speech turned the underscore into a space: the caller heard
+# "END CALL" in English. Upper-case only mid-text, so an English-speaking
+# tenant's own words ("…before you end call waiting") are never eaten.
+_END_CALL_ANY_RE = re.compile(r"[\[<({*]*\bEND[\s_-]?CALL\b[\]>)}*]*")
 
 
 # ── Register enforcement ──────────────────────────────────────────────────
@@ -4630,9 +4817,24 @@ _CALLER_FAREWELL_RE = re.compile(
 # sentinel the model produced, far too loose to hang up on by themselves).
 # The caller telling her to put the phone down, in any of the ways heard on
 # real calls: "cut చేయండి", "call cut chesi", "పెట్టేయండి", "hang up".
+#
+# "పెట్టేయండి" on its own is also "go ahead, book it" ("పది గంటలకి
+# పెట్టేయండి"), and "cut చే" matched "haircut చేయించుకోవాలి" — both hung up
+# on a caller mid-booking. The put-down form needs the phone named or to be
+# the whole utterance; "cut" must be a word of its own, not a haircut.
 _HANGUP_REQUEST_RE = re.compile(
-    r"cut\s*చే|cut\s*చెయ|call\s*cut|కట్\s*చే|కట్\s*చెయ|పెట్టేయ|పెట్టెయ|పెట్టేస్|"
+    r"(?<![a-z])cut\s*చే(?!యించ)|(?<![a-z])cut\s*చెయ(?!్యించ)|call\s*cut|"
+    r"(?<!హెయిర్ )(?<!హెయిర్)కట్\s*చే(?!యించ)|(?<!హెయిర్ )(?<!హెయిర్)కట్\s*చెయ(?!్యించ)|"
+    r"(?:phone|ఫోన్|call|కాల్)\S*\s*(?:\S+\s*)?(?:పెట్టేయ|పెట్టెయ|పెట్టేస్)|"
+    r"^\W*(?:సరే\W*|ఇక\W*|ఓకే\W*|ok\W*)?(?:పెట్టేయ|పెట్టెయ|పెట్టేస్)\S*\W*$|"
     r"cut the call|hang ?up|disconnect", re.I)
+
+_TRANSFER_REQUEST_RE = re.compile(
+    r"real person|\bhuman\b(?!\s*crm)|హ్యూమన్(?!\s*(?:crm|సీఆర్|సిఆర్))|హ్యుమన్(?!\s*(?:crm|సీఆర్|సిఆర్))|"
+    r"transfer|ట్రాన్స్ఫర్|ట్రాన్స్‌ఫర్|\bmanager\b|మేనేజర్|"
+    r"వేరే వ్యక్తి|నిజమైన మనిషి|మనిషితో|"
+    r"(?:\bstaff\b|స్టాఫ్|\bperson\b|మనిషి|owner|ఓనర్|డాక్టర్ గారితో)\S*\s*(?:\S+\s*)?"
+    r"(?:మాట్లాడ|connect|కనెక్ట్|ఇవ్వండి|\btalk\b|\bspeak\b)", re.I)
 # The caller's own goodbye.
 _CALLER_BYE_RE = re.compile(
     r"\bbye\b|బై|good ?night|గుడ్ ?నైట్|ఉంటాను|ఉంటానండి|ఉంటా(?![\u0C00-\u0C7F])|వెళ్తాను|వెళ్తా(?![\u0C00-\u0C7F])|"
@@ -4660,8 +4862,14 @@ def _split_end_sentinel(text: str) -> tuple[str, bool]:
     """
     if not text:
         return text, False
+    wants_end = bool(_END_CALL_RE.search(text))
+    if not (wants_end or _END_CALL_ANY_RE.search(text)):
+        return text, False
     stripped = _END_CALL_RE.sub("", text)
-    return (stripped.strip(), True) if stripped != text else (text, False)
+    # A mid-sentence token is removed from speech but is not a request to
+    # hang up — only the trailing sentinel is.
+    stripped = re.sub(r"[ \t]{2,}", " ", _END_CALL_ANY_RE.sub(" ", stripped))
+    return stripped.strip(), wants_end
 
 
 def _clean_for_speech(text: str) -> str:
@@ -4678,6 +4886,13 @@ def _clean_for_speech(text: str) -> str:
     if not text:
         return ""
     s = _EMOJI_RE.sub("", text)
+    # Internal prompt headers — "[CURRENT PRICING]", "[REFERENCE — …]",
+    # "[CALL ALREADY OPENED]". On 10 Sep one was read to a caller as the
+    # opening words of a reply, followed by a price list the model made up.
+    s = re.sub(r"\[[A-Z][A-Z _—–-]{3,}[^\]]*\]", " ", s)
+    # An END_CALL that reached this far (a first clause, a retry) is never
+    # words — the underscore strip below would make it "END CALL".
+    s = _END_CALL_ANY_RE.sub(" ", s)
     s = re.sub(r"[*_`#>|]+", " ", s)                    # markdown emphasis / fences
     s = re.sub(r"^\s*[-•–]\s+", "", s, flags=re.M)      # bullet leaders
     s = re.sub(r"^\s*\d+[.)]\s+", "", s, flags=re.M)    # numbered list leaders
@@ -4687,6 +4902,71 @@ def _clean_for_speech(text: str) -> str:
     # "Tanks andi" went out on the 5 Sep campaign call.
     s = re.sub(r"\bTanks\b", "Thanks", s)
     return s.strip()
+
+
+_VENDOR_NAMES = ("Sarvam", "Gemini", "LiveKit", "Exotel", "Plivo", "supabase", "OpenAI")
+
+
+def _scrub_vendors(text: str) -> str:
+    """Never name the stack to a caller. The batch and plain-stream paths did
+    this inline; the tools path (generate_with_tools) never did."""
+    for v in _VENDOR_NAMES:
+        text = text.replace(v, "our system")
+    return text
+
+
+_TRAILING_DIGIT_RE = re.compile(r"(?:" + _DIGIT_TOKEN_RE.pattern + r")[\s,.\-]*$", re.I)
+
+
+def _first_clause_hold_reason(prefix: str, user_text: str, prev_bot: str,
+                              lang: str = LANG_DEFAULT,
+                              known: list[str] | None = None) -> str:
+    """Why the streamed opening clause must wait for the whole reply, or "".
+
+    The fast path used to send the first clause to TTS the instant it was
+    separable, and every output guard — register, false agreement, doctor
+    presence, known numbers, connect promise, END_CALL, anti-loop — ran only
+    on the finished reply. So the caller heard "డాక్టర్ గారు ఉన్నారు" and then
+    the corrected line contradicting it, or "staff కి connect చేస్తున్నాను"
+    followed by "staff అందుబాటులో లేరు"; and because the final text no longer
+    began with the clause, _run_turn spoke the whole reply again after it.
+
+    Each guard is run on the clause alone. Anything a guard would change, or
+    cannot judge from a fragment, holds the clause: the turn then speaks the
+    full, filtered reply once — a little slower, never contradicted.
+    """
+    p = prefix or ""
+    if not p.strip():
+        return "empty"
+    if _scrub_vendors(p) != p:
+        return "vendor"
+    if _END_CALL_ANY_RE.search(p) or _END_CALL_RE.search(p) or _BARE_SENTINEL_RE.match(p):
+        return "sentinel"
+    if _enforce_register(p, lang)[0] != p:
+        return "register"
+    m = _AGREE_OPENER_RE.match(p)
+    if m and (_strip_false_agreement(p)[1]
+              or not re.search(r"[.!?\u0964]", p[m.end():])):
+        # The negative that makes the opener false may be in the part of the
+        # sentence that has not streamed yet.
+        return "agreement"
+    if _DOC_PRESENCE_Q_RE.search(user_text or "") and not _DOC_TIMING_RE.search(user_text or ""):
+        # The hedge that makes the answer honest may come later in the reply.
+        return "doctor"
+    if known and (_fix_known_numbers(p, known)[1] or _TRAILING_DIGIT_RE.search(p)):
+        # A number can be cut at the clause's comma and corrected as a whole.
+        return "number"
+    if _CONNECT_PROMISE_RE.search(p):
+        return "connect"
+    if _drop_repeated_question(p, prev_bot)[1]:
+        return "question"
+    if prev_bot:
+        head = prev_bot.strip()[:len(p.strip())]
+        if head and difflib.SequenceMatcher(None, head, p.strip()).ratio() > 0.72:
+            # Opens like the last reply: the anti-loop check will most likely
+            # throw this one away and ask again.
+            return "repeat"
+    return ""
 
 
 class BrowserChatRequest(BaseModel):
@@ -4896,12 +5176,19 @@ async def browser_chat(req: BrowserChatRequest):
 
 
 @app.post("/api/v1/browser/save-booking")
-async def browser_save_booking(req: BookingSaveRequest):
+async def browser_save_booking(req: BookingSaveRequest,
+                              x_internal_secret: str = Header(None)):
     """
     Save a booking collected by the browser widget to Supabase.
     This makes it appear in the client's Appointments dashboard immediately.
     For demo visitors (no tenant_id), saved to a shared demo tenant.
     """
+    # Unauthenticated, this wrote CONFIRMED appointments, calls and qualified
+    # leads into any tenant whose id a stranger supplied. Nothing in web/ or
+    # the api-server calls it; the demo (no tenant) stays open, and a real
+    # tenant needs the internal secret, i.e. a server-side caller.
+    if req.tenant_id and req.tenant_id != "demo" and not _internal_ok(x_internal_secret):
+        raise HTTPException(status_code=403, detail="tenant bookings require authentication")
     db = SupabaseClient()
     tenant_id = req.tenant_id or "00000000-0000-0000-0000-000000000000"  # demo tenant
 
@@ -4947,7 +5234,7 @@ async def browser_save_booking(req: BookingSaveRequest):
                             "stage":             "qualified",
                             "score":             80,
                             "source":            "widget",
-                            "last_contacted_at": datetime.now().isoformat(),
+                            "last_contacted_at": datetime.now(timezone.utc).isoformat(),
                         }
                     )
             except Exception as e:
@@ -5715,12 +6002,42 @@ def _wav_to_pcm16(audio: bytes) -> bytes:
 _TTS_SPOOL = "/tmp/recordings"
 
 
+# A FreeSWITCH channel uuid, and nothing else. fs_uuid arrives in a URL path
+# and is pasted into ESL commands ("api uuid_kill {fs_uuid}") and spool file
+# names; a value carrying a newline is a second ESL command.
+_FS_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _valid_fs_uuid(value: str | None) -> bool:
+    return bool(_FS_UUID_RE.fullmatch(value or ""))
+
+
+# Headers a reverse proxy adds. nginx and cloudflared on this host ALSO reach
+# the pipeline from 127.0.0.1, so loopback alone does not prove the peer is
+# FreeSWITCH; a proxied request always carries one of these, and
+# mod_audio_stream never does.
+_PROXY_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded")
+
+
+def _ws_is_local_freeswitch(ws) -> bool:
+    host = getattr(getattr(ws, "client", None), "host", "") or ""
+    if host not in ("127.0.0.1", "::1"):
+        return False
+    headers = getattr(ws, "headers", {}) or {}
+    return not any(h in headers for h in _PROXY_HEADERS)
+
+
 async def _esl_api(command: str, timeout: float = 5.0) -> str:
     """Minimal async ESL client — enough to issue one api command.
 
     The pipeline is network_mode: host, so FreeSWITCH's event socket is on
     127.0.0.1:8021 (it binds loopback only; see event_socket.conf.xml).
     """
+    # ESL frames end at a blank line. Anything interpolated into `command`
+    # that carries a line break would smuggle in a command of its own.
+    if "\n" in command or "\r" in command:
+        raise ValueError("refusing ESL command containing a line break")
     host = os.getenv("FREESWITCH_ESL_HOST", "127.0.0.1")
     port = int(os.getenv("FREESWITCH_ESL_PORT", "8021"))
     pw   = os.getenv("FREESWITCH_ESL_PASSWORD", "ClueCon")
@@ -5888,9 +6205,14 @@ async def _calls_so_far(db, voice_profile_id: str) -> int:
 async def _play_demo_exhausted(fs_uuid: str, profile: dict) -> None:
     """Say the demo is over rather than dropping the caller into silence."""
     try:
-        tts = SarvamTTS()
-        msg = ("ధన్యవాదాలు. ఈ demo call limit అయిపోయింది. "
-               "మా team మీకు త్వరలో contact చేస్తారు.")
+        lang = _tenant_lang(profile)
+        tts = SarvamTTS(lang)
+        msg = {
+            "hi-IN": "धन्यवाद। इस डेमो कॉल की सीमा पूरी हो गई है। हमारी टीम जल्द ही आपसे संपर्क करेगी।",
+            "bn-IN": "ধন্যবাদ। এই ডেমো কলের সীমা শেষ হয়ে গেছে। আমাদের টিম শীঘ্রই আপনার সাথে যোগাযোগ করবে।",
+            "en-IN": "Thank you. This demo line has reached its call limit. Our team will contact you soon.",
+        }.get(lang, "ధన్యవాదాలు. ఈ demo call limit అయిపోయింది. "
+                    "మా team మీకు త్వరలో contact చేస్తారు.")
         audio = await tts.synthesize(msg, "simran")
         if audio:
             await _send_audio_to_freeswitch(None, audio, fs_uuid, 99)
@@ -5899,9 +6221,70 @@ async def _play_demo_exhausted(fs_uuid: str, profile: dict) -> None:
         log.error(f"[FS] demo-exhausted message failed: {e}")
 
 
+_DEFAULT_NAME = {"te-IN": "నిక్కి", "hi-IN": "निक्की", "bn-IN": "নিক্কি", "en-IN": "Nikki"}
+
+
 def _assistant_name(profile: dict) -> str:
     """What she calls herself. Per-tenant, not always "Nikki"."""
-    return (profile.get("display_name") or "నిక్కి").strip()
+    # The default is in the tenant's script: a Telugu "నిక్కి" inside a Hindi
+    # greeting is a word the Hindi voice cannot say.
+    return (profile.get("display_name")
+            or _DEFAULT_NAME.get(_tenant_lang(profile), "నిక్కి")).strip()
+
+
+def _outbound_opener(profile: dict, kind: str, first_name: str = "",
+                     message: str = "") -> str:
+    """The first line of a call WE placed, in the tenant's language.
+
+    These were Telugu literals for every tenant, so a Bengali clinic's
+    reminder call opened in Telugu and the patient hung up on a language
+    they do not speak. Telugu wording is unchanged.
+    """
+    biz = profile.get("business_name") or "the business"
+    who = _assistant_name(profile)
+    lang = _tenant_lang(profile)
+    if lang == "hi-IN":
+        hello = f"नमस्ते {first_name} जी," if first_name else "नमस्ते,"
+        intro = f"{biz} से {who} बोल रही हूँ।"
+        return {
+            "campaign": f"नमस्ते, {intro} क्या एक मिनट बात कर सकते हैं?",
+            "incomplete_booking": (f"नमस्ते, {intro} आपने पहले हमें कॉल करके अपॉइंटमेंट माँगा था, "
+                                   "उसे कन्फ़र्म करने के लिए कॉल किया है। क्या अभी बात कर सकते हैं?"),
+            "outbound": f"नमस्ते, {intro} क्या अभी बात करने का समय है?",
+            "reminder": f"{hello} {intro} {message} यही बताने के लिए कॉल किया था।",
+        }[kind]
+    if lang == "bn-IN":
+        hello = f"নমস্কার {first_name}," if first_name else "নমস্কার,"
+        intro = f"{biz} থেকে {who} বলছি।"
+        return {
+            "campaign": f"নমস্কার, {intro} এক মিনিট কথা বলা যাবে?",
+            "incomplete_booking": (f"নমস্কার, {intro} আপনি আগে ফোন করে অ্যাপয়েন্টমেন্ট চেয়েছিলেন, "
+                                   "সেটা কনফার্ম করতেই ফোন করেছি। এখন কথা বলা যাবে?"),
+            "outbound": f"নমস্কার, {intro} এখন কথা বলার সময় হবে?",
+            "reminder": f"{hello} {intro} {message} এটা জানাতেই ফোন করেছিলাম।",
+        }[kind]
+    if lang == "en-IN":
+        hello = f"Hello {first_name}," if first_name else "Hello,"
+        intro = f"this is {who} calling from {biz}."
+        return {
+            "campaign": f"Hello, {intro} Do you have a minute?",
+            "incomplete_booking": (f"Hello, {intro} You called us earlier asking for an appointment, "
+                                   "and I'm calling to confirm it. Is now a good time?"),
+            "outbound": f"Hello, {intro} Is now a good time to talk?",
+            "reminder": f"{hello} {intro} {message} That's what I called to let you know.",
+        }[kind]
+    hello = f"హలో {first_name} గారు," if first_name else "హలో,"
+    return {
+        "campaign": (f"హలో, {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. "
+                     f"ఒక్క నిమిషం మాట్లాడొచ్చా?"),
+        "incomplete_booking": (f"హలో, {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. "
+                               f"మీరు ఇంతకుముందు మాకు కాల్ చేసి అపాయింట్‌మెంట్ అడిగారు కదా, "
+                               f"అది కన్ఫర్మ్ చేయడానికే కాల్ చేశాను. ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?"),
+        "outbound": (f"హలో, {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. "
+                     f"ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?"),
+        "reminder": (f"{hello} {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. {message} "
+                     f"ఇది తెలియజేయడానికే కాల్ చేశాను."),
+    }[kind]
 
 
 def _greeting_text(profile: dict, history: dict | None = None) -> str:
@@ -5976,9 +6359,12 @@ async def _greeting_audio(agent) -> bytes:
     # first call cached a wav under this name and every later call reads it
     # back. Silent, permanent, and exactly the kind of thing discovered weeks
     # later by someone wondering why their new opening never plays.
+    # With the tenant's language: without it a Hindi greeting went through the
+    # Telugu number/time rewriting.
     text = normalize_for_tts(getattr(agent, "greeting_override", None)
                              or _greeting_text(agent.profile, agent.caller_history),
-                             (agent.profile or {}).get("pronunciation_map"))
+                             (agent.profile or {}).get("pronunciation_map"),
+                             getattr(agent, "lang", LANG_DEFAULT))
     stamp = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
     path = pathlib.Path(_TTS_SPOOL) / f"greet_{pid}_{variant}_{stamp}.wav"
     try:
@@ -6104,6 +6490,11 @@ def _spoken_time(m: "re.Match") -> str:
 
 def _spoken_rupees(m: "re.Match") -> str:
     n = int(m.group(1).replace(",", ""))
+    # "Rs 3.50" matched only the 3, and the caller heard "3 రూపాయలు.50".
+    paise = (m.group(2) or "") if m.re.groups >= 2 else ""
+    if paise and int(paise):
+        p = int(paise) * (10 if len(paise) == 1 else 1)
+        return f"{n} రూపాయల {p} పైసలు"
     special = {100: "వంద", 200: "రెండొందలు", 300: "మూడొందలు", 400: "నాలుగొందలు",
                500: "ఐదొందలు", 1000: "వెయ్యి", 2000: "రెండు వేలు", 5000: "ఐదు వేలు"}
     if n in special: return special[n]
@@ -6113,6 +6504,53 @@ def _spoken_rupees(m: "re.Match") -> str:
         # 4500 -> నాలుగున్నర వేలు: the half-thousand form real speech uses.
         return f"{_TE_HALF[n // 1000]} వేల రూపాయలు"
     return f"{n} రూపాయలు"   # bulbul handles plain smaller numbers acceptably
+
+# Numbers that are read digit by digit, never as a quantity. The comma pass
+# below turned a Hyderabad landline "04023456789" into "4,023,456,789" and a
+# pincode "500032" into "500,032" — four billion and five hundred thousand.
+# Landlines (leading 0, 10-11 digits) and 11-12 digit forms of a mobile
+# (0- or 91-prefixed) are phone numbers; a six-digit run starting 1-8 that is
+# not a round figure is a pincode. Round six-digit amounts ("125000") stay
+# quantities.
+_PHONE_RUN_RE = re.compile(
+    r"(?<![\d,.])(?:\+?91[\s-]?[6-9]\d{9}|0\d{2,4}[\s-]\d{6,8}|\+?\d{10,12})(?!\d|[,.]\d)")
+_PINCODE_RE = re.compile(r"(?<![\d,.])[1-8]\d{5}(?!\d|[,.]\d)")
+
+
+def _is_phone_run(run: str) -> bool:
+    d = re.sub(r"\D", "", run)
+    if d.startswith("91") and len(d) == 12 and d[2] in "6789":
+        return True
+    if d.startswith("0") and 10 <= len(d) <= 12:
+        return True
+    return len(d) == 10 and d[0] in "6789"
+
+
+def _is_pincode(run: str) -> bool:
+    return bool(re.fullmatch(r"[1-8]\d{5}", run)) and not run.endswith("00")
+
+
+def _digits_spoken(run: str, lang: str) -> str:
+    """A phone number or pincode, one digit at a time, in the tenant's script."""
+    d = re.sub(r"\D", "", run)
+    if len(d) == 12 and d.startswith("91"):
+        d = d[2:]
+    elif len(d) == 11 and d.startswith("0") and d[1] in "6789":
+        d = d[1:]                       # 0-prefixed mobile
+    if lang == "te-IN":
+        if len(d) == 10 and d[0] in "6789":
+            return _spoken_phone(re.match(r".*", d))
+        words = [_TE_DIGIT[c] for c in d]
+    else:
+        words = list(d)                 # single numerals: the voice says them in its own language
+    group = 3 if len(d) == 6 else 5 if len(d) == 10 else 4
+    out = []
+    for i, w in enumerate(words):
+        if i and i % group == 0:
+            out[-1] += ","
+        out.append(w)
+    return " ".join(out)
+
 
 def normalize_for_tts(text: str, pmap: dict | None = None,
                       lang: str = LANG_DEFAULT) -> str:
@@ -6128,6 +6566,9 @@ def normalize_for_tts(text: str, pmap: dict | None = None,
                 v = pmap.get(k)
                 if k and isinstance(v, str) and v:
                     t = t.replace(k, v)
+        # Phone numbers and pincodes digit by digit — a mobile number used to
+        # reach the voice as "9,848,012,345", nine billion.
+        t = _pincodes_digitwise(_phones_digitwise(t, lang), lang)
         # Long digit runs still need separators whatever the language.
         return re.sub(r"\b\d{5,}\b", lambda m: f"{int(m.group()):,}", t)
     # The tenant's own words first — their business name, their doctors,
@@ -6141,9 +6582,11 @@ def normalize_for_tts(text: str, pmap: dict | None = None,
             v = pmap.get(k)
             if k and isinstance(v, str) and v:
                 t = t.replace(k, v)
+    t = _phones_digitwise(t, lang)                      # landlines, 0-/+91-prefixed forms
     t = re.sub(r"\b[6-9]\d{9}\b", _spoken_phone, t)   # mobile numbers first (longest)
     t = re.sub(r"\b(\d{1,2}):(\d{2})(?:\s*([APap])\.?[Mm]\.?)?\b", _spoken_time, t)
-    t = re.sub(r"(?:Rs\.?|₹)\s*([\d,]+)", _spoken_rupees, t)
+    t = re.sub(r"(?:Rs\.?|₹)\s*([\d,]+)(?:\.(\d{1,2})(?!\d))?", _spoken_rupees, t)
+    t = _pincodes_digitwise(t, lang)
     # Commas into any surviving long number so bulbul does not choke
     # (its docs: >4 digits without separators may fail). This used to require
     # seven digits to match, which let every five- and six-digit number — the
@@ -6152,6 +6595,16 @@ def normalize_for_tts(text: str, pmap: dict | None = None,
     # Collapse a case marker doubled by substitution ("పదిన్నర కి కి").
     t = re.sub(r"(కి|కు|లో)\s+\1\b", r"\1", t)
     return t
+
+
+def _phones_digitwise(t: str, lang: str) -> str:
+    return _PHONE_RUN_RE.sub(lambda m: _digits_spoken(m.group(0), lang)
+                             if _is_phone_run(m.group(0)) else m.group(0), t)
+
+
+def _pincodes_digitwise(t: str, lang: str) -> str:
+    return _PINCODE_RE.sub(lambda m: _digits_spoken(m.group(0), lang)
+                           if _is_pincode(m.group(0)) else m.group(0), t)
 
 
 async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
@@ -6467,12 +6920,8 @@ async def _prepare_api_reminder(agent, profile: dict, recipient_id: str) -> None
         log.warning(f"[api-call] {recipient_id[:8]}: no message on the row — generic outbound greeting")
         return
     biz  = profile.get("business_name") or "the business"
-    who  = _assistant_name(profile)
     name = str((row or {}).get("first_name") or "").strip()
-    hello = f"హలో {name} గారు," if name else "హలో,"
-    agent.greeting_override = (
-        f"{hello} {biz} నుంచి {who} మాట్లాడుతున్నాను అండి. {message} "
-        f"ఇది తెలియజేయడానికే కాల్ చేశాను.")
+    agent.greeting_override = _outbound_opener(profile, "reminder", name, message)
     agent.api_reminder = {"recipient_id": recipient_id, "message": message,
                           "purpose": str(md.get("purpose") or "reminder")}
     agent.system_prompt += (
@@ -6551,16 +7000,50 @@ async def _report_reminder_result(agent, fs_uuid: str, duration: int) -> None:
     verdict["spoke_seconds"] = duration
     # Merge, never replace: the hangup hook writes duration_seconds and the
     # callback stamps into this same jsonb column a few seconds from now.
-    row = await _fetch_recipient(agent.db, rid)
-    md = dict((row or {}).get("metadata") or {})
-    md["result"] = verdict
+    #
+    # Read-merge-write alone still lost those: a hangup-hook write landing
+    # between our read and our PATCH was overwritten with the stale copy
+    # (the LLM judgement above takes seconds, and the hook fires in exactly
+    # that window). So the PATCH is conditional on metadata being what we
+    # read — compare-and-swap through a PostgREST filter — and re-read and
+    # re-merged if someone else wrote first. There is no jsonb-merge RPC to
+    # do this server-side.
     try:
+        written = False
         async with httpx.AsyncClient(timeout=8.0) as c:
-            await c.patch(f"{agent.db.url}/rest/v1/outbound_recipients",
-                          headers=agent.db.headers, params={"id": f"eq.{rid}"},
-                          json={"metadata": md})
-        log.info(f"[api-call] {rid[:8]}: result {verdict['customer_response']} "
-                 f"(delivered={verdict['delivered']})")
+            for _attempt in range(4):
+                row = await _fetch_recipient(agent.db, rid)
+                if row is None:
+                    break
+                old_md = (row or {}).get("metadata") or {}
+                md = {**old_md, "result": verdict}
+                params = {"id": f"eq.{rid}"}
+                if _attempt < 3:
+                    params["metadata"] = "eq." + json.dumps(old_md, ensure_ascii=False,
+                                                            separators=(",", ":"))
+                r = await c.patch(f"{agent.db.url}/rest/v1/outbound_recipients",
+                                  headers={**agent.db.headers, "Prefer": "return=representation"},
+                                  params=params, json={"metadata": md})
+                if r.status_code < 300 and r.json():
+                    written = True
+                    break
+                if r.status_code >= 300 and _attempt < 3:
+                    # The conditional filter itself was refused; one plain
+                    # merge-write is better than no result on the row.
+                    log.warning(f"[api-call] {rid[:8]}: conditional write refused "
+                                f"({r.status_code}) — plain merge")
+                    params.pop("metadata", None)
+                    r = await c.patch(f"{agent.db.url}/rest/v1/outbound_recipients",
+                                      headers=agent.db.headers, params=params,
+                                      json={"metadata": md})
+                    written = r.status_code < 300
+                    break
+                # 0 rows: metadata changed under us — re-read and merge again.
+        if written:
+            log.info(f"[api-call] {rid[:8]}: result {verdict['customer_response']} "
+                     f"(delivered={verdict['delivered']})")
+        else:
+            log.warning(f"[api-call] {rid[:8]}: result not written")
     except Exception as e:  # noqa: BLE001
         log.warning(f"[api-call] {rid[:8]}: result write failed: {e}")
 
@@ -6785,6 +7268,54 @@ async def _notify_order(agent, fs_uuid: str, order_id: str, reference: str,
     }, cfg)
 
 
+# "Don't call me again", in the forms callers actually use. outbound_opt_outs
+# existed from migration 006 but nothing on a call ever wrote to it, so a
+# person who told Nikki "నాకు చేయొద్దు, వదిలేసి నన్ను" on 15 Sep heard "ఇకపై
+# మీకు కాల్ చేయము" and was still eligible for the next callback — the same
+# number had already been rung five times about one abandoned booking.
+# STT spells "call" as కాల్/కాలు/కాల్స్, so the verb and the noun are matched
+# in either order within a short window. This is the backstop; the post-call
+# model's do_not_call flag catches the phrasings a regex cannot.
+_OPT_OUT_RE = re.compile(
+    r"(?:don'?t|do not|never|stop)\s+(?:call|calling|ring|phone)"
+    r"|(?:కాల్|కాలు|call|phone|ఫోన్)\S*.{0,25}?(?:చేయొద్దు|చేయకండి|చేయవద్దు|చెయ్యొద్దు|మానేయ|ఆపేయ)"
+    r"|(?:చేయొద్దు|చేయకండి|చేయవద్దు|చెయ్యొద్దు)\S*.{0,25}?(?:కాల్|కాలు|call|phone|ఫోన్)"
+    r"|(?:call|फोन|कॉल)\s*(?:मत|नहीं)\s*(?:करना|करो|करें|कीजिए)",
+    re.I)
+
+
+def _caller_asked_not_to_be_called(agent) -> bool:
+    return any(t.get("role") == "user" and _OPT_OUT_RE.search(t.get("content") or "")
+               for t in (agent.transcript or []))
+
+
+async def _record_opt_out(agent, fs_uuid: str, caller_number: str, why: str) -> None:
+    """Put this number on the tenant's do-not-call list. Idempotent.
+
+    The dispatcher and the scheduler both refuse a number on this list, so
+    this is what makes Nikki's "we won't call you again" true.
+    """
+    digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+    tenant_id = (agent.profile or {}).get("tenant_id")
+    if len(digits) != 10 or not tenant_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            r = await c.post(
+                f"{agent.db.url}/rest/v1/outbound_opt_outs?on_conflict=tenant_id,phone",
+                headers={**agent.db.headers,
+                         "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                json={"tenant_id": tenant_id, "phone": digits,
+                      "reason": f"{why} (call {agent.call_id or fs_uuid})"[:200]})
+        if r.status_code >= 300:
+            log.error(f"[FS] {fs_uuid}: opt-out write FAILED {r.status_code} {r.text[:120]}")
+        else:
+            agent.opted_out = True
+            log.info(f"[FS] {fs_uuid}: …{digits[-4:]} added to do-not-call ({why})")
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[FS] {fs_uuid}: opt-out write failed: {e}")
+
+
 async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
                               did_number: str, duration: int) -> None:
     """Rate the conversation and write a lead. Runs AFTER hangup.
@@ -6813,7 +7344,10 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             "object, no markdown fence:\n"
             '{"score":0-100,"stage":"new|contacted|qualified|won|lost",'
             '"intent":"short_snake_case","interest":"what they asked about",'
-            '"summary":"one sentence in English"}\n'
+            '"summary":"one sentence in English","do_not_call":true|false}\n'
+            "do_not_call: true ONLY if the Caller clearly asked not to be called "
+            "again (stop calling me, don't call, leave me alone). A plain 'not "
+            "interested' or 'busy now' is false.\n"
             "score: how likely this caller is to become a customer. A booking "
             "or a clear commitment is 80+. A price enquiry is 50-70. A wrong "
             "number, abuse or an immediate hangup is under 20.\n"
@@ -6833,6 +7367,9 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             log.warning(f"[FS] {fs_uuid}: lead scoring returned no JSON")
             return
         d = json.loads(m.group(0))
+
+        if d.get("do_not_call") is True and not getattr(agent, "opted_out", False):
+            await _record_opt_out(agent, fs_uuid, caller_number, "caller asked (model)")
 
         score = max(0, min(100, int(d.get("score") or 0)))
         _VALID_STAGES = ("new", "contacted", "qualified", "won", "lost")
@@ -6977,7 +7514,7 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         # to uninterested people earns blocks, and enough blocks drop the
         # number's quality rating to Low, which throttles every template
         # including the transactional ones.
-        if stage in ("qualified", "won"):
+        if stage in ("qualified", "won") and not getattr(agent, "opted_out", False):
             cfg = await _read_platform_config()
             await _fire_automation_webhook("interested-lead", {
                 "caller_number":   digits,
@@ -7050,6 +7587,80 @@ def _utterance_incomplete(text: str) -> bool:
     return False
 
 
+# Said when the API server could not move the call. The caller has just been
+# told she is connecting them; silence after that is the worst answer.
+_TRANSFER_FAILED_LINE = {
+    "te-IN": "క్షమించండి అండి, ఇప్పుడు స్టాఫ్ లైన్ కనెక్ట్ కావడం లేదు. "
+             "మీ నంబర్ నోట్ చేశాను, మా టీమ్ మీకు వెంటనే కాల్ బ్యాక్ చేస్తుంది.",
+    "hi-IN": "माफ़ कीजिए, अभी स्टाफ़ की लाइन कनेक्ट नहीं हो रही। "
+             "आपका नंबर नोट कर लिया है, हमारी टीम आपको जल्दी वापस कॉल करेगी।",
+    "bn-IN": "দুঃখিত, এই মুহূর্তে স্টাফের লাইনে যোগাযোগ হচ্ছে না। "
+             "আপনার নম্বর নোট করেছি, আমাদের টিম শীঘ্রই আপনাকে কল ব্যাক করবে।",
+    "en-IN": "Sorry, I can't reach our staff line right now. "
+             "I've noted your number and our team will call you back shortly.",
+}
+
+
+async def _transfer_mid_call(agent, ws, fs_uuid: str, seq: int, speaking: dict) -> None:
+    """Hand a live call to the ring group, or tell the caller why not.
+
+    The stream used to be detached BEFORE the API was asked to transfer. When
+    that POST failed — API restarting, a 500 from ESL — the caller had
+    already lost Nikki and never got a person: dead air until the 120s idle
+    timeout, which did not hang up either. Now the stream is only stopped
+    once the transfer has actually been accepted; on failure she is still on
+    the line and says so.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.post(
+                f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
+                headers={"X-Internal-Secret": INTERNAL_SECRET},
+                json={"fs_uuid": fs_uuid,
+                      "ring_group": agent.ring_group,
+                      "guard_seconds": agent.guard_seconds},
+            )
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[FS] {fs_uuid}: transfer failed ({e}) — staying on the line")
+        agent.intent = "callback"
+        agent.callback_promised = True
+        agent._fire_missed_call_followup()
+        line = _TRANSFER_FAILED_LINE.get(getattr(agent, "lang", LANG_DEFAULT),
+                                         _TRANSFER_FAILED_LINE["te-IN"])
+        agent.history.append({"role": "assistant", "content": line})
+        agent.transcript.append({"role": "assistant", "content": line,
+                                 "ts": datetime.now(timezone.utc).isoformat()})
+        try:
+            await asyncio.sleep(max(0.0, speaking.get("until", 0.0) - time.monotonic()) + 0.05)
+            await _speak_chunked(agent, ws, fs_uuid, line, seq, speaking, sub_offset=8)
+        except Exception as e2:  # noqa: BLE001
+            log.error(f"[FS] {fs_uuid}: transfer-failed apology not spoken: {e2}")
+        return
+
+    # Transfer accepted. The caller is still on the line, now with a person.
+    # Cleanup must not stop the recording or file the call as completed —
+    # see the handed_to_human branch in the finally block.
+    agent.handed_to_human = True
+    # Detach mod_audio_stream now. Closing our end of the websocket does not
+    # stop the stream on the channel — it simply reconnects, the pipeline
+    # treats the reconnection as a brand new call, and Nikki comes back to
+    # life on a leg that is supposed to be a human. On the 12:52 call that
+    # produced a second calls row (18s, no transcript, intent unknown)
+    # sharing one FreeSWITCH uuid with the first, and the caller heard the
+    # bot restart after being told she was connecting them to staff.
+    try:
+        res = await _esl_api(f"uuid_audio_stream {fs_uuid} stop")
+        if not res.startswith("+OK"):
+            log.warning(f"[FS] {fs_uuid}: audio stream stop returned {res!r}")
+    except Exception as e:  # noqa: BLE001
+        log.error(f"[FS] {fs_uuid}: audio stream stop failed after transfer: {e}")
+    try:
+        await ws.close(code=1000)
+    except Exception:  # noqa: BLE001
+        pass    # FreeSWITCH closed it first when the stream stopped
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict,
                     transcript: str | None = None,
@@ -7061,6 +7672,7 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
     cancel here must leave the call healthy, so CancelledError is allowed
     to propagate untouched and everything else is swallowed.
     """
+    clause = {"text": None, "until": 0.0, "task": None}
     try:
         # The filler waits 1.1s and is cancelled the moment the reply text is
         # ready. Two research findings drove this: fillers on EVERY turn make
@@ -7085,7 +7697,7 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # still generating; it goes to TTS and the caller's ear immediately.
         # clause["until"] is when its audio finishes — the remainder must
         # not broadcast before that, because uuid_broadcast interrupts.
-        clause = {"text": None, "until": 0.0, "task": None}
+        clause.update({"text": None, "until": 0.0, "task": None})
 
         def _on_first_clause(prefix: str) -> None:
             # A hold sentinel must never reach TTS, and it arrives here first:
@@ -7118,6 +7730,11 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     clause["until"] = speaking["until"]
                     await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10)
             clause["task"] = asyncio.create_task(_speak_prefix())
+            # Published so barge-in can cancel it. It is its own task, not a
+            # child of this turn: cancelling the turn left it synthesising,
+            # and a second later it re-set speaking["until"] and broadcast the
+            # clause over the caller who had just interrupted.
+            speaking["clause_task"] = clause["task"]
 
         reply_text = await agent.on_speech(wav_bytes, want_text=True,
                                            transcript_override=transcript,
@@ -7141,13 +7758,18 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             return
         # speaking["until"] is published inside, before each chunk is sent, so
         # a caller who interrupts immediately still trips the barge-in check.
-        if clause["text"] and reply_text.startswith(clause["text"]):
+        # Compared stripped: the stream's reply is .strip()ped and the clause
+        # is a raw slice, so a leading space or newline from the model failed
+        # startswith and the clause was spoken twice.
+        _head = (clause["text"] or "").strip()
+        reply_text = reply_text.strip()
+        if _head and reply_text.startswith(_head):
             # The opening clause is already playing (or in flight). Speak only
             # the remainder, starting after the clause audio ends, with sub
             # sequence numbers above it.
             if clause["task"]:
                 await clause["task"]
-            remainder = reply_text[len(clause["text"]):].strip()
+            remainder = reply_text[len(_head):].strip()
             if remainder:
                 await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
                 await _speak_chunked(agent, ws, fs_uuid, remainder, seq, speaking,
@@ -7198,39 +7820,26 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         if getattr(agent, "transfer_requested", False):
             agent.transfer_requested = False
             log.info(f"[FS] {fs_uuid}: caller asked for a human — transferring")
-            try:
-                # Detach mod_audio_stream FIRST. Closing our end of the
-                # websocket does not stop the stream on the channel — it
-                # simply reconnects, the pipeline treats the reconnection as
-                # a brand new call, and Nikki comes back to life on a leg
-                # that is supposed to be a human. On the 12:52 call that
-                # produced a second calls row (18s, no transcript, intent
-                # unknown) sharing one FreeSWITCH uuid with the first, and
-                # the caller heard the bot restart after being told she was
-                # connecting them to staff.
-                await _esl_api(f"uuid_audio_stream {fs_uuid} stop")
-                async with httpx.AsyncClient(timeout=4.0) as client:
-                    r = await client.post(
-                        f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
-                        headers={"X-Internal-Secret": INTERNAL_SECRET},
-                        json={"fs_uuid": fs_uuid,
-                              "ring_group": agent.ring_group,
-                              "guard_seconds": agent.guard_seconds},
-                    )
-                    r.raise_for_status()
-                # The caller is still on the line, now with a person. Cleanup
-                # must not stop the recording or file the call as completed
-                # — see the handed_to_human branch in the finally block.
-                agent.handed_to_human = True
-                try:
-                    await ws.close(code=1000)
-                except Exception:  # noqa: BLE001
-                    pass    # FreeSWITCH closed it first when the stream stopped
-            except Exception as e:  # noqa: BLE001
-                # She has already said she is connecting them, so failing
-                # silently here would strand the caller mid-promise.
-                log.error(f"[FS] {fs_uuid}: transfer failed: {e}")
+            # Shielded: once the API has been asked to move the channel, a
+            # caller saying "సరే" over "connecting you" must not cancel the
+            # hand-off halfway, with the stream still attached to a bridged
+            # leg.
+            await asyncio.shield(_transfer_mid_call(agent, ws, fs_uuid, seq, speaking))
     except asyncio.CancelledError:
+        # Barge-in (or cleanup) cancelled this turn. Take the clause with it —
+        # see speaking["clause_task"] above.
+        _ct = clause.get("task")
+        if _ct and not _ct.done():
+            _ct.cancel()
+        # A hangup or transfer armed by the reply the caller just talked over
+        # was only ever cleared at the END of this function, which a cancel
+        # never reaches — so the NEXT turn, about something else entirely,
+        # hung up on them or put them through to staff. What the caller
+        # interrupted did not happen.
+        if getattr(agent, "end_call_requested", False) or getattr(agent, "transfer_requested", False):
+            log.info(f"[FS] {fs_uuid}: turn interrupted — voiding pending hangup/transfer")
+        agent.end_call_requested = False
+        agent.transfer_requested = False
         raise
     except Exception as e:  # noqa: BLE001
         log.error(f"[FS] {fs_uuid}: turn failed: {e}")
@@ -7498,7 +8107,11 @@ async def _upload_to_r2(local_wav_bytes: bytes, call_id: str, tenant_id: str) ->
             return ""
 
         object_key = f"{tenant_id}/{call_id}.wav{key_suffix}"
-        s3.put_object(
+        # boto3 is synchronous. Called bare, a multi-MB upload at hangup froze
+        # the event loop — audio frames, barge-in and turns on every OTHER live
+        # call stalled for the length of the upload.
+        await asyncio.to_thread(
+            s3.put_object,
             Bucket=r2_bucket,
             Key=object_key,
             Body=body,
@@ -7687,6 +8300,16 @@ async def freeswitch_ws(
     Recording flow:
       All inbound PCM accumulated in memory → WAV → Cloudflare R2 on hangup.
     """
+    # Only FreeSWITCH on this host may open a call. The route was open to
+    # anyone who could reach the port through a proxy: a made-up request
+    # could run a billed AI call against any DID, write an onboarding draft
+    # into any tenant, and push its fs_uuid into ESL unescaped.
+    if not _ws_is_local_freeswitch(ws) or not _valid_fs_uuid(fs_uuid):
+        log.warning(f"[FS] refused websocket from "
+                    f"{getattr(getattr(ws, 'client', None), 'host', '?')} "
+                    f"uuid={fs_uuid[:40]!r}")
+        await ws.close(code=1008)
+        return
     await ws.accept()
     # The dialplan has always appended ?direction=outbound&campaign_id=... on
     # the campaign path; this handler simply never declared the parameters, so
@@ -7697,6 +8320,10 @@ async def freeswitch_ws(
     # business that just signed up, to ask about their business — not Nikki
     # answering as that business.
     onboarding  = (onboarding or "").strip()
+    if onboarding and not _valid_fs_uuid(onboarding):
+        # tenants.id is a uuid; anything else is not a tenant to write into.
+        log.warning(f"[FS] ignoring malformed onboarding tenant {onboarding[:40]!r}")
+        onboarding = ""
     log.info(f"[FS] Connected: did={did_number} caller={caller_number} "
              f"uuid={fs_uuid} direction={'outbound' if is_outbound else 'inbound'}"
              + (f" campaign={campaign_id}" if campaign_id else "")
@@ -7733,6 +8360,13 @@ async def freeswitch_ws(
             log.warning(f"[FS] demo cap reached for {profile.get('business_name')}: "
                         f"{used}/{limit} — playing closing message")
             await _play_demo_exhausted(fs_uuid, profile)
+            # The leg is already answered. Closing the websocket alone left a
+            # live, silent, billed line — and mod_audio_stream reconnecting
+            # replayed this message in a loop. Hang up like the other refusals.
+            try:
+                await _esl_api(f"uuid_kill {fs_uuid}")
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[FS] uuid_kill after demo cap failed: {e}")
             await ws.close(code=1000)
             return
         log.info(f"[FS] demo call {used + 1}/{limit} for {profile.get('business_name')}")
@@ -7761,17 +8395,21 @@ async def freeswitch_ws(
         # call played the INBOUND greeting — a returning contact heard
         # "మళ్ళీ కాల్ చేసినందుకు థాంక్యూ! చెప్పండి" on a call we placed
         # (02:11 on 5 Sep) and answered with sixteen seconds of "Hello?".
-        _biz = profile.get("business_name") or "the business"
-        agent.greeting_override = (
-            f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
-            f"ఒక్క నిమిషం మాట్లాడొచ్చా?")
+        agent.greeting_override = _outbound_opener(profile, "campaign")
         try:
             camp = await db.get_campaign_script(campaign_id)
             if camp:
                 from app.widget import build_outbound_prompt
                 agent.system_prompt = build_outbound_prompt(camp).replace(
                     "__LANGUAGE_RULE__",
-                    "- Speak Telugu with natural English words mixed in, as Hyderabad speaks.")
+                    _LANGUAGE_RULE.get(agent.lang, _LANGUAGE_RULE["te-IN"]))
+                # The script replaced the whole prompt, business facts and
+                # tool instructions included — while the tools themselves
+                # stayed declared, so a model that did not know the date was
+                # still free to book an appointment.
+                agent.system_prompt += _business_context_block(profile, knowledge)
+                if agent.use_tools:
+                    agent.system_prompt += _TOOLS_PROMPT
                 log.info(f"[FS] campaign {campaign_id[:8]}: script applied ({len(camp)} chars)")
             else:
                 log.warning(f"[FS] campaign {campaign_id[:8]} has no script — using the default prompt")
@@ -7789,6 +8427,9 @@ async def freeswitch_ws(
         agent.onboarding_tenant = onboarding
         agent.system_prompt = ONBOARDING_PROMPT.format(
             business=profile.get("business_name") or "your business")
+        # The interview prompt replaces the receptionist's, but the booking
+        # and transfer tools would still have been declared to the model.
+        agent.use_tools = False
     elif is_outbound and not campaign_id:
         # A plain outbound leg — a test dial, or a callback with no campaign
         # script. Everything above was written for a caller who rang US:
@@ -7802,10 +8443,7 @@ async def freeswitch_ws(
             # and the call ended before a slot was fixed. Without this she
             # opened with "calling about your health care" and the person
             # asked three times who was speaking.
-            agent.greeting_override = (
-                f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
-                f"మీరు ఇంతకుముందు మాకు కాల్ చేసి అపాయింట్‌మెంట్ అడిగారు కదా, "
-                f"అది కన్ఫర్మ్ చేయడానికే కాల్ చేశాను. ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?")
+            agent.greeting_override = _outbound_opener(profile, "incomplete_booking")
             agent.system_prompt += (
                 f"\n\nTHIS IS AN OUTBOUND CALLBACK from {_biz}. The customer phoned "
                 "the business earlier and asked for an appointment, but the call "
@@ -7821,9 +8459,7 @@ async def freeswitch_ws(
             # follow-up below and never say what she rang to say.
             await _prepare_api_reminder(agent, profile, recipient.strip())
         else:
-            agent.greeting_override = (
-                f"హలో, {_biz} నుంచి {_assistant_name(profile)} మాట్లాడుతున్నాను అండి. "
-                f"ఇప్పుడు మాట్లాడటానికి వీలవుతుందా?")
+            agent.greeting_override = _outbound_opener(profile, "outbound")
             agent.system_prompt += (
                 f"\n\nTHIS IS AN OUTBOUND CALL. You called the customer from {_biz}; "
                 "they did not call you. Never say or imply they called. If they ask "
@@ -7868,6 +8504,22 @@ async def freeswitch_ws(
     if not routing:
         log.error(f"[FS] {fs_uuid}: no routing answer — answering as the AI without "
                   "the tenant's routing mode, concurrency cap or credit check")
+        if not is_outbound:
+            # Still answered — a dead line is worse for the business than an
+            # unmetered minute. But without the credit and suspension verdict
+            # this call must not create work the tenant may not be entitled
+            # to: no bookings, orders or confirmations (tools and the keyword
+            # booking path are off), and the model is told to apologise and
+            # take a message, which the transcript and the lead carry to the
+            # business. Outbound legs were already approved by the dispatcher
+            # before they were dialled, so they keep their script.
+            agent.routing_degraded = True
+            agent.use_tools = False
+            agent.system_prompt += (
+                "\n\n[SERVICE NOTE] Our booking system is unavailable on this call. "
+                "Do NOT book appointments, take orders or promise a transfer. Apologise "
+                "briefly that you cannot book right now, take the caller's name and "
+                "message, confirm their number, and say the team will call them back.")
 
     # Give the agent what a mid-call transfer needs. Without this it could
     # only ever promise one: the working path below fires at call START for
@@ -7961,7 +8613,7 @@ async def freeswitch_ws(
         log.info(f"[FS] {fs_uuid}: routing_mode=human — transferring to ring group")
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
-                await client.post(
+                _hr = await client.post(
                     f"{API_SERVER_URL}/webhooks/freeswitch/transfer-to-human",
                     headers={"X-Internal-Secret": INTERNAL_SECRET},
                     json={
@@ -7970,9 +8622,20 @@ async def freeswitch_ws(
                         "guard_seconds": routing.get("missed_call_seconds", 20),
                     },
                 )
+            # The status was never read: a 500 from the API ("Transfer
+            # failed") still marked the row transferred and closed the
+            # websocket, leaving the caller on a line nobody was attached to.
+            _hr.raise_for_status()
         except Exception as e:
             log.error(f"[FS] human transfer failed: {e} — continuing with AI")
         else:
+            # Same reason as _transfer_mid_call: closing the websocket alone
+            # lets mod_audio_stream reconnect and Nikki restart on the
+            # humans' leg.
+            try:
+                await _esl_api(f"uuid_audio_stream {fs_uuid} stop")
+            except Exception as e:  # noqa: BLE001
+                log.warning(f"[FS] {fs_uuid}: audio stream stop after routing transfer failed: {e}")
             # This handler returns before the try/finally below, so nothing
             # else will touch the row: it stayed status=active with
             # intent NULL, which the calls page rendered as a live
@@ -8000,10 +8663,16 @@ async def freeswitch_ws(
     if routing and (routing.get("ok") is False or routing.get("routing_mode") == "reject"):
         reason = routing.get("reason", "refused")
         log.warning(f"[FS] call refused ({reason}) — {did_number} from {caller_number}")
-        msg = routing.get("message") or "క్షమించండి, ఈ నంబర్ ప్రస్తుతం అందుబాటులో లేదు."
+        _lang = _tenant_lang(profile)
+        msg = routing.get("message") or {
+            "hi-IN": "क्षमा करें, यह नंबर अभी उपलब्ध नहीं है।",
+            "bn-IN": "দুঃখিত, এই নম্বরটি এখন উপলব্ধ নয়।",
+            "en-IN": "Sorry, this number is not available right now.",
+        }.get(_lang, "క్షమించండి, ఈ నంబర్ ప్రస్తుతం అందుబాటులో లేదు.")
         try:
-            tts = SarvamTTS()
-            wav = await tts.synthesize(normalize_for_tts(msg), profile.get("voice") or "priya", 8000)
+            tts = SarvamTTS(_lang)
+            wav = await tts.synthesize(normalize_for_tts(msg, None, _lang),
+                                       profile.get("voice") or "priya", 8000)
             await _send_audio_to_freeswitch(ws, wav, fs_uuid)
             # 8kHz mono 16-bit => 16000 bytes/sec; wait for playback to finish
             # before killing the channel or the caller hears nothing at all.
@@ -8068,6 +8737,7 @@ async def freeswitch_ws(
     pending_text = ""             # B7: merged mid-reply interjections
     pending_pcm  = bytearray()
     pending_runner: dict = {"t": None}
+    classify_tasks: set = set()   # detached _classify_short checks, for cleanup
     held_text = ""                # completeness gate: fragments awaiting the rest
     held_pcm  = bytearray()
     held_at   = 0.0
@@ -8076,7 +8746,9 @@ async def freeswitch_ws(
     # Per-call streaming STT. Transcribes WHILE the caller talks, so the
     # transcript is ~ready when the silence window closes — the batch POST's
     # 300-600ms round-trip leaves the critical path. Fails open to batch.
-    stt_stream = SarvamStreamingSTT()
+    # The tenant's language — built without it, every Hindi, Bengali and
+    # English line was transcribed as Telugu on the main path.
+    stt_stream = SarvamStreamingSTT(getattr(agent, "lang", LANG_DEFAULT))
     asyncio.create_task(stt_stream.start())
     speech_needed  = _MIN_SPEECH_FRAMES
     cfg           = {}
@@ -8124,6 +8796,19 @@ async def freeswitch_ws(
             log.debug(f"[FS] caller history skipped: {e}")
 
         greet = await _greeting_audio(agent)
+        # The opener is audio only — it never entered the model's history, so
+        # on the caller's first "Hello" she greeted all over again: "గుడ్
+        # ఆఫ్టర్నూన్ అండి! హే నిక్కి ... గురించి చెప్పండి" (16 Sep), and on a
+        # callback whose opener the caller talked over she never said why
+        # she was ringing. Tell her what she has already said.
+        if greet:
+            _opened = (getattr(agent, "greeting_override", None)
+                       or _greeting_text(agent.profile, agent.caller_history))
+            agent.system_prompt += (
+                f"\n\n[CALL ALREADY OPENED] You have just said: «{_opened}». "
+                "Do not greet or introduce yourself again. If the caller only says "
+                "'hello' or talks over you, they may not have heard it: say in one "
+                "short sentence who you are and why you are on the line, then listen.")
         if greet:
             await _send_audio_to_freeswitch(ws, greet, fs_uuid, 1)
             speaking["until"] = time.monotonic() + _wav_duration_secs(greet)
@@ -8135,6 +8820,15 @@ async def freeswitch_ws(
                 message = await asyncio.wait_for(ws.receive(), timeout=120.0)
             except asyncio.TimeoutError:
                 log.warning(f"[FS] {fs_uuid}: 120s timeout — hanging up")
+                # It said "hanging up" and only left the loop: the channel
+                # stayed up, billed, with nobody listening. FreeSWITCH sends
+                # frames continuously, so two minutes of nothing is a dead
+                # stream, not a quiet caller.
+                if not getattr(agent, "handed_to_human", False):
+                    try:
+                        await _esl_api(f"uuid_kill {fs_uuid}")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(f"[FS] {fs_uuid}: uuid_kill on idle timeout failed: {e}")
                 break
 
             # FreeSWITCH sends disconnect on call end
@@ -8331,6 +9025,12 @@ async def freeswitch_ws(
                         asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
                         if turn_task and not turn_task.done():
                             turn_task.cancel()
+                        # The streamed first clause is a task of its own; left
+                        # running it re-set speaking["until"] and broadcast
+                        # over the caller who had just cut her off.
+                        _ct = speaking.get("clause_task")
+                        if _ct and not _ct.done():
+                            _ct.cancel()
                         log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted (confirmed)")
                 elif not is_speech:
                     barge_frames = 0
@@ -8364,6 +9064,11 @@ async def freeswitch_ws(
                         log.info(f"[FS] {fs_uuid}: dropped {speech_count} frames of "
                                  f"background (peak {utt_peak:.0f} vs floor {vad_threshold:.0f})")
                         speech_buf, speech_count, silence_count, utt_peak = bytearray(), 0, 0, 0.0
+                        # Those frames were already fed to the streaming
+                        # socket. Left there, the street noise came back as
+                        # the first words of the caller's next turn.
+                        if not stt_stream.dead:
+                            asyncio.create_task(stt_stream.finish_turn(timeout=0.8, discard=True))
                         continue
                     utterance_pcm = bytes(speech_buf)
                     _trail_bytes  = silence_count * len(frame)   # silence after the voice
@@ -8436,9 +9141,12 @@ async def freeswitch_ws(
                                     return          # true backchannel — she talks on
                                 if re.search(r"ఆగండి|ఆపండి|wait|stop|hold|ఒక్క నిమిషం", low):
                                     speaking["until"] = 0.0
-                                    await _esl_api(f"uuid_break {fs_uuid} all")
                                     if tt and not tt.done():
                                         tt.cancel()
+                                    _ct = speaking.get("clause_task")
+                                    if _ct and not _ct.done():
+                                        _ct.cancel()
+                                    await _esl_api(f"uuid_break {fs_uuid} all")
                                     log.info(f"[FS] {fs_uuid}: caller said wait — stopped")
                                     return
                                 # A real interjection: MERGED into one
@@ -8472,8 +9180,10 @@ async def freeswitch_ws(
                                                       turn_seq, speaking,
                                                       transcript=q_text))
                                     pending_runner["t"] = asyncio.create_task(_drain_pending())
-                            asyncio.create_task(
+                            _ct_short = asyncio.create_task(
                                 _classify_short(utterance_pcm, turn_task))
+                            classify_tasks.add(_ct_short)
+                            _ct_short.add_done_callback(classify_tasks.discard)
                             speech_buf = bytearray()
                             continue
 
@@ -8530,6 +9240,28 @@ async def freeswitch_ws(
 
     finally:
         # ── Call cleanup ───────────────────────────────────────────────────
+        # Stop this call's own work before anything reads its state. Nothing
+        # cancelled the in-flight turn, the queued interjection runner or the
+        # short-utterance classifiers, so a reply could still be generated,
+        # appended to the transcript and broadcast AFTER the final row was
+        # written — and a keyword booking still being inserted lost the race
+        # with _enrich_appointment, which found no appointment_id and left
+        # the row bare.
+        _mine = [t for t in (turn_task, pending_runner.get("t"),
+                             speaking.get("clause_task"), *classify_tasks)
+                 if t is not None and not t.done()]
+        for _t in _mine:
+            _t.cancel()
+        if _mine:
+            await asyncio.wait(_mine, timeout=3.0)
+        # The agent's background writes (booking insert, missed-call
+        # follow-up) are finished, not cancelled: they are the call's output.
+        _bg = [t for t in getattr(agent, "_bg_tasks", ()) if not t.done()]
+        if _bg:
+            # asyncio.wait, not wait_for: a timeout must leave them running.
+            _done, _pending = await asyncio.wait(_bg, timeout=10.0)
+            if _pending:
+                log.warning(f"[FS] {fs_uuid}: {len(_pending)} background task(s) still running at cleanup")
         try:
             await stt_stream.close()
         except Exception:  # noqa: BLE001
@@ -8616,7 +9348,10 @@ async def freeswitch_ws(
                 "tenant_id":     profile["tenant_id"],
                 "business_name": profile.get("business_name", ""),
             }, cfg)
-        elif agent.intent == "appointment":
+        # A booking that exists, not the last turn's keyword: "time" or "date"
+        # in a caller's final sentence fired "appointment-confirmed" with
+        # nothing booked, and a real booking ending on "థాంక్స్" fired nothing.
+        elif getattr(agent, "appointment_id", None):
             # The event name is the n8n webhook path, and the workflow has
             # always listened on "appointment-confirmed" — matching the
             # approved Meta template of the same name. Firing
@@ -8636,9 +9371,17 @@ async def freeswitch_ws(
         # Rate the conversation and create the lead. After cleanup on purpose:
         # the recording upload matters more than the score, and this must not
         # delay it.
-        await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
-        await _enrich_appointment(agent, fs_uuid)
-        await _extract_order(agent, fs_uuid, caller_number, cfg)
+        # Opt-out first and independent of scoring: scoring skips short calls,
+        # and "stop calling me" is often the whole of a short call.
+        if _caller_asked_not_to_be_called(agent):
+            await _record_opt_out(agent, fs_uuid, caller_number, "caller asked (phrase)")
+        # Not for an onboarding interview: the "caller" is our own customer
+        # describing their business, not a lead, a booking or an order of
+        # the business whose DID carried the call.
+        if not onboarding:
+            await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
+            await _enrich_appointment(agent, fs_uuid)
+            await _extract_order(agent, fs_uuid, caller_number, cfg)
         await _report_reminder_result(agent, fs_uuid, duration)
         await _surface_wa_otp(agent, fs_uuid, caller_number, did_number)
 
@@ -8707,7 +9450,7 @@ async def fs_hangup(req: FSHangupRequest, x_internal_secret: str = Header(None))
     if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     log.info(f"[FS REST] Hangup: uuid={req.fs_uuid} call_id={req.call_id}")
-    if req.upload_recording and req.call_id and req.tenant_id:
+    if req.upload_recording and req.call_id and req.tenant_id and _valid_fs_uuid(req.fs_uuid):
         asyncio.create_task(_upload_leftover_recording(req.fs_uuid, req.call_id, req.tenant_id))
     return {"ok": True}
 

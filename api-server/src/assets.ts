@@ -23,6 +23,7 @@ import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import type { Express, Request, Response } from "express";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
+import { requireOwner } from "./roles";
 
 const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!,
   { auth: { persistSession: false } });
@@ -161,6 +162,11 @@ export function mountAssetRoutes(
   app.post("/api/profile-drafts/:id/apply", verifyJWT, async (req: any, res: Response) => {
     const tenantId = await getTenantId(req.user.id);
     if (!tenantId) return res.status(403).json({ error: "No tenant" });
+    // Applying rewrites the agent's hours, services and script — or creates
+    // the agent outright. 039 reserves that for the owner; this route uses the
+    // service key, so RLS never asked.
+    if (!(await requireOwner(sb as any, req.user.id, tenantId, res,
+        "Only the account owner can apply changes to the agent."))) return;
     const { data: draft } = await sb.from("profile_drafts")
       .select("id, proposed, tenant_id, status")
       .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();

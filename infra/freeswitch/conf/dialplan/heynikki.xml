@@ -91,6 +91,28 @@
       </condition>
     </extension>
 
+    <!-- caller_ani is the ONE value in this file the outside world writes.
+         Anything that is not +91XXXXXXXXXX or 0XXXXXXXXXX falls through the
+         two extensions above as the raw From-user of the INVITE — and it is
+         pasted, unescaped, inside single quotes in the `system curl` of the
+         missed-call guard and into the hangup hook's shell command. A SIP
+         caller ID of  x';reboot;'  is a valid From header and would have
+         run as a shell command on this box. It also goes into the pipeline
+         websocket URL and a transfer destination.
+
+         So it is cut down here, before anything reads it: a caller ID made
+         of digits with an optional leading + passes; anything else (letters,
+         quotes, spaces, an empty or withheld CLI) becomes the literal
+         "anonymous", which the pipeline already treats as no usable number
+         and which keeps the /ws/freeswitch/{did}/{caller}/{uuid} path
+         matching — an empty segment would 404 the stream and leave the
+         caller in silence. -->
+    <extension name="sanitize_caller_ani" continue="true">
+      <condition field="${caller_ani}" expression="^\+?\d{1,15}$">
+        <anti-action application="set" data="caller_ani=anonymous" inline="true"/>
+      </condition>
+    </extension>
+
     <!-- ── INBOUND FROM JIO / VI SIP TRUNK ────────────────────── -->
     <extension name="inbound_sip_ai" continue="false">
       <!-- Conditions AND together. This first one is a guard, not a match:

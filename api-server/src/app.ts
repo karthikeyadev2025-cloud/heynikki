@@ -52,6 +52,19 @@ export function mountAppRoutes(app: Express, d: Deps) {
       await sb.from("app_device_tokens").update({ revoked_at: new Date().toISOString() }).eq("id", row.id);
       return res.status(401).json({ error: "Device token expired — open the app and sign in again." });
     }
+    // Still on that team? A token names a tenant and a user, and outlives
+    // the web session by months: a receptionist removed from the team, or
+    // who accepted an invite to another business, kept a wake-word app that
+    // answered questions about this business's calls and customers. Removal
+    // revokes tokens too; this catches every path that does not (an admin
+    // role change, a row deleted by hand).
+    const { data: member, error: memErr } = await sb.from("tenant_users")
+      .select("id").eq("user_id", row.user_id).eq("tenant_id", row.tenant_id).maybeSingle();
+    if (memErr) return res.status(503).json({ error: "Could not check this device — try again." });
+    if (!member) {
+      await sb.from("app_device_tokens").update({ revoked_at: new Date().toISOString() }).eq("id", row.id);
+      return res.status(401).json({ error: "Device signed out — open the app and sign in again." });
+    }
     // Fire and forget; a failed touch must not fail the question.
     sb.from("app_device_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", row.id)
       .then(() => {}, () => {});

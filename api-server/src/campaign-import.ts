@@ -20,6 +20,7 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireOwner } from "./roles";
 
 type Row = Record<string, string>;
 
@@ -97,6 +98,44 @@ export function normalizePhone(raw: string): string | null {
   return `+91${ten}`;
 }
 
+/**
+ * Every stored form of one number. outbound_opt_outs is written as ten
+ * digits — by the pipeline when someone says "stop calling me", and by the
+ * dashboard — while normalizePhone above produces +91XXXXXXXXXX. The import
+ * filter compared the two with IN, which never matched, so every opt-out was
+ * dialled again the next time their number appeared on a sheet.
+ */
+export function phoneForms(e164: string): string[] {
+  const ten = String(e164 ?? "").replace(/\D/g, "").slice(-10);
+  return ten.length === 10 ? [ten, `91${ten}`, `+91${ten}`, `0${ten}`] : [String(e164 ?? "")];
+}
+
+/** Opted-out numbers among `phones` (+91 form in, +91 form out). */
+async function optedOutAmong(sb: SupabaseClient, tenantId: string, phones: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  // 100 numbers x 4 forms per request keeps the query string well under
+  // what the gateway accepts.
+  for (let i = 0; i < phones.length; i += 100) {
+    const forms = phones.slice(i, i + 100).flatMap(phoneForms);
+    const { data, error } = await sb.from("outbound_opt_outs")
+      .select("phone").eq("tenant_id", tenantId).in("phone", forms);
+    // Failing to read the do-not-call list must not read as "nobody opted
+    // out" — that is how a complaint gets made.
+    if (error) throw new Error(`opt-out check failed: ${error.message}`);
+    (data || []).forEach((o: any) => {
+      const ten = String(o.phone || "").replace(/\D/g, "").slice(-10);
+      if (ten.length === 10) out.add(`+91${ten}`);
+    });
+  }
+  return out;
+}
+
+// TRAI permits promotional and service calls between 09:00 and 21:00. The
+// schedule accepted any HH:MM, so a campaign could be told to ring people at
+// 23:30 or 06:00 and the dialler would do as told.
+export const CALLING_WINDOW = { start: "09:00", end: "21:00" };
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 // IST calendar day as YYYY-MM-DD — the same form the date columns come back in.
 function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -121,6 +160,20 @@ export function mountCampaignImport(
     return c;
   }
 
+  /**
+   * ownCampaign, and the caller is an OWNER. 039 made campaign writes
+   * owner-only in RLS ("an outbound campaign places real calls that cost real
+   * minutes"), but these routes use the service key, which skips RLS — so a
+   * member could still import a list and start dialling from here.
+   */
+  async function ownCampaignAsOwner(req: any, res: Response): Promise<any | null> {
+    const c = await ownCampaign(req, res);
+    if (!c) return null;
+    if (!(await requireOwner(sb, req.user.id, c.tenant_id, res,
+        "Only the account owner can add people to a campaign, schedule it or start it."))) return null;
+    return c;
+  }
+
   // ── Import recipients ───────────────────────────────────────
   // Accepts EITHER { csv: "<text>" } or { rows: [{phone,name}, ...] }.
   // consent_declared is required and recorded against the campaign: this
@@ -128,7 +181,7 @@ export function mountCampaignImport(
   // dispatcher to dial at all.
   app.post("/api/campaigns/:id/import", verifyJWT, async (req: any, res) => {
     try {
-      const c = await ownCampaign(req, res);
+      const c = await ownCampaignAsOwner(req, res);
       if (!c) return;
 
       // Outbound is a Growth-and-above feature and was never checked, so a
@@ -199,13 +252,9 @@ export function mountCampaignImport(
 
       const phones = clean.map(c2 => c2.phone);
 
-      // Never dial someone who opted out, no matter what the sheet says.
-      const optedOut = new Set<string>();
-      for (let i = 0; i < phones.length; i += 500) {
-        const { data } = await sb.from("outbound_opt_outs")
-          .select("phone").eq("tenant_id", c.tenant_id).in("phone", phones.slice(i, i + 500));
-        (data || []).forEach((o: any) => optedOut.add(o.phone));
-      }
+      // Never dial someone who opted out, no matter what the sheet says —
+      // in whichever form the opt-out was stored.
+      const optedOut = await optedOutAmong(sb, c.tenant_id, phones);
 
       // Already on this campaign from an earlier upload. Re-importing the same
       // sheet is a normal thing to do after fixing a few rows, and it must not
@@ -284,7 +333,7 @@ export function mountCampaignImport(
   // watching the dialler start.
   app.post("/api/campaigns/:id/segment", verifyJWT, async (req: any, res) => {
     try {
-      const c = await ownCampaign(req, res);
+      const c = await ownCampaignAsOwner(req, res);
       if (!c) return;
 
       const { stages, min_score, max_score, tags, not_contacted_days,
@@ -313,16 +362,12 @@ export function mountCampaignImport(
 
       // Opt-outs and anyone already on this campaign are excluded before the
       // count is shown, so the preview number is the number that will dial.
-      const excluded = new Set<string>();
-      for (const [table, col] of [["outbound_opt_outs", "phone"], ["outbound_recipients", "phone"]] as const) {
-        for (let i = 0; i < phones.length; i += 500) {
-          const slice = phones.slice(i, i + 500);
-          const qq = table === "outbound_opt_outs"
-            ? sb.from(table).select(col).eq("tenant_id", c.tenant_id).in(col, slice)
-            : sb.from(table).select(col).eq("campaign_id", c.id).in(col, slice);
-          const { data } = await qq;
-          (data || []).forEach((r: any) => excluded.add(r.phone));
-        }
+      // Opt-outs are matched in every stored form (see phoneForms).
+      const excluded = await optedOutAmong(sb, c.tenant_id, phones);
+      for (let i = 0; i < phones.length; i += 500) {
+        const { data } = await sb.from("outbound_recipients").select("phone")
+          .eq("campaign_id", c.id).in("phone", phones.slice(i, i + 500));
+        (data || []).forEach((r: any) => excluded.add(r.phone));
       }
 
       const chosen = (leads || []).filter((l: any) => {
@@ -380,11 +425,20 @@ export function mountCampaignImport(
 
   // ── Start / pause, reachable from the dashboard ─────────────
   app.post("/api/campaigns/:id/start", verifyJWT, async (req: any, res) => {
-    const c = await ownCampaign(req, res);
+    const c = await ownCampaignAsOwner(req, res);
     if (!c) return;
     const gate = await planAllows(c.tenant_id, "outbound_campaigns");
     if (!gate.ok) return res.status(402).json({ error: gate.msg });
     if (c.status === "running") return res.status(400).json({ error: "Already running" });
+    // The dashboard creates campaigns straight into the table, so a window
+    // outside TRAI hours can already be sitting on the row. Refuse to start
+    // one rather than dial into the night. (time columns read back HH:MM:SS.)
+    const ws = String(c.window_start || "").slice(0, 5), we = String(c.window_end || "").slice(0, 5);
+    if (!HHMM.test(ws) || !HHMM.test(we) || ws < CALLING_WINDOW.start || we > CALLING_WINDOW.end) {
+      return res.status(400).json({
+        error: `This campaign calls outside ${CALLING_WINDOW.start}–${CALLING_WINDOW.end} IST — change its calling hours first`,
+      });
+    }
     if (!c.consent_declared) {
       return res.status(400).json({
         error: "This campaign has no consent declaration — import a list first",
@@ -411,14 +465,14 @@ export function mountCampaignImport(
   // Dates are IST calendar days (YYYY-MM-DD), times are HH:MM IST. Any field
   // may be omitted to leave it alone; send null for a date to clear it.
   app.patch("/api/campaigns/:id/schedule", verifyJWT, async (req: any, res) => {
-    const c = await ownCampaign(req, res);
+    const c = await ownCampaignAsOwner(req, res);
     if (!c) return;
     if (c.status === "completed" || c.status === "cancelled") {
       return res.status(400).json({ error: `Cannot reschedule a ${c.status} campaign` });
     }
     const b = req.body || {};
     const upd: Record<string, unknown> = {};
-    const DATE = /^\d{4}-\d{2}-\d{2}$/, TIME = /^\d{2}:\d{2}$/;
+    const DATE = /^\d{4}-\d{2}-\d{2}$/;
     for (const k of ["start_date", "end_date"]) {
       if (!(k in b)) continue;
       if (b[k] === null || b[k] === "") { upd[k] = null; continue; }
@@ -427,7 +481,12 @@ export function mountCampaignImport(
     }
     for (const k of ["window_start", "window_end"]) {
       if (!(k in b)) continue;
-      if (typeof b[k] !== "string" || !TIME.test(b[k])) return res.status(400).json({ error: `${k} must be HH:MM` });
+      if (typeof b[k] !== "string" || !HHMM.test(b[k])) return res.status(400).json({ error: `${k} must be HH:MM` });
+      if (b[k] < CALLING_WINDOW.start || b[k] > CALLING_WINDOW.end) {
+        return res.status(400).json({
+          error: `Calls may only be placed between ${CALLING_WINDOW.start} and ${CALLING_WINDOW.end} IST (TRAI)`,
+        });
+      }
       upd[k] = b[k];
     }
     if ("max_concurrent" in b) {

@@ -89,8 +89,24 @@ async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
         return;
       }
 
-      // Wait for complete response (ends with double newline or has Reply-Text)
-      if (commandSent && (buffer.includes("\n\n") || buffer.includes("Reply-Text:"))) {
+      // Wait for the COMPLETE response. FreeSWITCH writes the headers and the
+      // body of an api/response separately, and this used to resolve on the
+      // first "\n\n" — the end of the headers — with no body. Measured: 2 in
+      // 200 `show channels count` replies came back empty. On an originate
+      // that loses the "+OK <uuid>" of a call that WAS answered, so the
+      // dispatcher recorded a live conversation as a no-answer, sent the
+      // "missed you" WhatsApp and queued a redial.
+      if (commandSent) {
+        const sep = buffer.indexOf("\n\n");
+        if (sep < 0) return;
+        const headers = buffer.slice(0, sep);
+        const m = headers.match(/Content-Length:\s*(\d+)/i);
+        if (m) {
+          const body = Buffer.from(buffer.slice(sep + 2), "utf8");
+          if (body.length < parseInt(m[1], 10)) return;
+        } else if (!/Reply-Text:/i.test(headers)) {
+          return;
+        }
         clearTimeout(timer);
         const response = buffer;
         socket.destroy();
@@ -108,6 +124,29 @@ async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
       if (!commandSent) resolve("");
     });
   });
+}
+
+// ── Values interpolated into ESL commands ─────────────────────
+// An originate is ONE line of text: `{a=1,b=2}sofia/... dest XML ctx`, and an
+// ESL command ends at a newline. A comma in a variable starts a new variable,
+// a `}` closes the block early, a space ends the dial string and a newline
+// starts a whole new ESL command — with full call control. campaign_id,
+// onboard_tenant and ring_group went in exactly as they arrived. Today they
+// come from our own database, but "nobody would put a newline in a campaign
+// id" is not a security boundary. Each is cut down to the characters its
+// value can legitimately contain.
+function safeUuid(v: unknown): string {
+  return String(v ?? "").replace(/[^0-9a-f-]/gi, "").slice(0, 36);
+}
+// A ring group is a comma-separated list of dial strings such as
+// sofia/gateway/jio_primary/+919848012345. No spaces, braces, quotes or
+// line breaks can appear in one.
+function safeDialList(v: unknown): string {
+  return String(v ?? "").replace(/[^A-Za-z0-9_/+.,:@|-]/g, "");
+}
+function safeSeconds(v: unknown, fallback: number): number {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 // ── FreeSWITCH ESL Client ─────────────────────────────────────
@@ -294,6 +333,7 @@ export class FreeSwitchESL {
     const clean = (n: string) => n.replace(/[^0-9+]/g, "");
     const customer = clean(customerNumber);
     const cli      = clean(callerIdNumber);
+    timeoutSec     = safeSeconds(timeoutSec, 35);
     if (!customer) throw new Error("Outbound needs a customer number");
     if (!cli)      throw new Error("Outbound needs a caller ID we own");
 
@@ -331,7 +371,7 @@ export class FreeSwitchESL {
       // a ringing phone and the first seconds of the pitch are lost.
       `ignore_early_media=true`,
       `originate_timeout=${timeoutSec}`,
-      campaignId ? `campaign_id=${campaignId}` : `campaign_id=`,
+      `campaign_id=${safeUuid(campaignId)}`,
       `call_reason=${callReason.replace(/[^a-z_]/gi, "")}`,
       `recipient_id=${recipientId.replace(/[^0-9a-f-]/gi, "")}`,
       `outbound_call=true`,
@@ -388,9 +428,11 @@ export class FreeSwitchESL {
     const clean = (n: string) => n.replace(/[^0-9+]/g, "");
     const digits = clean(ownerPhone).replace(/\D/g, "").slice(-10);
     const cli    = clean(callerId);
+    const tenant = safeUuid(tenantId);
+    timeoutSec   = safeSeconds(timeoutSec, 40);
     if (digits.length !== 10) throw new Error(`Bad owner number: ${ownerPhone}`);
     if (!cli)      throw new Error("Onboarding needs a caller ID we own");
-    if (!tenantId) throw new Error("Onboarding needs a tenant");
+    if (tenant.length !== 36) throw new Error("Onboarding needs a tenant");
 
     const vars = [
       `origination_caller_id_number=${wireCli(cli)}`,
@@ -399,7 +441,7 @@ export class FreeSwitchESL {
       `originate_timeout=${timeoutSec}`,
       `outbound_cli=${wireCli(cli)}`,
       `onboard_did=${cli}`,
-      `onboard_tenant=${tenantId}`,
+      `onboard_tenant=${tenant}`,
     ].join(",");
 
     const response = await eslCommand(
@@ -429,11 +471,14 @@ export class FreeSwitchESL {
     guardSeconds: number = 20
   ): Promise<void> {
     if (!/^[a-f0-9-]{36}$/i.test(uuid)) throw new Error("Invalid channel uuid");
-    if (!ringGroup) throw new Error("ring_group required for human transfer");
+    const group = safeDialList(ringGroup);
+    if (!group) throw new Error("ring_group required for human transfer");
 
     // setvar before transfer — the extension reads both immediately.
-    await eslCommand(`api uuid_setvar ${uuid} ring_group ${ringGroup}`);
-    await eslCommand(`api uuid_setvar ${uuid} guard_seconds ${Math.max(5, guardSeconds)}`);
+    // guard_seconds arrives as parseInt(req.body...) and was NaN for a bad
+    // value; Math.max(5, NaN) is NaN, and "NaN" became the ring timeout.
+    await eslCommand(`api uuid_setvar ${uuid} ring_group ${group}`);
+    await eslCommand(`api uuid_setvar ${uuid} guard_seconds ${Math.max(5, safeSeconds(guardSeconds, 20))}`);
     await eslCommand(`api uuid_transfer ${uuid} human_transfer XML heynikki`);
   }
 

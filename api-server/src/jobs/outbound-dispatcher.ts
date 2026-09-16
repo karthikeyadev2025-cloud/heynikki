@@ -11,9 +11,10 @@
  *   5. Marks completed when all recipients are settled
  *
  * Run as a systemd service (nikki-outbound-dispatcher.service) — single
- * long-lived process. Multi-instance dispatching is NOT safe yet because
- * we don't lock recipient rows during pickup; that's a future enhancement
- * via SELECT FOR UPDATE SKIP LOCKED.
+ * long-lived process. Every recipient row is now claimed with a
+ * compare-and-set on its status (see transition()), so two dispatchers can
+ * no longer both dial the same row — but a second one would still double
+ * the concurrency a campaign asked for, so run one.
  *
  * TRAI: the scrub PATH is complete — opt-out list, consent carve-out,
  * caching, audit ledger and a fail-safe that blocks when it cannot get an
@@ -55,6 +56,75 @@ const POLL_INTERVAL_MS = 30_000;
 //
 // Wiring a real TRAI NCPR / DLT provider is implementing one function in
 // that module; nothing in this file changes.
+
+// ─── Do-not-call ──────────────────────────────────────
+// outbound_opt_outs was only consulted when a list was IMPORTED, so a number
+// that asked to stop after it was queued — or an instant callback, which is
+// never imported — was dialled anyway. One person was rung five times about
+// the same abandoned booking and told the bot to stop on the last of them.
+// Checked immediately before every dial. Fails CLOSED: if we cannot read the
+// list, we do not call.
+async function isOptedOut(tenantId: string, phone: string): Promise<boolean> {
+  const d = String(phone || "").replace(/\D/g, "").slice(-10);
+  if (d.length !== 10) return true;
+  const { data, error } = await sb.from("outbound_opt_outs")
+    .select("id").eq("tenant_id", tenantId)
+    .in("phone", [d, `91${d}`, `+91${d}`, `0${d}`]).limit(1);
+  if (error) {
+    console.error(`[dispatcher] opt-out lookup failed for …${d.slice(-4)} — not dialling: ${error.message}`);
+    return true;
+  }
+  return !!data?.length;
+}
+
+async function markOptedOut(r: any, from: string): Promise<void> {
+  if (await transition(r.id, from, {
+    status: "opted_out", outcome: "opted_out", next_attempt_at: null,
+  }) && r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
+}
+
+// ─── Row ownership ────────────────────────────────────
+// A tick reads up to 20 rows and then dials them one after another, each
+// taking up to ~50 s — so the snapshot is minutes old by the time the last
+// row is dialled. Every write used to be a bare .eq("id"): an API DELETE of a
+// pending call (which sets it failed), an opt-out (which flips pending/queued
+// to opted_out) or a hangup that already closed the row was silently
+// overwritten back to in_progress, and the withdrawn number was rung anyway.
+//
+// Every status change is now a compare-and-set on the status this process
+// last saw. Zero rows back means somebody else moved the row: leave it.
+// A write error counts as "not ours" — fail closed, never dial on a guess.
+async function transition(
+  id: string, from: string | string[], patch: Record<string, unknown>,
+): Promise<boolean> {
+  let q = sb.from("outbound_recipients").update(patch).eq("id", id);
+  q = Array.isArray(from) ? q.in("status", from) : q.eq("status", from);
+  const { data, error } = await q.select("id");
+  if (error) {
+    console.error(`[dispatcher] recipient ${id} ${[from].flat().join("|")} → ${patch.status ?? "(same)"} failed: ${error.message}`);
+    return false;
+  }
+  if (!data?.length) {
+    console.warn(`[dispatcher] recipient ${id} is no longer ${[from].flat().join("|")} — changed elsewhere, left alone`);
+    return false;
+  }
+  return true;
+}
+
+// Paused or cancelled from the dashboard while this tick was working through
+// its batch: the old code only read the campaign once, at the top of the
+// tick, and kept dialling the rest of the batch after the client pressed
+// Pause. Read again right before each dial. An unreadable status is not
+// "running".
+async function campaignStillRunning(campaignId: string): Promise<boolean> {
+  const { data, error } = await sb.from("outbound_campaigns")
+    .select("status").eq("id", campaignId).maybeSingle();
+  if (error) {
+    console.error(`[dispatcher] campaign ${campaignId} status re-check failed — not dialling: ${error.message}`);
+    return false;
+  }
+  return data?.status === "running";
+}
 
 // ─── Pipeline dispatch ────────────────────────────────
 // `campaign` is null for instant (is_instant=true) recipients — there is
@@ -189,6 +259,28 @@ const TRUNK_RETRY_MS  = 15 * 60 * 1000;
 // A full trunk clears in the time one call takes, not in fifteen minutes.
 const TRUNK_BUSY_RETRY_MS = 90 * 1000;
 const TRUNK_MAX_TRIES = 8;
+// CALL_REJECTED is ALSO what a person pressing Decline produces (SIP 603), and
+// the two cannot be told apart from the cause alone. Eight redials every 15
+// minutes to someone who is declining is harassment, so this cause gets two.
+const REJECTED_MAX_TRIES = 2;
+function maxTrunkTries(reason: string): number {
+  return reason.includes("CALL_REJECTED") ? REJECTED_MAX_TRIES : TRUNK_MAX_TRIES;
+}
+
+/**
+ * Our OWN side failed to talk to FreeSWITCH. These used to fall through to
+ * the no-answer branch, so a FreeSWITCH restart sent every queued recipient a
+ * "sorry we missed you" WhatsApp about a call that never left the box.
+ *  - nothing was dialled: connection refused, no password — retry quietly.
+ *  - ESL timeout: the originate may still have gone out and connected, so
+ *    no quick redial (that could ring a live call twice) and no WhatsApp.
+ */
+function isEslUnreachable(reason: string): boolean {
+  return reason.includes("ESL connection error") || reason.includes("FREESWITCH_ESL_PASSWORD");
+}
+function isEslTimeout(reason: string): boolean {
+  return reason.includes("ESL timeout");
+}
 
 /**
  * One WhatsApp per person, on the FIRST no-answer — not once per attempt.
@@ -257,15 +349,28 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
 }
 
 // ─── Hours check (recipient timezone assumed IST for now) ───
+// TRAI's calling hours are 09:00–21:00 and they are a legal limit, not a
+// campaign setting. A stored window is only ever NARROWED to them: a
+// campaign saved with 08:00–22:00 (or edited straight in the table) used to
+// dial at 08:00 because the stored value was trusted as-is.
+const TRAI_START_MIN = 9 * 60;
+const TRAI_END_MIN   = 21 * 60;
+
+function hhmmToMinutes(t: unknown): number | null {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
+  return m ? +m[1] * 60 + +m[2] : null;
+}
+
 function withinWindow(start: string, end: string): boolean {
   const now = new Date();
   // IST = UTC+5:30
   const istMinutes  = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % (24 * 60);
-  const [sH, sM]    = start.split(":").map(Number);
-  const [eH, eM]    = end.split(":").map(Number);
-  const startMin    = sH * 60 + sM;
-  const endMin      = eH * 60 + eM;
-  return istMinutes >= startMin && istMinutes < endMin;
+  const s = hhmmToMinutes(start);
+  const e = hhmmToMinutes(end);
+  // An unreadable window used to throw on .split and take the whole tick
+  // down with it; it is now simply "closed".
+  if (s === null || e === null) return false;
+  return istMinutes >= Math.max(s, TRAI_START_MIN) && istMinutes < Math.min(e, TRAI_END_MIN);
 }
 
 // IST calendar day as YYYY-MM-DD, comparable to the date columns as strings.
@@ -302,20 +407,66 @@ async function reapStaleInProgress(): Promise<void> {
     let outcome = "no_conversation_stale";
     let call_id: string | null = null;
     if (fsUuid) {
-      const { data: call } = await sb.from("calls")
-        .select("id, duration_seconds")
-        .eq("livekit_room_id", fsUuid).maybeSingle();
+      const call = await callForChannel(fsUuid);
       if (call) {
         call_id = call.id;
         outcome = (call.duration_seconds || 0) >= 5 ? "answered" : "no_conversation_stale";
       }
     }
-    await sb.from("outbound_recipients")
-      .update({ status: "completed", outcome, call_id })
-      .eq("id", r.id).eq("status", "in_progress");
-    console.warn(`[dispatcher] reaped stale in_progress recipient ${r.id} (${r.phone}) → ${outcome}` +
+    await closeUnreported(r, outcome, call_id,
+      `reaped stale in_progress recipient ${r.id} (${r.phone}) → ${outcome}` +
       ` — dialled ${r.last_attempt_at}, no hangup report received`);
   }
+
+  // A call that ended before the dispatcher had written metadata.fs_uuid.
+  // The hangup hook matches the recipient ON that uuid, so a callee who
+  // answered and hung up within a second or two — before originate's reply
+  // had even come back — left a report that matched nothing, and the row sat
+  // in_progress for the full 30 minutes above. For an API-placed reminder
+  // that was 30 minutes of the customer's system polling a call that was
+  // long over. Once the calls row for that channel is closed, the call is
+  // over whatever the recipient row says.
+  const quickCutoff = new Date(Date.now() - UNREPORTED_GRACE_MS).toISOString();
+  const { data: recent, error: recentErr } = await sb.from("outbound_recipients")
+    .select("id, phone, campaign_id, metadata, last_attempt_at")
+    .eq("status", "in_progress")
+    .not("metadata->>fs_uuid", "is", null)
+    .lt("last_attempt_at", quickCutoff)
+    .gte("last_attempt_at", cutoff)
+    .limit(50);
+  if (recentErr) { console.error("[dispatcher] unreported-hangup scan failed:", recentErr.message); return; }
+  for (const r of (recent || [])) {
+    const call = await callForChannel((r.metadata as any).fs_uuid);
+    if (!call || !["completed", "missed"].includes(call.status)) continue;
+    const answered = (call.duration_seconds || 0) >= 5;
+    await closeUnreported(r, answered ? "answered" : "no_conversation_unreported", call.id,
+      `closed recipient ${r.id} (${r.phone}) — call ${call.id} already ${call.status}, hangup report never matched it`);
+  }
+}
+
+// How long after dialling a closed calls row is trusted over a hangup report
+// that may still be on its way. The hook fires within a second of hangup.
+const UNREPORTED_GRACE_MS = 3 * 60_000;
+
+// order + limit(1), never maybeSingle on its own: livekit_room_id is not
+// unique, and a channel with two calls rows (the pipeline's insert racing
+// the inbound webhook's) made maybeSingle error, which read as "no call".
+async function callForChannel(fsUuid: string): Promise<{ id: string; status: string; duration_seconds: number | null } | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(String(fsUuid || ""))) return null;
+  const { data, error } = await sb.from("calls")
+    .select("id, status, duration_seconds")
+    .eq("livekit_room_id", fsUuid).order("created_at", { ascending: true }).limit(1);
+  if (error) { console.error(`[dispatcher] call lookup for ${fsUuid} failed: ${error.message}`); return null; }
+  return (data?.[0] as any) ?? null;
+}
+
+// The hangup webhook is what normally tells an API customer their call is
+// over. The reaper closed rows WITHOUT that, so a reminder placed over the
+// API whose hangup report was lost never got its callback at all.
+async function closeUnreported(r: any, outcome: string, call_id: string | null, msg: string): Promise<void> {
+  if (!await transition(r.id, "in_progress", { status: "completed", outcome, call_id })) return;
+  console.warn(`[dispatcher] ${msg}`);
+  if (r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
 }
 
 async function tick(): Promise<void> {
@@ -336,10 +487,12 @@ async function tick(): Promise<void> {
       .eq("campaign_id", c.id)
       .in("status", ["pending", "queued", "in_progress", "scrubbing"]);
     if ((outstanding || 0) === 0) {
+      // Conditional, like every write below: a campaign the client cancelled
+      // in the meantime stays cancelled.
       await sb.from("outbound_campaigns").update({
         status: "completed",
         completed_at: new Date().toISOString(),
-      }).eq("id", c.id);
+      }).eq("id", c.id).eq("status", "running");
       console.log(`[dispatcher] campaign ${c.id} completed — no recipients outstanding`);
       continue;
     }
@@ -350,7 +503,7 @@ async function tick(): Promise<void> {
     const today = istToday();
     if (c.start_date && today < c.start_date) continue;
     if (c.end_date && today > c.end_date) {
-      await sb.from("outbound_campaigns").update({ status: "paused" }).eq("id", c.id);
+      await sb.from("outbound_campaigns").update({ status: "paused" }).eq("id", c.id).eq("status", "running");
       console.log(`[dispatcher] campaign ${c.id} paused — end date ${c.end_date} passed with ${outstanding} outstanding`);
       continue;
     }
@@ -368,7 +521,10 @@ async function tick(): Promise<void> {
       .select("*").eq("campaign_id", c.id).eq("status", "pending").limit(slots);
 
     for (const r of (pending || [])) {
-      await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
+      // Claimed, not assumed: an opt-out that landed after the select above
+      // has already moved this row off 'pending', and scrubbing it back to
+      // 'queued' is what put an opted-out number back in the dial queue.
+      if (!await transition(r.id, "pending", { status: "scrubbing" })) continue;
       // A campaign whose uploader declared consent for every number on the
       // list dials without a third-party scrub; anything else still needs a
       // real DND feed and stays blocked. scrubDnd fails safe either way — the
@@ -376,12 +532,12 @@ async function tick(): Promise<void> {
       const { blocked, reason } = await scrubDnd(sb, r.phone, {
         tenantId: r.tenant_id, consented: !!c.consent_declared,
       });
-      await sb.from("outbound_recipients").update({
+      await transition(r.id, "scrubbing", {
         status:       blocked ? "blocked_dnd" : "queued",
         scrubbed_at:  new Date().toISOString(),
         dnd_blocked:  blocked,
         metadata:     { ...r.metadata, scrub_reason: reason },
-      }).eq("id", r.id);
+      });
     }
 
     // Dispatch queued recipients whose backoff has expired. The
@@ -394,12 +550,26 @@ async function tick(): Promise<void> {
       .limit(slots);
 
     for (const r of (queued || [])) {
+      // Both checks sit HERE, per dial, not once per batch. The batch is
+      // dialled sequentially at up to ~50 s a call, so a window checked at
+      // 20:59 went on ringing people well past 21:00, and a campaign paused
+      // at the first call still rang the other nineteen.
+      if (!withinWindow(c.window_start, c.window_end)) break;
+      if (!await campaignStillRunning(c.id)) break;
+
       const attempt = (r.attempts || 0) + 1;
-      await sb.from("outbound_recipients").update({
+      if (!await transition(r.id, "queued", {
         status:          "in_progress",
         attempts:        attempt,
         last_attempt_at: new Date().toISOString(),
-      }).eq("id", r.id);
+      })) continue;
+
+      // After the claim, so an opt-out recorded while this row sat in the
+      // batch is still seen — and nothing but this process can now move it.
+      if (await isOptedOut(r.tenant_id || c.tenant_id, r.phone)) {
+        await markOptedOut(r, "in_progress");
+        continue;
+      }
 
       try {
         const fsUuid = await dispatchCall(r, c);
@@ -419,32 +589,43 @@ async function tick(): Promise<void> {
         // created moments later, when the pipeline registers the answered
         // leg. So the UUID goes in metadata, where there is no FK, and the
         // hangup webhook resolves it to a real call_id once the row exists.
-        const { error: linkErr } = await sb.from("outbound_recipients").update({
-          status:   "in_progress",
+        // Only while still in_progress: a very short call can already have
+        // been closed by the hangup webhook (or the reaper), and this write
+        // must not drag it back open.
+        await transition(r.id, "in_progress", {
           outcome:  "dialled",
           metadata: { ...(r.metadata || {}), fs_uuid: fsUuid },
-        }).eq("id", r.id);
-        if (linkErr) console.error(`[dispatcher] link ${r.id} failed:`, linkErr.message);
+        });
       } catch (e: any) {
         const reason = String(e?.message || e).slice(0, 120);
 
         if (isTrunkBusy(reason)) {
           console.warn(`[dispatcher] ${reason} — ${r.phone} waits for a free channel`);
-          await sb.from("outbound_recipients").update({
+          await transition(r.id, "in_progress", {
             status:          "queued",
             outcome:         reason,
             attempts:        r.attempts || 0,
             next_attempt_at: new Date(Date.now() + TRUNK_BUSY_RETRY_MS).toISOString(),
-          }).eq("id", r.id);
+          });
           continue;
         }
 
-        if (isTrunkFault(reason)) {
-          void recordTrunkState(false, reason);
+        if (isEslTimeout(reason)) {
+          console.error(`[dispatcher] ESL timeout dialling ${r.phone} (campaign ${c.id}) — outcome unknown, no follow-up, next try tomorrow`);
+          await transition(r.id, "in_progress", {
+            status:          attempt >= 3 ? "failed" : "queued",
+            outcome:         reason,
+            next_attempt_at: attempt >= 3 ? null : new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+          });
+          continue;
+        }
+
+        if (isTrunkFault(reason) || isEslUnreachable(reason)) {
+          if (!isEslUnreachable(reason)) void recordTrunkState(false, reason);
           // The phone never rang, so this is not a missed call: no WhatsApp,
           // and the attempt is rolled back to what it was before we tried.
           const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + 1;
-          const giveUp     = trunkTries >= TRUNK_MAX_TRIES;
+          const giveUp     = trunkTries >= maxTrunkTries(reason);
 
           // The dispatcher used to swallow this entirely — the only line it
           // ever printed was "[dispatcher] started", so a campaign that
@@ -453,10 +634,10 @@ async function tick(): Promise<void> {
           console.error(
             `[dispatcher] TRUNK FAULT dialling ${r.phone} (campaign ${c.id}): ${reason} ` +
             `— attempt not counted, ${giveUp ? "giving up" : `retrying in ${TRUNK_RETRY_MS / 60000}m`} ` +
-            `(${trunkTries}/${TRUNK_MAX_TRIES})`
+            `(${trunkTries}/${maxTrunkTries(reason)})`
           );
 
-          await sb.from("outbound_recipients").update({
+          await transition(r.id, "in_progress", {
             status:          giveUp ? "failed" : "queued",
             outcome:         reason,
             attempts:        r.attempts || 0,
@@ -464,15 +645,15 @@ async function tick(): Promise<void> {
               ? null
               : new Date(Date.now() + TRUNK_RETRY_MS).toISOString(),
             metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
-          }).eq("id", r.id);
+          });
           continue;
         }
 
         if (isDeadNumber(reason)) {
           console.error(`[dispatcher] number refused dialling ${r.phone} (campaign ${c.id}): ${reason} — no follow-up, not retried`);
-          await sb.from("outbound_recipients").update({
+          await transition(r.id, "in_progress", {
             status: "failed", outcome: reason, next_attempt_at: null,
-          }).eq("id", r.id);
+          });
           continue;
         }
 
@@ -486,13 +667,13 @@ async function tick(): Promise<void> {
         // 3 attempts total — the original try plus two retries — spaced a
         // day apart so a campaign never reads as harassment.
         const exhausted = attempt >= 3;
-        await sb.from("outbound_recipients").update({
+        await transition(r.id, "in_progress", {
           status:          exhausted ? "failed" : "queued",
           outcome:         reason,
           next_attempt_at: exhausted
             ? null
             : new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-        }).eq("id", r.id);
+        });
       }
     }
 
@@ -523,6 +704,20 @@ async function tickInstant(): Promise<void> {
     .limit(20);
 
   for (const r of (pending || [])) {
+    // Per row, not per batch: twenty sequential callbacks at up to ~50 s each
+    // is a quarter of an hour, and a batch that started at 20:29 was still
+    // ringing people at 20:45.
+    if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
+
+    // Claim before anything else. An API DELETE (pending → failed) or an
+    // opt-out (pending → opted_out) that arrived after the select above is
+    // respected here instead of being overwritten by "scrubbing".
+    if (!await transition(r.id, "pending", { status: "scrubbing" })) continue;
+
+    if (await isOptedOut(r.tenant_id, r.phone)) {
+      await markOptedOut(r, "scrubbing");
+      continue;
+    }
     // Whether THIS tenant has opted in to skipping third-party DND
     // scrubbing for self-submitted enquiries. Default false — the
     // business must explicitly choose this in Setup.
@@ -542,22 +737,24 @@ async function tickInstant(): Promise<void> {
     const consented = !!r.consent_call_id || !!r.consent_declared
       || !!profile?.skip_dnd_for_instant_leads;
 
-    await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
     const { blocked, reason } = await scrubDnd(sb, r.phone, {
       tenantId: r.tenant_id, consented,
     });
     if (blocked) {
-      await sb.from("outbound_recipients").update({
+      if (await transition(r.id, "scrubbing", {
         status: "blocked_dnd", scrubbed_at: new Date().toISOString(),
         dnd_blocked: true, metadata: { ...r.metadata, scrub_reason: reason },
-      }).eq("id", r.id);
-      if (r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
+      }) && r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
       continue;
     }
 
-    await sb.from("outbound_recipients").update({
+    if (!await transition(r.id, "scrubbing", {
       status: "in_progress", scrubbed_at: new Date().toISOString(), dnd_blocked: false,
-    }).eq("id", r.id);
+      // Stamped at the claim, not after the dial: the reapers age an
+      // in_progress row by this, and a retry still carried the previous
+      // attempt's time.
+      last_attempt_at: new Date().toISOString(),
+    })) continue;
 
     // dispatchCall THROWS on a rejected or unanswered call (see above). This
     // loop used to await it bare, so the first CALL_REJECTED escaped to
@@ -572,49 +769,50 @@ async function tickInstant(): Promise<void> {
       const reason = String(e?.message || e).slice(0, 120);
       if (isTrunkBusy(reason)) {
         console.warn(`[dispatcher] ${reason} — instant callback to ${r.phone} waits`);
-        await sb.from("outbound_recipients").update({
+        await transition(r.id, "in_progress", {
           status:          "pending",
           outcome:         reason,
           attempts:        r.attempts || 0,
           next_attempt_at: new Date(Date.now() + TRUNK_BUSY_RETRY_MS).toISOString(),
-        }).eq("id", r.id);
+        });
         continue;
       }
-      const fault  = isTrunkFault(reason);
-      void recordTrunkState(!fault, fault ? reason : undefined);
+      const unreachable = isEslUnreachable(reason);
+      const fault  = isTrunkFault(reason) || unreachable;
+      if (!unreachable && !isEslTimeout(reason)) void recordTrunkState(!fault, fault ? reason : undefined);
       // A trunk fault is our problem, not the lead's: keep the row pending
       // and try again shortly, a bounded number of times. A phone that rang
       // and was not answered is a one-shot — the moment has passed.
       const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + (fault ? 1 : 0);
-      const retry      = fault && trunkTries < TRUNK_MAX_TRIES;
+      const retry      = fault && trunkTries < maxTrunkTries(reason);
       console.error(
         `[dispatcher] instant callback to ${r.phone} failed: ${reason}` +
-        (retry ? ` — retrying in ${TRUNK_RETRY_MS / 60000}m (${trunkTries}/${TRUNK_MAX_TRIES})` : "")
+        (retry ? ` — retrying in ${TRUNK_RETRY_MS / 60000}m (${trunkTries}/${maxTrunkTries(reason)})` : "")
       );
-      await sb.from("outbound_recipients").update({
+      const settled = await transition(r.id, "in_progress", {
         status:          retry ? "pending" : "failed",
         outcome:         reason,
         attempts:        (r.attempts || 0) + (fault ? 0 : 1),
         last_attempt_at: now,
         next_attempt_at: retry ? new Date(Date.now() + TRUNK_RETRY_MS).toISOString() : null,
         metadata:        { ...(r.metadata || {}), trunk_failures: trunkTries },
-      }).eq("id", r.id);
+      });
       // A call the API asked for and we could not place is a result the
       // caller is waiting on — only a final failure, a retry is still ours.
-      if (!retry && r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
+      if (settled && !retry && r.metadata?.source === API_CALL_SOURCE) void notifyApiCallback(sb, r.id);
       continue;
     }
     void recordTrunkState(true);
     // A channel UUID, not a calls.id — same FK trap as the campaign path;
     // the hangup webhook resolves metadata.fs_uuid to the real call row.
-    const { error: linkErr } = await sb.from("outbound_recipients").update({
-      status:          "in_progress",
+    // Conditional for the same reason as the campaign link: a callee who
+    // hung up at once may already have been closed by the hangup webhook.
+    if (!await transition(r.id, "in_progress", {
       outcome:         "dialled",
       attempts:        (r.attempts || 0) + 1,
       last_attempt_at: now,
       metadata:        { ...(r.metadata || {}), fs_uuid: fsUuid },
-    }).eq("id", r.id);
-    if (linkErr) console.error(`[dispatcher] link ${r.id} failed:`, linkErr.message);
+    })) continue;
   }
 }
 

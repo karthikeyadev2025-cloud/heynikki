@@ -102,10 +102,16 @@ async function sendStep(t: any, s: Step): Promise<void> {
     const { data: prior } = await sb.from("onboarding_events")
       .select("status, attempts").eq("tenant_id", t.id).eq("step", s.step).maybeSingle();
     if (!prior || prior.status !== "failed" || (prior.attempts ?? 1) >= 3) return;
-    const { error: reclaimErr } = await sb.from("onboarding_events")
+    // The re-claim is a compare-and-set, and only the process whose update
+    // actually changed the row may send. Checking the error alone was not
+    // enough: an update that matches nothing is not an error, so when two
+    // schedulers both read "failed" in the same minute both carried on and
+    // the owner got the retried message twice.
+    const { data: reclaimed, error: reclaimErr } = await sb.from("onboarding_events")
       .update({ status: "sending" })
-      .eq("tenant_id", t.id).eq("step", s.step).eq("status", "failed");
-    if (reclaimErr) return;
+      .eq("tenant_id", t.id).eq("step", s.step).eq("status", "failed")
+      .select("id");
+    if (reclaimErr || !reclaimed?.length) return;
     console.log(`[onboarding] retrying ${s.step} for ${t.name} (attempt ${(prior.attempts ?? 1) + 1})`);
   }
 

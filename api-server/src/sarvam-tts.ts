@@ -16,8 +16,10 @@
  * re-wrapped into one clip, because the browser is handed a single base64
  * blob to decode.
  *
- * Throws on ANY problem. The caller is expected to fall back to REST — a
- * slower voice is fine, a silent demo is not.
+ * Throws on ANY problem, including a socket that closes before Sarvam's
+ * completion event — the promise only resolves with a COMPLETE clip, which
+ * is what makes its result safe to cache. The caller is expected to fall
+ * back to REST — a slower voice is fine, a silent demo is not.
  */
 import WebSocket from "ws";
 
@@ -124,20 +126,37 @@ export function synthesizeWs(opts: WsTtsOpts): Promise<Buffer> {
       if (m?.type === "error") {
         return finish(new Error(`sarvam ws: ${JSON.stringify(m).slice(0, 200)}`));
       }
-      // Anything else is the completion event: synthesis is done.
-      const pcm = Buffer.concat(chunks);
-      if (!pcm.length) return finish(new Error("ws synthesis returned no audio"));
-      finish(null, pcm16ToWav(pcm, sampleRate));
+      // Only the completion event means synthesis is done:
+      //   {"type":"event","data":{"event_type":"final"}}
+      // This used to treat ANY other JSON frame as completion, so an
+      // informational or keepalive frame arriving between audio chunks ended
+      // the clip early — and the truncated reply was then cached in
+      // webTtsCache and replayed, cut short, to every later visitor who got
+      // the same answer.
+      const ev = String(m?.data?.event_type ?? m?.event_type ?? "").toLowerCase();
+      if (m?.type === "event" && (!ev || ["final", "complete", "completed", "done"].includes(ev))) {
+        const pcm = Buffer.concat(chunks);
+        if (!pcm.length) return finish(new Error("ws synthesis returned no audio"));
+        return finish(null, pcm16ToWav(pcm, sampleRate));
+      }
+      // Anything else is not ours to interpret; keep waiting (the timer
+      // bounds it). Logged, because an unrecognised terminal event would
+      // show up here as a 12s stall before the REST fallback.
+      console.warn(`[sarvam-ws] ignoring frame: ${JSON.stringify(m).slice(0, 160)}`);
     });
 
     ws.on("error", (e: Error) => finish(e));
     ws.on("close", () => {
-      // Closed before a completion event — salvage whatever arrived rather
-      // than discarding a usable clip.
+      // Closed before the completion event: the clip is incomplete, however
+      // much arrived. It used to be salvaged and returned as a success,
+      // which is a reply with its ending missing — and a cached one. Failing
+      // lets the caller fall back to REST, which returns a whole clip or
+      // nothing. A streaming caller has already forwarded the chunks it got
+      // and knows not to repeat them.
       if (settled) return;
-      const pcm = Buffer.concat(chunks);
-      pcm.length ? finish(null, pcm16ToWav(pcm, sampleRate))
-                 : finish(new Error("ws closed before any audio"));
+      finish(new Error(chunks.length
+        ? `ws closed before completion (${chunks.length} chunk(s) received)`
+        : "ws closed before any audio"));
     });
   });
 }

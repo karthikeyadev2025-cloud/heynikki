@@ -9,6 +9,7 @@
 // expressErrorHandler at the BOTTOM of the middleware stack.
 import * as Sentry from "@sentry/node";
 import { makePush } from "./push.js";
+import { requireOwner } from "./roles";
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -260,22 +261,28 @@ async function getTenantId(userId: string): Promise<string | null> {
 app.post("/webhooks/lead-capture/:token", async (req, res) => {
   try {
     const token = req.params.token || "";
-    const { data: profile } = await sb.from("voice_profiles")
+    // Looked up BY the token. This used to fetch 500 profiles with any token,
+    // unordered, and compare in a loop — so once the platform passed 500
+    // profiles, whichever tenants fell outside that arbitrary page had a
+    // capture link that answered 404 and silently dropped every lead. The
+    // column has a unique index (013/033); an indexed equality lookup on a
+    // 128-bit random value leaks nothing a timing attack could use.
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
+      return res.status(404).json({ error: "Unknown or invalid capture link" });
+    }
+    const { data: match, error: tokErr } = await sb.from("voice_profiles")
       .select("id, tenant_id, business_name, capture_token, whatsapp_number, "
             + "auto_whatsapp_new_leads, auto_call_new_leads")
-      .not("capture_token", "is", null)
-      .limit(500) as { data: {
+      .eq("capture_token", token)
+      .maybeSingle() as { data: {
         id: string; tenant_id: string; business_name: string | null;
         capture_token: string; whatsapp_number: string | null;
         auto_whatsapp_new_leads: boolean; auto_call_new_leads: boolean;
-      }[] | null };
-
-    // Constant-time compare against each candidate — avoids leaking which
-    // prefix matched via response timing, same reasoning as checkExotelToken.
-    const match = (profile || []).find(p =>
-      p.capture_token.length === token.length &&
-      crypto.timingSafeEqual(Buffer.from(p.capture_token), Buffer.from(token))
-    );
+      } | null; error: any };
+    if (tokErr) {
+      console.error("[lead-capture] token lookup failed:", tokErr.message);
+      return res.status(500).json({ error: "Could not save lead" });
+    }
     if (!match) {
       return res.status(404).json({ error: "Unknown or invalid capture link" });
     }
@@ -292,6 +299,16 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
     if (!phone) {
       return res.status(400).json({ error: "phone (or phone_number/mobile) is required" });
     }
+    // A real Indian mobile, or nothing is queued. The auto-call and the
+    // WhatsApp ack below used to take the raw form field, so "call me: 98765"
+    // or a landline went straight into outbound_recipients and burned a dial
+    // attempt and its retries, and a mistyped digit became a stranger's
+    // WhatsApp. Same rule as the public API's outbound endpoint.
+    const mobile = normaliseIndianMobile(phone);
+    if (!mobile) {
+      return res.status(400).json({ error: "phone must be a 10-digit Indian mobile number" });
+    }
+    const mobile10 = mobile.slice(-10);
 
     // Reuse the same upsert function calls use — a lead who fills the
     // form twice, or later calls in, converges on one record either way.
@@ -301,7 +318,7 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
       // this path did not, so the same person arriving through a web form as
       // "+91 98765 43210" became a second lead beside the one their phone
       // call created — and the CRM's whole dedupe rests on this column.
-      p_phone:     String(phone).replace(/\D/g, "").slice(-10),
+      p_phone:     mobile10,
       p_name:      name,
       p_intent:    "other",
       p_interest:  message,
@@ -338,7 +355,7 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
         `${match.business_name || "మేము"} మీ enquiry అందుకున్నాము. ` +
         `మా team షార్ట్‌గా మిమ్మల్ని సంప్రదిస్తుంది.\n\n` +
         `Thanks for reaching out — we'll call you shortly.`;
-      sendWhatsApp(phone, ackMsg, match.tenant_id, match.id, "lead_capture_ack",
+      sendWhatsApp(mobile10, ackMsg, match.tenant_id, match.id, "lead_capture_ack",
         undefined, undefined, match.business_name)
         .catch(e => console.error("[lead-capture] whatsapp ack failed:", e));
     }
@@ -348,7 +365,7 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
         tenant_id:  match.tenant_id,
         campaign_id: null,
         is_instant: true,
-        phone,
+        phone:      mobile,
         first_name: name,
         status:     "pending",
         metadata:   { source, message, voice_profile_id: match.id },
@@ -369,13 +386,20 @@ app.post("/webhooks/razorpay", async (req, res) => {
   const rawBody = req.body as Buffer;
   const sig     = req.headers["x-razorpay-signature"] as string;
 
+  // With RAZORPAY_WEBHOOK_SECRET unset the HMAC key is "", which anyone can
+  // compute — so an unset secret accepted forged events that set any
+  // tenant's plan. No secret, no webhook.
+  if (!RZP_WEBHOOK_SEC) {
+    console.error("[Razorpay] RAZORPAY_WEBHOOK_SECRET not set — webhook refused");
+    return res.status(503).json({ error: "Webhook not configured" });
+  }
   // HMAC verification — reject if invalid
   const expected = crypto
     .createHmac("sha256", RZP_WEBHOOK_SEC)
     .update(rawBody)
     .digest("hex");
 
-  if (sig !== expected) {
+  if (!safeHexEqual(sig, expected)) {
     console.error("[Razorpay] Invalid webhook signature");
     return res.status(400).json({ error: "Invalid signature" });
   }
@@ -415,14 +439,6 @@ app.post("/webhooks/razorpay", async (req, res) => {
         const tenantId = notes.tenant_id;
         if (!tenantId) break;
 
-        // Add-on minutes purchase
-        if (notes.type === "addon_minutes") {
-          const minutes = parseInt(notes.minutes || "0");
-          await sb.rpc("increment_call_minutes", {
-            p_tenant_id: tenantId,
-            p_seconds:   minutes * 60,
-          });
-        }
         // The invoices table has existed since the first schema and NOTHING
         // has ever written to it, so /billing renders an empty list for a
         // tenant who has genuinely paid. Razorpay's payment id is the natural
@@ -436,19 +452,47 @@ app.post("/webhooks/razorpay", async (req, res) => {
         // worth applying as the real guarantee against a concurrent retry.
         const { data: seen } = await sb.from("invoices")
           .select("id").eq("razorpay_payment_id", pmt.id).maybeSingle();
-        if (!seen) {
-          const { error: invErr } = await sb.from("invoices").insert({
-            tenant_id:           tenantId,
-            razorpay_payment_id: pmt.id,
-            razorpay_order_id:   pmt.order_id ?? null,
-            amount_paise:        pmt.amount,
-            plan_id:             notes.plan_id ?? null,
-            description:         notes.type === "addon_minutes"
-              ? `Add-on: ${notes.minutes} minutes`
-              : "Subscription payment",
-            status:              "paid",
-          });
-          if (invErr) console.error("[Razorpay] invoice insert failed:", invErr.message);
+        // A retry of a payment already processed: the minutes were granted and
+        // the email sent the first time. Everything below is once per payment.
+        if (seen) break;
+        const { error: invErr } = await sb.from("invoices").insert({
+          tenant_id:           tenantId,
+          razorpay_payment_id: pmt.id,
+          razorpay_order_id:   pmt.order_id ?? null,
+          amount_paise:        pmt.amount,
+          plan_id:             notes.plan_id ?? null,
+          description:         notes.type === "addon_minutes"
+            ? `Add-on: ${notes.minutes} minutes`
+            : "Subscription payment",
+          status:              "paid",
+        });
+        // Lost a race with a concurrent retry (018's unique index): that
+        // delivery owns the grant.
+        if (invErr && /duplicate key/i.test(invErr.message)) break;
+        if (invErr) console.error("[Razorpay] invoice insert failed:", invErr.message);
+
+        // Add-on minutes purchase. This called increment_call_minutes, which
+        // adds to call_minutes.used_seconds — CONSUMPTION — so a customer who
+        // bought 500 minutes was recorded as having used 500 more, and it ran
+        // before the dedupe above, so every Razorpay retry did it again. What
+        // they bought is credit: a ledger row, which the 025 trigger adds to
+        // tenants.credit_minutes. The reason carries the payment id and is
+        // checked first, so even with the invoice insert failing (no 018
+        // index) a retry cannot grant twice.
+        if (notes.type === "addon_minutes") {
+          const minutes = parseInt(notes.minutes || "0", 10);
+          const reason = `addon_minutes:${pmt.id}`;
+          const { data: granted } = await sb.from("credit_ledger")
+            .select("id").eq("tenant_id", tenantId).eq("reason", reason).limit(1).maybeSingle();
+          if (minutes > 0 && !granted) {
+            const { error: grantErr } = await sb.from("credit_ledger").insert({
+              tenant_id: tenantId, delta: minutes, reason,
+            });
+            // duplicate key = a concurrent delivery granted it (052's index).
+            if (grantErr && !/duplicate key/i.test(grantErr.message)) console.error(`[Razorpay] add-on credit grant failed for ${pmt.id}:`, grantErr.message);
+            else if (grantErr) { /* already granted */ }
+            else console.log(`[Razorpay] tenant ${tenantId} +${minutes} add-on min (${pmt.id})`);
+          }
         }
 
         await sendEmail(tenantId, "payment_success", { amount: pmt.amount / 100 });
@@ -1492,6 +1536,10 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
           pace: 1.06,
         });
         audioBase64 = wsWav.toString("base64");
+        // Safe to cache: synthesizeWs resolves only on Sarvam's completion
+        // event. It used to resolve with whatever had arrived when the socket
+        // closed, and a truncated reply cached here was served, truncated, to
+        // every later visitor who got the same answer.
         webTtsPut(cacheKey, audioBase64);
       } catch (e: any) {
         console.warn("[voice-turn] sarvam ws tts failed, falling back to REST:", e.message);
@@ -1499,6 +1547,8 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
 
       if (!audioBase64) {
         audioBase64 = await sarvamRestTts(speakText, ttsLang, SARVAM_KEY);
+        // REST returns the whole clip or throws; a partial socket clip never
+        // reaches this line (audioBase64 is only set above on completion).
         if (audioBase64) webTtsPut(cacheKey, audioBase64);
       }
       }
@@ -1793,6 +1843,33 @@ app.post("/api/whatsapp/order-confirm", verifyInternal, async (req, res) => {
 // Missed call auto-response
 app.post("/api/whatsapp/missed-call", verifyInternal, async (req, res) => {
   const { caller_number, business_name, tenant_id, voice_profile_id, call_id } = req.body;
+  // "You called us and we missed your call" is only true of someone who rang
+  // US. The one caller of this route is the outbound dispatcher's no-answer
+  // follow-up — people the business dialled from a campaign list — so every
+  // one of those messages told a stranger they had phoned a business they
+  // had never heard of. None of the approved templates (docs/whatsapp-
+  // templates.md) says "we tried to reach you": missed_call_followup is the
+  // inbound wording and lead_capture_ack thanks them for an enquiry they
+  // never made. So an outbound leg gets nothing until an outbound template is
+  // approved. Recognised by an explicit direction, by the call row, or by the
+  // number sitting on this tenant's outbound list.
+  if (tenant_id && caller_number && String(req.body.direction || "").toLowerCase() !== "inbound") {
+    let outbound = String(req.body.direction || "").toLowerCase() === "outbound";
+    if (!outbound && call_id) {
+      const { data: c } = await sb.from("calls").select("direction")
+        .eq("id", call_id).eq("tenant_id", tenant_id).maybeSingle();
+      outbound = c?.direction === "outbound";
+    }
+    if (!outbound) {
+      const { data: r } = await sb.from("outbound_recipients").select("id")
+        .eq("tenant_id", tenant_id).in("phone", phoneForms(caller_number)).limit(1).maybeSingle();
+      outbound = !!r;
+    }
+    if (outbound) {
+      console.warn(`[WhatsApp] missed-call message refused for outbound leg to ${last10(caller_number)} — no outbound template`);
+      return res.json({ ok: false, skipped: "outbound_no_template" });
+    }
+  }
   const message = `నమస్కారం! మీరు ${business_name} కి call చేశారు.\n\n` +
     `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము.\n\n` +
     `అర్జెంట్ అయితే, మళ్ళీ call చేయండి. ధన్యవాదాలు! 🙏`;
@@ -1816,11 +1893,35 @@ app.post("/api/whatsapp/reminder", verifyInternal, async (req, res) => {
     (ref ? `🔖 Booking no: ${ref}\n` : "") +
     (service ? `🏷️ ${service}\n` : "") +
     `\nతప్పక వచ్చేందుకు request చేస్తున్నాము. ధన్యవాదాలు! 🙏`;
+  if (!appointment_id) return res.status(400).json({ ok: false, error: "appointment_id required" });
+
+  // Claim first, send second. This sent and then set wa_reminder_sent with
+  // the update's error ignored — so when that write failed the flag stayed
+  // false and the scheduler, which re-selects on it every fifteen minutes,
+  // sent the same reminder again every tick until the slot passed. A
+  // conditional false→true update is also what stops two overlapping ticks
+  // (or a retried request) from both sending.
+  const { data: claimed, error: claimErr } = await sb.from("appointments")
+    .update({ wa_reminder_sent: true })
+    .eq("id", appointment_id).eq("wa_reminder_sent", false)
+    .select("id");
+  if (claimErr) {
+    console.error(`[reminder] could not claim ${appointment_id}:`, claimErr.message);
+    return res.status(500).json({ ok: false, error: "could not record the reminder — not sent" });
+  }
+  if (!claimed?.length) return res.json({ ok: true, skipped: "already_sent" });
+
   const ok = await sendWhatsApp(caller_number, message, tenant_id, voice_profile_id,
     today ? "reminder_today" : "reminder", undefined, appointment_id, business_name,
     [business_name || "us", timeWithRef(slot_time, ref)]);
-  if (ok) {
-    await sb.from("appointments").update({ wa_reminder_sent: true }).eq("id", appointment_id);
+  if (!ok) {
+    // Release the claim so the next tick retries (the same-day template may
+    // simply not be approved yet). If the release itself fails the reminder
+    // is lost rather than repeated, which is the right way round.
+    const { error: relErr } = await sb.from("appointments")
+      .update({ wa_reminder_sent: false }).eq("id", appointment_id);
+    if (relErr) console.error(`[reminder] send failed AND release failed for ${appointment_id}:`, relErr.message);
+    return res.status(502).json({ ok: false, error: "WhatsApp did not accept the reminder" });
   }
   res.json({ ok });
 });
@@ -1852,6 +1953,11 @@ app.post("/api/whatsapp/booking-incomplete", verifyInternal, async (req, res) =>
 // initialization failed" — which reads as "your card was refused" or "the
 // product is broken", when the truth is that we have not finished setting
 // up payments. Say that instead, and log it loudly at our end.
+function safeHexEqual(given: unknown, expected: string): boolean {
+  if (typeof given !== "string" || given.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+
 function paymentsConfigured(): boolean {
   return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
 }
@@ -1866,6 +1972,8 @@ app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
   const userId   = (req as any).user.id;
   const tenantId = await getTenantId(userId);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
+  // 039: spending the business's money is the owner's decision.
+  if (!(await requireOwner(sb, userId, tenantId, res, "Only the account owner can change the plan."))) return;
 
   const { plan_id, annual } = req.body;
   const planAmounts: Record<string, { monthly: number; annual: number }> = {
@@ -1905,7 +2013,16 @@ app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
 
 // Verify payment after Razorpay checkout
 app.post("/api/billing/verify", verifyJWT, async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id } = req.body;
+  // Three holes, all live: with RAZORPAY_KEY_SECRET unset the HMAC key was ""
+  // so any user could sign their own "payment"; plan_id came from the body,
+  // so paying for Starter and posting "scale" got Scale; and nothing tied the
+  // order to this tenant, so one real signature upgraded anyone who replayed
+  // it. The plan now comes from the order Razorpay holds, and only if that
+  // order is paid and was created for this tenant.
+  if (!paymentsConfigured()) {
+    return res.status(503).json({ error: "Online payment isn't switched on yet" });
+  }
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
   const userId = (req as any).user.id;
   const tenantId = await getTenantId(userId);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
@@ -1915,14 +2032,79 @@ app.post("/api/billing/verify", verifyJWT, async (req, res) => {
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest("hex");
 
-  if (expected !== razorpay_signature) {
+  if (!safeHexEqual(razorpay_signature, expected)) {
     return res.status(400).json({ error: "Invalid signature" });
+  }
+
+  let plan_id: string;
+  let annual = false;
+  try {
+    const auth = Buffer.from(`${RZP_KEY_ID}:${RZP_SECRET}`).toString("base64");
+    const r = await fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(String(razorpay_order_id))}`,
+      { headers: { Authorization: `Basic ${auth}` } });
+    const order = await r.json() as { status?: string; notes?: Record<string, string> };
+    if (!r.ok || order.status !== "paid" || order.notes?.tenant_id !== tenantId
+        || !["starter", "growth", "scale"].includes(order.notes?.plan_id || "")) {
+      console.error(`[billing] verify refused for tenant ${tenantId}: order ${razorpay_order_id} status=${order.status}`);
+      return res.status(400).json({ error: "Payment could not be verified" });
+    }
+    plan_id = order.notes!.plan_id;
+    annual = order.notes?.annual === "true";
+  } catch (e: any) {
+    console.error("[billing] order lookup failed:", e?.message);
+    return res.status(502).json({ error: "Payment could not be verified — try again" });
+  }
+
+  // What the payment bought, and until when. This set tenants.plan and
+  // nothing else, so one month's payment was a paid plan forever — no row
+  // recorded that it had an end. The subscriptions row is that record: one
+  // per Razorpay order, current_period_end = +1 month (or +12 for annual),
+  // and the plan-expiry job downgrades a tenant whose latest period has
+  // ended. A renewal paid before expiry starts where the current period
+  // ends rather than throwing away the days already paid for. Replaying the
+  // same verify finds its own order and extends nothing.
+  const { data: already } = await sb.from("subscriptions")
+    .select("id, current_period_end").eq("tenant_id", tenantId)
+    .eq("razorpay_order_id", String(razorpay_order_id)).maybeSingle();
+  let periodEnd = already?.current_period_end || null;
+  if (!already) {
+    const { data: latest } = await sb.from("subscriptions")
+      .select("current_period_end").eq("tenant_id", tenantId)
+      .in("status", ["active", "cancelled"]).not("current_period_end", "is", null)
+      .order("current_period_end", { ascending: false }).limit(1).maybeSingle();
+    const now = new Date();
+    const latestEnd = latest?.current_period_end ? new Date(latest.current_period_end) : null;
+    const start = latestEnd && latestEnd > now ? latestEnd : now;
+    const end = addMonthsClamped(start, annual ? 12 : 1);
+    const { error: subErr } = await sb.from("subscriptions").insert({
+      tenant_id:            tenantId,
+      plan_id,
+      razorpay_order_id:    String(razorpay_order_id),
+      status:               "active",
+      current_period_start: start.toISOString(),
+      current_period_end:   end.toISOString(),
+    });
+    // Logged, not fatal: the customer has paid and must get the plan. A
+    // missing row means no expiry, which is the old behaviour, not a new one.
+    if (subErr && !/duplicate key/i.test(subErr.message)) console.error(`[billing] subscription row for ${tenantId} order ${razorpay_order_id} failed:`, subErr.message);
+    periodEnd = end.toISOString();
   }
 
   await sb.from("tenants").update({ plan: plan_id, status: "active" }).eq("id", tenantId);
   await updateMinuteLimit(tenantId, plan_id);
-  res.json({ ok: true, plan: plan_id });
+  res.json({ ok: true, plan: plan_id, current_period_end: periodEnd });
 });
+
+// Calendar months, clamped: 31 Jan + 1 month is 28/29 Feb, not 3 Mar.
+function addMonthsClamped(from: Date, months: number): Date {
+  const d = new Date(from.getTime());
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
+  return d;
+}
 
 // ════════════════════════════════════════════════
 // VOICE PROFILE APIS
@@ -1952,6 +2134,9 @@ app.get("/api/voice-profiles/:id/versions", verifyJWT, async (req: any, res) => 
 app.post("/api/voice-profiles/:id/restore/:versionId", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  // A restore rewrites the greeting, the script and the negotiation floor in
+  // one press — every column 039 reserved for the owner.
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can restore an earlier version of the agent."))) return;
 
   const { data: v } = await sb.from("voice_profile_versions")
     .select("snapshot").eq("id", req.params.versionId)
@@ -1963,9 +2148,15 @@ app.post("/api/voice-profiles/:id/restore/:versionId", verifyJWT, async (req: an
   // phone line it answers on — restoring an old prompt must not silently
   // move the agent to a number it used to have.
   const snap = v.snapshot as Record<string, any>;
-  const IMMUTABLE = new Set(["id", "tenant_id", "created_at", "updated_at", "did_number", "status"]);
+  // Restricted to the same whitelist a direct edit uses: a snapshot is the
+  // whole row, so it also carries exotel_did, caller_id_number and
+  // capture_token — restoring one would have silently reverted a rotated
+  // (leaked) capture link to the old working token.
   const patch: Record<string, any> = {};
-  for (const [k, val] of Object.entries(snap)) if (!IMMUTABLE.has(k)) patch[k] = val;
+  for (const [k, val] of Object.entries(snap)) {
+    if (VOICE_PROFILE_EDITABLE.has(k) && k !== "status") patch[k] = val;
+  }
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "That version has nothing to restore" });
 
   // The update fires the trigger, so the version being replaced is itself
   // snapshotted — an undo is undoable.
@@ -2079,9 +2270,39 @@ app.post("/api/agents/draft", verifyJWT, apiLimiter, async (req: any, res) => {
   }
 });
 
+// ── What a person may write on a voice profile ────────────────
+// These two routes spread req.body straight into the row. tenant_id was
+// overwritten on insert but not on update, so a PATCH could move a profile
+// into another tenant; did_number / exotel_did / caller_id_number could
+// point an agent at a line (or a caller ID) the business was never given;
+// capture_token could be set to a value someone else knows; id and
+// created_at could be rewritten. The platform assigns those. Everything a
+// business legitimately edits on /setup is listed here, and nothing else
+// gets through.
+const VOICE_PROFILE_EDITABLE = new Set([
+  "profile_sku", "display_name", "business_name", "open_time", "close_time",
+  "open_days", "services", "appointment_types", "whatsapp_number", "status",
+  "language", "dialect_region", "agent_mode", "greeting_script", "must_ask",
+  "fallback_message", "fallback_wa_enabled", "fallback_wa_template",
+  "missed_call_guard_enabled", "missed_call_guard_seconds",
+  "auto_call_new_leads", "auto_whatsapp_new_leads", "skip_dnd_for_instant_leads",
+  "automation_webhook_url", "negotiation", "order_taking", "catalogue",
+  "pronunciation_map",
+]);
+
+function pickVoiceProfileFields(body: unknown): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (!body || typeof body !== "object" || Array.isArray(body)) return out;
+  for (const [k, v] of Object.entries(body as Record<string, any>)) {
+    if (VOICE_PROFILE_EDITABLE.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 app.post("/api/voice-profiles", verifyJWT, async (req, res) => {
   const tenantId = await getTenantId((req as any).user.id);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
+  if (!(await requireOwner(sb, (req as any).user.id, tenantId, res, "Only the account owner can create or change the agent."))) return;
 
   // Check plan profile limit
   const { data: tenant } = await sb.from("tenants").select("plan").eq("id", tenantId).single();
@@ -2094,7 +2315,7 @@ app.post("/api/voice-profiles", verifyJWT, async (req, res) => {
   }
 
   const { data, error } = await sb.from("voice_profiles")
-    .insert({ ...req.body, tenant_id: tenantId })
+    .insert({ ...pickVoiceProfileFields(req.body), tenant_id: tenantId })
     .select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
@@ -2103,8 +2324,11 @@ app.post("/api/voice-profiles", verifyJWT, async (req, res) => {
 app.patch("/api/voice-profiles/:id", verifyJWT, async (req, res) => {
   const tenantId = await getTenantId((req as any).user.id);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
+  if (!(await requireOwner(sb, (req as any).user.id, tenantId, res, "Only the account owner can create or change the agent."))) return;
+  const patch = pickVoiceProfileFields(req.body);
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing editable in that request" });
   const { data, error } = await sb.from("voice_profiles")
-    .update(req.body)
+    .update(patch)
     .eq("id", req.params.id)
     .eq("tenant_id", tenantId) // RLS enforcement
     .select().single();
@@ -2407,6 +2631,9 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
 app.post("/api/whatsapp/sender/add", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  // 039: the number a business messages its customers from is its identity,
+  // and registering one ends that number's WhatsApp Business app account.
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can change the business's WhatsApp number."))) return;
   const { data: kyc } = await sb.from("kyc_documents").select("id")
     .eq("tenant_id", tenantId).eq("status", "approved").limit(1).maybeSingle();
   if (!kyc) return res.status(409).json({ error: "We'll enable this as soon as your KYC is approved." });
@@ -2421,6 +2648,7 @@ app.post("/api/whatsapp/sender/add", verifyJWT, async (req: any, res) => {
 app.post("/api/whatsapp/sender/request-code", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can change the business's WhatsApp number."))) return;
   try {
     const method = req.body?.method === "SMS" ? "SMS" : "VOICE";
     const { number, own } = await waRequestCode(tenantId, method);
@@ -2439,6 +2667,7 @@ app.post("/api/whatsapp/sender/request-code", verifyJWT, async (req: any, res) =
 app.post("/api/whatsapp/sender/verify", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can change the business's WhatsApp number."))) return;
   try {
     await waVerifyCode(tenantId, String(req.body?.code || "").replace(/\D/g, ""));
     res.json({ ok: true, message: "Your number is live — customers now get WhatsApp from it." });
@@ -2477,6 +2706,7 @@ app.get("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
 app.post("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can change the business's WhatsApp number."))) return;
 
   const mode = String(req.body?.mode || "").toLowerCase();
   const displayName = String(req.body?.display_name || "").trim();
@@ -2708,11 +2938,39 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
 // ════════════════════════════════════════════════
 // DASHBOARD ANALYTICS APIS
 // ════════════════════════════════════════════════
+
+// Today's date in India. Every customer is in IST; a server clock in UTC is
+// an implementation detail that must not decide which day a call was on.
+function istDay(offsetDays = 0): string {
+  return new Date(Date.now() + 330 * 60_000 + offsetDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Reads every row of a query, 1000 at a time — PostgREST's per-request cap.
+// The builder must apply a stable order (id) and the given range.
+async function fetchAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+  max = 200_000,
+): Promise<{ data: T[]; error: string | null }> {
+  const out: T[] = [];
+  const SIZE = 1000;
+  for (let from = 0; from < max; from += SIZE) {
+    const { data, error } = await page(from, from + SIZE - 1);
+    if (error) return { data: out, error: error.message || String(error) };
+    out.push(...(data || []));
+    if (!data || data.length < SIZE) break;
+  }
+  return { data: out, error: null };
+}
 app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
   const tenantId = await getTenantId((req as any).user.id);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
 
-  const today = new Date().toISOString().split("T")[0];
+  // IST, not UTC. The day and month boundaries were toISOString(), so
+  // "today" began at 05:30 in the morning for the business: calls between
+  // midnight and 05:30 counted as yesterday, and on the 1st the whole early
+  // morning was billed to last month. month (UTC) still keys call_minutes,
+  // because that is the key updateMinuteLimit writes.
+  const today = istDay();
   const month = new Date().toISOString().slice(0, 7);
 
   // Usage is DERIVED from the calls themselves, not read from
@@ -2724,17 +2982,29 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
   // A counter that must be maintained in three services drifts; a sum over the
   // rows that already exist cannot. The plan's limit still comes from the
   // subscription, falling back to the tenant's tier.
-  const monthStart = month + "-01T00:00:00";
+  //
+  // Both call lists are read in pages. PostgREST returns at most 1000 rows
+  // per request, so a busy tenant's monthly minutes silently stopped counting
+  // at the thousandth call — the meter under-reported exactly the customers
+  // most likely to be over their allowance.
+  const monthStart = `${istDay().slice(0, 7)}-01T00:00:00+05:30`;
   const [todayCalls, monthCalls, planRow, tenantRow] = await Promise.all([
-    sb.from("calls").select("id,status,wa_sent,appointment_created,intent,duration_seconds")
+    fetchAllRows<any>((from, to) => sb.from("calls")
+      .select("id,status,wa_sent,appointment_created,intent,duration_seconds")
       .eq("tenant_id", tenantId)
-      .gte("created_at", today + "T00:00:00"),
-    sb.from("calls").select("duration_seconds")
-      .eq("tenant_id", tenantId).gte("created_at", monthStart),
+      .gte("created_at", `${today}T00:00:00+05:30`)
+      .order("id").range(from, to)),
+    fetchAllRows<any>((from, to) => sb.from("calls").select("id,duration_seconds")
+      .eq("tenant_id", tenantId).gte("created_at", monthStart)
+      .order("id").range(from, to)),
     sb.from("call_minutes").select("plan_limit_seconds")
       .eq("tenant_id", tenantId).eq("month", month).maybeSingle(),
     sb.from("tenants").select("plan, credit_minutes").eq("id", tenantId).maybeSingle(),
   ]);
+  if (todayCalls.error || monthCalls.error) {
+    console.error("[analytics] call read failed:", todayCalls.error || monthCalls.error);
+    return res.status(500).json({ error: "Could not read call history" });
+  }
 
   const usedSeconds = (monthCalls.data || [])
     .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
@@ -3088,7 +3358,8 @@ app.get("/api/admin/stats", verifySuperAdmin, async (req, res) => {
     sb.from("tenants").select("id,plan,status"),
     sb.from("calls").select("id,tenant_id,intent,created_at", { count: "exact" }).eq("status", "active"),
     sb.from("calls").select("id", { count: "exact" })
-      .gte("created_at", new Date().toISOString().split("T")[0] + "T00:00:00"),
+      // IST day, like every other "today" (see istDay).
+      .gte("created_at", `${istDay()}T00:00:00+05:30`),
   ]);
 
   const t = tenants.data || [];
@@ -3260,7 +3531,7 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: adminId, action: `kyc_${decision}`,
-    target_tenant_id: data?.tenant_id, details: { kyc_id: req.params.id, note: note || null },
+    target_tenant_id: data?.tenant_id, metadata: { kyc_id: req.params.id, note: note || null },
   }).then(r => r.error && console.error("[kyc review] audit:", r.error.message));
 
   // Approving KYC is what unlocks a WhatsApp number for this business. Until
@@ -3315,7 +3586,7 @@ app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "plan_updated",
-    details: { plan_id: req.params.id, ...patch },
+    metadata: { plan_id: req.params.id, ...patch },
   }).then(r => r.error && console.error("[plans] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3359,7 +3630,7 @@ app.post("/api/admin/trunks", verifySuperAdmin, async (req: any, res) => {
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "trunk_created",
-    details: { trunk_id: data.id, provider, host },
+    metadata: { trunk_id: data.id, provider, host },
   }).then(r => r.error && console.error("[trunk] audit:", r.error.message));
   res.json({ ok: true, id: data.id,
     note: "Created as standby — FreeSWITCH gateway config is separate; activate after testing" });
@@ -3376,7 +3647,7 @@ app.post("/api/admin/trunks/:id", verifySuperAdmin, async (req: any, res) => {
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "trunk_updated",
-    details: { trunk_id: req.params.id,
+    metadata: { trunk_id: req.params.id,
       fields: Object.keys(patch).map(k => k === "password_enc" ? "password" : k) },
   }).then(r => r.error && console.error("[trunk] audit:", r.error.message));
   res.json({ ok: true });
@@ -3399,7 +3670,7 @@ app.post("/api/admin/api-keys/:id/revoke", verifySuperAdmin, async (req: any, re
   if (error || !data) return res.status(404).json({ error: "Not found" });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "api_key_revoked",
-    target_tenant_id: data.tenant_id, details: { key_id: data.id, name: data.name },
+    target_tenant_id: data.tenant_id, metadata: { key_id: data.id, name: data.name },
   }).then(r => r.error && console.error("[keys] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3432,7 +3703,7 @@ app.post("/api/admin/demo-tenants", verifySuperAdmin, async (req: any, res) => {
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "demo_tenant_created",
-    target_tenant_id: data.id, details: { name, days },
+    target_tenant_id: data.id, metadata: { name, days },
   }).then(r => r.error && console.error("[demo] audit:", r.error.message));
   res.json({ ok: true, tenant_id: data.id, expires_at: data.demo_expires_at });
 });
@@ -3472,7 +3743,7 @@ app.post("/api/admin/staff/:rowId/role", verifySuperAdmin, async (req: any, res)
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "role_changed",
     target_tenant_id: row.tenant_id,
-    details: { row_id: req.params.rowId, from: row.role, to: role },
+    metadata: { row_id: req.params.rowId, from: row.role, to: role },
   }).then(r => r.error && console.error("[acl] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3498,7 +3769,7 @@ app.delete("/api/admin/tenants/:id", verifySuperAdmin, async (req: any, res) => 
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "tenant_deleted",
-    details: { tenant_id: tid, name: t.name, released_dids: (dids || []).map((d: any) => d.number) },
+    metadata: { tenant_id: tid, name: t.name, released_dids: (dids || []).map((d: any) => d.number) },
   }).then(r => r.error && console.error("[delete] audit:", r.error.message));
   res.json({ ok: true, released: (dids || []).length });
 });
@@ -3524,7 +3795,7 @@ app.post("/api/admin/wa-log/:id/resend", verifySuperAdmin, async (req: any, res)
     row.voice_profile_id, row.message_type);
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "wa_resent",
-    target_tenant_id: row.tenant_id, details: { to: row.to_number, type: row.message_type, ok },
+    target_tenant_id: row.tenant_id, metadata: { to: row.to_number, type: row.message_type, ok },
   }).then(r => r.error && console.error("[wa resend] audit:", r.error.message));
   res.json({ ok });
 });
@@ -3537,7 +3808,7 @@ app.post("/api/admin/quality/rescore/:tenantId", verifySuperAdmin, async (req: a
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "quality_rescore",
-    target_tenant_id: req.params.tenantId, details: { cleared: (data || []).length },
+    target_tenant_id: req.params.tenantId, metadata: { cleared: (data || []).length },
   }).then(r => r.error && console.error("[rescore] audit:", r.error.message));
   res.json({ ok: true, cleared: (data || []).length,
              note: "The scheduler re-scores within 15 minutes" });
@@ -3566,7 +3837,7 @@ app.post("/api/admin/voice-profiles/:id/restore/:versionId", verifySuperAdmin, a
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "agent_restored",
     target_tenant_id: v.tenant_id,
-    details: { profile_id: req.params.id, version_id: req.params.versionId },
+    metadata: { profile_id: req.params.id, version_id: req.params.versionId },
   }).then(r => r.error && console.error("[restore] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3588,7 +3859,7 @@ app.delete("/api/admin/knowledge/:rowId", verifySuperAdmin, async (req: any, res
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "knowledge_deleted",
-    target_tenant_id: data.tenant_id, details: { content: String(data.content).slice(0, 120) },
+    target_tenant_id: data.tenant_id, metadata: { content: String(data.content).slice(0, 120) },
   }).then(r => r.error && console.error("[kb] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3612,7 +3883,7 @@ app.post("/api/admin/dids/:number/routing", verifySuperAdmin, async (req: any, r
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "did_routing_changed",
-    target_tenant_id: data.tenant_id, details: { number, ...patch },
+    target_tenant_id: data.tenant_id, metadata: { number, ...patch },
   }).then(r => r.error && console.error("[routing] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3628,7 +3899,7 @@ app.post("/api/admin/campaigns/:id/pause", verifySuperAdmin, async (req: any, re
   if (!data) return res.status(409).json({ error: "Campaign is not running" });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "campaign_paused",
-    target_tenant_id: data.tenant_id, details: { campaign_id: req.params.id },
+    target_tenant_id: data.tenant_id, metadata: { campaign_id: req.params.id },
   }).then(r => r.error && console.error("[pause] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3641,7 +3912,7 @@ app.post("/api/admin/campaigns/:id/resume", verifySuperAdmin, async (req: any, r
   if (!data) return res.status(409).json({ error: "Campaign is not paused" });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "campaign_resumed",
-    target_tenant_id: data.tenant_id, details: { campaign_id: req.params.id },
+    target_tenant_id: data.tenant_id, metadata: { campaign_id: req.params.id },
   }).then(r => r.error && console.error("[resume] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3656,7 +3927,7 @@ app.post("/api/admin/voice-profiles/:id/rotate-capture-token", verifySuperAdmin,
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "capture_token_rotated",
-    target_tenant_id: data.tenant_id, details: { profile_id: req.params.id },
+    target_tenant_id: data.tenant_id, metadata: { profile_id: req.params.id },
   }).then(r => r.error && console.error("[token] audit:", r.error.message));
   res.json({ ok: true, capture_url: `${process.env.SELF_URL || "https://api.heynikki.in"}/webhooks/lead-capture/${fresh}` });
 });
@@ -3700,7 +3971,7 @@ app.post("/api/admin/tenants/:id/credits", verifySuperAdmin, async (req: any, re
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "credits_adjusted",
-    target_tenant_id: req.params.id, details: { delta, reason },
+    target_tenant_id: req.params.id, metadata: { delta, reason },
   }).then(r => r.error && console.error("[credits] audit:", r.error.message));
   res.json({ ok: true, balance_after: data.balance_after });
 });
@@ -3715,7 +3986,7 @@ app.post("/api/admin/invoices/:id/refund", verifySuperAdmin, async (req: any, re
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "invoice_refunded",
-    target_tenant_id: data.tenant_id, details: { invoice_id: data.id, amount_paise: data.amount_paise },
+    target_tenant_id: data.tenant_id, metadata: { invoice_id: data.id, amount_paise: data.amount_paise },
   }).then(r => r.error && console.error("[refund] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3737,7 +4008,7 @@ app.post("/api/admin/tenants/:id/trial", verifySuperAdmin, async (req: any, res)
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "trial_adjusted",
-    target_tenant_id: req.params.id, details: { days, new_end: next },
+    target_tenant_id: req.params.id, metadata: { days, new_end: next },
   }).then(r => r.error && console.error("[trial] audit:", r.error.message));
   res.json({ ok: true, trial_ends_at: next });
 });
@@ -3748,7 +4019,7 @@ app.post("/api/admin/tenants/:id/cancel", verifySuperAdmin, async (req: any, res
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "tenant_cancelled",
-    target_tenant_id: req.params.id, details: { reason: req.body?.reason || null },
+    target_tenant_id: req.params.id, metadata: { reason: req.body?.reason || null },
   }).then(r => r.error && console.error("[cancel] audit:", r.error.message));
   res.json({ ok: true });
 });
@@ -3767,7 +4038,7 @@ app.post("/api/admin/tenants/:id/owner-phone", verifySuperAdmin, async (req: any
   if (!data?.length) return res.status(404).json({ error: "No owner row for this tenant" });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "owner_phone_fixed",
-    target_tenant_id: req.params.id, details: { phone: digits },
+    target_tenant_id: req.params.id, metadata: { phone: digits },
   }).then(r => r.error && console.error("[phone] audit:", r.error.message));
   res.json({ ok: true, phone: digits });
 });
@@ -3819,7 +4090,7 @@ app.post("/api/admin/voice-lab/:profileId/pronunciations", verifySuperAdmin, asy
   if (error) return res.status(500).json({ error: error.message });
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "pronunciations_updated",
-    details: { profile_id: req.params.profileId, entries: Object.keys(clean).length },
+    metadata: { profile_id: req.params.profileId, entries: Object.keys(clean).length },
   }).then(r => r.error && console.error("[voice-lab] audit:", r.error.message));
   res.json({ ok: true, entries: Object.keys(clean).length });
 });
@@ -3876,7 +4147,7 @@ app.post("/api/admin/onboarding-call/:tenantId", verifySuperAdmin, async (req: a
     const uuid = await fsl.originateOnboarding(owner.phone, cli, tenantId);
     await sb.from("admin_audit_log").insert({
       admin_user_id: req.user.id, action: "onboarding_call",
-      target_tenant_id: tenantId, details: { to: owner.phone, from: cli, fs_uuid: uuid },
+      target_tenant_id: tenantId, metadata: { to: owner.phone, from: cli, fs_uuid: uuid },
     }).then(r => r.error && console.error("[onboarding call] audit:", r.error.message));
     res.json({ ok: true, calling: owner.phone, from: cli, fs_uuid: uuid });
   } catch (e: any) {
@@ -3951,7 +4222,7 @@ app.post("/api/admin/whatsapp-numbers/:tenantId/bind", verifySuperAdmin, async (
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "whatsapp_bind",
     target_tenant_id: req.params.tenantId,
-    details: { phone_number_id, waba_id, verified_name: verified?.verified_name },
+    metadata: { phone_number_id, waba_id, verified_name: verified?.verified_name },
   }).then(r => r.error && console.error("[wa bind] audit:", r.error.message));
 
   res.json({ ok: true, number: data, meta: verified });
@@ -4025,7 +4296,7 @@ app.post("/api/admin/dids", verifySuperAdmin, async (req: any, res) => {
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "did_added",
-    details: { number, provider: data.provider },
+    metadata: { number, provider: data.provider },
   }).then(r => r.error && console.error("[did add] audit:", r.error.message));
 
   res.json({ ok: true, did: data });
@@ -4111,7 +4382,7 @@ app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) =>
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: adminId, action: "assign_did",
-    target_tenant_id: tenant_id, details: { number, voice_profile_id: profile!.id },
+    target_tenant_id: tenant_id, metadata: { number, voice_profile_id: profile!.id },
   }).then(r => r.error && console.error("[assign_did] audit:", r.error.message));
 
   res.json({ ok: true, number: did.number, tenant: tenant.name, voice_profile_id: profile!.id });
@@ -4138,7 +4409,7 @@ app.post("/api/admin/dids/:number/release", verifySuperAdmin, async (req, res) =
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: adminId, action: "release_did",
-    target_tenant_id: did.tenant_id, details: { number: did.number },
+    target_tenant_id: did.tenant_id, metadata: { number: did.number },
   }).then(r => r.error && console.error("[release_did] audit:", r.error.message));
 
   res.json({ ok: true, number: did.number });
@@ -4436,6 +4707,17 @@ const OUTBOUND_PURPOSES = ["reminder", "follow_up", "custom"] as const;
 const OUTBOUND_LANGS    = ["te", "en", "hi"] as const;
 const CALLING_HOURS     = "09:00–20:30 IST";
 
+// Every way the same Indian number is stored somewhere in this schema.
+// outbound_opt_outs is written as ten digits by the pipeline ("remove me" on
+// a call) and by the dashboard, while this file and the importers normalise
+// to +91XXXXXXXXXX — so an equality check in either form missed the other,
+// and a person who had asked not to be called was queued anyway.
+function phoneForms(raw: unknown): string[] {
+  const ten = String(raw ?? "").replace(/\D/g, "").slice(-10);
+  if (ten.length !== 10) return [String(raw ?? "")];
+  return [ten, `91${ten}`, `+91${ten}`, `0${ten}`];
+}
+
 function normaliseIndianMobile(raw: unknown): string | null {
   const digits = String(raw ?? "").replace(/\D/g, "");
   const ten = digits.length === 10 ? digits
@@ -4505,7 +4787,7 @@ app.post("/api/v1/calls/outbound",
     if (!did) return res.status(409).json({ error: "This business has no phone number yet — calls need a number to dial out from", code: "no_number" });
 
     const { data: optOut } = await sb.from("outbound_opt_outs").select("phone")
-      .eq("tenant_id", tenantId).eq("phone", phone).maybeSingle();
+      .eq("tenant_id", tenantId).in("phone", phoneForms(phone)).limit(1).maybeSingle();
     if (optOut) return res.status(409).json({ error: "This number has asked not to be called", code: "opted_out" });
 
     // The same reminder queued twice — a retrying client — should not ring
@@ -4642,10 +4924,13 @@ app.get("/api/v1/appointments",
     let q = sb.from("appointments")
       .select("*")
       .eq("tenant_id", req.apiAuth.tenantId)
-      .order("scheduled_at", { ascending: true })
+      // appointments has slot_date/slot_time; scheduled_at is a campaigns
+      // column, so this endpoint returned 500 on every request.
+      .order("slot_date", { ascending: true })
+      .order("slot_time", { ascending: true })
       .limit(limit);
-    if (from) q = q.gte("scheduled_at", from);
-    if (to)   q = q.lte("scheduled_at", to);
+    if (from) q = q.gte("slot_date", String(from).slice(0, 10));
+    if (to)   q = q.lte("slot_date", String(to).slice(0, 10));
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     res.json({ items: data || [] });
@@ -4656,15 +4941,18 @@ app.get("/api/v1/appointments",
 app.get("/api/v1/usage",
   verifyApiKey, publicApiLimiter,
   async (req: any, res) => {
-    const startOfMonth = new Date();
-    startOfMonth.setUTCDate(1);
-    startOfMonth.setUTCHours(0, 0, 0, 0);
+    // The IST calendar month, read in pages. The UTC month started 05:30 late
+    // for an Indian business, and a single select stopped at PostgREST's
+    // 1000-row cap, so this endpoint reported a busy tenant's usage as
+    // whatever its first thousand calls added up to.
+    const startOfMonth = new Date(`${istDay().slice(0, 7)}-01T00:00:00+05:30`);
 
-    const { data, error } = await sb.from("calls")
-      .select("duration_seconds")
+    const { data, error } = await fetchAllRows<any>((from, to) => sb.from("calls")
+      .select("id, duration_seconds")
       .eq("tenant_id", req.apiAuth.tenantId)
-      .gte("created_at", startOfMonth.toISOString());
-    if (error) return res.status(500).json({ error: error.message });
+      .gte("created_at", startOfMonth.toISOString())
+      .order("id").range(from, to));
+    if (error) return res.status(500).json({ error });
 
     const seconds = (data || []).reduce((sum, c: any) => sum + (c.duration_seconds || 0), 0);
     res.json({
@@ -4852,31 +5140,102 @@ app.post("/api/team/accept", verifyJWT, async (req: any, res) => {
   // admin — which is exactly the protection that should stop a person
   // moving themselves between businesses.
   const { data: existing } = await sb.from("tenant_users")
-    .select("id, tenant_id, role").eq("user_id", req.user.id);
+    .select("id, tenant_id, role, phone, display_name").eq("user_id", req.user.id);
   for (const row of existing || []) {
     if (row.tenant_id === inv.tenant_id) {
       return res.status(409).json({ error: "You're already on this team." });
     }
   }
 
-  const solo = (existing || []).filter(r => r.role === "owner");
-  await sb.from("tenant_users").delete().eq("user_id", req.user.id);
-  const { error: insErr } = await sb.from("tenant_users")
-    .insert({ tenant_id: inv.tenant_id, user_id: req.user.id, role: inv.role });
-  if (insErr) return res.status(500).json({ error: insErr.message });
+  // The seat cap, again, at the moment it is spent. It was only checked at
+  // invite time — so a business that downgraded its plan after sending links
+  // could still fill seats the new plan does not have. The pending invite
+  // being accepted already holds one of the counted seats.
+  const { data: t } = await sb.from("tenants").select("plan").eq("id", inv.tenant_id).maybeSingle();
+  const { data: plan } = await sb.from("plans")
+    .select("max_seats, display_name").eq("id", String(t?.plan || "trial")).maybeSingle();
+  const [{ count: memberCount }, { count: otherInvites }] = await Promise.all([
+    sb.from("tenant_users").select("id", { count: "exact", head: true }).eq("tenant_id", inv.tenant_id),
+    sb.from("tenant_invites").select("id", { count: "exact", head: true })
+      .eq("tenant_id", inv.tenant_id).is("accepted_at", null).neq("id", inv.id),
+  ]);
+  const seatsTotal = plan?.max_seats ?? 1;
+  if ((memberCount || 0) + (otherInvites || 0) + 1 > seatsTotal) {
+    return res.status(402).json({
+      error: "This team has no free seat on its current plan — ask the owner to upgrade or free one up.",
+    });
+  }
 
-  await sb.from("tenant_invites")
+  // Claim the invite BEFORE touching anyone's membership. Two tabs (or a
+  // double tap) both passed the accepted_at check above and both ran the
+  // delete-and-insert below; a conditional update that must change exactly
+  // one row is the only check two concurrent requests cannot both pass.
+  const { data: claimed, error: claimErr } = await sb.from("tenant_invites")
     .update({ accepted_at: new Date().toISOString(), accepted_by: req.user.id })
-    .eq("id", inv.id);
+    .eq("id", inv.id).is("accepted_at", null)
+    .select("id");
+  if (claimErr) return res.status(500).json({ error: claimErr.message });
+  if (!claimed?.length) return res.status(409).json({ error: "This invite has already been used." });
+
+  const solo = (existing || []).filter(r => r.role === "owner");
+  const { error: delErr } = await sb.from("tenant_users").delete().eq("user_id", req.user.id);
+  const { error: insErr } = delErr ? { error: delErr } : await sb.from("tenant_users")
+    .insert({ tenant_id: inv.tenant_id, user_id: req.user.id, role: inv.role });
+  if (insErr) {
+    // Put them back where they were and release the invite, rather than
+    // leaving a person with no business at all and a spent link.
+    if (!delErr && existing?.length) {
+      const { error: restoreErr } = await sb.from("tenant_users").insert(existing.map(r => ({
+        tenant_id: r.tenant_id, user_id: req.user.id, role: r.role,
+        phone: r.phone ?? null, display_name: r.display_name ?? null,
+      })));
+      if (restoreErr) console.error(`[team] accept rollback failed for ${req.user.id}:`, restoreErr.message);
+    }
+    await sb.from("tenant_invites").update({ accepted_at: null, accepted_by: null }).eq("id", inv.id);
+    return res.status(500).json({ error: insErr.message });
+  }
+
+  // The phone app's device tokens carry the OLD tenant_id and outlive the
+  // web session: a person who left for another business kept asking the
+  // wake-word assistant about their previous employer's calls and customers.
+  const oldTenantIds = (existing || []).map(r => r.tenant_id);
+  if (oldTenantIds.length) {
+    const { error: devErr } = await sb.from("app_device_tokens")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("user_id", req.user.id).in("tenant_id", oldTenantIds).is("revoked_at", null);
+    if (devErr) console.error(`[team] device token revoke failed for ${req.user.id}:`, devErr.message);
+  }
 
   // Clean up the empty shell they were given at signup — but only if it is
-  // genuinely empty. A tenant with calls or a profile belongs to somebody.
+  // genuinely empty. Calls and other members were the only test, so a
+  // business that had been assigned a number, built its agent, bought
+  // minutes or paid for a plan — but not yet taken a call — was deleted
+  // outright when its owner accepted an invite elsewhere, and the cascade
+  // took the profile, the ledger and the DID assignment with it. The signup
+  // grant does not count as bought credit: every shell has it.
   for (const row of solo) {
-    const [{ count: others }, { count: calls }] = await Promise.all([
+    const [{ count: others }, { count: calls }, { count: dids }, { count: profiles },
+           { count: bought }, { data: oldTenant }] = await Promise.all([
       sb.from("tenant_users").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
       sb.from("calls").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
+      sb.from("dids").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
+      sb.from("voice_profiles").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id),
+      sb.from("credit_ledger").select("id", { count: "exact", head: true }).eq("tenant_id", row.tenant_id)
+        .gt("delta", 0).not("reason", "in", "(signup_grant,signup_grant_backfill)"),
+      sb.from("tenants").select("plan").eq("id", row.tenant_id).maybeSingle(),
     ]);
-    if (!others && !calls) await sb.from("tenants").delete().eq("id", row.tenant_id);
+    const paid = ["starter", "growth", "scale"].includes(String(oldTenant?.plan || "").toLowerCase());
+    // null counts mean a query failed — treat "could not tell" as "not empty".
+    const empty = others === 0 && calls === 0 && dids === 0 && profiles === 0 && bought === 0 && !paid;
+    if (empty) {
+      await sb.from("tenants").delete().eq("id", row.tenant_id);
+    } else {
+      console.warn(`[team] ${req.user.id} left tenant ${row.tenant_id}, which is not empty — kept, now without that owner`);
+      await audit("team_left_nonempty_tenant", {
+        tenantId: row.tenant_id, actorId: req.user.id,
+        metadata: { joined: inv.tenant_id, others, calls, dids, profiles, bought_credit_rows: bought, paid },
+      });
+    }
   }
 
   await audit("team_joined", { tenantId: inv.tenant_id, actorId: req.user.id, metadata: { role: inv.role } });
@@ -4904,7 +5263,16 @@ app.post("/api/team/:id/remove", verifyJWT, async (req: any, res) => {
     return res.status(409).json({ error: "Transfer ownership before removing an owner." });
   }
 
-  await sb.from("tenant_users").delete().eq("id", target.id);
+  const { error: delErr } = await sb.from("tenant_users").delete().eq("id", target.id).eq("tenant_id", tenantId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  // Removing someone must also sign their phone out. Device tokens live 90
+  // days idle and were checked only against their own row, so a removed
+  // receptionist's wake-word app went on reading this business's calls,
+  // leads and customer numbers for months.
+  const { error: devErr } = await sb.from("app_device_tokens")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("user_id", target.user_id).eq("tenant_id", tenantId).is("revoked_at", null);
+  if (devErr) console.error(`[team] device token revoke failed for ${target.user_id}:`, devErr.message);
   await audit("team_removed", { tenantId, actorId: req.user.id, metadata: { removed: target.user_id } });
   res.json({ ok: true });
 });
@@ -4912,6 +5280,9 @@ app.post("/api/team/:id/remove", verifyJWT, async (req: any, res) => {
 app.post("/api/team/invite/:id/revoke", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  // Issuing invites was owner-only and cancelling them was not, so any member
+  // could quietly void the links the owner had just sent.
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can cancel an invite."))) return;
   const { error } = await sb.from("tenant_invites")
     .delete().eq("id", req.params.id).eq("tenant_id", tenantId).is("accepted_at", null);
   if (error) return res.status(500).json({ error: error.message });
@@ -4931,6 +5302,10 @@ app.post("/api/team/invite/:id/revoke", verifyJWT, async (req: any, res) => {
 app.post("/api/keys/mine", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  // An API key can queue outbound calls at the business's expense and read
+  // every call transcript. 039: spending and exposing the business is the
+  // owner's call, and the key outlives the member who minted it.
+  if (!(await requireOwner(sb, req.user.id, tenantId, res, "Only the account owner can create API keys."))) return;
 
   const gate = await planAllows(tenantId, "api_access");
   if (!gate.ok) return res.status(402).json({ error: gate.msg });
@@ -5281,15 +5656,31 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // Concurrency is the cap with real cost behind it: the trunk carries ten
     // channels in total, so one tenant on Scale can occupy all of them.
     const limits = await planLimitsFor(tenantRow?.plan);
-    const { count: liveNow } = await sb.from("calls")
+    let liveQ = sb.from("calls")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", did.tenant_id).eq("status", "active");
+    // A retried request must not count its own first attempt's row as a
+    // second live call — on a one-line trial plan that refused the call.
+    if (fs_uuid && /^[0-9a-f-]{36}$/i.test(String(fs_uuid))) {
+      liveQ = liveQ.or(`livekit_room_id.is.null,livekit_room_id.neq.${fs_uuid}`);
+    }
+    const { count: liveNow } = await liveQ;
     if ((liveNow || 0) >= limits.concurrent) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} at concurrency cap ` +
         `(${liveNow}/${limits.concurrent}, ${limits.tier}) — refusing`);
       return res.json({
         ok: false, reason: "concurrency_limit", routing_mode: "reject",
         message: `All ${limits.concurrent} lines on this plan are busy.`,
+      });
+    }
+    // The admin kill switch and runExpireDemos set status to suspended or
+    // cancelled, and nothing read it: a suspended tenant on a paid plan kept
+    // getting answered, billed calls.
+    if (["suspended", "cancelled"].includes(String(tenantRow?.status || ""))) {
+      console.warn(`[FS Inbound] tenant ${did.tenant_id} is ${tenantRow?.status} — refusing`);
+      return res.json({
+        ok: false, reason: "tenant_inactive", routing_mode: "reject",
+        message: "This number is not in service.",
       });
     }
     if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
@@ -5301,14 +5692,48 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       });
     }
 
-    const { data: callRow } = await sb.from("calls").insert({
-      tenant_id:        did.tenant_id,
-      voice_profile_id: did.voice_profile_id,
-      caller_number:    caller,
-      direction:        isOutbound ? "outbound" : "inbound",
-      status:           "active",
-      livekit_room_id:  fs_uuid,   // reuse field for FS UUID
-    }).select().single();
+    // One row per FreeSWITCH channel. The pipeline retries this request when
+    // it times out (4s, then 2.5s), and the first attempt had usually already
+    // inserted — on 13 Sep one outbound call produced two rows at the same
+    // instant. The hangup hook could then match neither, so the call was
+    // never completed or billed and the orphan held a concurrency slot for
+    // two hours. Reuse the row a previous attempt created.
+    let callRow: any = null;
+    if (fs_uuid) {
+      const { data: existing } = await sb.from("calls").select()
+        .eq("livekit_room_id", fs_uuid).order("created_at", { ascending: true })
+        .limit(1).maybeSingle();
+      callRow = existing;
+    }
+    if (!callRow) {
+      const { data: inserted, error: insErr } = await sb.from("calls").insert({
+        tenant_id:        did.tenant_id,
+        voice_profile_id: did.voice_profile_id,
+        caller_number:    caller,
+        direction:        isOutbound ? "outbound" : "inbound",
+        status:           "active",
+        livekit_room_id:  fs_uuid,   // reuse field for FS UUID
+      }).select().single();
+      callRow = inserted;
+      if (insErr && insErr.code === "23505" && fs_uuid) {
+        // Lost the race to a concurrent retry (unique index from 052): use its row.
+        const { data: winner } = await sb.from("calls").select()
+          .eq("livekit_room_id", fs_uuid).limit(1).maybeSingle();
+        callRow = winner;
+      } else if (insErr) {
+        console.error(`[FS Inbound] call row insert failed for ${fs_uuid}:`, insErr.message);
+      }
+    }
+    // No row means no call_id, and a call without one is never completed,
+    // never billed and never listed — yet this answered ok:true and the call
+    // went ahead as if routed. Say it failed. The pipeline retries this
+    // request once (a transient insert failure usually clears), and a 5xx is
+    // what it logs as "no routing answer" rather than proceeding believing
+    // the call was recorded.
+    if (!callRow?.id) {
+      console.error(`[FS Inbound] no calls row for ${fs_uuid || "(no fs_uuid)"} tenant ${did.tenant_id} — refusing to route an unrecorded call`);
+      return res.status(503).json({ ok: false, reason: "call_record_failed", error: "Could not record the call" });
+    }
 
     // Resolve the ring group for human/hybrid routing.
     let ringGroup = "";
@@ -5616,21 +6041,34 @@ app.post("/webhooks/whatsapp", async (req, res) => {
           console.log(`[WhatsApp] in from ${from}: ${String(text).slice(0, 200)}`);
           if (!from) continue;
 
-          // WHOSE reply is this? Meta tells us the sender and the number it
-          // arrived on, not which of our businesses it belongs to. Match the
-          // sender against the leads and calls we already hold: a person
-          // replying to a HeyNikki message has, by definition, been in touch
-          // with exactly the business that messaged them. Most recent wins
-          // when a number somehow reaches two.
+          // WHOSE reply is this? Meta tells us the sender and — in
+          // value.metadata.phone_number_id — the number it arrived ON. When
+          // that number is a tenant's own registered sender, the tenant is
+          // known exactly and nothing else should be consulted: matching the
+          // sender against leads and calls ACROSS ALL TENANTS put a customer's
+          // reply to Clinic A in Clinic B's inbox whenever they had more
+          // recently rung B. The cross-tenant match below is only for the
+          // shared platform number, where the arrival number says nothing.
+          let senderTenant: string | null = null;
+          const arrivedOn = String(v.metadata?.phone_number_id || "");
+          if (arrivedOn) {
+            const { data: tw, error: twErr } = await sb.from("tenant_whatsapp")
+              .select("tenant_id").eq("phone_number_id", arrivedOn).maybeSingle();
+            if (twErr && !/tenant_whatsapp/i.test(twErr.message)) {
+              console.error("[WhatsApp] sender tenant lookup failed:", twErr.message);
+            }
+            senderTenant = tw?.tenant_id || null;
+          }
+          const scoped = <T,>(q: T): T => senderTenant ? (q as any).eq("tenant_id", senderTenant) : q;
           const [{ data: lead }, { data: call }] = await Promise.all([
-            sb.from("leads").select("id, tenant_id")
-              .like("phone", `%${from}`).order("updated_at", { ascending: false })
+            scoped(sb.from("leads").select("id, tenant_id")
+              .like("phone", `%${from}`)).order("updated_at", { ascending: false })
               .limit(1).maybeSingle(),
-            sb.from("calls").select("tenant_id")
-              .like("caller_number", `%${from}`).order("created_at", { ascending: false })
+            scoped(sb.from("calls").select("tenant_id")
+              .like("caller_number", `%${from}`)).order("created_at", { ascending: false })
               .limit(1).maybeSingle(),
           ]);
-          const tenantId = lead?.tenant_id || call?.tenant_id;
+          const tenantId = senderTenant || lead?.tenant_id || call?.tenant_id;
           if (!tenantId) {
             // Nobody we have ever spoken to. Storing it against a guessed
             // tenant would put a stranger's message in someone's inbox.
@@ -5659,7 +6097,7 @@ app.post("/webhooks/whatsapp", async (req, res) => {
           if (lead?.id) {
             await sb.from("leads")
               .update({ last_contacted_at: new Date().toISOString() })
-              .eq("id", lead.id);
+              .eq("id", lead.id).eq("tenant_id", tenantId);
           }
         }
         for (const st of v.statuses || []) {
@@ -5702,7 +6140,11 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     const { data: callRow, error: selErr } = await sb.from("calls")
       .select("id, tenant_id, voice_profile_id, created_at, direction, caller_number, status, intent")
       .eq("livekit_room_id", fs_uuid)
-      .single();
+      // The oldest row, not .single(): with two rows for one channel (see the
+      // inbound handler) .single() errored and neither was ever completed.
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
     if (selErr) console.error("[FS Hangup] call lookup failed:", selErr.message);
 
     // What this call ends as. A human ring-out is missed whatever the
@@ -5830,15 +6272,20 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // here, from the hangup hook, rather than by an in-process poller
       // that an api-server restart mid-call left at duration 0 forever.
       if (humanCall) {
+        // Scoped to the call's tenant throughout: the log row and its
+        // lead_id are matched on a channel UUID and a stored id, and neither
+        // lookup should be able to reach another business's lead.
         const { data: ctc } = await sb.from("click_to_call_log")
           .update({ duration_seconds: secs, call_id: callRow.id, updated_at: new Date().toISOString() })
-          .eq("freeswitch_uuid", fs_uuid).select("id, lead_id").maybeSingle();
+          .eq("freeswitch_uuid", fs_uuid).eq("tenant_id", callRow.tenant_id)
+          .select("id, lead_id").maybeSingle();
         if (ctc?.lead_id) {
-          const { data: l } = await sb.from("leads").select("call_count").eq("id", ctc.lead_id).maybeSingle();
+          const { data: l } = await sb.from("leads").select("call_count")
+            .eq("id", ctc.lead_id).eq("tenant_id", callRow.tenant_id).maybeSingle();
           await sb.from("leads").update({
             call_count: (l?.call_count || 0) + 1, last_contacted_at: new Date().toISOString(),
             last_call_id: callRow.id,
-          }).eq("id", ctc.lead_id);
+          }).eq("id", ctc.lead_id).eq("tenant_id", callRow.tenant_id);
         } else if (callRow.direction === "inbound" && waCaller && !wasMissed) {
           // Somebody on the team took this call. Nikki never heard it, so
           // there is no scored lead — file the caller as contacted so the
@@ -5906,17 +6353,35 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // the workflow ran green, reported success, and delivered nothing. This
       // path uses the approved missed_call_followup template on Meta, and
       // writes wa_dispatch_log itself.
+      //
+      // Once per call. FreeSWITCH has delivered the same hangup twice, and
+      // each delivery sent the WhatsApp — the caller got "we missed your
+      // call" twice. wa_sent is claimed false→true BEFORE sending, so only
+      // one delivery can win, and released again if Meta refuses, so the
+      // flag means "a message went", not "we got this far". It used to be set
+      // true unconditionally, including when nothing was sent at all.
       if (vp?.fallback_wa_enabled !== false && callRow?.tenant_id && /^\d{10}$/.test(waCaller)) {
-        const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
-          `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
-        await sendWhatsApp(waCaller, msg, callRow.tenant_id,
-          callRow.voice_profile_id, "missed_call", callRow.id, undefined,
-          vp?.business_name || "our team");
+        const { data: claim, error: claimErr } = await sb.from("calls")
+          .update({ wa_sent: true }).eq("id", callRow.id)
+          .or("wa_sent.is.null,wa_sent.eq.false").select("id");
+        if (claimErr) {
+          console.error("[FS Hangup] wa_sent claim failed — not sending:", claimErr.message);
+        } else if (claim?.length) {
+          const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
+            `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
+          const sentOk = await sendWhatsApp(waCaller, msg, callRow.tenant_id,
+            callRow.voice_profile_id, "missed_call", callRow.id, undefined,
+            vp?.business_name || "our team");
+          if (!sentOk) {
+            await sb.from("calls").update({ wa_sent: false }).eq("id", callRow.id)
+              .then(r => r.error && console.error("[FS Hangup] wa_sent release failed:", r.error.message));
+          }
+        }
       }
 
       // Log missed call in Supabase
       if (callRow) {
-        await sb.from("calls").update({ status: "missed", wa_sent: true }).eq("id", callRow.id);
+        await sb.from("calls").update({ status: "missed" }).eq("id", callRow.id);
         // The owner wants to know now, not when they next open the dashboard.
         pushToTenant(callRow.tenant_id, {
           title: "Missed call",
@@ -5991,16 +6456,6 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
       // the workflow ran green, reported success, and delivered nothing. This
       // path uses the approved missed_call_followup template on Meta, and
       // writes wa_dispatch_log itself.
-      let waSent = false;
-      if (vp?.fallback_wa_enabled !== false && callerDigits) {
-        const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
-          `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
-        await sendWhatsApp(caller_number, msg, did.tenant_id,
-          did.voice_profile_id, "missed_call", undefined, undefined,
-          vp?.business_name || "our team");
-        waSent = true;
-      }
-
       // File the call and the caller. A ring-out used to leave the calls
       // row for the hangup hook, which marked it completed, and created no
       // lead at all — the one caller a business most needs to ring back
@@ -6008,9 +6463,35 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
       let callId: string | null = null;
       if (fs_uuid) {
         const { data: c } = await sb.from("calls")
-          .update({ status: "missed", wa_sent: waSent, updated_at: new Date().toISOString() })
-          .eq("livekit_room_id", fs_uuid).select("id").maybeSingle();
-        callId = c?.id || null;
+          .update({ status: "missed", updated_at: new Date().toISOString() })
+          .eq("livekit_room_id", fs_uuid).eq("tenant_id", did.tenant_id).select("id");
+        callId = c?.[0]?.id || null;
+      }
+
+      // Same once-per-call rule as the hangup hook: claim wa_sent before
+      // sending, release it if Meta refuses. This set wa_sent to true
+      // whenever it had TRIED, and sent to the raw caller_number rather than
+      // the normalised digits it had just validated.
+      if (vp?.fallback_wa_enabled !== false && callerDigits) {
+        let mine = true;
+        if (callId) {
+          const { data: claim, error: claimErr } = await sb.from("calls")
+            .update({ wa_sent: true }).eq("id", callId)
+            .or("wa_sent.is.null,wa_sent.eq.false").select("id");
+          if (claimErr) console.error("[FS missed-call] wa_sent claim failed — not sending:", claimErr.message);
+          mine = !claimErr && !!claim?.length;
+        }
+        if (mine) {
+          const msg = `నమస్కారం! మీరు ${vp?.business_name || "మా team"} కి call చేశారు.\n\n` +
+            `మేము మీ call miss చేశాము. త్వరలో మేము మీకు call back చేస్తాము. ధన్యవాదాలు! 🙏`;
+          const sentOk = await sendWhatsApp(callerDigits, msg, did.tenant_id,
+            did.voice_profile_id, "missed_call", callId || undefined, undefined,
+            vp?.business_name || "our team");
+          if (!sentOk && callId) {
+            await sb.from("calls").update({ wa_sent: false }).eq("id", callId)
+              .then(r => r.error && console.error("[FS missed-call] wa_sent release failed:", r.error.message));
+          }
+        }
       }
       if (callerDigits) {
         await touchLeadFromHumanCall(did.tenant_id, callerDigits, callId, false);
@@ -6053,6 +6534,23 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     const { customer_number, lead_id, agent_phone } = req.body;
     if (!customer_number) return res.status(400).json({ error: "customer_number required" });
+    // Both legs are dialled on our trunk under this tenant's DID, and neither
+    // was validated: any member could bridge two premium-rate or international
+    // numbers. Indian mobiles and landlines only (10 digits after an optional
+    // 0/91/+91), which is all this product is sold to call.
+    const indian = (n: unknown) => {
+      const d = String(n ?? "").replace(/[^\d]/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
+      return /^[1-9]\d{9}$/.test(d);
+    };
+    if (!indian(customer_number)) return res.status(400).json({ error: "Enter a 10-digit Indian number" });
+    if (agent_phone && !indian(agent_phone)) return res.status(400).json({ error: "Your number must be a 10-digit Indian number" });
+    // lead_id is written onto the call log and later used by id; it must be
+    // one of THIS tenant's leads.
+    if (lead_id) {
+      const { data: own } = await sb.from("leads").select("id")
+        .eq("id", lead_id).eq("tenant_id", tenantId).maybeSingle();
+      if (!own) return res.status(404).json({ error: "Lead not found" });
+    }
 
     // Check telephony engine
     const cfg = await getPlatformConfig();
@@ -6217,9 +6715,12 @@ app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) 
     };
     const newStage = STAGE_MAP[disposition];
 
-    // Get lead_id from log
+    // Get lead_id from log. Tenant-scoped like the update above: by id alone
+    // a member could pass another business's ctc_log_id and have that
+    // business's lead read back and WhatsApp'd below under their own name.
     const { data: log } = await sb.from("click_to_call_log")
-      .select("lead_id").eq("id", ctc_log_id).single();
+      .select("lead_id").eq("id", ctc_log_id).eq("tenant_id", tenantId).maybeSingle();
+    if (!log) return res.status(404).json({ error: "Call not found" });
 
     if (log?.lead_id && newStage) {
       await sb.from("leads").update({
@@ -6230,9 +6731,9 @@ app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) 
     }
 
     // Fire automation webhook for interested leads
-    if (disposition === "interested" || disposition === "booked") {
+    if ((disposition === "interested" || disposition === "booked") && log.lead_id) {
       const { data: lead } = await sb.from("leads")
-        .select("phone, name").eq("id", log?.lead_id).single();
+        .select("phone, name").eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
       if (lead?.phone) {
         // Sent here rather than through the interested-lead n8n workflow, for
         // the same reason as missed-call: that workflow's send node posts to
@@ -6358,22 +6859,25 @@ app.post("/api/admin/freeswitch/reload-dialplan", verifyJWT, async (req: any, re
 // Sarvam STT+TTS) use the exact same data-gathering logic rather than
 // two copies drifting apart over time.
 async function buildBusinessContext(targetTenantId: string | null) {
-  const today = new Date();
-  const todayStr = today.toISOString().split("T")[0];
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+  // IST day and month. These were the server's UTC date, so between
+  // midnight and 05:30 IST the assistant answered "how many calls today"
+  // about yesterday, and every "today" dropped the business's early hours.
+  const todayStr = istDay();
+  const dayStart = `${todayStr}T00:00:00+05:30`;
+  const monthStart = `${todayStr.slice(0, 7)}-01T00:00:00+05:30`;
   const queries: Record<string, any> = {};
 
   const { data: todayCalls } = await (targetTenantId
     ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
-        .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
+        .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
     : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
-        .gte("created_at", todayStr + "T00:00:00").limit(200));
+        .gte("created_at", dayStart).limit(200));
   queries.today_calls = todayCalls || [];
 
   const { data: todayAppts } = await (targetTenantId
     ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
-        .eq("tenant_id", targetTenantId).gte("created_at", todayStr + "T00:00:00")
-    : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", todayStr + "T00:00:00").limit(100));
+        .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
+    : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", dayStart).limit(100));
   queries.today_appointments = todayAppts || [];
 
   const { data: hotLeads } = await (targetTenantId
@@ -6401,7 +6905,7 @@ async function buildBusinessContext(targetTenantId: string | null) {
     today_calls_missed:       queries.today_calls.filter((c: any) => c.status === "missed").length,
     today_appointments:       queries.today_appointments.length,
     today_appointments_list:  queries.today_appointments.slice(0, 10).map((a: any) => ({
-      time:    new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      time:    new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }),
       notes:   a.notes || "No details",
       status:  a.status,
     })),

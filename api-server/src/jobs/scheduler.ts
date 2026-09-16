@@ -33,6 +33,7 @@
  *   npx ts-node src/jobs/scheduler.ts
  * On Railway: add as a Cron service with schedule "*\/15 * * * *".
  */
+import os from "os";
 import { createClient } from "@supabase/supabase-js";
 import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
@@ -136,6 +137,8 @@ function slotMinutes(t: string | null): number | null {
 //    pass could not cover: booked after 21:00 for the next morning, or booked
 //    the same day (today's 20:30 was booked at 15:12 and would never have
 //    been reminded at all).
+const REMINDER_MAX_TRIES = 3;
+
 export async function runAppointmentReminders(): Promise<number> {
   const nowMin = istMinutesNow();
   const evening = nowMin >= 17 * 60 && nowMin < 21 * 60;
@@ -158,7 +161,10 @@ export async function runAppointmentReminders(): Promise<number> {
     ...(tomorrowRows || []).map(a => ({ ...a, when: "tomorrow" as const })),
     ...(todayRows || []).filter(a => {
       const sm = slotMinutes(a.slot_time);
-      return sm !== null && sm - nowMin >= 90 && sm - nowMin <= 180;
+      // Not before 07:00 IST: a 07:30 slot otherwise got its WhatsApp at
+      // 04:30–06:00. An early slot booked the evening before was already
+      // covered by the evening pass.
+      return sm !== null && nowMin >= 7 * 60 && sm - nowMin >= 90 && sm - nowMin <= 180;
     }).map(a => ({ ...a, when: "today" as const })),
   ];
   if (!due.length) return 0;
@@ -166,6 +172,28 @@ export async function runAppointmentReminders(): Promise<number> {
   let sent = 0;
   for (const a of due) {
     if (!a.caller_number) continue;
+
+    // wa_reminder_sent is set by the API AFTER the WhatsApp goes out, so when
+    // that write fails the appointment still reads "not reminded" and every
+    // 15-minute run sends the same reminder again — all evening, or for the
+    // whole three-hour same-day band. wa_dispatch_log records every attempt
+    // against the appointment whatever happened to the flag, so it is the
+    // record this job trusts: anything that went out means done, and a
+    // reminder Meta refused three times is not tried a fourth. Fails CLOSED
+    // on a read error — a missed reminder is better than a repeated one.
+    const { data: prior, error: priorErr } = await sb.from("wa_dispatch_log")
+      .select("status").eq("appointment_id", a.id)
+      .in("message_type", ["reminder", "reminder_today"]);
+    if (priorErr) { log(`reminder history lookup failed for ${a.id} — not sending:`, priorErr.message); continue; }
+    if ((prior || []).some((p: any) => p.status !== "failed")) {
+      const { error: flagErr } = await sb.from("appointments")
+        .update({ wa_reminder_sent: true }).eq("id", a.id).eq("wa_reminder_sent", false);
+      log(`appointment ${a.id} was already reminded but not flagged` +
+        (flagErr ? ` (flag write failed again: ${flagErr.message})` : " — flag set, not resending"));
+      continue;
+    }
+    if ((prior || []).length >= REMINDER_MAX_TRIES) continue;
+
     // tenants has no business_name column — this select failed on every
     // reminder and the error was discarded, so every customer was told
     // about "your appointment" with no idea whose. The name a caller
@@ -195,9 +223,12 @@ export async function runAppointmentReminders(): Promise<number> {
           when:             a.when,
         }),
       });
-      if (r.ok) sent++;
-      // The endpoint itself sets wa_reminder_sent, so a failure here simply
-      // means it's retried on the next run rather than silently dropped.
+      // The endpoint answers 200 with {ok:false} when Meta refused, so the
+      // status alone over-counted. A failure is retried next run, up to
+      // REMINDER_MAX_TRIES logged attempts (see above).
+      const j: any = await r.json().catch(() => ({}));
+      if (r.ok && j.ok !== false) sent++;
+      else log(`reminder for ${a.id} not sent (HTTP ${r.status})`);
     } catch (e) {
       log("reminder send failed:", e);
     }
@@ -268,33 +299,51 @@ export async function runIncompleteBookings(): Promise<number> {
     // holds for 24 h, so a row that sat pending re-queued a callback every
     // night until it aged out — the same person was rung at 00:01 and again
     // at 00:15 the next night about a booking from five days earlier.
-    const { data: chased } = await sb.from("outbound_recipients")
+    //
+    // Per NUMBER as well as per row: one caller routinely leaves several
+    // pending rows (six from one number on 25 Aug), and each new row used to
+    // earn its own chase. One callback per person per 30 days, whichever row.
+    //
+    // Both lookups fail CLOSED. `chased` coming back null on a query error
+    // read as "never chased" — a guard that fails open here dials a stranger.
+    const { data: chased, error: chasedErr } = await sb.from("outbound_recipients")
       .select("id").eq("tenant_id", a.tenant_id).eq("is_instant", true)
-      .eq("metadata->>appointment_id", a.id).limit(1);
+      .or(`metadata->>appointment_id.eq.${a.id},` +
+          `and(phone.eq."${a.caller_number}",created_at.gt.${new Date(now - 30 * 24 * 3600 * 1000).toISOString()})`)
+      .limit(1);
+    if (chasedErr) { log("incomplete-booking chase lookup failed:", chasedErr.message); continue; }
     if (chased?.length) continue;
 
+    // Asked not to be called: no WhatsApp chase and no callback either.
+    const digits = String(a.caller_number).replace(/\D/g, "").slice(-10);
+    const { data: optedOut, error: optErr } = await sb.from("outbound_opt_outs")
+      .select("id").eq("tenant_id", a.tenant_id)
+      .in("phone", [digits, `91${digits}`, `+91${digits}`]).limit(1);
+    if (optErr) { log("incomplete-booking opt-out lookup failed:", optErr.message); continue; }
+    if (optedOut?.length) continue;
+
     // Already chased this number today?
-    const { data: recent } = await sb.from("wa_dispatch_log")
+    const { data: recent, error: recentErr } = await sb.from("wa_dispatch_log")
       .select("id")
       .eq("to_number", a.caller_number)
       .eq("message_type", "booking_incomplete")
       .gt("sent_at", dayAgo)
       .limit(1);
-    if (recent?.length) continue;
+    if (recentErr || recent?.length) continue;
 
     // Did they get through in the end? An abandoned row is not evidence of
     // an unserved caller if the same person has a booking on the books —
     // they rang back, or Nikki opened a second row and finished that one.
     // Telling someone who is booked for this afternoon that we could not
     // confirm their date is worse than saying nothing at all.
-    const { data: booked } = await sb.from("appointments")
+    const { data: booked, error: bookedErr } = await sb.from("appointments")
       .select("id")
       .eq("caller_number", a.caller_number)
       .eq("tenant_id", a.tenant_id)
       .eq("status", "confirmed")
       .gte("slot_date", istDateString(0))
       .limit(1);
-    if (booked?.length) continue;
+    if (bookedErr || booked?.length) continue;
 
     const [{ data: vp }, { data: t }] = await Promise.all([
       sb.from("voice_profiles").select("business_name")
@@ -338,12 +387,12 @@ export async function runIncompleteBookings(): Promise<number> {
     // it is someone who phoned this business and asked for an appointment,
     // and the recording of that call is the consent record. The dispatcher
     // reads it as consent so the callback is not blocked as unscrubbed.
-    const { data: already } = await sb.from("outbound_recipients")
+    const { data: already, error: alreadyErr } = await sb.from("outbound_recipients")
       .select("id").eq("tenant_id", a.tenant_id)
       .eq("phone", a.caller_number).eq("is_instant", true)
       .in("status", ["pending", "scrubbing", "queued", "in_progress"])
       .limit(1);
-    if (already?.length) continue;
+    if (alreadyErr || already?.length) continue;
 
     const { error: insErr } = await sb.from("outbound_recipients").insert({
       tenant_id:       a.tenant_id,
@@ -373,6 +422,10 @@ export async function runDailySummaries(): Promise<number> {
   if (istHour < 19 || istHour > 21) return 0;
 
   const today = istDateString(0);
+  // IST midnight, with the offset spelled out. A bare "T00:00:00" is read as
+  // UTC — 05:30 IST — so "today's" calls silently left out everything
+  // between midnight and half past five.
+  const dayStart = `${today}T00:00:00+05:30`;
   // Destination is the business's own WhatsApp number from their voice
   // profile — already collected at setup, so no extra field to fill in.
   const { data: profiles, error } = await sb
@@ -387,20 +440,22 @@ export async function runDailySummaries(): Promise<number> {
     const t = { id: p.tenant_id, business_name: p.business_name,
                 owner_phone: p.whatsapp_number, voice_profile_id: p.id };
     // Skip if today's summary already went out (idempotent across runs).
-    const { data: already } = await sb.from("wa_dispatch_log")
+    const { data: already, error: alreadyErr } = await sb.from("wa_dispatch_log")
       .select("id").eq("tenant_id", t.id).eq("message_type", "daily_summary")
       // sent_at: wa_dispatch_log has no created_at. The query 400d, so
       // `already` came back null and this idempotency guard FAILED OPEN —
       // once the evening window opened the daily summary would resend on
       // every 15-minute tick, roughly eight WhatsApps a night to the owner.
-      .gte("sent_at", today + "T00:00:00").limit(1).maybeSingle();
-    if (already) continue;
+      // Any other read error did exactly the same, so it now skips instead.
+      .gte("sent_at", dayStart).limit(1);
+    if (alreadyErr) { log(`summary history lookup failed for ${t.id} — not sending:`, alreadyErr.message); continue; }
+    if (already?.length) continue;
 
     const [calls, appts, leads] = await Promise.all([
       sb.from("calls").select("id, status")
-        .eq("tenant_id", t.id).gte("created_at", today + "T00:00:00"),
+        .eq("tenant_id", t.id).gte("created_at", dayStart),
       sb.from("appointments").select("id")
-        .eq("tenant_id", t.id).gte("created_at", today + "T00:00:00"),
+        .eq("tenant_id", t.id).gte("created_at", dayStart),
       sb.from("leads").select("id, name, phone, score")
         .eq("tenant_id", t.id).eq("stage", "new").gte("score", 50)
         .order("score", { ascending: false }).limit(3),
@@ -476,7 +531,10 @@ export async function runCallQuality(): Promise<number> {
 
   // Left join in two steps: PostgREST cannot express "not exists" cheaply,
   // and the scored set stays small enough to filter in memory.
-  const { data: scored } = await sb.from("call_quality").select("call_id").limit(5000);
+  const { data: scored, error: scoredErr } = await sb.from("call_quality").select("call_id").limit(5000);
+  // Unreadable means "everything is unscored" to the filter below, which
+  // re-sent already-scored calls to Gemini — paid for twice.
+  if (scoredErr) { log("quality: scored-set fetch failed:", scoredErr.message); return 0; }
   const done = new Set((scored || []).map((r: any) => r.call_id));
 
   const { data: calls, error } = await sb.from("calls")
@@ -663,6 +721,7 @@ export async function runCloseAbandonedCalls(): Promise<number> {
 }
 
 export async function runScheduler() {
+  if (!await acquireSchedulerLease()) return;
   log("run start");
   // Sequential on purpose: these are small jobs and running them one at a
   // time keeps log output readable and avoids hammering Gemini/Supabase.
@@ -703,25 +762,30 @@ export async function runScheduler() {
 
   try { await runExpireDemos(); }
   catch (e: any) { console.error("[scheduler] demo expiry failed:", e.message); }
+
+  try { await runPlanExpiry(); }
+  catch (e: any) { console.error("[scheduler] plan expiry failed:", e.message); }
   log("run complete");
 }
-
-if (require.main === module) {
-  runScheduler()
-    .then(() => process.exit(0))
-    .catch(e => { console.error("[scheduler] fatal", e); process.exit(1); });
-}
-
 
 /* ── Recording retention purge ──────────────────────────────── */
 async function runRetentionPurge(): Promise<void> {
   // recording_days per plan; anything unrecognised keeps the tightest
   // default. A retention bug must err toward keeping less, not more —
   // these are recordings of real people's calls.
-  const { data: plans } = await sb.from("plans").select("id, recording_days");
+  // An unreadable plans table used to mean "every plan keeps 30 days", and
+  // the purge went ahead — deleting recordings a Scale tenant pays to keep
+  // for longer. Deletion is the one thing here that cannot be retried, so a
+  // failed read stops it.
+  const { data: plans, error: plansErr } = await sb.from("plans").select("id, recording_days");
+  if (plansErr || !plans?.length) {
+    console.error(`[retention] plans unreadable — not purging: ${plansErr?.message || "no rows"}`);
+    return;
+  }
   const daysOf = new Map((plans || []).map((p: any) => [String(p.id), p.recording_days || 30]));
 
-  const { data: tenants } = await sb.from("tenants").select("id, plan");
+  const { data: tenants, error: tenantsErr } = await sb.from("tenants").select("id, plan");
+  if (tenantsErr) { console.error("[retention] tenant read failed:", tenantsErr.message); return; }
   let purged = 0;
   for (const t of tenants || []) {
     const days = daysOf.get(String(t.plan)) ?? 30;
@@ -760,4 +824,150 @@ async function runExpireDemos(): Promise<void> {
   for (const t of data || []) {
     console.log(`[scheduler] demo expired: ${t.name}`);
   }
+}
+
+/* ── Single-instance lease ──────────────────────────────────── */
+/**
+ * docker-compose.yml is shared with the EC2 host, and the scheduler had no
+ * profile, so a plain `docker compose up -d` there started a SECOND
+ * scheduler against the same database. Every job here is "check a flag,
+ * then send": two copies read the same unsent flag in the same minute and
+ * both send — the reminder, the incomplete-booking chase and the callback
+ * it queues all go out twice.
+ *
+ * The profile in docker-compose.yml stops that from happening by accident;
+ * this stops it happening at all. A lease row in platform_config (no
+ * migration: key/value/updated_at already exist) names the host that runs
+ * the jobs. The holder renews it at the start of every run; anyone else
+ * skips while it is unexpired. Taking it over is a compare-and-set on the
+ * exact value that was read, so two hosts racing for an expired lease cannot
+ * both win.
+ *
+ * The holder is the HOST, not the process: each run is a fresh node process,
+ * and a per-process holder released at the end of each run would let a
+ * second host whose 15-minute cycle is offset by seven minutes run in every
+ * gap. The TTL is longer than one cycle plus a slow run, so the owning host
+ * keeps it; a host that stops running hands over after 30 minutes.
+ *
+ * Any read or write error skips the run. A missed cycle is retried in 15
+ * minutes; a doubled one has already messaged people.
+ */
+const LEASE_KEY    = "scheduler_lease";
+const LEASE_TTL_MS = 30 * 60_000;
+
+async function acquireSchedulerLease(): Promise<boolean> {
+  const holder = process.env.SCHEDULER_INSTANCE || os.hostname();
+  const now    = Date.now();
+  const stamp  = new Date(now).toISOString();
+  const value  = JSON.stringify({ holder, expires_at: new Date(now + LEASE_TTL_MS).toISOString() });
+
+  const { error: insErr } = await sb.from("platform_config")
+    .insert({ key: LEASE_KEY, value, updated_at: stamp });
+  if (!insErr) return true;
+  if (insErr.code !== "23505") {
+    log("lease insert failed — skipping this run:", insErr.message);
+    return false;
+  }
+
+  const { data: cur, error: readErr } = await sb.from("platform_config")
+    .select("value").eq("key", LEASE_KEY).maybeSingle();
+  if (readErr || !cur) {
+    log("lease read failed — skipping this run:", readErr?.message || "row vanished");
+    return false;
+  }
+  let held: { holder?: string; expires_at?: string } = {};
+  try { held = JSON.parse(cur.value); } catch { /* unreadable lease = expired */ }
+  const live = Date.parse(held.expires_at || "") > now;
+  if (live && held.holder !== holder) {
+    log(`another scheduler (${held.holder}) holds the lease until ${held.expires_at} — skipping this run`);
+    return false;
+  }
+
+  const { data: won, error: casErr } = await sb.from("platform_config")
+    .update({ value, updated_at: stamp })
+    .eq("key", LEASE_KEY).eq("value", cur.value)
+    .select("key");
+  if (casErr) { log("lease renew failed — skipping this run:", casErr.message); return false; }
+  if (!won?.length) { log("lease taken by another scheduler a moment ago — skipping this run"); return false; }
+  if (held.holder && held.holder !== holder) log(`took over the scheduler lease from ${held.holder} (expired ${held.expires_at})`);
+  return true;
+}
+
+/* ── Paid plan expiry ───────────────────────────────────────── */
+/**
+ * Nothing ever took a paid plan away. /api/billing/verify sets tenants.plan
+ * when a one-off order is paid, and the only thing that could ever undo it
+ * was a person remembering to — so a month's Starter payment bought Starter
+ * for good.
+ *
+ * Downgrades to 'trial' (tenants_plan_check allows demo/trial/starter/
+ * growth/scale) only when the tenant's subscription record positively says
+ * the paid period is over. Everything uncertain leaves the plan alone:
+ *
+ *  - NO subscriptions row at all: the plan was set by hand by an admin
+ *    ("sai clinic", "Go motion"). There is nothing here that says it ends.
+ *  - any row without current_period_end: we cannot tell when it ends.
+ *  - an 'active' Razorpay recurring subscription (razorpay_sub_id): the
+ *    subscription.charged webhook renews it every month WITHOUT moving
+ *    current_period_end, so its end date goes stale while it is being paid.
+ *  - the latest row is for a different plan than the tenant is on: somebody
+ *    changed the plan by hand after that payment.
+ *
+ * A day's grace past current_period_end, so a customer renewing on the
+ * last evening is not downgraded overnight. Any query error: do nothing.
+ */
+const PAID_PLANS = ["starter", "growth", "scale"];
+const PLAN_EXPIRY_GRACE_MS = 24 * 3600 * 1000;
+
+export async function runPlanExpiry(): Promise<number> {
+  const { data: tenants, error } = await sb.from("tenants")
+    .select("id, name, plan").in("plan", PAID_PLANS);
+  if (error) { log("plan expiry: tenant read failed:", error.message); return 0; }
+  if (!tenants?.length) return 0;
+
+  const { data: subs, error: subErr } = await sb.from("subscriptions")
+    .select("tenant_id, plan_id, status, razorpay_sub_id, current_period_end")
+    .in("tenant_id", tenants.map((t: any) => t.id));
+  if (subErr) { log("plan expiry: subscriptions read failed:", subErr.message); return 0; }
+
+  const byTenant = new Map<string, any[]>();
+  for (const s of subs || []) {
+    const list = byTenant.get(s.tenant_id) || [];
+    list.push(s);
+    byTenant.set(s.tenant_id, list);
+  }
+
+  const now = Date.now();
+  let downgraded = 0;
+  for (const t of tenants) {
+    const rows = byTenant.get(t.id) || [];
+    if (!rows.length) continue;
+    if (rows.some(s => !s.current_period_end || Number.isNaN(Date.parse(s.current_period_end)))) continue;
+    if (rows.some(s => s.status === "active" && s.razorpay_sub_id)) continue;
+
+    const latest = rows.reduce((a, b) =>
+      Date.parse(b.current_period_end) > Date.parse(a.current_period_end) ? b : a);
+    if (Date.parse(latest.current_period_end) + PLAN_EXPIRY_GRACE_MS > now) continue;
+    if (String(latest.plan_id || "").toLowerCase() !== String(t.plan).toLowerCase()) continue;
+
+    // Conditional on the plan we read, so a payment that lands mid-run and
+    // moves the tenant to another plan is not overwritten.
+    const { data: done, error: upErr } = await sb.from("tenants")
+      .update({ plan: "trial" }).eq("id", t.id).eq("plan", t.plan).select("id");
+    if (upErr) { log(`plan expiry: downgrade of ${t.name} failed:`, upErr.message); continue; }
+    if (!done?.length) continue;
+    downgraded++;
+    log(`plan expired: ${t.name} (${t.id}) ${t.plan} → trial — paid period ended ${latest.current_period_end}` +
+        ` (subscription status ${latest.status})`);
+  }
+  return downgraded;
+}
+
+// At the END of the file: module-level consts below the old position
+// (LEASE_TTL_MS, PAID_PLANS) were still in their temporal dead zone when
+// main() ran, and every scheduler run died with a ReferenceError.
+if (require.main === module) {
+  runScheduler()
+    .then(() => process.exit(0))
+    .catch(e => { console.error("[scheduler] fatal", e); process.exit(1); });
 }

@@ -81,7 +81,9 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     const leadIds = Array.from(new Set((recent || []).map((r: any) => r.lead_id).filter(Boolean)));
     const teamPhones = Array.from(new Set((teamRows || []).map((c: any) => last10(c.caller_number)).filter((p: string) => p.length === 10)));
     const [{ data: leads }, { data: phoneLeads }] = await Promise.all([
-      leadIds.length ? sb.from("leads").select("id, name, phone, stage").in("id", leadIds) : Promise.resolve({ data: [] as any[] }),
+      // Tenant-scoped: the ids come from log rows, and a lead id is not a
+      // credential — never read another business's lead by one.
+      leadIds.length ? sb.from("leads").select("id, name, phone, stage").eq("tenant_id", tenantId).in("id", leadIds) : Promise.resolve({ data: [] as any[] }),
       teamPhones.length ? sb.from("leads").select("id, name, phone").eq("tenant_id", tenantId).in("phone", teamPhones) : Promise.resolve({ data: [] as any[] }),
     ]);
     const leadById    = new Map((leads || []).map((l: any) => [l.id, l]));

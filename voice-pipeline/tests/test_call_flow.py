@@ -399,12 +399,23 @@ def test_end_sentinel_is_recognised_and_stripped(said):
 
 @pytest.mark.parametrize("said", [
     "మీ పేరు చెప్తారా?", "సరేనండి, థాంక్యూ అండి", "",
-    "END_CALL అయ్యాక చెప్తాను",   # mid-sentence, not a sentinel
 ])
 def test_ordinary_replies_do_not_end_the_call(said):
     text, end = main._split_end_sentinel(said)
     assert not end
     assert text == said
+
+
+# Mid-sentence it is not a request to hang up — but it is still never spoken:
+# _clean_for_speech turned the underscore into a space and bulbul said
+# "END CALL" in English.
+@pytest.mark.parametrize("said", ["END_CALL అయ్యాక చెప్తాను",
+                                  "మంచిది అండి END_CALL మళ్ళీ కలుద్దాం."])
+def test_mid_text_end_call_is_not_an_end_but_not_spoken(said):
+    text, end = main._split_end_sentinel(said)
+    assert not end
+    assert "END" not in text and text.strip()
+    assert "END" not in main._clean_for_speech(said)
 
 
 def test_both_personas_teach_the_sentinel():
@@ -517,6 +528,291 @@ def test_filter_is_telugu_only():
     for lang in ("bn-IN", "hi-IN", "en-IN"):
         out, hits = main._enforce_register("আপনাকে স্বাগতম", lang)
         assert out == "আপনাকে স্বাগতম" and not hits
+
+
+# ── 16 Sep call-log fixes ─────────────────────────────────────────────────
+# One caller was rung five times about one abandoned booking and said stop.
+@pytest.mark.parametrize("said", [
+    "నీకు దండం కావాలి నాకు చేయొద్దు నువ్వు కాలు వేకు వదిలేసి నన్ను.",
+    "please don't call me again", "Stop calling me",
+    "ఇంకా call చేయకండి", "మళ్ళీ ఫోన్ చేయొద్దు",
+])
+def test_opt_out_phrases_detected(said):
+    assert main._OPT_OUT_RE.search(said)
+
+
+@pytest.mark.parametrize("said", [
+    "ఏం అవసరం లేదు.", "ఇప్పుడు నాకు ఎందుకు phone చేశావు",
+    "అంటే నువ్వు అందరికీ call చేయగలవా మా customers అందరికీ?",
+    "I will call you tomorrow, don't worry",
+])
+def test_ordinary_lines_are_not_opt_outs(said):
+    assert not main._OPT_OUT_RE.search(said)
+
+
+# Substring transfer words sent "is another day free?" to the ring group, and
+# a booking phrase or a haircut hung up on the caller.
+@pytest.mark.parametrize("said", [
+    "వేరే రోజు ఉందా?", "real estate గురించి", "Human CRM Seat ఎంత?",
+    "నిజంగా బాగుంది", "మీతో మాట్లాడాలి",
+])
+def test_not_a_transfer(said):
+    agent = main.NikkiAgent({"profile_sku": "standard", "business_name": "X",
+                             "tenant_id": "t", "id": "x"}, "999")
+    assert agent._detect_intent(said) != "transfer"
+
+
+@pytest.mark.parametrize("said,hang", [
+    ("రేపు పది గంటలకి అపాయింట్‌మెంట్ పెట్టేయండి", False),
+    ("haircut చేయించుకోవాలి", False),
+    ("హెయిర్ కట్ చేయించుకోవాలి", False),
+    ("call cut చేయండి", True), ("phone పెట్టేయండి", True), ("సరే పెట్టేయండి", True),
+])
+def test_hangup_request(said, hang):
+    assert bool(main._HANGUP_REQUEST_RE.search(said.lower())) is hang
+
+
+def test_internal_headers_never_spoken():
+    out = main._clean_for_speech("[CURRENT PRICING]\n- Starter: Rs 1,999")
+    assert "CURRENT PRICING" not in out and "Starter" in out
+
+
+def test_tenant_prompt_has_no_heynikki_tariff():
+    main._PRICING_CACHE.update({"at": 0.0, "text": "\n\n[REFERENCE — internal price list]"})
+    clinic = main.build_system_prompt({"business_name": "Sai Clinic", "profile_sku": "clinic",
+                                       "tenant_id": "t", "id": "x"})
+    ours = main.build_system_prompt({"business_name": "Hey Nikki", "profile_sku": "standard",
+                                     "tenant_id": "t", "id": "x"})
+    assert "internal price list" not in clinic
+    assert "internal price list" in ours and "CALLS OUT TOO" in ours
+
+
+# ── 16 Sep pipeline review fixes ──────────────────────────────────────────
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def _agent(**extra):
+    return main.NikkiAgent({"profile_sku": "standard", "business_name": "X",
+                            "tenant_id": "t", "id": "x", **extra}, "999")
+
+
+# The first clause was spoken before any output guard ran: "డాక్టర్ గారు
+# ఉన్నారు" then the correction, "connecting you" then "staff not available".
+@pytest.mark.parametrize("prefix,user,why", [
+    ("డాక్టర్ గారు ఇప్పుడు ఉన్నారు అండి.", "డాక్టర్ గారు ఉన్నారా?", "doctor"),
+    ("మిమ్మల్ని staff కి కనెక్ట్ చేస్తున్నాను.", "సరే", "connect"),
+    ("సరే END_CALL మళ్ళీ కలుద్దాం,", "బై", "sentinel"),
+    ("Sarvam ద్వారా మేము పని చేస్తాం.", "ఎలా?", "vendor"),
+    ("Bismillah Clinic కి స్వాగతం.", "హలో", "register"),
+    ("అలాగేనండి, మా దగ్గర ఆర్థోపెడిక్ డాక్టర్", "ఆర్థో ఉన్నారా", "agreement"),
+])
+def test_first_clause_held_when_a_guard_would_change_it(prefix, user, why):
+    assert main._first_clause_hold_reason(prefix, user, "") == why
+
+
+def test_ordinary_first_clause_is_spoken_early():
+    assert main._first_clause_hold_reason(
+        "మా క్లినిక్ ఉదయం పది గంటలకి తెరుస్తాం.", "ఎప్పుడు తెరుస్తారు?",
+        "హలో, X అండి. చెప్పండి!") == ""
+
+
+def test_held_clause_never_reaches_the_turn():
+    agent = _agent()
+    spoken = []
+
+    async def gen(system_prompt, history, temperature=None, first_clause_cb=None):
+        first_clause_cb("మిమ్మల్ని staff కి కనెక్ట్ చేస్తున్నాను. ")
+        return "మిమ్మల్ని staff కి కనెక్ట్ చేస్తున్నాను. ఒక్క నిమిషం."
+    agent.llm.generate = gen
+    _run(agent.on_speech(b"", want_text=True, transcript_override="ధర ఎంత?",
+                         first_clause_cb=spoken.append))
+    assert spoken == []
+
+
+# The anti-loop retry replaced the reply raw: END_CALL and banned phrases
+# went straight to TTS.
+def test_anti_loop_retry_is_filtered():
+    agent = _agent()
+    prev = "మీ ఫోన్ నంబర్ చెప్తారా అండి?"
+    agent.history = [{"role": "user", "content": "హలో"},
+                     {"role": "assistant", "content": prev}]
+    replies = iter([prev, "X కి స్వాగతం END_CALL మళ్ళీ కలుద్దాం."])
+
+    async def gen(system_prompt, history, temperature=None, first_clause_cb=None):
+        assert history[-1]["role"] == "user", "a trailing model turn is a Gemini 400"
+        return next(replies)
+    agent.llm.generate = gen
+    out = _run(agent.on_speech(b"", want_text=True, transcript_override="ఏంటి మళ్ళీ అదే అడుగుతున్నారు"))
+    assert "END" not in out and "స్వాగతం" not in out
+    assert agent.history[-1]["content"] == out == agent.transcript[-1]["content"]
+
+
+# Barge-in cancelled the turn but not the clause task, and a hangup armed by
+# the interrupted reply fired on the next turn.
+def test_cancelled_turn_voids_hangup_and_cancels_clause(monkeypatch):
+    agent = _agent()
+    started = asyncio.Event()
+
+    async def slow_tts(*a, **k):
+        await asyncio.sleep(30)
+        return b""
+    monkeypatch.setattr(agent.tts, "synthesize", slow_tts)
+
+    async def on_speech(wav, want_text=False, transcript_override=None,
+                        first_clause_cb=None, likely_noise=False):
+        first_clause_cb("మీ బుకింగ్ అయిపోయింది అండి. ")
+        agent.end_call_requested = True
+        agent.transfer_requested = True
+        started.set()
+        await asyncio.sleep(30)
+    agent.on_speech = on_speech
+    speaking = {"until": 0.0}
+
+    async def go():
+        task = asyncio.ensure_future(main._run_turn(agent, None, "u", b"\0" * 320, 1, speaking))
+        await started.wait()
+        clause_task = speaking["clause_task"]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        return clause_task
+    clause_task = _run(go())
+    assert clause_task.cancelled() or clause_task.done()
+    assert not agent.end_call_requested and not agent.transfer_requested
+
+
+def test_numbers_read_as_digits_not_quantities():
+    te = main.normalize_for_tts("పిన్ 500032, ఫోన్ 04023456789")
+    assert "500,032" not in te and "4,023,456,789" not in te
+    assert "ఐదు సున్నా సున్నా" in te
+    assert "3 రూపాయల 50 పైసలు" in main.normalize_for_tts("ధర Rs 3.50")
+    hi = main.normalize_for_tts("नंबर 9848012345 है", lang="hi-IN")
+    assert "9,848,012,345" not in hi and "9 8 4 8 0" in hi
+    # round amounts are still amounts
+    assert "125,000" in main.normalize_for_tts("total 125000", lang="hi-IN")
+
+
+class _FakeWS:
+    def __init__(self, host, headers=None):
+        self.client = type("C", (), {"host": host})()
+        self.headers = headers or {}
+
+
+def test_freeswitch_websocket_must_be_local_and_unproxied():
+    assert main._ws_is_local_freeswitch(_FakeWS("127.0.0.1"))
+    assert not main._ws_is_local_freeswitch(_FakeWS("203.0.113.9"))
+    # nginx and cloudflared also connect from loopback
+    assert not main._ws_is_local_freeswitch(_FakeWS("127.0.0.1", {"x-forwarded-for": "1.2.3.4"}))
+    assert not main._ws_is_local_freeswitch(_FakeWS("127.0.0.1", {"cf-connecting-ip": "1.2.3.4"}))
+
+
+def test_fs_uuid_is_validated_and_esl_refuses_line_breaks():
+    assert main._valid_fs_uuid("0b6c2f7e-3d1a-4c55-9b0e-2f6a1d9c8e11")
+    assert not main._valid_fs_uuid("0b6c2f7e-3d1a-4c55-9b0e-2f6a1d9c8e11\n\napi shutdown")
+    assert not main._valid_fs_uuid("../../etc/passwd")
+    with pytest.raises(ValueError):
+        _run(main._esl_api("uuid_kill x\n\napi fsctl shutdown"))
+
+
+def test_internal_secret_fails_closed(monkeypatch):
+    monkeypatch.setattr(main, "INTERNAL_SECRET", "")
+    assert not main._internal_ok("")
+    assert not main._internal_ok("nikki-internal-secret-change-me")
+    monkeypatch.setattr(main, "INTERNAL_SECRET", "s3cret")
+    assert main._internal_ok("s3cret") and not main._internal_ok("nope")
+
+
+def test_save_booking_refuses_a_real_tenant_without_the_secret():
+    req = main.BookingSaveRequest(name="A", phone="9848012345", service="x", slot="y",
+                                  tenant_id="11111111-1111-1111-1111-111111111111",
+                                  session_id="s")
+    with pytest.raises(main.HTTPException) as e:
+        _run(main.browser_save_booking(req, x_internal_secret=None))
+    assert e.value.status_code == 403
+
+
+def test_outbound_openers_follow_the_tenant_language():
+    te = main._outbound_opener({"business_name": "Sai"}, "campaign")
+    assert te == "హలో, Sai నుంచి నిక్కి మాట్లాడుతున్నాను అండి. ఒక్క నిమిషం మాట్లాడొచ్చా?"
+    for kind in ("campaign", "incomplete_booking", "outbound", "reminder"):
+        bn = main._outbound_opener({"business_name": "Muskan", "language": "bn-IN"}, kind,
+                                   "Rahim", "কাল দশটায় অ্যাপয়েন্টমেন্ট।")
+        assert not any("ఀ" <= ch <= "౿" for ch in bn), bn
+    assert "bn-IN" in main._TOOL_WAIT_LINE
+
+
+def test_campaign_prompt_gets_business_context():
+    block = main._business_context_block(
+        {"business_name": "Sai Clinic", "services": ["Dental"], "open_time": "10:00"},
+        ["Parking at the back"])
+    assert "Sai Clinic" in block and "Dental" in block and "Today:" in block
+    assert "Parking at the back" in block
+
+
+# Any failed pending insert wrote a second, confirmed row.
+@pytest.mark.parametrize("err,existing,expect_retry", [
+    ((0, "ReadTimeout"), None, False),
+    ((0, "ReadTimeout"), "appt-existing", False),
+    ((400, 'new row for relation "appointments" violates check constraint '
+           '"appointments_status_check"'), None, True),
+])
+def test_booking_fallback_only_on_the_status_constraint(err, existing, expect_retry):
+    agent = _agent()
+    agent.call_id = "c1"
+    inserts = []
+
+    async def save(row):
+        inserts.append(row["status"])
+        agent.db.last_appointment_error = err
+        return None if row["status"] == "pending" else "appt-confirmed"
+
+    async def for_call(call_id):
+        return existing
+    agent.db.save_appointment = save
+    agent.db.appointment_for_call = for_call
+    _run(agent._handle_appointment_booking("appointment కావాలి", "సరే"))
+    assert inserts == (["pending", "confirmed"] if expect_retry else ["pending"])
+    if existing:
+        assert agent.appointment_id == existing
+
+
+def test_open_breaker_skips_the_alt_model(monkeypatch):
+    llm = main.GeminiLLM()
+    called = []
+
+    async def alt(*a, **k):
+        called.append(1)
+        return "alt"
+    monkeypatch.setattr(llm, "_gemini_alt", alt)
+    monkeypatch.setattr(main.gemini_breaker, "allow_request", lambda: False)
+    out = _run(llm._generate_batch("sys", [{"role": "user", "content": "hi"}]))
+    assert not called and out
+
+
+def test_streaming_stt_discard_drops_noise_segments():
+    stt = main.SarvamStreamingSTT()
+    stt._ws = object()
+    stt._segments = ["హారన్ శబ్దం"]
+
+    async def go():
+        async def answer():
+            await asyncio.sleep(0.01)
+            stt._flush_evt.set()
+        asyncio.ensure_future(answer())
+        return await stt.finish_turn(timeout=0.5, discard=True)
+    assert _run(go()) == "" and stt._segments == []
+
+
+def test_transcript_timestamps_carry_an_offset():
+    agent = _agent()
+
+    async def gen(system_prompt, history, temperature=None, first_clause_cb=None):
+        return "సరే అండి."
+    agent.llm.generate = gen
+    _run(agent.on_speech(b"", want_text=True, transcript_override="ధర ఎంత?"))
+    assert agent.transcript[0]["ts"].endswith("+00:00")
 
 
 # ── live: needs the network ───────────────────────────────────────────────

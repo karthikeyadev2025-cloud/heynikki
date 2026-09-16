@@ -20,6 +20,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import crypto from "crypto";
+import { tenantRole, OWNER_ROLES } from "./roles";
 
 export type Card =
   | { type: "summary"; title: string; stats: { label: string; value: string | number; tone?: string }[] }
@@ -51,6 +52,15 @@ function reap() {
 
 const ist = (d: Date) => new Date(d.getTime() + 5.5 * 3600_000);
 const todayIST = () => ist(new Date()).toISOString().slice(0, 10);
+// An IST calendar day as a half-open UTC range. created_at is timestamptz;
+// comparing it to "2026-09-16T00:00:00" with no offset meant midnight UTC,
+// so "today" ran 05:30 IST to 05:29 the next morning — the evening's calls
+// were counted, the small hours' were filed under the wrong day.
+const istDayRange = (day: string) => {
+  const start = `${day}T00:00:00+05:30`;
+  const next = new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  return { start, end: `${next}T00:00:00+05:30` };
+};
 const last10 = (s: unknown) => String(s ?? "").replace(/\D/g, "").slice(-10);
 
 export function makeOwnerAssistant(deps: {
@@ -224,7 +234,7 @@ export function makeOwnerAssistant(deps: {
     const rows = [
       ...(calls.data || []).map((c: any) => ({
         title: `Call · ${(c.intent || "enquiry").replace(/_/g, " ")}`,
-        subtitle: new Date(c.created_at).toLocaleString("en-IN"),
+        subtitle: new Date(c.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
         meta: `${c.duration_seconds || 0}s · ${c.status}`, href: "/calls",
       })),
       ...(appts.data || []).map((a: any) => ({
@@ -254,13 +264,14 @@ export function makeOwnerAssistant(deps: {
 
   async function dayCalls(tenantId: string, args: any) {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(args.day || "")) ? args.day : todayIST();
+    const r = istDayRange(day);
     const [{ data: calls }, { data: appts }, { data: orders }] = await Promise.all([
       sb.from("calls").select("status, duration_seconds, appointment_created, intent")
         .eq("tenant_id", tenantId)
-        .gte("created_at", `${day}T00:00:00`).lte("created_at", `${day}T23:59:59`),
+        .gte("created_at", r.start).lt("created_at", r.end),
       sb.from("appointments").select("id").eq("tenant_id", tenantId).eq("slot_date", day),
       sb.from("orders").select("total").eq("tenant_id", tenantId)
-        .gte("created_at", `${day}T00:00:00`).lte("created_at", `${day}T23:59:59`)
+        .gte("created_at", r.start).lt("created_at", r.end)
         .not("status", "eq", "cancelled"),
     ]);
     const rows = calls || [];
@@ -296,14 +307,15 @@ export function makeOwnerAssistant(deps: {
 
   async function missedCalls(tenantId: string, args: any) {
     const day = /^\d{4}-\d{2}-\d{2}$/.test(String(args.day || "")) ? args.day : todayIST();
+    const r = istDayRange(day);
     const { data } = await sb.from("calls")
       .select("id, caller_number, created_at, status, duration_seconds")
       .eq("tenant_id", tenantId).eq("status", "missed")
-      .gte("created_at", `${day}T00:00:00`).lte("created_at", `${day}T23:59:59`)
+      .gte("created_at", r.start).lt("created_at", r.end)
       .order("created_at", { ascending: false }).limit(20);
     const rows = (data || []).map(c => ({
       title: c.caller_number || "unknown",
-      subtitle: new Date(c.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      subtitle: new Date(c.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }),
       meta: "missed", tone: "bad" as string, href: "/calls",
     }));
     return {
@@ -354,12 +366,26 @@ export function makeOwnerAssistant(deps: {
     if (tool === "cancel_appointment") {
       const key = String(args.booking_ref || "").trim();
       const digits = last10(key);
-      let q = sb.from("appointments").update({ status: "cancelled" }).eq("tenant_id", tenantId);
-      q = digits.length === 10 ? q.like("caller_number", `%${digits}`).eq("status", "confirmed")
-                               : q.eq("booking_ref", key.toUpperCase());
-      const { data, error } = await q.select("booking_ref, slot_date, slot_time, caller_name").limit(1);
+      // Find the ONE booking first, then cancel it by id. This was
+      // update().like().eq().select().limit(1): the limit applies to the rows
+      // RETURNED, not the rows UPDATED, so "cancel by phone" cancelled every
+      // confirmed booking that number had — past and future — and reported
+      // one. By phone it is the next upcoming confirmed slot.
+      let find = sb.from("appointments")
+        .select("id, booking_ref, slot_date, slot_time, caller_name").eq("tenant_id", tenantId);
+      find = digits.length === 10
+        ? find.like("caller_number", `%${digits}`).eq("status", "confirmed")
+            .gte("slot_date", todayIST())
+            .order("slot_date", { ascending: true }).order("slot_time", { ascending: true })
+        : find.eq("booking_ref", key.toUpperCase()).neq("status", "cancelled");
+      const { data: target, error: findErr } = await find.limit(1).maybeSingle();
+      if (findErr) return { answer: `I could not cancel it: ${findErr.message}` };
+      if (!target) return { answer: `I could not find a confirmed booking for ${key}.` };
+      const { data, error } = await sb.from("appointments").update({ status: "cancelled" })
+        .eq("id", target.id).eq("tenant_id", tenantId).neq("status", "cancelled")
+        .select("booking_ref, slot_date, slot_time, caller_name");
       if (error) return { answer: `I could not cancel it: ${error.message}` };
-      if (!data?.length) return { answer: `I could not find a confirmed booking for ${key}.` };
+      if (!data?.length) return { answer: `That booking was already cancelled.` };
       const a = data[0];
       return { answer: `Cancelled ${a.booking_ref || "the booking"}${a.slot_date ? ` on ${a.slot_date}` : ""}${a.slot_time ? ` at ${a.slot_time}` : ""}.` };
     }
@@ -472,6 +498,11 @@ about their own numbers, or wants something done.
              cards: cards.length ? cards : undefined, confirm };
   }
 
+  // Placing a call spends the business's minutes and speaks for it to a
+  // customer — owner-only under 039. Changing an order or cancelling a
+  // booking is the team's everyday work and stays open to members.
+  const OWNER_ONLY_TOOLS = new Set(["call_customer_back"]);
+
   function mountRoutes(app: Express, verifyJWT: any, getTenantId: (userId: string) => Promise<string | null>) {
     app.post("/api/tenant/assistant/confirm", verifyJWT, async (req: any, res) => {
       const tenantId = await getTenantId(req.user.id);
@@ -482,6 +513,14 @@ about their own numbers, or wants something done.
       // hour is not consent to ring somebody now.
       if (!p) return res.json({ ok: false, answer: "That action expired — ask me again and I'll set it up fresh." });
       if (p.tenantId !== tenantId) return res.status(403).json({ ok: false, answer: "That action belongs to another account." });
+      if (OWNER_ONLY_TOOLS.has(p.tool)) {
+        const role = await tenantRole(sb, req.user.id, tenantId);
+        if (!role || !OWNER_ROLES.includes(role)) {
+          // Left pending: the owner can still confirm it within the window.
+          const answer = "Only the account owner can confirm a call to a customer.";
+          return res.status(403).json({ ok: false, answer, error: answer, code: "owner_only" });
+        }
+      }
       pending.delete(String(req.body.id));   // one press, one action
       try {
         const out = await execute(p);

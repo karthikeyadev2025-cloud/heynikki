@@ -138,7 +138,7 @@ async function sendEmail(to: string, subject: string, body: string): Promise<str
       console.error(
         "[onboarding] SENDING DOMAIN NOT VERIFIED — no onboarding email can go out. " +
         "Add and verify the domain at resend.com/domains. Nothing is lost: the " +
-        "send-once record is only written after a successful send.",
+        "send-once claim is released when a send fails.",
       );
     }
     return null;
@@ -186,23 +186,47 @@ export async function runOnboardingEmails(): Promise<{ sent: number; skipped: nu
     });
 
     for (const u of candidates) {
-      // Check if this step has already been sent
-      const { data: existing } = await sb.from("onboarding_emails_sent")
-        .select("id").eq("user_id", u.id).eq("step", step.id).maybeSingle();
-      if (existing) { skipped++; continue; }
+      // CLAIM, then send. The old order was look-up, send, record — and both
+      // ends failed open: a lookup ERROR came back as `existing = null`,
+      // which read as "never sent", and the insert that recorded the send
+      // had its error ignored. So one bad read, or one failed insert, and the
+      // same welcome email went out again on every 15-minute cycle.
+      //
+      // The unique (user_id, step) constraint makes the insert itself the
+      // guard: exactly one run can create the row, and only that run sends.
+      // Any other insert error means we do not know — so we do not send.
+      const { data: claim, error: claimErr } = await sb.from("onboarding_emails_sent")
+        .insert({ user_id: u.id, step: step.id })
+        .select("id").single();
+      if (claimErr) {
+        if (claimErr.code === "23505") { skipped++; continue; }
+        console.error(`[onboarding] claim ${step.id} for ${u.id} failed — not sending:`, claimErr.message);
+        errors++;
+        continue;
+      }
 
       const firstName = (u.user_metadata?.full_name as string | undefined)?.split(" ")[0]
                      || u.email!.split("@")[0];
       const subject   = step.subject(firstName);
       const body      = step.body({ firstName, dashboardUrl: `${SITE_URL}/dashboard` });
 
-      const resendId = await sendEmail(u.email!, subject, body);
-      if (!resendId) { errors++; if (domainBlocked) break; continue; }
+      let resendId: string | null = null;
+      try { resendId = await sendEmail(u.email!, subject, body); }
+      catch (e: any) { console.error(`[onboarding] send ${step.id} to ${u.id} threw:`, e?.message || e); }
+      if (!resendId) {
+        // Nothing went out, so give the step back for the next run. If the
+        // release itself fails the claim stays and this email is never sent
+        // — the safe way round; it is logged so it can be cleared by hand.
+        const { error: relErr } = await sb.from("onboarding_emails_sent").delete().eq("id", claim.id);
+        if (relErr) console.error(`[onboarding] could not release claim ${claim.id} (${step.id} for ${u.id}) — it will not be retried:`, relErr.message);
+        errors++;
+        if (domainBlocked) break;
+        continue;
+      }
 
-      // Record AFTER successful send so a Resend outage gets retried tomorrow
-      await sb.from("onboarding_emails_sent").insert({
-        user_id: u.id, step: step.id, resend_id: resendId,
-      });
+      const { error: idErr } = await sb.from("onboarding_emails_sent")
+        .update({ resend_id: resendId }).eq("id", claim.id);
+      if (idErr) console.error(`[onboarding] resend_id not recorded for ${claim.id}:`, idErr.message);
 
       // Audit log for DPDP
       await sb.from("audit_log").insert({

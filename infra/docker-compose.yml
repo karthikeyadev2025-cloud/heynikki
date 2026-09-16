@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ================================================================
 # Hey Nikki — Full EC2 Stack
 # Run: docker-compose up -d
@@ -140,10 +138,19 @@ services:
   # the interval is visible here rather than in a crontab inside a container.
   # Every job is idempotent (embedding IS NULL, wa_reminder_sent = false,
   # summary keyed by date), so an extra pass is harmless.
+  #
+  # An extra pass is harmless; an extra SCHEDULER is not. This file is shared
+  # with the EC2 host, and with no profile a plain `docker compose up -d`
+  # there started a second scheduler on the same database: two processes
+  # read the same "not yet sent" flag in the same minute and both send.
+  # OPT-IN like the dispatcher — only the telephony host starts it, via
+  # deploy.sh (`--profile scheduler`). scheduler.ts also holds a lease in
+  # platform_config, so a second copy started by hand skips its runs.
   scheduler:
     image: infra-api-server:latest
     container_name: heynikki-scheduler
     restart: always
+    profiles: ["scheduler"]
     network_mode: host          # reaches api-server on 127.0.0.1:4000
     env_file: .env
     environment:

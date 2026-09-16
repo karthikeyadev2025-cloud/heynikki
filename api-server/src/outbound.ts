@@ -13,6 +13,7 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { phoneForms, CALLING_WINDOW } from "./campaign-import";
 
 export function mountOutboundRoutes(
   app:     Express,
@@ -28,11 +29,24 @@ export function mountOutboundRoutes(
     if (!tenant_id || !name || !script) {
       return res.status(400).json({ error: "tenant_id, name, script required" });
     }
+    // Any string was stored as the calling window, so "07:00"–"23:00" (or
+    // "banana") went straight to the dialler. Validate the shape and hold it
+    // inside TRAI's 09:00–21:00.
+    const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const ws = window_start || "10:00", we = window_end || "19:00";
+    if (!HHMM.test(ws) || !HHMM.test(we)) {
+      return res.status(400).json({ error: "window_start and window_end must be HH:MM" });
+    }
+    if (ws < CALLING_WINDOW.start || we > CALLING_WINDOW.end || we <= ws) {
+      return res.status(400).json({
+        error: `Calling window must fall between ${CALLING_WINDOW.start} and ${CALLING_WINDOW.end} IST, start before end`,
+      });
+    }
 
     const { data, error } = await sb.from("outbound_campaigns").insert({
       tenant_id, name, script, voice_profile_id,
-      window_start:  window_start  || "10:00",
-      window_end:    window_end    || "19:00",
+      window_start:  ws,
+      window_end:    we,
       max_concurrent: Math.min(max_concurrent || 3, 25),
       start_date: start_date || null,
       end_date:   end_date   || null,
@@ -75,14 +89,22 @@ export function mountOutboundRoutes(
       return null;
     };
 
-    // Cross-reference opt-outs for this tenant
-    const phones    = recipients.map(r => normalize(r.phone)).filter(Boolean);
-    const { data: optOuts } = await sb.from("outbound_opt_outs")
-      .select("phone").eq("tenant_id", c.tenant_id).in("phone", phones);
-    const blocked = new Set((optOuts || []).map(o => o.phone));
+    // Cross-reference opt-outs for this tenant. Opt-outs are stored as ten
+    // digits (pipeline, dashboard) and these phones are +91 — an IN over one
+    // form matched nothing, so every opt-out was re-queued. Match every form,
+    // in batches small enough for the query string, and fail rather than
+    // treat an unreadable do-not-call list as empty.
+    const phones    = recipients.map(r => normalize(String(r.phone ?? ""))).filter(Boolean) as string[];
+    const blocked = new Set<string>();
+    for (let i = 0; i < phones.length; i += 100) {
+      const { data: optOuts, error: ooErr } = await sb.from("outbound_opt_outs")
+        .select("phone").eq("tenant_id", c.tenant_id).in("phone", phones.slice(i, i + 100).flatMap(phoneForms));
+      if (ooErr) return res.status(500).json({ error: `opt-out check failed: ${ooErr.message}` });
+      (optOuts || []).forEach(o => blocked.add(`+91${String(o.phone).replace(/\D/g, "").slice(-10)}`));
+    }
 
     const rows = recipients
-      .map(r => ({ ...r, phone: normalize(r.phone) }))
+      .map(r => ({ ...r, phone: normalize(String(r.phone ?? "")) }))
       .filter(r => r.phone && !blocked.has(r.phone))
       .map(r => ({
         campaign_id:     id,
@@ -158,9 +180,17 @@ export function mountOutboundRoutes(
     const { data: c } = await sb.from("outbound_campaigns").select("tenant_id").eq("id", req.params.id).single();
     if (!c) return res.status(404).json({ error: "Campaign not found" });
 
-    await sb.from("outbound_opt_outs").upsert({
-      tenant_id: c.tenant_id, phone, reason: reason || "user_request",
+    // Stored as ten digits, the form the pipeline and the dashboard write, so
+    // one person is one row whichever door they asked through. Every lookup
+    // matches all forms anyway (phoneForms); this keeps the list itself clean.
+    const ten = String(phone).replace(/\D/g, "").slice(-10);
+    if (ten.length !== 10) return res.status(400).json({ error: "phone must be a 10-digit number" });
+    const { error: ooErr } = await sb.from("outbound_opt_outs").upsert({
+      tenant_id: c.tenant_id, phone: ten, reason: reason || "user_request",
     }, { onConflict: "tenant_id,phone" });
+    // An opt-out that did not save must not answer ok — the caller would
+    // tell the person they are off the list.
+    if (ooErr) return res.status(500).json({ error: ooErr.message });
 
     // Mark any pending recipient rows with this phone as opted_out.
     //
@@ -171,7 +201,7 @@ export function mountOutboundRoutes(
     await sb.from("outbound_recipients")
       .update({ status: "opted_out" })
       .eq("tenant_id", c.tenant_id)
-      .eq("phone", phone)
+      .in("phone", phoneForms(ten))
       .in("status", ["pending", "queued", "scrubbing"]);
 
     await audit("campaign.opt_out", {

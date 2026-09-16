@@ -100,12 +100,30 @@ echo "── restarting (FreeSWITCH untouched) ──"
 # The trade: if freeswitch is down, these start without waiting for it.
 # That is the right way round. They reconnect on their own; restarting a
 # live PBX to satisfy a dependency check does not undo a dropped call.
-docker compose up -d --no-deps api-server voice-pipeline scheduler
-docker compose --profile outbound up -d --no-deps outbound-dispatcher
+docker compose up -d --no-deps api-server voice-pipeline
+# --force-recreate for these two, which is what went wrong for a week.
+# scheduler and outbound-dispatcher have no build: of their own, only
+# `image: infra-api-server:latest`, so compose sees an unchanged config and
+# leaves them running the OLD image when that tag moves. The scheduler ran a
+# 4 Sep build until 16 Sep — without the one-chase-per-booking guard — and
+# rang one caller five times about the same abandoned booking.
+#
+# Both sit behind compose profiles so the EC2 host that shares this compose
+# file never starts a second copy with a bare `up -d` (two schedulers send
+# every reminder twice). This host is the one that runs them, so name the
+# profiles explicitly.
+docker compose --profile scheduler up -d --no-deps --force-recreate scheduler
+docker compose --profile outbound up -d --no-deps --force-recreate outbound-dispatcher
 
 echo "── health ──"
 sleep 8
-docker compose ps --format '  {{.Name}}  {{.Status}}'
+docker compose --profile scheduler --profile outbound ps --format '  {{.Name}}  {{.Status}}'
+# Fail loudly if anything built from the api-server image is still on an old one.
+want=$(docker image inspect infra-api-server:latest --format '{{.Id}}')
+for c in heynikki-api heynikki-scheduler heynikki-outbound; do
+  have=$(docker inspect "$c" --format '{{.Image}}' 2>/dev/null || echo missing)
+  [ "$have" = "$want" ] || echo "  !! $c is NOT on the new image ($have)" >&2
+done
 curl -s --max-time 8 http://127.0.0.1:4000/health || echo "api-server not answering"
 echo
 curl -s --max-time 8 http://127.0.0.1:8000/health >/dev/null && echo "  pipeline OK" || echo "  pipeline NOT answering"
