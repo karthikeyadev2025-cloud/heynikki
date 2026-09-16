@@ -41,7 +41,9 @@ const RZP_SECRET      = process.env.RAZORPAY_KEY_SECRET!;
 const META_WA_VERIFY_TOKEN = process.env.META_WA_VERIFY_TOKEN || "";
 const META_WA_APP_SECRET   = process.env.META_WA_APP_SECRET || "";
 const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
+// Read and validated in one place — see internal-secret.ts for what the
+// `!` that used to be here did when the variable was missing.
+import { INTERNAL_SECRET, internalSecretOk } from "./internal-secret";
 const WATI_KEY        = process.env.WATI_API_KEY || "";
 const WATI_URL        = process.env.WATI_API_URL || "";
 const PIPELINE_URL    = process.env.PIPELINE_URL || "http://localhost:8000";
@@ -134,7 +136,10 @@ const webhookLimiter = rateLimit({
   // A caller holding INTERNAL_SECRET is already inside; rate-limiting it
   // protects nothing. The limit stays for everyone else, which is who it
   // was written for — Razorpay retries and unauthenticated junk.
-  skip: (req) => req.headers["x-internal-secret"] === INTERNAL_SECRET,
+  // Same constant-time check as verifyInternal, and the same reason: with
+  // INTERNAL_SECRET unset this read `undefined === undefined` and skipped
+  // the webhook rate limit for every unauthenticated request on earth.
+  skip: (req) => internalSecretOk(req.headers["x-internal-secret"]),
 });
 const apiLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
 // Fully unauthenticated (public landing page, no login) AND each
@@ -205,8 +210,7 @@ app.use((req, res, next) => {
 
 // ── INTERNAL AUTH ─────────────────────────────────────────
 function verifyInternal(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const secret = req.headers["x-internal-secret"];
-  if (secret !== INTERNAL_SECRET) {
+  if (!internalSecretOk(req.headers["x-internal-secret"])) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();
@@ -2578,7 +2582,7 @@ app.get("/api/calls/:id/recording", verifyJWT, apiLimiter, async (req: any, res)
     url.searchParams.set("tenant_id", tenantId);
     url.searchParams.set("call_id", call.id);
     const r = await fetch(url, {
-      headers: { "X-Internal-Secret": process.env.INTERNAL_SECRET || "" },
+      headers: { "X-Internal-Secret": INTERNAL_SECRET },
       signal: AbortSignal.timeout(30_000),
     });
     if (!r.ok) {
@@ -3322,7 +3326,12 @@ app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
 // toggle Jio/Vi. Passwords are AES-256-GCM under a key derived from
 // INTERNAL_SECRET, and are NEVER returned — the list shows metadata only.
 function encTrunkPassword(plain: string): string {
-  const key = crypto.createHash("sha256").update("trunk:" + (process.env.INTERNAL_SECRET || "")).digest();
+  // Byte-identical to the old `process.env.INTERNAL_SECRET || ""`: the
+  // constant holds the raw, untrimmed value precisely so this derived key —
+  // and every trunk password already encrypted under it — stays valid.
+  // Before the startup check, an unset secret derived this key from the
+  // literal "trunk:", which anyone could reproduce.
+  const key = crypto.createHash("sha256").update("trunk:" + INTERNAL_SECRET).digest();
   const iv = crypto.randomBytes(12);
   const c = crypto.createCipheriv("aes-256-gcm", key, iv);
   const ct = Buffer.concat([c.update(plain, "utf8"), c.final()]);

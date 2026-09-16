@@ -43,7 +43,7 @@ const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
 const GEMINI_KEY    = process.env.GEMINI_API_KEY || "";
 const API_URL       = process.env.API_URL || "http://localhost:4000";
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "";
+import { INTERNAL_SECRET } from "../internal-secret";
 
 // Must match voice-pipeline/app/knowledge.py — a mismatch here means
 // embeddings that can never match at query time.

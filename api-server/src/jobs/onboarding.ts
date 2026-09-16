@@ -22,7 +22,7 @@ const sb = createClient(
 );
 
 const API = process.env.SELF_URL || "http://127.0.0.1:4000";
-const INTERNAL = process.env.INTERNAL_SECRET || "";
+import { INTERNAL_SECRET as INTERNAL } from "../internal-secret";
 
 type Step = {
   step: string;

@@ -29,7 +29,9 @@ const PIPELINE_URL  = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
 // routing internal events out to Cloudflare and back only adds a round trip
 // and a dependency on the tunnel being up.
 const API_URL       = process.env.API_URL || "http://127.0.0.1:4000";
-const INTERNAL_SEC  = process.env.INTERNAL_SECRET!;
+// Validated at import — a missing secret stops this process rather than
+// letting it dispatch calls it cannot authenticate. See internal-secret.ts.
+import { INTERNAL_SECRET as INTERNAL_SEC } from "../internal-secret";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 

@@ -6,6 +6,7 @@ Run: uvicorn main:app --host 0.0.0.0 --port 8000
 
 import difflib
 import hashlib
+import hmac
 import os
 import re
 import json
@@ -73,7 +74,36 @@ SARVAM_KEY     = os.environ["SARVAM_API_KEY"]
 GEMINI_KEY     = os.environ["GEMINI_API_KEY"]
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_SERVICE_KEY"]
-INTERNAL_SECRET= os.environ.get("INTERNAL_SECRET", "nikki-internal-secret-change-me")
+# No default. This guards eight endpoints — inbound call routing, the
+# FreeSWITCH hangup hook, recording presign and purge — and the value that
+# used to sit here ("nikki-internal-secret-change-me") was public in this
+# repository. Any deploy that forgot the variable was protected by a string
+# an attacker could read on GitHub, and looked identical to one that was not.
+# Required, and read the same way as the four keys above, so a missing secret
+# stops the process at import instead of at the first unauthorised call.
+INTERNAL_SECRET= os.environ["INTERNAL_SECRET"]
+if not INTERNAL_SECRET.strip():
+    raise RuntimeError(
+        "INTERNAL_SECRET is set but blank. It authenticates every call from "
+        "the API server, the scheduler and the outbound dispatcher. Generate "
+        "one with `openssl rand -hex 32` and set the SAME value on all of them."
+    )
+
+
+def _internal_ok(supplied: Optional[str]) -> bool:
+    """Constant-time check of the X-Internal-Secret header.
+
+    The eight call sites used to compare with `!=`, which returns on the
+    first differing byte. Digest both sides first: compare_digest is already
+    constant-time, but hashing means a wrong guess cannot learn the secret's
+    LENGTH from the comparison either.
+    """
+    if not supplied:
+        return False
+    return hmac.compare_digest(
+        hashlib.sha256(supplied.encode("utf-8")).digest(),
+        hashlib.sha256(INTERNAL_SECRET.encode("utf-8")).digest(),
+    )
 # The "this call is handled by an automated assistant" line played before
 # the greeting on every inbound and outbound call. Switched off on 5 Sep at
 # the owner's request — the greeting now opens the call. Nikki still says
@@ -4074,7 +4104,7 @@ async def purge_recordings(req: RecordingPurgeRequest,
     hundred keys per run, and a wildcard or empty key is refused outright:
     a purge endpoint that can be talked into deleting everything is a
     disaster with an API."""
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="unauthorized")
     keys = [str(k) for k in (req.keys or []) if isinstance(k, str)
             and 8 < len(k) < 300 and "*" not in k and ".." not in k]
@@ -4953,7 +4983,7 @@ async def presign_recording(req: RecordingPresignRequest,
     should not sit behind a link that works forever, which is what a public
     bucket gives you.
     """
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     cf_account_id = os.environ.get("CF_ACCOUNT_ID", "")
@@ -4990,7 +5020,7 @@ async def presign_recording(req: RecordingPresignRequest,
 
 @app.post("/api/v1/call/inbound")
 async def handle_inbound(req: InboundCallRequest, x_internal_secret: str = Header(None)):
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     db = SupabaseClient()
@@ -5014,7 +5044,7 @@ async def handle_inbound(req: InboundCallRequest, x_internal_secret: str = Heade
 
 @app.post("/api/v1/call/speech")
 async def handle_speech(req: SpeechRequest, x_internal_secret: str = Header(None)):
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     import base64
@@ -5041,7 +5071,7 @@ async def handle_call_end(
     duration_seconds: int,
     x_internal_secret: str = Header(None)
 ):
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     db = SupabaseClient()
     await db.update_call(call_id, {
@@ -7493,7 +7523,7 @@ async def fetch_recording(
     The api-server is what checks that the caller owns the call; this
     endpoint only proves it is the api-server asking.
     """
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="unauthorized")
     if ".." in key or key.startswith("/"):
         raise HTTPException(status_code=400, detail="bad key")
@@ -8615,7 +8645,7 @@ async def fs_inbound(req: FSInboundRequest, x_internal_secret: str = Header(None
     """Called by api-server when FreeSWITCH answers a call.
     The actual AI session is handled by the WebSocket endpoint above.
     This shim just acknowledges receipt."""
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     log.info(f"[FS REST] Inbound: uuid={req.fs_uuid} did={req.did_number} caller={req.caller_number}")
     return {"ok": True, "fs_uuid": req.fs_uuid, "ws_url": f"/ws/freeswitch/{req.did_number}/{req.caller_number}/{req.fs_uuid}"}
@@ -8625,7 +8655,7 @@ async def fs_hangup(req: FSHangupRequest, x_internal_secret: str = Header(None))
     """Called by api-server after FreeSWITCH CHANNEL_HANGUP.
     Recording upload happens inside the WebSocket handler on disconnect;
     this endpoint is a secondary trigger for cases where WS already closed."""
-    if x_internal_secret != INTERNAL_SECRET:
+    if not _internal_ok(x_internal_secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     log.info(f"[FS REST] Hangup: uuid={req.fs_uuid} call_id={req.call_id}")
     if req.upload_recording and req.call_id and req.tenant_id:

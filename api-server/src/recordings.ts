@@ -8,7 +8,7 @@
 // row that forgets its key while the object survives is an orphan nobody can
 // ever delete.
 const PIPELINE_URL = process.env.PIPELINE_URL || "http://127.0.0.1:8000";
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "";
+import { INTERNAL_SECRET } from "./internal-secret";
 
 export interface PurgeResult {
   ok: boolean;          // false when the pipeline refused or was unreachable

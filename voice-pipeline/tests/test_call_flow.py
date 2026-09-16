@@ -623,3 +623,53 @@ def test_widget_sweep_removes_expired_and_keeps_live(widget_dir):
     main._widget_sweep()
     assert not os.path.exists(dead)
     assert os.path.exists(main._widget_path("live-one"))
+
+
+# ── the internal-secret guard ─────────────────────────────────────────────
+# INTERNAL_SECRET protects inbound call routing, the FreeSWITCH hangup hook
+# and recording presign/purge. It used to default to a fixed string that was
+# public in this repository, so a deploy that forgot the variable was
+# "protected" by a value anyone could read — and looked exactly like a
+# deploy that was not.
+def test_internal_secret_has_no_default():
+    """Whatever the process is running with, it must have come from the
+    environment. A literal default here is the bug this replaced."""
+    assert main.INTERNAL_SECRET == os.environ["INTERNAL_SECRET"]
+    assert main.INTERNAL_SECRET.strip()
+
+
+def test_internal_ok_accepts_the_real_secret():
+    assert main._internal_ok(main.INTERNAL_SECRET) is True
+
+
+@pytest.mark.parametrize("bad", [
+    None,                                  # header absent entirely
+    "",                                    # header present but blank
+    "nikki-internal-secret-change-me",     # the old hardcoded default
+    "heynikki-internal-2026-change-for-production",   # the old .env.ec2 one
+    "wrong",
+])
+def test_internal_ok_rejects_everything_else(bad):
+    assert main._internal_ok(bad) is False
+
+
+def test_internal_ok_rejects_a_prefix_of_the_secret():
+    """A length-only or prefix match must not pass — the digest comparison
+    is what makes both of those indistinguishable from any other miss."""
+    assert main._internal_ok(main.INTERNAL_SECRET[:-1]) is False
+    assert main._internal_ok(main.INTERNAL_SECRET + "x") is False
+
+
+def test_pipeline_refuses_to_start_without_the_secret():
+    """The whole point: no INTERNAL_SECRET, no process. Checked in a child
+    interpreter because the import has already succeeded in this one."""
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k != "INTERNAL_SECRET"}
+    env["PIPE_DIR"] = os.path.dirname(os.path.abspath(main.__file__))
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import os,sys; sys.path.insert(0, os.environ['PIPE_DIR']); import main"],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert child.returncode != 0, "pipeline started with no INTERNAL_SECRET"
+    assert "INTERNAL_SECRET" in child.stderr
