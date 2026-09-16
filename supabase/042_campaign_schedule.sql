@@ -13,6 +13,19 @@
 -- campaign is started, null end = until the list is exhausted.
 alter table public.outbound_campaigns
   add column if not exists start_date date,
-  add column if not exists end_date   date,
-  add constraint outbound_campaigns_dates_ordered
-    check (start_date is null or end_date is null or end_date >= start_date);
+  add column if not exists end_date   date;
+
+-- Split out of the ALTER above and guarded. ADD CONSTRAINT has no
+-- IF NOT EXISTS, and bundling it with the ADD COLUMNs meant a second run of
+-- this file failed before the idempotent parts were even reached. Same
+-- shape as 012 and 023.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'outbound_campaigns_dates_ordered'
+  ) then
+    alter table public.outbound_campaigns
+      add constraint outbound_campaigns_dates_ordered
+      check (start_date is null or end_date is null or end_date >= start_date);
+  end if;
+end $$;

@@ -648,10 +648,12 @@ values
 on conflict (id) do nothing;
 
 -- Storage RLS: tenants can only access their own files
+drop policy if exists "recordings_tenant_access" on storage.objects;
 create policy "recordings_tenant_access" on storage.objects for all
   using (bucket_id = 'call-recordings' and (storage.foldername(name))[1] = get_my_tenant_id()::text)
   with check (bucket_id = 'call-recordings' and (storage.foldername(name))[1] = get_my_tenant_id()::text);
 
+drop policy if exists "docs_tenant_access" on storage.objects;
 create policy "docs_tenant_access" on storage.objects for all
   using (bucket_id = 'knowledge-docs' and (storage.foldername(name))[1] = get_my_tenant_id()::text)
   with check (bucket_id = 'knowledge-docs' and (storage.foldername(name))[1] = get_my_tenant_id()::text);

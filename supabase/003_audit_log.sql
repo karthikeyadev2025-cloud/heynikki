@@ -34,10 +34,23 @@ create index if not exists idx_audit_log_tenant_id   on public.audit_log(tenant_
 create index if not exists idx_audit_log_actor_id    on public.audit_log(actor_id, created_at desc);
 create index if not exists idx_audit_log_action      on public.audit_log(action,    created_at desc);
 
--- Cap individual metadata blobs to keep table manageable
-alter table public.audit_log
-  add constraint audit_log_metadata_size
-  check (octet_length(metadata::text) < 8192);
+-- Cap individual metadata blobs to keep table manageable.
+--
+-- Guarded because ADD CONSTRAINT has no IF NOT EXISTS, so re-running this
+-- file stopped here. Files in this directory get re-pasted into the SQL
+-- editor when nobody is sure whether they were applied (033 exists because
+-- 013 never was), and a migration that errors on a second run makes that
+-- check unsafe. Same shape as 012 and 023.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'audit_log_metadata_size'
+  ) then
+    alter table public.audit_log
+      add constraint audit_log_metadata_size
+      check (octet_length(metadata::text) < 8192);
+  end if;
+end $$;
 
 -- ─── RLS ──────────────────────────────────────────────
 alter table public.audit_log enable row level security;

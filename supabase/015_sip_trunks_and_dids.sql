@@ -44,6 +44,7 @@ on conflict do nothing;
 -- RLS: only super_admin
 alter table sip_trunks enable row level security;
 
+drop policy if exists "super_admin_all_sip" on sip_trunks;
 create policy "super_admin_all_sip" on sip_trunks
   for all using (is_super_admin())
   with check (is_super_admin());
@@ -83,10 +84,12 @@ create table if not exists dids (
 -- RLS: super admin sees all; tenant sees only their DIDs
 alter table dids enable row level security;
 
+drop policy if exists "super_admin_all_dids" on dids;
 create policy "super_admin_all_dids" on dids
   for all using (is_super_admin())
   with check (is_super_admin());
 
+drop policy if exists "tenant_read_own_dids" on dids;
 create policy "tenant_read_own_dids" on dids
   for select using (
     tenant_id = get_my_tenant_id()

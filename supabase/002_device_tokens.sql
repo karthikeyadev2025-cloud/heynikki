@@ -40,6 +40,7 @@ create policy "device_tokens: owner can write"
   on public.device_tokens for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "device_tokens: owner can update" on public.device_tokens;
 create policy "device_tokens: owner can update"
   on public.device_tokens for update
   using (auth.uid() = user_id);

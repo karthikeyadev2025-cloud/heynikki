@@ -40,6 +40,7 @@ on conflict (key) do nothing;
 -- RLS: only super_admin can read/write
 alter table platform_config enable row level security;
 
+drop policy if exists "super_admin_all" on platform_config;
 create policy "super_admin_all" on platform_config
   for all using (is_super_admin())
   with check (is_super_admin());

@@ -59,10 +59,12 @@ create table if not exists click_to_call_log (
 
 alter table click_to_call_log enable row level security;
 
+drop policy if exists "tenant_own_ctc" on click_to_call_log;
 create policy "tenant_own_ctc" on click_to_call_log
   for all using (tenant_id = get_my_tenant_id())
   with check (tenant_id = get_my_tenant_id());
 
+drop policy if exists "super_admin_all_ctc" on click_to_call_log;
 create policy "super_admin_all_ctc" on click_to_call_log
   for all using (is_super_admin())
   with check (is_super_admin());
@@ -90,10 +92,12 @@ create table if not exists wa_templates (
 
 alter table wa_templates enable row level security;
 
+drop policy if exists "tenant_own_wa_templates" on wa_templates;
 create policy "tenant_own_wa_templates" on wa_templates
   for all using (tenant_id = get_my_tenant_id())
   with check (tenant_id = get_my_tenant_id());
 
+drop policy if exists "super_admin_all_wa_templates" on wa_templates;
 create policy "super_admin_all_wa_templates" on wa_templates
   for all using (is_super_admin())
   with check (is_super_admin());

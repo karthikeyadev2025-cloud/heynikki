@@ -17,11 +17,13 @@
 -- tenant still cannot edit or delete a template they do not own.
 drop policy if exists tenant_own_wa_templates on wa_templates;
 
+drop policy if exists "wa_templates_read" on wa_templates;
 create policy wa_templates_read on wa_templates for select
   using (tenant_id is null
          or tenant_id = get_my_tenant_id()
          or is_super_admin());
 
+drop policy if exists "wa_templates_write" on wa_templates;
 create policy wa_templates_write on wa_templates for all
   using (tenant_id = get_my_tenant_id())
   with check (tenant_id = get_my_tenant_id());

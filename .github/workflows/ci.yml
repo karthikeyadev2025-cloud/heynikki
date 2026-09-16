@@ -120,6 +120,24 @@ jobs:
           INTERNAL_SECRET:       "placeholder"
         run: python -m pytest tests -q -m "not live"
 
+  # ─── Migrations must survive being applied twice ───
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Eight of the fifty-two files in supabase/ used to error on a second
+      # apply, all on CREATE POLICY or ADD CONSTRAINT — neither has an
+      # IF NOT EXISTS form. These files are applied by pasting them into the
+      # Supabase SQL editor, and re-pasting one is how you check whether it
+      # landed (033 exists because 013 never did). A file that errors halfway
+      # through a second run makes that check unsafe.
+      - name: Re-appliable check
+        run: node scripts/check-migrations.mjs
+
   # ─── Quick secret scan ───
   secrets:
     name: Secret scan
