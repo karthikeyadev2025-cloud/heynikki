@@ -39,6 +39,18 @@ jobs:
           NEXT_PUBLIC_API_URL:           "https://placeholder"
         run: npm run build
 
+      # api-server's first tests: the DND scrub decisions, where a wrong
+      # answer is either a lost call or a TRAI violation. node's own test
+      # runner, so this adds no dependency to a service that ships to
+      # production. Only api-server has a `test` script today; the `if`
+      # keeps the web and super-admin matrix legs unchanged.
+      - name: Test
+        if: matrix.app == 'api-server'
+        working-directory: api-server
+        env:
+          INTERNAL_SECRET: "placeholder"
+        run: npm test
+
   # ─── Python voice pipeline: syntax + import check ───
   python:
     name: Voice pipeline

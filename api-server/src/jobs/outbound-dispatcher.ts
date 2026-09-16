@@ -15,12 +15,18 @@
  * we don't lock recipient rows during pickup; that's a future enhancement
  * via SELECT FOR UPDATE SKIP LOCKED.
  *
- * TRAI: DND scrubbing is currently a STUB. Wire a real provider (
- * KMS, or TRAI direct feed) into scrubDnd() before launching to numbers
- * that DON'T have explicit consent.
+ * TRAI: the scrub PATH is complete — opt-out list, consent carve-out,
+ * caching, audit ledger and a fail-safe that blocks when it cannot get an
+ * answer. What is not wired is a real registry, because India's NCPR is
+ * reached through a DLT platform (Jio TrueConnect, Airtel IQ, Vi, BSNL,
+ * Tata Vilpower) whose API differs per platform and needs a telemarketer
+ * registration. Until DND_SCRUB_PROVIDER_URL points at one, bulk dialling
+ * to numbers without recorded consent stays blocked, by design. See
+ * ../dnd.ts — wiring a provider is implementing queryProvider().
  */
 import { createClient } from "@supabase/supabase-js";
 import { notifyApiCallback, API_CALL_SOURCE } from "../api-callbacks";
+import { scrubDnd } from "../dnd";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -38,41 +44,17 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const POLL_INTERVAL_MS = 30_000;
 
 // ─── DND scrubbing ────────────────────────────────────
-// TODO: replace this stub with an actual TRAI NCPR provider call.
+// Moved to ../dnd. What used to be here was a stub that called fetch()
+// with no timeout — a provider that accepted the connection and never
+// answered stopped this whole polling loop, silently, until a restart.
 //
-// CONSENT CARVE-OUT — this comment used to say "only campaigns where ALL
-// recipients have consent_call_id should be allowed in production" but
-// that carve-out was never implemented; every recipient hit the same
-// fail-safe block. isConsented finally builds it: an instant lead-capture
-// row (someone who just submitted the business's own enquiry form) can
-// skip third-party DND scrubbing IF the tenant has explicitly opted in
-// via voice_profiles.skip_dnd_for_instant_leads. Bulk campaign dialing
-// is completely untouched by this — it always requires either a real
-// DND_SCRUB_PROVIDER_URL or stays blocked, exactly as before.
-async function scrubDnd(
-  phone: string,
-  isConsented: boolean = false
-): Promise<{ blocked: boolean; reason?: string }> {
-  if (isConsented) {
-    return { blocked: false, reason: "self_submitted_enquiry_consent" };
-  }
-  if (!process.env.DND_SCRUB_PROVIDER_URL) {
-    console.warn(`[dispatcher] DND_SCRUB_PROVIDER_URL not set — phone ${phone} unscrubbed`);
-    // Fail SAFE: if we can't scrub and it's not consent-based, block.
-    return { blocked: true, reason: "scrubbing_unavailable" };
-  }
-  try {
-    const r = await fetch(`${process.env.DND_SCRUB_PROVIDER_URL}/check?phone=${encodeURIComponent(phone)}`, {
-      headers: { Authorization: `Bearer ${process.env.DND_SCRUB_PROVIDER_TOKEN || ""}` },
-    });
-    if (!r.ok) return { blocked: true, reason: "scrub_provider_error" };
-    const j = await r.json() as { on_dnd?: boolean; reason?: string };
-    return { blocked: !!j.on_dnd, reason: j.reason };
-  } catch (e) {
-    console.error("[dispatcher] scrub error:", e);
-    return { blocked: true, reason: "scrub_exception" };
-  }
-}
+// The module now also checks the tenant's own opt-out list BEFORE consent
+// is considered (a withdrawal outranks a consent that predates it), caches
+// provider answers for a bounded window, and records every decision in
+// dnd_scrub_results so an auditor can be shown what we asked and when.
+//
+// Wiring a real TRAI NCPR / DLT provider is implementing one function in
+// that module; nothing in this file changes.
 
 // ─── Pipeline dispatch ────────────────────────────────
 // `campaign` is null for instant (is_instant=true) recipients — there is
@@ -391,7 +373,9 @@ async function tick(): Promise<void> {
       // list dials without a third-party scrub; anything else still needs a
       // real DND feed and stays blocked. scrubDnd fails safe either way — the
       // declaration is recorded on the campaign with who made it and when.
-      const { blocked, reason } = await scrubDnd(r.phone, !!c.consent_declared);
+      const { blocked, reason } = await scrubDnd(sb, r.phone, {
+        tenantId: r.tenant_id, consented: !!c.consent_declared,
+      });
       await sb.from("outbound_recipients").update({
         status:       blocked ? "blocked_dnd" : "queued",
         scrubbed_at:  new Date().toISOString(),
@@ -559,7 +543,9 @@ async function tickInstant(): Promise<void> {
       || !!profile?.skip_dnd_for_instant_leads;
 
     await sb.from("outbound_recipients").update({ status: "scrubbing" }).eq("id", r.id);
-    const { blocked, reason } = await scrubDnd(r.phone, consented);
+    const { blocked, reason } = await scrubDnd(sb, r.phone, {
+      tenantId: r.tenant_id, consented,
+    });
     if (blocked) {
       await sb.from("outbound_recipients").update({
         status: "blocked_dnd", scrubbed_at: new Date().toISOString(),
