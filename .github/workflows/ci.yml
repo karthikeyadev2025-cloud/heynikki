@@ -138,6 +138,13 @@ jobs:
       - name: Re-appliable check
         run: node scripts/check-migrations.mjs
 
+      # The drift script's parser decides what its report says. A phantom —
+      # something it declares that no correct database has — makes the report
+      # permanently non-empty, and a report that is never empty is one nobody
+      # reads. These tests are mostly about that.
+      - name: Drift parser tests
+        run: node --test "scripts/tests/*.test.mjs"
+
   # ─── Quick secret scan ───
   secrets:
     name: Secret scan
