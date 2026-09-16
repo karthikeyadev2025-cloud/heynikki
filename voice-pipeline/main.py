@@ -5103,9 +5103,20 @@ async def test_dashboard():
     return HTMLResponse(content=TEST_CONSOLE_HTML)
 
 
+# ── The three /api/test/* routes below spend real money ───────────────────
+# They call Sarvam and Gemini directly with the platform's own API keys, and
+# they had no authentication of any kind while every other operational route
+# on this app required X-Internal-Secret. nginx proxies the whole of /api/ on
+# pipeline.heynikki.in to this process, so `POST /api/test/tts` in a loop was
+# an open tap on our Sarvam credits for anyone who found it.
+#
+# They are useful, so they are kept and authenticated rather than deleted —
+# the test console below sends the secret with every request.
 @app.post("/api/test/tts")
-async def test_tts(req: TTSTestRequest):
+async def test_tts(req: TTSTestRequest, x_internal_secret: str = Header(None)):
     """Direct Sarvam Telugu TTS test — bypasses fallback to show real errors"""
+    if not _internal_ok(x_internal_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     import base64
     try:
         # Enforce word cap
@@ -5162,8 +5173,10 @@ async def test_tts(req: TTSTestRequest):
 
 
 @app.post("/api/test/llm")
-async def test_llm(req: LLMTestRequest):
+async def test_llm(req: LLMTestRequest, x_internal_secret: str = Header(None)):
     """Direct Gemini LLM test"""
+    if not _internal_ok(x_internal_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     try:
         llm = GeminiLLM()
         fake_profile = {
@@ -5188,8 +5201,10 @@ async def test_llm(req: LLMTestRequest):
 
 
 @app.post("/api/test/full")
-async def test_full(req: LLMTestRequest):
+async def test_full(req: LLMTestRequest, x_internal_secret: str = Header(None)):
     """Full chain: LLM → TTS audio (with error details)"""
+    if not _internal_ok(x_internal_secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     import base64
     try:
         llm = GeminiLLM()
@@ -5278,6 +5293,15 @@ TEST_CONSOLE_HTML = """<!DOCTYPE html>
   <div class="sub">Verify each piece of the voice pipeline works independently</div>
 
   <div class="card">
+    <h2>0. Internal secret</h2>
+    <p>These tests spend real Sarvam and Gemini credit, so they need the same
+       INTERNAL_SECRET the API server uses. Kept in this tab only (sessionStorage),
+       never written to disk and never sent anywhere but this pipeline.</p>
+    <input id="secret" type="password" placeholder="INTERNAL_SECRET" />
+    <div class="sub" id="secret-state" style="margin:0;font-size:13px"></div>
+  </div>
+
+  <div class="card">
     <h2>1. Sarvam TTS — Text to Telugu Speech</h2>
     <p>Enter Telugu/Tanglish/English text. Hear it spoken in a chosen voice.</p>
     <textarea id="tts-text" rows="3">నమస్కారం! Ravi Clinic కి కాల్ చేసినందుకు thank you. మీకు ఎలా సహాయపడగలను?</textarea>
@@ -5320,6 +5344,31 @@ TEST_CONSOLE_HTML = """<!DOCTYPE html>
   </div>
 
 <script>
+// The secret lives in sessionStorage, so it survives a reload while this tab
+// is open and is gone when it closes. Never localStorage: that would leave
+// the key that authenticates every internal call sitting on disk.
+const secretBox = document.getElementById('secret');
+const secretState = document.getElementById('secret-state');
+secretBox.value = sessionStorage.getItem('nikki_internal_secret') || '';
+function paintSecretState() {
+  secretState.textContent = secretBox.value
+    ? 'Set for this tab.' : 'Not set — the tests below will return 401.';
+}
+secretBox.addEventListener('input', () => {
+  sessionStorage.setItem('nikki_internal_secret', secretBox.value);
+  paintSecretState();
+});
+paintSecretState();
+
+// Every /api/test/* call goes through this, so none of them can be left
+// unauthenticated by accident.
+function testHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-Internal-Secret': secretBox.value,
+  };
+}
+
 async function testTTS() {
   const btn = event.target;
   const div = document.getElementById('tts-result');
@@ -5329,7 +5378,7 @@ async function testTTS() {
   try {
     const r = await fetch('/api/test/tts', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: testHeaders(),
       body: JSON.stringify({
         text: document.getElementById('tts-text').value,
         speaker: document.getElementById('tts-speaker').value,
@@ -5353,7 +5402,7 @@ async function testLLM() {
   try {
     const r = await fetch('/api/test/llm', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: testHeaders(),
       body: JSON.stringify({
         user_message: document.getElementById('llm-text').value,
         profile_sku: document.getElementById('llm-profile').value,
@@ -5378,7 +5427,7 @@ async function testFull() {
   try {
     const r = await fetch('/api/test/full', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: testHeaders(),
       body: JSON.stringify({
         user_message: document.getElementById('full-text').value,
         profile_sku: 'clinic',

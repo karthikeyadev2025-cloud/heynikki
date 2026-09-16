@@ -673,3 +673,57 @@ def test_pipeline_refuses_to_start_without_the_secret():
     )
     assert child.returncode != 0, "pipeline started with no INTERNAL_SECRET"
     assert "INTERNAL_SECRET" in child.stderr
+
+
+# ── the /api/test/* routes spend money ────────────────────────────────────
+# They call Sarvam and Gemini on the platform's own keys, and had no auth at
+# all while every other operational route required X-Internal-Secret. nginx
+# proxies all of /api/ on pipeline.heynikki.in to this app, so they were an
+# open tap for anyone who found them.
+def _route_for(path: str):
+    for r in main.app.routes:
+        if getattr(r, "path", None) == path:
+            return r
+    raise AssertionError(f"route {path} not registered")
+
+
+@pytest.mark.parametrize("path", [
+    "/api/test/tts", "/api/test/llm", "/api/test/full",
+])
+def test_money_spending_test_routes_require_the_internal_secret(path):
+    """The header must be a declared parameter of the handler — without it
+    the route cannot reject anything, however the body is validated."""
+    import inspect
+    fn = _route_for(path).endpoint
+    assert "x_internal_secret" in inspect.signature(fn).parameters, \
+        f"{path} takes no internal-secret header"
+    src = inspect.getsource(fn)
+    assert "_internal_ok(x_internal_secret)" in src, f"{path} never checks it"
+    assert "401" in src, f"{path} does not reject an unauthorised caller"
+
+
+def test_every_pipeline_api_route_is_authenticated_or_deliberately_public():
+    """A new /api/ route that forgets the header should fail here rather than
+    on a credit-card statement. The public entries are the landing-page
+    widget (unauthenticated by design, rate-limited at nginx) and the
+    fetch/presign pair, which carry their own token checks."""
+    PUBLIC = {
+        "/api/v1/browser/chat",          # public widget, by design
+        "/api/v1/browser/save-booking",  # public widget, by design
+    }
+    import inspect
+    unguarded = []
+    for r in main.app.routes:
+        p = getattr(r, "path", "")
+        if not p.startswith("/api/") or p in PUBLIC:
+            continue
+        fn = getattr(r, "endpoint", None)
+        if fn is None:
+            continue
+        try:
+            src = inspect.getsource(fn)
+        except OSError:
+            continue
+        if "_internal_ok" not in src and "token" not in src.lower():
+            unguarded.append(p)
+    assert not unguarded, f"unauthenticated /api/ routes: {unguarded}"
