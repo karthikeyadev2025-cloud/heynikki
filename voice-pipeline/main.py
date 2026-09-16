@@ -7209,12 +7209,13 @@ async def _save_onboarding_draft(tenant_id: str, agent, db) -> None:
         for t in agent.history
     )[:12000]
 
-    # agent.llm, not gemini_generate. gemini_generate lives in
-    # app/../gemini_client.py and was never imported here, so this line raised
-    # NameError on EVERY onboarding call — swallowed by the caller's except,
-    # which is why the draft silently never appeared. The agent already holds
-    # a configured GeminiLLM, so it is also the one place the model name,
-    # auth header and circuit breaker stay consistent.
+    # agent.llm, not the gemini_generate that used to live in a separate
+    # gemini_client module. That name was never imported here, so this line
+    # raised NameError on EVERY onboarding call — swallowed by the caller's
+    # except, which is why the draft silently never appeared. The module is
+    # gone now; the agent already holds a configured GeminiLLM, and that is
+    # the one place the model name, auth header and circuit breaker stay
+    # consistent.
     raw = await agent.llm.generate(
         "Return only JSON. Extract nothing that was not said.",
         [{"role": "user", "content": ONBOARDING_EXTRACT.format(transcript=transcript)}],

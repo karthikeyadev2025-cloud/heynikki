@@ -55,9 +55,15 @@ jobs:
         working-directory: voice-pipeline
         run: pip install -r requirements.txt
 
+      # gemini_client.py was dropped from this list when the module was
+      # deleted: nothing imported it, and compiling it here was the only
+      # thing keeping it in the tree. app/ takes its place because those
+      # modules ARE live — and two of them (widget.py, knowledge.py) are
+      # imported lazily inside functions, so the `import main` step below
+      # never touches them and a syntax error there would reach production.
       - name: Syntax check
         working-directory: voice-pipeline
-        run: python -m compileall -q main.py gemini_client.py scripts/
+        run: python -m compileall -q main.py app/ scripts/
 
       # These are the SIX names main.py actually reads with os.environ[...] at
       # module level. This step used to set SUPABASE_KEY (main.py wants

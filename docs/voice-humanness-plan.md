@@ -9,6 +9,27 @@ Every serious India platform (Sarvam, Gnani, Ori, Rezo, Skit, Verloop, even Mees
 
 ---
 
+## Status — what has shipped since this plan was written
+
+This plan is the design record, kept as written. Line numbers in it are from
+the day it was drafted and have long since drifted; grep for the function
+name instead. What it does NOT track is that most of section A and the two
+hardest items in B are now in main. Audited against the code 2026-09-16:
+
+| Item | State | Where |
+|---|---|---|
+| A1 per-stage latency | shipped | `NikkiAgent.turn_timings`, `/health` `turn_latency_ms` |
+| A2 barge-in confirm + backchannels | shipped | 0.24s voiced-and-sustained window; Telugu backchannel regex in the receive loop |
+| A3 filler soft timeout | shipped, **off by default** | `_FILLER_DELAY` reads `NIKKI_FILLER_DELAY`, default `0` — set it to `1.2` to switch on |
+| A4 `normalize_for_tts` | shipped | `normalize_for_tts()`, called from the phone and greeting paths |
+| A5 remove 20-word cap | shipped | `_synthesize_uncached` clamps at 2400 chars; the only `words[:20]` left is in the `/api/test/tts` debug route |
+| A14 delete `gemini_client.py` | shipped | module deleted; `_save_onboarding_draft` goes through `agent.llm` |
+| B1 streaming STT | shipped | `SarvamStreamingSTT`, fed 20ms frames in the receive loop |
+| B3 streaming TTS | shipped | `SarvamTTS._synthesize_ws` — `bulbul:v3` over WebSocket, prewarmed socket with a 25s TTL, REST fallback, breaker-wired |
+| B10 per-tenant pronunciation | shipped | `pronunciation_map`, applied inside `normalize_for_tts` |
+
+Still open in A/B: A6–A13 (except A14), B2, B4–B9, B11. Section C untouched.
+
 ## A. This-week quick wins (ranked by humanness/cost)
 
 ### A1. Per-stage latency instrumentation (prerequisite for verifying everything else)
