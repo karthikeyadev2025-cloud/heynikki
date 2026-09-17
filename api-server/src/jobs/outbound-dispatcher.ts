@@ -27,6 +27,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { notifyApiCallback, API_CALL_SOURCE } from "../api-callbacks";
+import { minutesGate } from "../usage";
 import { scrubDnd } from "../dnd";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
@@ -116,6 +117,20 @@ async function transition(
 // tick, and kept dialling the rest of the batch after the client pressed
 // Pause. Read again right before each dial. An unreadable status is not
 // "running".
+// Minutes, checked BEFORE a row is claimed so a tenant out of minutes leaves
+// its queue untouched and resumes when the month resets or it upgrades. An
+// outbound leg is refused at /webhooks/freeswitch/inbound too, but only
+// after the phone has rung and been answered — by a caller who then hears
+// nothing. Cached for one tick: a batch is one tenant's twenty rows.
+let _gateCache = new Map<string, boolean>();
+async function tenantHasMinutes(tenantId: string): Promise<boolean> {
+  if (_gateCache.has(tenantId)) return _gateCache.get(tenantId)!;
+  const gate = await minutesGate(sb, tenantId);
+  if (!gate.ok) console.warn(`[dispatcher] tenant ${tenantId} ${gate.reason} (${gate.usedMinutes}/${gate.limitMinutes} min) — not dialling`);
+  _gateCache.set(tenantId, gate.ok);
+  return gate.ok;
+}
+
 async function campaignStillRunning(campaignId: string): Promise<boolean> {
   const { data, error } = await sb.from("outbound_campaigns")
     .select("status").eq("id", campaignId).maybeSingle();
@@ -470,6 +485,7 @@ async function closeUnreported(r: any, outcome: string, call_id: string | null, 
 }
 
 async function tick(): Promise<void> {
+  _gateCache = new Map();
   await reapStaleInProgress();
 
   const { data: campaigns } = await sb.from("outbound_campaigns")
@@ -556,6 +572,7 @@ async function tick(): Promise<void> {
       // at the first call still rang the other nineteen.
       if (!withinWindow(c.window_start, c.window_end)) break;
       if (!await campaignStillRunning(c.id)) break;
+      if (!await tenantHasMinutes(r.tenant_id || c.tenant_id)) break;
 
       const attempt = (r.attempts || 0) + 1;
       if (!await transition(r.id, "queued", {
@@ -697,6 +714,7 @@ const INSTANT_WINDOW_START = "09:00";
 const INSTANT_WINDOW_END   = "20:30";
 
 async function tickInstant(): Promise<void> {
+  _gateCache = new Map();
   if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
   const { data: pending } = await sb.from("outbound_recipients")
     .select("*").eq("is_instant", true).eq("status", "pending")
@@ -708,6 +726,7 @@ async function tickInstant(): Promise<void> {
     // is a quarter of an hour, and a batch that started at 20:29 was still
     // ringing people at 20:45.
     if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
+    if (!await tenantHasMinutes(r.tenant_id)) continue;
 
     // Claim before anything else. An API DELETE (pending → failed) or an
     // opt-out (pending → opted_out) that arrived after the select above is

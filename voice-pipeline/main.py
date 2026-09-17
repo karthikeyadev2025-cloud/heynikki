@@ -642,13 +642,20 @@ async def _refresh_pricing() -> None:
             lines.append(
                 f"\n- {t.get('name')}: Rs {rup(t.get('monthly_paise', 0))}/month, "
                 f"{t.get('minutes')} minutes, {t.get('numbers')} number(s), "
-                f"{t.get('concurrent')} calls at once."
+                f"{t.get('seats')} team seat(s), {t.get('concurrent')} calls at once"
+                + (", outbound campaigns" if t.get("outbound_campaigns") else "")
+                + (", API access" if t.get("api_access") else "") + "."
             )
-        a = d.get("addons", {})
-        lines.append(f"\n- Pay as you go: Rs {int(d.get('per_minute_paise', 350)) / 100:.2f} per minute, no monthly commitment.")
-        lines.append(f"\n- Extra CRM seat: Rs {rup(a.get('crm_seat_paise', 0))}/seat/month.")
-        lines.append(f"\n- Extra number: Rs {rup(a.get('number_paise', 0))}/number/month.")
-        lines.append(f"\n- Extra minutes beyond the plan: Rs {int(d.get('overage_paise', 1500)) / 100:.2f} per minute.")
+        # Only what a customer can actually buy. This list also quoted "pay as
+        # you go Rs 3.50/min", "extra minutes Rs 15/min" and Rs 1,999 extra
+        # numbers and seats from leftover platform_config keys — none of which
+        # billing sells (checkout accepts starter/growth/scale only), and the
+        # pay-as-you-go rate undercut every plan. The pricing page's answers:
+        lines.append("\n- More minutes: upgrade to the next plan. There is no per-minute or pay-as-you-go option.")
+        lines.append("\n- Numbers and team seats come with the plan; there are no separate add-ons.")
+        lines.append("\n- Every new account gets 100 free minutes, no card needed.")
+        lines.append("\n- Annual billing saves a third.")
+        lines.append("\n- Bigger call volumes or multi-branch: the team quotes individually.")
         lines.append("\nGST extra. Cancel any month.")
         _PRICING_CACHE.update({"at": time.time(), "text": "".join(lines)})
     except Exception as e:  # noqa: BLE001

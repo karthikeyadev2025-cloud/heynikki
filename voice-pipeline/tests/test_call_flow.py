@@ -815,6 +815,33 @@ def test_transcript_timestamps_carry_an_offset():
     assert agent.transcript[0]["ts"].endswith("+00:00")
 
 
+def test_price_list_quotes_only_what_billing_sells(monkeypatch):
+    catalogue = {"per_minute_paise": 350, "overage_paise": 1500,
+                 "addons": {"crm_seat_paise": 199900, "number_paise": 199900},
+                 "tiers": [{"name": "Starter", "monthly_paise": 199900, "minutes": 200,
+                            "numbers": 1, "seats": 1, "concurrent": 2,
+                            "outbound_campaigns": False, "api_access": False}]}
+
+    class _Resp:
+        status_code = 200
+        def json(self): return catalogue
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): return _Resp()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _Client)
+    main._PRICING_CACHE.update({"at": 0.0, "text": ""})
+    asyncio.run(main._refresh_pricing())
+    text = main._PRICING_CACHE["text"]
+    assert "Rs 1,999/month" in text and "200 minutes" in text
+    for unsold in ("3.50", "15.00", "Pay as you go:", "Extra CRM seat", "Extra number"):
+        assert unsold not in text, unsold
+    assert "upgrade" in text.lower()
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():

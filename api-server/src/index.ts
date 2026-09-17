@@ -45,6 +45,7 @@ const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
 // Read and validated in one place — see internal-secret.ts for what the
 // `!` that used to be here did when the variable was missing.
 import { INTERNAL_SECRET, internalSecretOk } from "./internal-secret";
+import { minutesGate, creditMinutesToSpend, istMonthKey } from "./usage";
 const WATI_KEY        = process.env.WATI_API_KEY || "";
 const WATI_URL        = process.env.WATI_API_URL || "";
 const PIPELINE_URL    = process.env.PIPELINE_URL || "http://localhost:8000";
@@ -2906,8 +2907,11 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
       error: "We don't have your mobile number yet. Add it in your profile, then try again.",
     });
   }
-  if ((tenant?.credit_minutes ?? 0) <= 0 && !["starter", "growth", "scale"].includes(String(tenant?.plan))) {
-    return res.status(402).json({ error: "Your free minutes have run out — add a plan to keep calling." });
+  const gate = await minutesGate(sb, tenantId);
+  if (!gate.ok) {
+    return res.status(402).json({ error: gate.reason === "plan_minutes_exhausted"
+      ? "This month's plan minutes are used up — upgrade to keep calling."
+      : "Your free minutes have run out — add a plan to keep calling." });
   }
 
   try {
@@ -3029,10 +3033,9 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
       // 40-second call is how a customer discovers the meter is lying.
       used:  Math.ceil(usedSeconds / 60),
       limit: limitMinutes,
-      // Minutes past the plan allowance. Deliberately reported rather than
-      // blocked: the pricing page sells extra minutes at Rs 15, so going over
-      // is a purchase, not a fault. What was broken is that nobody could see
-      // it — usage read 0 forever, so overage could never have been billed.
+      // Minutes past the plan allowance, covered by top-up credit if there is
+      // any. With none, calls are refused at the gate (usage.ts) — the
+      // pricing page sells no per-minute overage, only an upgrade.
       overage: limitMinutes > 0 ? Math.max(0, Math.ceil(usedSeconds / 60) - limitMinutes) : 0,
     },
     // Trial balance, so the dashboard can show what is actually left rather
@@ -4500,6 +4503,32 @@ app.get("/api/admin/audit-log", verifySuperAdmin, async (req, res) => {
 // ════════════════════════════════════════════════
 // EMAIL HELPER (Resend)
 // ════════════════════════════════════════════════
+/**
+ * Tell the owner before, and when, the plan's minutes run out — once per
+ * threshold per month. Without it the first sign of a cap is a customer
+ * saying the business stopped picking up. The audit_log row is the dedupe
+ * key, written BEFORE the email so two calls in the same second send one.
+ */
+async function warnUsage(tenantId: string, pct: 80 | 100,
+                         gate: { usedMinutes: number; limitMinutes: number }) {
+  const action = `usage.warning.${pct}.${istMonthKey()}`;
+  try {
+    const { data: seen, error } = await sb.from("audit_log").select("id")
+      .eq("tenant_id", tenantId).eq("action", action).limit(1);
+    if (error || seen?.length) return;
+    const { error: insErr } = await sb.from("audit_log").insert({
+      tenant_id: tenantId, action,
+      metadata: { used: gate.usedMinutes, limit: gate.limitMinutes },
+    });
+    if (insErr) return;
+    await sendEmail(tenantId, pct === 100 ? "usage_100" : "usage_80",
+                    { used: gate.usedMinutes, limit: gate.limitMinutes });
+    console.log(`[usage] tenant ${tenantId} warned at ${pct}% (${gate.usedMinutes}/${gate.limitMinutes})`);
+  } catch (e: any) {
+    console.error("[usage] warning failed:", e?.message || e);
+  }
+}
+
 async function sendEmail(tenantId: string, template: string, data: Record<string, any>) {
   const RESEND_KEY = process.env.RESEND_API_KEY;
   if (!RESEND_KEY) return;
@@ -4517,6 +4546,14 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
     payment_failed: {
       subject: "Payment Failed — Action Required",
       html: `<p>Your Nikki payment failed. Please update your payment method within 3 days to keep your service active.</p>`,
+    },
+    usage_80: {
+      subject: "You've used 80% of this month's Nikki minutes",
+      html: `<p>Hi ${tenant.name}, Nikki has used ${data.used} of the ${data.limit} minutes in your plan this month. When they run out, calls to your number stop being answered until the month resets. <a href="https://heynikki.in/billing">Upgrade your plan</a> to keep her answering.</p>`,
+    },
+    usage_100: {
+      subject: "Your Nikki minutes for this month are used up",
+      html: `<p>Hi ${tenant.name}, all ${data.limit} minutes in your plan are used for this month, so Nikki has stopped answering calls to your number. <a href="https://heynikki.in/billing">Upgrade your plan</a> to switch her back on straight away.</p>`,
     },
     trial_expiry: {
       subject: `Your free Nikki minutes are running low`,
@@ -5683,13 +5720,19 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
         message: "This number is not in service.",
       });
     }
-    if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
-      console.warn(`[FS Inbound] tenant ${did.tenant_id} out of credits — refusing`);
+    // Minutes. Paid plans used to skip this entirely, so the 200 minutes
+    // Starter includes were unlimited in practice — see usage.ts.
+    const gate = await minutesGate(sb, did.tenant_id);
+    if (!gate.ok) {
+      console.warn(`[FS Inbound] tenant ${did.tenant_id} ${gate.reason} ` +
+        `(${gate.usedMinutes}/${gate.limitMinutes} min, credits ${gate.credits}) — refusing`);
+      if (gate.reason === "plan_minutes_exhausted") void warnUsage(did.tenant_id, 100, gate);
       return res.json({
-        ok: false, reason: "no_credits",
-        routing_mode: "reject",
-        message: "This number's free minutes have run out.",
+        ok: false, reason: gate.reason, routing_mode: "reject", message: gate.message,
       });
+    }
+    if (gate.paid && gate.limitMinutes > 0 && gate.usedMinutes >= gate.limitMinutes * 0.8) {
+      void warnUsage(did.tenant_id, gate.usedMinutes >= gate.limitMinutes ? 100 : 80, gate);
     }
 
     // One row per FreeSWITCH channel. The pipeline retries this request when
@@ -6252,8 +6295,11 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
       // and a second insert is rejected rather than billing the minute
       // again. A conflict here is expected, not an error.
       // A ring-out cost the tenant nothing but an apology; not a minute.
-      if (callRow.tenant_id && secs > 0 && !wasMissed) {
-        const minutes = Math.ceil(secs / 60);
+      // On a paid plan only minutes PAST the plan allowance spend credit —
+      // see creditMinutesToSpend. A call wholly inside the plan spends none.
+      const minutes = (callRow.tenant_id && secs > 0 && !wasMissed)
+        ? await creditMinutesToSpend(sb, callRow.tenant_id, callRow.id, secs) : 0;
+      if (callRow.tenant_id && minutes > 0) {
         const { error: cErr } = await sb.from("credit_ledger").insert({
           tenant_id: callRow.tenant_id,
           delta:     -minutes,
@@ -6563,11 +6609,11 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     // Desk calls ride the same trunk and are billed the same minute, so
     // the same gate applies: a trial with no credits left cannot dial.
-    const { data: tenantRow } = await sb.from("tenants")
-      .select("credit_minutes, plan").eq("id", tenantId).maybeSingle();
-    const onPaidPlan = ["starter", "growth", "scale"].includes(String(tenantRow?.plan || "").toLowerCase());
-    if (!onPaidPlan && Number(tenantRow?.credit_minutes ?? 0) <= 0) {
-      return res.status(402).json({ error: "no_credits", detail: "This account has no call minutes left. Top up on the Billing page to dial." });
+    const gate = await minutesGate(sb, tenantId);
+    if (!gate.ok) {
+      return res.status(402).json({ error: gate.reason, detail: gate.reason === "plan_minutes_exhausted"
+        ? "This month's plan minutes are used up. Upgrade on the Billing page to keep dialling."
+        : "This account has no call minutes left. Top up on the Billing page to dial." });
     }
 
     // NEVER fall back to the customer's own number. This read
