@@ -387,7 +387,11 @@ export function makeOwnerAssistant(deps: {
       if (error) return { answer: `I could not cancel it: ${error.message}` };
       if (!data?.length) return { answer: `That booking was already cancelled.` };
       const a = data[0];
-      return { answer: `Cancelled ${a.booking_ref || "the booking"}${a.slot_date ? ` on ${a.slot_date}` : ""}${a.slot_time ? ` at ${a.slot_time}` : ""}.` };
+      // Say WHOSE booking. "Cancelled 001 on 2026-09-20 at 11:00" is a
+      // reference number read aloud to someone who has never seen it; the
+      // owner knows the customer by name.
+      const who = a.caller_name ? `${a.caller_name}'s booking` : (a.booking_ref ? `booking ${a.booking_ref}` : "the booking");
+      return { answer: `Cancelled ${who}${a.slot_date ? ` on ${a.slot_date}` : ""}${a.slot_time ? ` at ${a.slot_time}` : ""}.` };
     }
 
     return { answer: "That action is no longer available." };

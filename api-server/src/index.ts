@@ -7195,7 +7195,6 @@ Return only JSON: {"type":"call"|"alarm"|"timer"|"none","name":"","name_variants
 
 async function askGemini(question: string, contextJson: string, isSuperAdmin: boolean, onPhone = false): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY!;
-  const isAuthKey = geminiKey.startsWith("AQ.") || geminiKey.startsWith("IQ.") || geminiKey.startsWith("EQ.");
   const geminiModel = resolveGeminiModel();
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
@@ -7217,7 +7216,7 @@ spoken confirmation on the next. Nikki repeats these facts to callers, so
 write the fact as the business would want a customer to hear it. Only do this
 for durable facts about the business — never for a question, an instruction
 to you, or a one-off comment.
-${isSuperAdmin ? "" : "Respond in Telugu, naturally and warmly, matching how a helpful assistant would speak to a business owner they know well."}
+${isSuperAdmin ? "" : "Answer in the SAME language the owner used — English question, English answer; Telugu question, Telugu answer; Hindi question, Hindi answer. Naturally and warmly, the way a helpful assistant speaks to a business owner they know well. Telugu when you cannot tell. Answering an English question in Telugu is what this line used to demand, and it reads as not listening."}
 ${onPhone ? `You are speaking through the owner's phone as their voice assistant ("Hey Nikki"). If the question is not about the business at all — general knowledge, quick math, a chat, the date/time (now: ${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date())} in India) — answer it helpfully in the same language they spoke instead of saying the data lacks it. No lists or markdown; you are read aloud.` : ""}
 
 CURRENT BUSINESS DATA:
@@ -7228,17 +7227,20 @@ ${contextJson}`
     generationConfig: { maxOutputTokens: 150, temperature: 0.15 },  // lowered from 0.4 for more literal, less improvised answers
   };
 
-  const geminiResp = await fetch(
-    isAuthKey ? geminiUrl : `${geminiUrl}?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(isAuthKey ? { Authorization: `Bearer ${geminiKey}` } : {}),
-      },
-      body: JSON.stringify(payload),
-    }
-  );
+  // x-goog-api-key, for BOTH key formats. The AQ./IQ./EQ. keys were sent as
+  // "Authorization: Bearer", which Google answers with 401 — so every question
+  // asked from the phone app came back "Gemini error: 401" while the same
+  // question typed in the dashboard (a different code path) worked. The voice
+  // pipeline hit this exact wall and settled on this header; see
+  // voice-pipeline/main.py's note on the three auth shapes it measured.
+  const geminiResp = await fetch(geminiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": geminiKey,
+    },
+    body: JSON.stringify(payload),
+  });
 
   if (!geminiResp.ok) {
     throw new Error(`Gemini error: ${geminiResp.status}`);
@@ -7451,13 +7453,18 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   const SARVAM_KEY = process.env.SARVAM_API_KEY!;
   const t0 = Date.now();
 
-  // ── 1. Transcribe the caller's Telugu speech (Sarvam Saaras v3) ──
+  // ── 1. Transcribe what the owner said (Sarvam Saaras v3) ──
   const audioBuffer = Buffer.from(audio_base64, "base64");
   const sttForm = new FormData();
   const ext = (mime_type || "audio/webm").split("/")[1] || "webm";
   sttForm.append("file", new Blob([audioBuffer], { type: mime_type || "audio/webm" }), `audio.${ext}`);
   sttForm.append("model", "saaras:v3");
-  sttForm.append("language_code", "te-IN");
+  // "unknown" = let Sarvam detect it. Pinned to te-IN, an owner asking "how
+  // many calls today?" in English was transcribed into Telugu script
+  // ("ఎంత కాల్స్ వి గెట్ టుడే?"), so the model then answered in Telugu and it
+  // was read back in Telugu — measured against the live API, auto-detect
+  // returns the English sentence verbatim with the language it heard.
+  sttForm.append("language_code", "unknown");
 
   const sttResp = await fetch("https://api.sarvam.ai/speech-to-text", {
     method: "POST",
@@ -7519,6 +7526,25 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
 // this plays through a speaker or a browser <audio> element, so higher
 // quality output is worth it, and there's no 20-word truncation since this
 // is Q&A, not a live phone conversation with pacing constraints.
+/**
+ * The language a reply should be SPOKEN in, from the script it is written in.
+ *
+ * Everything below used to be hard-coded te-IN: an owner who asked a question
+ * in English got the English answer read aloud by a Telugu voice pronouncing
+ * English letter by letter, and a Hindi answer fared worse. Bulbul speaks all
+ * of these; it only needed telling which one.
+ */
+function speechLangOf(text: string): string {
+  if (/[\u0C00-\u0C7F]/.test(text)) return "te-IN";   // Telugu
+  if (/[\u0900-\u097F]/.test(text)) return "hi-IN";   // Devanagari
+  if (/[\u0980-\u09FF]/.test(text)) return "bn-IN";   // Bengali
+  if (/[\u0B80-\u0BFF]/.test(text)) return "ta-IN";   // Tamil
+  if (/[\u0C80-\u0CFF]/.test(text)) return "kn-IN";   // Kannada
+  if (/[\u0D00-\u0D7F]/.test(text)) return "ml-IN";   // Malayalam
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu-IN";   // Gujarati
+  return "en-IN";
+}
+
 async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Promise<string> {
   const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
@@ -7530,7 +7556,8 @@ async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Pro
     headers: { "api-subscription-key": process.env.SARVAM_API_KEY!, "Content-Type": "application/json" },
     body: JSON.stringify({
       inputs: [text],
-      target_language_code: "te-IN",
+      // The reply's OWN language, not Telugu by default — see speechLangOf.
+      target_language_code: speechLangOf(text),
       speaker: "priya",
       model: "bulbul:v3",
       // No pitch/loudness — Bulbul V3 400s on both.
