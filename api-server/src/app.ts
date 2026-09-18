@@ -91,10 +91,15 @@ export function mountAppRoutes(app: Express, d: Deps) {
   app.post("/api/app/device-token/revoke", verifyJWT, apiLimiter, async (req: any, res) => {
     const id = String(req.body?.device_id || "");
     if (!id) return res.status(400).json({ error: "device_id required" });
-    const { error } = await sb.from("app_device_tokens")
+    // device_id is the row's uuid, as returned when the phone registered.
+    // Anything else made Postgres reject the comparison and the phone got a
+    // 500 for what is simply a bad request.
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ error: "device_id must be the id returned at registration" });
+    const { data, error } = await sb.from("app_device_tokens")
       .update({ revoked_at: new Date().toISOString() })
-      .eq("id", id).eq("user_id", req.user.id);
+      .eq("id", id).eq("user_id", req.user.id).select("id");
     if (error) return res.status(500).json({ error: error.message });
+    if (!data?.length) return res.status(404).json({ error: "No such device for this account" });
     res.json({ ok: true });
   });
 

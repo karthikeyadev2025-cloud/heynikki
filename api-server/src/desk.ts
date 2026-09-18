@@ -186,9 +186,12 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
 
-    const { error } = await sb.from("tenant_users").update(patch)
-      .eq("id", memberId).eq("tenant_id", tenantId);
+    // .select(), so a member_id belonging to nobody is a 404 rather than a
+    // cheerful {ok:true} for a seat that was never touched.
+    const { data, error } = await sb.from("tenant_users").update(patch)
+      .eq("id", memberId).eq("tenant_id", tenantId).select("id");
     if (error) return res.status(500).json({ error: error.message });
+    if (!data?.length) return res.status(404).json({ error: "No such team member on this account" });
     res.json({ ok: true, ...patch });
   });
 }
