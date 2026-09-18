@@ -1564,7 +1564,10 @@ function DidPanel({ token }: { token: string }) {
                     </div>
                     <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
                       {d.provider || "—"} · routing {d.routing_mode || "ai"}
-                      {d.tenant_name ? ` · ${d.tenant_name}` : ""}
+                      {/* /api/admin/dids returns the business under `tenant`,
+                          never `tenant_name` — so an assigned number never
+                          showed who owns it. */}
+                      {d.tenant?.name ? ` · ${d.tenant.name}` : ""}
                     </div>
                   </div>
                   <Pill label={d.status || "unknown"} color={assigned ? C.grn : C.dim} />
@@ -1573,7 +1576,7 @@ function DidPanel({ token }: { token: string }) {
                       onClick={() => {
                         // Detaches a live number from a paying business, and
                         // the only undo is assigning it back.
-                        if (window.confirm(`Release ${d.number} from ${d.tenant_name || "its tenant"}? Calls to it stop working immediately.`))
+                        if (window.confirm(`Release ${d.number} from ${d.tenant?.name || "its tenant"}? Calls to it stop working immediately.`))
                           act(d.number, "release");
                       }}
                       disabled={acting === d.number + "release"}
@@ -1670,7 +1673,10 @@ function AuditPanel({ token }: { token: string }) {
                              minWidth: 130, fontFamily: "monospace" }}>{r.action}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ color: C.mid, fontSize: TYPE.xs, wordBreak: "break-word" }}>
-                  {r.details ? JSON.stringify(r.details) : "—"}
+                  {/* metadata, not details: admin_audit_log has no `details`
+                      column, so every entry's payload rendered as "—" — the
+                      plan an override set, the reason a tenant was suspended. */}
+                  {r.metadata && Object.keys(r.metadata).length ? JSON.stringify(r.metadata) : "—"}
                 </div>
                 {r.target_tenant_id && (
                   <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
@@ -2319,7 +2325,10 @@ function ProvisionWhatsApp({ token, onDone }: { token: string; onDone: () => voi
 
   useEffect(() => {
     fetch(`${API}/api/admin/tenants`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json()).then(d => setTenants(d.tenants || [])).catch(() => {});
+      // The endpoint returns a bare array. Reading `d.tenants` left the
+      // dropdown empty, so no tenant could be selected and the whole
+      // three-step WhatsApp provisioning wizard was unreachable.
+      .then(r => r.json()).then(d => setTenants(Array.isArray(d) ? d : (d?.tenants || []))).catch(() => {});
   }, [token]);
 
   const step = async (path: string, body: any, label: string) => {
@@ -2653,9 +2662,13 @@ function BroadcastPanel({ token }: { token: string }) {
       body: JSON.stringify({ message, plan_filter: filter === "all" ? undefined : filter }),
     });
     const data = await resp.json();
-    setResult(`Sent to ${data.sent_to || 0} tenants`);
+    // Never claim delivery the server did not make: this said "Sent to N
+    // tenants" for an endpoint that only logged the message.
+    setResult(resp.ok && data.ok
+      ? `Sent to ${data.sent_to || 0} tenants`
+      : (data.error || "Broadcast failed — nothing was sent."));
     setSending(false);
-    setMessage("");
+    if (resp.ok && data.ok) setMessage("");
   };
 
   return (

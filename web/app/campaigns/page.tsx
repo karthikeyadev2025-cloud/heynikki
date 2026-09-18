@@ -357,6 +357,7 @@ export default function CampaignsPage() {
   const [notice, setNotice] = useState("");
 
   const [showNew, setShowNew] = useState(false);
+  const [outboundAllowed, setOutboundAllowed] = useState(true);
   const [form, setForm] = useState({
     name: "", script: "", start_date: "", end_date: "",
     window_start: "10:00", window_end: "19:00", max_concurrent: 3,
@@ -393,6 +394,23 @@ export default function CampaignsPage() {
       .select("tenant_id").eq("user_id", auth.user.id).single();
     if (!tu) { setError("No tenant found for this account."); setLoading(false); return; }
     setTenantId(tu.tenant_id);
+
+    // Outbound is Growth and above. Nothing here said so: a trial owner could
+    // fill in the whole form, get a campaign row (the insert is direct
+    // Supabase, ungated), and only meet the plan at the import call's 402.
+    //
+    // The plan's features come from /api/platform/pricing, NOT from the plans
+    // table: plans has RLS on with no policy, so a browser reads [] from it
+    // and every customer would look ungated. That endpoint reads it with the
+    // service key and is what the pricing and billing pages already use.
+    const { data: t } = await sb.from("tenants").select("plan").eq("id", tu.tenant_id).single();
+    try {
+      const pr = await fetch(`${API}/api/platform/pricing`).then(r => r.json());
+      const tier = (pr?.tiers || []).find((x: any) => x.id === (t?.plan || "trial"));
+      // Unknown plan (trial has no tier row) = not allowed; a failed fetch
+      // leaves the form open rather than locking out a paying customer.
+      setOutboundAllowed(!!tier?.outbound_campaigns);
+    } catch { setOutboundAllowed(true); }
 
     const { data, error: e } = await sb.from("outbound_campaigns")
       .select("*").eq("tenant_id", tu.tenant_id).order("created_at", { ascending: false });
@@ -494,13 +512,21 @@ export default function CampaignsPage() {
           <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: 0 }}>
             Outbound Campaigns
           </h1>
-          <button onClick={() => setShowNew(v => !v)} style={{
-            background: C.glow, color: "#fff", border: "none", borderRadius: 8,
-            padding: "10px 18px", fontSize: 14, fontWeight: 700, cursor: "pointer",
-          }}>{showNew ? "Cancel" : "+ New campaign"}</button>
+          <button onClick={() => setShowNew(v => !v)} disabled={!outboundAllowed} style={{
+            background: outboundAllowed ? C.glow : C.bord, color: "#fff", border: "none", borderRadius: 8,
+            padding: "10px 18px", fontSize: 14, fontWeight: 700,
+            cursor: outboundAllowed ? "pointer" : "not-allowed",
+          }} title={outboundAllowed ? "" : "Outbound campaigns are on the Growth plan and above"}>
+            {showNew ? "Cancel" : "+ New campaign"}</button>
         </div>
         <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20 }}>
           Upload a list of numbers and Hey Nikki calls them with your script.
+          {!outboundAllowed && (
+            <> {" "}<strong style={{ color: C.txt }}>
+              Outbound campaigns come with the Growth plan and above —{" "}
+              <a href="/billing" style={{ color: C.glow }}>upgrade</a> to switch them on.
+            </strong></>
+          )}
         </p>
 
         {/* Dialling now runs on our own trunk. What is left is operational,

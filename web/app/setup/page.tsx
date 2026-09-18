@@ -291,8 +291,11 @@ export default function SetupPage() {
     }
     const sb = createClient();
     const { data: { user } } = await sb.auth.getUser();
+    // Scoped to THIS tenant: someone who holds a seat in two businesses had
+    // one Setup page overwrite their phone in both, and the ring group dials
+    // this column.
     const { error } = await sb.from("tenant_users")
-      .update({ phone: digits }).eq("user_id", user?.id);
+      .update({ phone: digits }).eq("user_id", user?.id).eq("tenant_id", tenantId);
     setPhoneMsg(error ? error.message : "Saved.");
     setTimeout(() => setPhoneMsg(""), 3000);
   };

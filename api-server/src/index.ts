@@ -45,7 +45,7 @@ const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
 // Read and validated in one place — see internal-secret.ts for what the
 // `!` that used to be here did when the variable was missing.
 import { INTERNAL_SECRET, internalSecretOk } from "./internal-secret";
-import { minutesGate, creditMinutesToSpend, istMonthKey } from "./usage";
+import { minutesGate, creditMinutesToSpend, istMonthKey, planMinutes, PAID_PLANS } from "./usage";
 const WATI_KEY        = process.env.WATI_API_KEY || "";
 const WATI_URL        = process.env.WATI_API_URL || "";
 const PIPELINE_URL    = process.env.PIPELINE_URL || "http://localhost:8000";
@@ -193,7 +193,21 @@ app.use((req, res, next) => {
     // leaves req.body empty, so every field read as "" and the lead was
     // rejected as invalid — the one integration we actively instruct people
     // to build could not work.
-    express.urlencoded({ extended: false })(req, res, next);
+    //
+    // BOTH shapes, chosen by Content-Type. The same Setup page also names
+    // "Zapier, Make, or any tool that can send a webhook", and all of those
+    // post JSON — which this urlencoded-only branch answered with 400,
+    // dropping exactly the leads those integrations exist to deliver.
+    //
+    // Selected, never chained: the first body parser to run sets req._body and
+    // every parser after it returns immediately, so chaining silently keeps
+    // whichever ran first and a JSON post still arrives empty.
+    const ct = String(req.headers["content-type"] || "");
+    if (ct.includes("application/json")) {
+      express.json({ limit: "256kb" })(req, res, next);
+    } else {
+      express.urlencoded({ extended: false })(req, res, next);
+    }
   } else {
     // 2mb, not the 100kb default. /api/public/voice-turn carries a whole
     // spoken turn as base64 audio and rejects anything over ~1.4M chars with
@@ -3012,10 +3026,13 @@ app.get("/api/analytics/summary", verifyJWT, async (req, res) => {
 
   const usedSeconds = (monthCalls.data || [])
     .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
-  const PLAN_MINUTES: Record<string, number> = { starter: 200, growth: 600, scale: 1500 };
+  // From the plans table, never a hard-coded map: a map lies the moment an
+  // operator edits a plan row. A trial has no plan allowance at all — its
+  // budget is credit_minutes, which is reported separately below.
+  const planId = String(tenantRow.data?.plan || "").toLowerCase();
   const limitMinutes = planRow.data?.plan_limit_seconds
     ? Math.round(planRow.data.plan_limit_seconds / 60)
-    : (PLAN_MINUTES[String(tenantRow.data?.plan || "").toLowerCase()] ?? 0);
+    : (PAID_PLANS.includes(planId) ? await planMinutes(sb, planId) : 0);
 
   const calls = todayCalls.data || [];
   res.json({
@@ -3735,7 +3752,7 @@ app.post("/api/admin/staff/:rowId/role", verifySuperAdmin, async (req: any, res)
   // super_admin. A panel that can lock out its last operator is a panel
   // that will, eventually, at the worst moment.
   const { data: row } = await sb.from("tenant_users")
-    .select("user_id, role, tenant_id").eq("id", req.params.rowId).maybeSingle();
+    .select("*").eq("id", req.params.rowId).maybeSingle();
   if (!row) return res.status(404).json({ error: "Staff row not found" });
   if (row.user_id === req.user.id && row.role === "super_admin" && role !== "super_admin") {
     return res.status(400).json({ error: "You cannot remove your own super_admin role" });
@@ -3743,6 +3760,26 @@ app.post("/api/admin/staff/:rowId/role", verifySuperAdmin, async (req: any, res)
   const { error } = await sb.from("tenant_users")
     .update({ role }).eq("id", req.params.rowId);
   if (error) return res.status(500).json({ error: error.message });
+
+  // The UPDATE above is a SILENT NO-OP. trg_guard_tenant_user_role (migration
+  // 035) does `new.role := old.role` unless is_super_admin(), which reads
+  // auth.uid() — NULL on a service-key request. PostgREST reports success, the
+  // role never changes, and the audit row below then asserts a change that
+  // did not happen. Read it back; if the trigger pinned it, replace the row
+  // the way the invite-accept path already does, keeping its id so anything
+  // referencing this seat still resolves.
+  const { data: after } = await sb.from("tenant_users")
+    .select("role").eq("id", req.params.rowId).maybeSingle();
+  if (after?.role !== role) {
+    const { error: delErr } = await sb.from("tenant_users").delete().eq("id", req.params.rowId);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+    const { error: insErr } = await sb.from("tenant_users").insert({ ...row, role });
+    if (insErr) {
+      // Put the original row back rather than leaving the person with no seat.
+      await sb.from("tenant_users").insert(row);
+      return res.status(500).json({ error: insErr.message });
+    }
+  }
   await sb.from("admin_audit_log").insert({
     admin_user_id: req.user.id, action: "role_changed",
     target_tenant_id: row.tenant_id,
@@ -4475,17 +4512,26 @@ app.post("/api/admin/broadcast", verifySuperAdmin, async (req, res) => {
   if (plan_filter) q = q.eq("plan", plan_filter);
   const { data: tenants } = await q;
 
-  // In production: trigger FCM push + in-app notification per tenant
-  console.log(`[Broadcast] "${message}" → ${tenants?.length || 0} tenants`);
+  // NOTHING IS SENT. There is no delivery channel wired up here — no push,
+  // no in-app notification, and no approved WhatsApp template for an operator
+  // announcement. This used to answer {ok:true, sent_to:N} and write an audit
+  // row saying it was broadcast, so an operator had positive confirmation of
+  // an announcement nobody received. Refuse honestly until a channel exists.
+  console.warn(`[Broadcast] refused — no delivery channel. "${String(message).slice(0, 80)}" ` +
+    `would have gone to ${tenants?.length || 0} tenant(s)`);
 
   await sb.from("admin_audit_log").insert({
     admin_user_id: (req as any).user.id,
-    action:        "broadcast",
-    metadata:      { message, plan_filter, tenant_count: tenants?.length || 0 },
+    action:        "broadcast_refused_not_implemented",
+    metadata:      { message, plan_filter, would_reach: tenants?.length || 0 },
     ip_address:    req.ip,
   });
 
-  res.json({ ok: true, sent_to: tenants?.length || 0 });
+  res.status(501).json({
+    ok: false,
+    would_reach: tenants?.length || 0,
+    error: "Broadcast isn't wired to a delivery channel yet — nothing was sent.",
+  });
 });
 
 // Audit log
@@ -4628,7 +4674,11 @@ async function verifyApiKey(req: any, res: any, next: any) {
   // Look up candidates by prefix only (cheap indexed query)
   const { data: candidates, error } = await sb
     .from("api_keys")
-    .select("id, tenant_id, key_hash, mode, scopes, expires_at, revoked_at")
+    // request_count is READ because the increment below computes
+    // `(matched.request_count || 0) + 1` — without it in the projection every
+    // key's counter was written as 1 forever, so per-key usage and abuse
+    // detection saw nothing.
+    .select("id, tenant_id, key_hash, mode, scopes, expires_at, revoked_at, request_count")
     .eq("prefix", prefix)
     .is("revoked_at", null);
 
@@ -4976,7 +5026,9 @@ app.get("/api/v1/appointments",
 
 // GET /api/v1/usage — current month's minutes consumed vs plan limit
 app.get("/api/v1/usage",
-  verifyApiKey, publicApiLimiter,
+  // Scoped like every other v1 route. Without this a key granted NO scopes
+  // still read the tenant's consumption and plan allowance.
+  verifyApiKey, publicApiLimiter, requireScope("calls.read"),
   async (req: any, res) => {
     // The IST calendar month, read in pages. The UTC month started 05:30 late
     // for an Indian business, and a single select stopped at PostgREST's
@@ -5154,8 +5206,8 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
   const link = `${process.env.APP_URL || "https://www.heynikki.in"}/signup?invite=${inv.token}`;
   await audit("team_invited", { tenantId, actorId: req.user.id, metadata: { email, role } });
 
-  // Email if Resend is configured; either way return the link, because a
-  // WhatsApp forward is how this actually reaches a colleague in practice.
+  // No email is sent — the link is returned instead, because a WhatsApp
+  // forward is how this actually reaches a colleague in practice.
   res.json({ ok: true, link, expires_at: inv.expires_at });
 });
 

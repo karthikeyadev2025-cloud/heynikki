@@ -2268,10 +2268,18 @@ class SupabaseClient:
                     headers={**self.headers, "Prefer": "return=representation"},
                     json=call_data
                 )
+                # Say WHY it failed. A rejected insert (a column that does
+                # not exist, a check constraint) returns an error OBJECT, and
+                # `data[0]` on it raised KeyError: 0 — so the log read
+                # "Supabase save_call: 0" and the real reason, sitting in the
+                # response body, was never printed.
+                if resp.status_code >= 300:
+                    log.error(f"Supabase save_call {resp.status_code}: {resp.text[:200]}")
+                    return None
                 data = resp.json()
                 return data[0]["id"] if data else None
         except Exception as e:
-            log.error(f"Supabase save_call: {e}")
+            log.error(f"Supabase save_call: {type(e).__name__}: {e}")
             return None
 
     async def update_call(self, call_id: str, updates: dict):
@@ -5212,16 +5220,27 @@ async def browser_save_booking(req: BookingSaveRequest,
             "direction":     "inbound",
             "status":        "completed",
             "intent":        "appointment",
-            "source":        "widget",
+            # No "source" key: calls has no such column, so PostgREST answered
+            # 400 and save_call returned None — every widget booking was saved
+            # with call_id null and no call row at all.
         })
         call_id = lead_resp
 
         # Create appointment record
+        # PENDING, not confirmed. The widget collects the slot as free text
+        # ("tomorrow 11am"), so slot_date and slot_time are unknown — and a
+        # "confirmed" appointment with no date is what the operations panel
+        # counts as broken, what /api/v1/appointments cannot order, and what
+        # the business reads as a booking it never agreed. Pending is the
+        # truth, and it puts the request into the follow-up flow that exists
+        # for exactly this.
         appt_id = await db.save_appointment({
             "tenant_id":     real_tenant_id or tenant_id,
             "caller_number": req.phone,
             "call_id":       call_id,
-            "status":        "confirmed",
+            "caller_name":   req.name,
+            "service":       req.service,
+            "status":        "pending",
             "notes":         f"Web widget booking | Name: {req.name} | Service: {req.service} | Slot: {req.slot}",
         })
 
@@ -5229,9 +5248,13 @@ async def browser_save_booking(req: BookingSaveRequest,
         if real_tenant_id:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(
-                        f"{db.url}/rest/v1/leads",
-                        headers={**db.headers, "Prefer": "resolution=merge-duplicates"},
+                    # on_conflict names the unique key (tenant_id, phone).
+                    # Without it PostgREST cannot merge and answered 409, and
+                    # httpx does not raise on 409 — so a returning visitor's
+                    # name, interest and stage were dropped in silence.
+                    r = await client.post(
+                        f"{db.url}/rest/v1/leads?on_conflict=tenant_id,phone",
+                        headers={**db.headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
                         json={
                             "tenant_id":         real_tenant_id,
                             "phone":             req.phone,
@@ -5244,6 +5267,8 @@ async def browser_save_booking(req: BookingSaveRequest,
                             "last_contacted_at": datetime.now(timezone.utc).isoformat(),
                         }
                     )
+                    if r.status_code >= 300:
+                        log.warning(f"[widget] lead upsert {r.status_code}: {r.text[:120]}")
             except Exception as e:
                 log.warning(f"[widget] lead upsert failed: {e}")
 

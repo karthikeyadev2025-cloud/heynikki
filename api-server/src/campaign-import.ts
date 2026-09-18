@@ -336,6 +336,12 @@ export function mountCampaignImport(
       const c = await ownCampaignAsOwner(req, res);
       if (!c) return;
 
+      // Gated like /import and /start. Without it a Free or Starter tenant
+      // could build the recipient list for a campaign their plan will never
+      // let them dial — the list-building door was the one left open.
+      const gate = await planAllows(c.tenant_id, "outbound_campaigns");
+      if (!gate.ok) return res.status(402).json({ error: gate.msg });
+
       const { stages, min_score, max_score, tags, not_contacted_days,
               preview, consent_declared } = req.body || {};
 

@@ -10,7 +10,19 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { X } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 import { NIKKI } from "../lib/brand";
+
+// The session, from supabase-js itself. This used to read
+// localStorage("sb-access-token") — a key nothing in this repo ever writes
+// (supabase-js stores its session under sb-<project-ref>-auth-token as a JSON
+// blob), so the Authorization header was always empty and every question the
+// assistant asked came back 401 "No token": "I couldn't get that data right
+// now", for every operator, forever.
+const sb = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+);
 
 declare global {
   interface Window {
@@ -127,9 +139,14 @@ export default function VoiceAssistant({ tenantId }: { tenantId?: string }) {
     setStatus("thinking");
 
     try {
-      const token = typeof window !== "undefined"
-        ? localStorage.getItem("sb-access-token") || sessionStorage.getItem("sb-access-token") || ""
-        : "";
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token || "";
+      if (!token) {
+        const msg = "Sign in to the panel first — I can't read your data without it.";
+        setMsgs(m => [...m, { role: "nikki", text: msg, time: now() }]);
+        setStatus("idle");
+        return;
+      }
 
       const resp = await fetch(`${API}/api/admin/voice-query`, {
         method: "POST",

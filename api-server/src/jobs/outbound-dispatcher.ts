@@ -229,13 +229,28 @@ const TRUNK_FAULTS = [
   "SERVICE_UNAVAILABLE",
   "GATEWAY_DOWN",
   "RECOVERY_ON_TIMER_EXPIRE",
-  // Our own preflight refusals — also nothing the recipient did.
+];
+
+/**
+ * Our own preflight refusals: nothing the recipient did, and nothing wrong
+ * with the trunk either. They are handled like a trunk fault (no missed-call
+ * WhatsApp, no attempt burned) but must NOT reach recordTrunkState — that
+ * writes the PLATFORM-wide trunk_outbound_state, which the voice pipeline
+ * reads for six hours and uses to stop offering every caller, on every
+ * tenant, a transfer to a human. One tenant with no DID assigned would have
+ * degraded every conversation on the system.
+ */
+const CONFIG_FAULTS = [
   "no assigned DID to dial out as",
   "recipient has no tenant",
 ];
 
+function isConfigFault(reason: string): boolean {
+  return CONFIG_FAULTS.some(c => reason.includes(c));
+}
+
 function isTrunkFault(reason: string): boolean {
-  return TRUNK_FAULTS.some(c => reason.includes(c));
+  return TRUNK_FAULTS.some(c => reason.includes(c)) || isConfigFault(reason);
 }
 
 /**
@@ -638,7 +653,7 @@ async function tick(): Promise<void> {
         }
 
         if (isTrunkFault(reason) || isEslUnreachable(reason)) {
-          if (!isEslUnreachable(reason)) void recordTrunkState(false, reason);
+          if (!isEslUnreachable(reason) && !isConfigFault(reason)) void recordTrunkState(false, reason);
           // The phone never rang, so this is not a missed call: no WhatsApp,
           // and the attempt is rolled back to what it was before we tried.
           const trunkTries = ((r.metadata?.trunk_failures as number) || 0) + 1;
@@ -798,7 +813,11 @@ async function tickInstant(): Promise<void> {
       }
       const unreachable = isEslUnreachable(reason);
       const fault  = isTrunkFault(reason) || unreachable;
-      if (!unreachable && !isEslTimeout(reason)) void recordTrunkState(!fault, fault ? reason : undefined);
+      // A per-tenant config fault says nothing about the trunk either way:
+      // neither "down" (which degrades every tenant for six hours) nor "ok".
+      if (!unreachable && !isEslTimeout(reason) && !isConfigFault(reason)) {
+        void recordTrunkState(!fault, fault ? reason : undefined);
+      }
       // A trunk fault is our problem, not the lead's: keep the row pending
       // and try again shortly, a bounded number of times. A phone that rang
       // and was not answered is a one-shot — the moment has passed.
