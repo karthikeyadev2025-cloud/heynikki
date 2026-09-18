@@ -842,6 +842,12 @@ def test_price_list_quotes_only_what_billing_sells(monkeypatch):
     assert "upgrade" in text.lower()
 
 
+def test_heynikki_prompt_answers_who_built_it():
+    ours = main.build_system_prompt({"business_name": "Hey Nikki", "profile_sku": "standard",
+                                     "tenant_id": "t", "id": "x"})
+    assert "WHO BUILT YOU" in ours and "Hyderabad" in ours
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
