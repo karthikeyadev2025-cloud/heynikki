@@ -1,11 +1,12 @@
 // app/calls/page.tsx — Call History, Recordings & Transcripts
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord } from "../../lib/supabase";
-import { Check, X, Bot, User, Phone } from "lucide-react";
+import { Check, X, Bot, User, Phone, Search } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
+import ExportButton from "../../components/ExportButton";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -210,53 +211,38 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
   );
 }
 
-// CSV export — generates a UTF-8 CSV with BOM so Excel opens it cleanly
-// without "Save in CSV format?" prompts and without mangling Telugu /
-// any other non-ASCII text.
-function exportCsv(rows: CallRecord[]) {
-  if (rows.length === 0) return;
+/**
+ * A list row. /calls no longer selects * — a page of 100 calls used to drag
+ * 100 full transcripts into the browser to draw a table that shows none of
+ * them, and the transcript search below returns this same narrow shape from
+ * the API. The full record is fetched only when a call is opened.
+ */
+type CallRow = {
+  id: string;
+  caller_number: string | null;
+  direction: string | null;
+  status: string;
+  duration_seconds: number;
+  intent: string | null;
+  wa_sent: boolean;
+  appointment_created: boolean;
+  created_at: string;
+  /** The transcript line that matched a search, when the row came from one. */
+  snippet?: string | null;
+};
 
-  const cols: { key: keyof CallRecord; label: string; map?: (v: any, row: CallRecord) => string }[] = [
-    { key: "created_at",       label: "Date",         map: v => new Date(v).toLocaleString("en-IN") },
-    { key: "caller_number",    label: "Caller" },
-    { key: "direction",        label: "Direction" },
-    { key: "status",           label: "Status",       map: v => STATUS_META[String(v || "")]?.label || String(v ?? "") },
-    { key: "intent",           label: "Intent",       map: v => intentLabel(v) },
-    { key: "duration_seconds", label: "Duration (s)" },
-    { key: "transcript",       label: "Transcript",
-    // An array of {role, content} turns — .toString() on it exported
-    // "[object Object], [object Object]" for every call ever downloaded.
-    map: (v: any) => (Array.isArray(v)
-      ? v.map((t: any) => `${t.role}: ${t.content}`).join(" | ")
-      : String(v ?? "")).replace(/\s+/g, " ").slice(0, 8000) },
-  ];
+const LIST_COLUMNS =
+  "id,caller_number,direction,status,duration_seconds,intent,wa_sent,appointment_created,created_at";
 
-  const escape = (val: any) => {
-    if (val === null || val === undefined) return "";
-    const s = String(val);
-    // RFC 4180: quote if contains comma, quote, or newline; escape quotes by doubling
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+// Every customer is in India. A date filter that means "since 05:30 this
+// morning" because the browser or the server is on UTC is the kind of wrong
+// a shop owner notices and cannot explain. Same +05:30 arithmetic the API
+// and the pipeline use.
+const IST_MS = 330 * 60_000;
+const istDay = (offsetDays = 0) =>
+  new Date(Date.now() + IST_MS + offsetDays * 86_400_000).toISOString().slice(0, 10);
 
-  const header = cols.map(c => escape(c.label)).join(",");
-  const body   = rows.map(r =>
-    cols.map(c => escape(c.map ? c.map((r as any)[c.key], r) : (r as any)[c.key])).join(",")
-  ).join("\n");
-
-  // UTF-8 BOM so Excel auto-detects encoding
-  const csv  = "\uFEFF" + header + "\n" + body;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url  = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href     = url;
-  a.download = `nikki-calls-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
+const PAGE = 100;
 
 function RecordingPlayer({ callId, publicUrl }: { callId: string; publicUrl?: string | null }) {
   const [src, setSrc] = useState<string | null>(publicUrl || null);
@@ -344,58 +330,188 @@ function DeleteRecording({ callId, onDeleted }: { callId: string; onDeleted: () 
   );
 }
 
-export default function CallsPage() {
-  const [calls, setCalls]         = useState<CallRecord[]>([]);
-  const [selected, setSelected]   = useState<CallRecord | null>(null);
-  const [loading, setLoading]     = useState(true);
-  const [filter, setFilter]       = useState("all");
-  const [search, setSearch]       = useState("");
-  const [tenantId, setTenantId]   = useState<string | null>(null);
+const INTENTS  = ["all", "appointment", "enquiry", "callback", "transfer", "emergency", "order"];
+const STATUSES = ["all", "completed", "missed", "transferred", "failed", "active"];
 
-  const fetchCalls = useCallback(async (tid: string) => {
+// Quick ranges, in IST days. "All time" leaves both ends open rather than
+// guessing a start date the business never gave.
+const RANGES: Array<{ id: string; label: string; from: () => string; to: () => string }> = [
+  { id: "today", label: "Today",    from: () => istDay(0),   to: () => istDay(0) },
+  { id: "7d",    label: "7 days",   from: () => istDay(-6),  to: () => istDay(0) },
+  { id: "30d",   label: "30 days",  from: () => istDay(-29), to: () => istDay(0) },
+  { id: "all",   label: "All time", from: () => "",          to: () => "" },
+];
+
+export default function CallsPage() {
+  const [rows, setRows]         = useState<CallRow[]>([]);
+  const [selected, setSelected] = useState<CallRecord | null>(null);
+  const [opening, setOpening]   = useState<string | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [more, setMore]         = useState(false);      // another page exists
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError]       = useState("");
+  const [tenantId, setTenantId] = useState<string | null>(null);
+
+  const [intent, setIntent] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [from,   setFrom]   = useState("");
+  const [to,     setTo]     = useState("");
+  const [typed,  setTyped]  = useState("");             // what is in the box
+  const [query,  setQuery]  = useState("");             // what has been searched
+  // Set when the server stopped short of reading every call. The count must
+  // then be read as "in the most recent N", never as "that is all there is".
+  const [capped, setCapped] = useState<{ scanned: number } | null>(null);
+
+  const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
+
+  // Searching on every keystroke would fire a transcript scan per letter.
+  // A third of a second is below the pause between words.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(typed.trim()), 350);
+    return () => clearTimeout(t);
+  }, [typed]);
+
+  /**
+   * One page of results.
+   *
+   * Without a search this is Supabase directly, as every other list screen
+   * does it — RLS scopes the rows and the page keeps working even if the API
+   * is down. With a search it has to be the API: the words are inside
+   * calls.transcript, which is jsonb, and PostgREST cannot filter a cast of
+   * it (see api-server/src/search-export.ts).
+   */
+  const fetchPage = useCallback(async (tid: string, offset: number):
+    Promise<{ rows: CallRow[]; more: boolean; capped: { scanned: number } | null }> => {
+
     const sb = createClient();
-    let q = sb.from("calls").select("*").eq("tenant_id", tid)
-      .order("created_at", { ascending: false }).limit(100);
-    if (filter !== "all") q = q.eq("intent", filter);
-    const { data } = await q;
-    setCalls(data || []);
-    setLoading(false);
-    // Deep links from a lead's timeline: /calls?call=<id> opens that call.
-    // It may be older than the 100 rows above, so fetch it on its own.
+
+    if (query.length >= 2) {
+      const { data: { session } } = await sb.auth.getSession();
+      const qs = new URLSearchParams({ q: query, limit: String(PAGE), offset: String(offset) });
+      if (intent !== "all") qs.set("intent", intent);
+      if (status !== "all") qs.set("status", status);
+      if (from) qs.set("from", from);
+      if (to)   qs.set("to", to);
+      const r = await fetch(`${API}/api/search/calls?${qs}`, {
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      const j = await r.json().catch(() => ({} as any));
+      if (!r.ok) throw new Error(j.error || "Could not search your calls just now.");
+      return {
+        rows: (j.rows || []) as CallRow[],
+        more: !!j.has_more,
+        capped: j.capped ? { scanned: Number(j.scanned) || 0 } : null,
+      };
+    }
+
+    let q = sb.from("calls").select(LIST_COLUMNS).eq("tenant_id", tid);
+    if (intent !== "all") q = q.eq("intent", intent);
+    if (status !== "all") q = q.eq("status", status);
+    // The bounds are IST days; +05:30 keeps a 9pm call on the day it happened.
+    if (from) q = q.gte("created_at", `${from}T00:00:00+05:30`);
+    if (to)   q = q.lte("created_at", `${to}T23:59:59.999+05:30`);
+    const { data, error: e } = await q
+      // created_at alone is not a stable sort — two calls in the same second
+      // can swap between pages, so one appears twice and the other never.
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .range(offset, offset + PAGE - 1);
+    if (e) throw new Error(e.message);
+    const batch = (data || []) as unknown as CallRow[];
+    return { rows: batch, more: batch.length === PAGE, capped: null };
+  }, [API, intent, status, from, to, query]);
+
+  // A slow search that the user has already typed past must not overwrite a
+  // newer one when it finally lands.
+  const runId = useRef(0);
+
+  const load = useCallback(async (tid: string) => {
+    const mine = ++runId.current;
+    setLoading(true); setError("");
     try {
-      const want = new URLSearchParams(window.location.search).get("call");
-      if (want) {
-        const hit = (data || []).find((c: any) => c.id === want)
-          || (await sb.from("calls").select("*").eq("id", want).eq("tenant_id", tid).maybeSingle()).data;
-        if (hit) setSelected(hit as CallRecord);
-        window.history.replaceState({}, "", "/calls");
-      }
-    } catch { /* no window */ }
-  }, [filter]);
+      const out = await fetchPage(tid, 0);
+      if (mine !== runId.current) return;
+      setRows(out.rows); setMore(out.more); setCapped(out.capped);
+    } catch (e: any) {
+      if (mine !== runId.current) return;
+      setRows([]); setMore(false); setCapped(null);
+      setError(e?.message || "Could not load your calls.");
+    } finally {
+      if (mine === runId.current) setLoading(false);
+    }
+  }, [fetchPage]);
+
+  const loadMore = async () => {
+    if (!tenantId || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const out = await fetchPage(tenantId, rows.length);
+      setRows(prev => [...prev, ...out.rows]);
+      setMore(out.more);
+      setCapped(out.capped);
+    } catch (e: any) {
+      setError(e?.message || "Could not load more calls.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  /**
+   * Open one call. The list rows deliberately carry no transcript and no
+   * recording key, so the full record is read here — the same read the
+   * ?call=<id> deep link has always done.
+   */
+  const openCall = useCallback(async (id: string) => {
+    if (!tenantId) return;
+    setOpening(id);
+    const sb = createClient();
+    const { data, error: e } = await sb.from("calls").select("*")
+      .eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+    setOpening(null);
+    if (e || !data) { setError("Could not open that call."); return; }
+    setSelected(data as CallRecord);
+  }, [tenantId]);
 
   useEffect(() => {
     const sb = createClient();
     sb.auth.getUser().then(async ({ data }) => {
       if (!data.user) { window.location.href = "/login"; return; }
       const { data: tu } = await sb.from("tenant_users")
-        .select("tenant_id").eq("user_id", data.user.id).single();
-      if (tu) { setTenantId(tu.tenant_id); fetchCalls(tu.tenant_id); }
+        .select("tenant_id").eq("user_id", data.user.id).maybeSingle();
+      if (!tu) { setLoading(false); setError("No business is linked to this login yet."); return; }
+      setTenantId(tu.tenant_id);
+      // Deep links from a lead's timeline: /calls?call=<id> opens that call,
+      // which may be far older than the first page of the list.
+      try {
+        const want = new URLSearchParams(window.location.search).get("call");
+        if (want) {
+          const { data: hit } = await sb.from("calls").select("*")
+            .eq("id", want).eq("tenant_id", tu.tenant_id).maybeSingle();
+          if (hit) setSelected(hit as CallRecord);
+          window.history.replaceState({}, "", "/calls");
+        }
+      } catch { /* no window */ }
     });
   }, []);
 
-  useEffect(() => {
-    if (tenantId) fetchCalls(tenantId);
-  }, [filter, tenantId, fetchCalls]);
+  useEffect(() => { if (tenantId) load(tenantId); }, [tenantId, load]);
 
-  const filtered = calls.filter(c =>
-    !search || c.caller_number?.includes(search) ||
-    intentLabel(c.intent).toLowerCase().includes(search.toLowerCase()) ||
-    (STATUS_META[c.status]?.label || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const activeRange = RANGES.find(r => r.from() === from && r.to() === to)?.id
+    || (from || to ? "custom" : "all");
+  const filtersOn = intent !== "all" || status !== "all" || !!from || !!to || !!query;
 
-  // "emergency" is written by the pipeline alongside the four below but had
-  // no tab, so an urgent call was findable only by scrolling.
-  const FILTERS = ["all", "appointment", "enquiry", "callback", "transfer", "emergency"];
+  const clearAll = () => {
+    setIntent("all"); setStatus("all"); setFrom(""); setTo(""); setTyped(""); setQuery("");
+  };
+
+  const chip = (on: boolean, color: string): React.CSSProperties => ({
+    padding: "7px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
+    background: on ? color + "33" : C.hi, color: on ? color : C.mid,
+    border: "1px solid " + (on ? color : C.bord), cursor: "pointer", whiteSpace: "nowrap",
+  });
+  const dateInput: React.CSSProperties = {
+    padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.bord}`,
+    background: C.hi, color: C.txt, fontSize: 12.5, fontFamily: "inherit",
+  };
 
   return (
     <Shell title="Call History">
@@ -404,61 +520,94 @@ export default function CallsPage() {
           onRecordingDeleted={(id) => {
             // Mirror what the API did to the row: key and URL gone,
             // recording_size_bytes kept so the panel says "deleted".
-            const strip = (c: CallRecord): CallRecord =>
-              c.id === id ? { ...c, r2_object_key: null, recording_url: null } : c;
-            setCalls(prev => prev.map(strip));
-            setSelected(prev => (prev ? strip(prev) : prev));
+            setSelected(prev => (prev && prev.id === id
+              ? { ...prev, r2_object_key: null, recording_url: null } : prev));
           }} />
       )}
 
-      {/* Filters */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by number, intent or status..."
-          style={{ flex: "1 1 220px", maxWidth: 320, padding: "9px 12px", borderRadius: 8,
-                   border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: 13 }} />
+      {/* Search + filters */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 380 }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: 12, color: C.dim }} />
+          <input value={typed} onChange={e => setTyped(e.target.value)}
+            placeholder="Search what was said, or a phone number…"
+            aria-label="Search calls and transcripts"
+            style={{ width: "100%", padding: "9px 12px 9px 32px", borderRadius: 8, boxSizing: "border-box",
+                     border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: 13 }} />
+        </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {FILTERS.map(f => (
-            <button key={f} onClick={() => setFilter(f)} style={{
-              padding: "7px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
-              background: filter === f ? C.glow + "66" : C.hi,
-              color: filter === f ? C.gbr : f === "emergency" ? C.red : C.mid,
-              border: "1px solid " + (filter === f ? C.glow : C.bord),
-            }}>{f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}</button>
+          {RANGES.map(r => (
+            <button key={r.id} onClick={() => { setFrom(r.from()); setTo(r.to()); }}
+              style={chip(activeRange === r.id, C.gbr)}>{r.label}</button>
           ))}
         </div>
-        <span style={{ color: C.dim, fontSize: 12, marginLeft: "auto" }}>
-          {filtered.length} calls
-        </span>
-        <button
-          onClick={() => exportCsv(filtered)}
-          disabled={filtered.length === 0}
-          title="Download as CSV (Excel / Sheets compatible)"
-          style={{
-            padding: "7px 14px", borderRadius: 7, fontSize: 12, fontWeight: 700,
-            background: filtered.length === 0 ? C.hi : C.grn + "22",
-            color: filtered.length === 0 ? C.dim : C.grn,
-            border: "1px solid " + (filtered.length === 0 ? C.bord : C.grn + "66"),
-            cursor: filtered.length === 0 ? "not-allowed" : "pointer",
-          }}
-        >
-          ↓ Export CSV
-        </button>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)}
+            aria-label="From date" style={dateInput} />
+          <span style={{ color: C.dim, fontSize: 12 }}>to</span>
+          <input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)}
+            aria-label="To date" style={dateInput} />
+        </div>
       </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="nk-scroll" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {INTENTS.map(f => (
+            <button key={f} onClick={() => setIntent(f)}
+              style={chip(intent === f, f === "emergency" ? C.red : C.glow)}>
+              {f === "all" ? "All intents" : f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+        <select value={status} onChange={e => setStatus(e.target.value)} aria-label="Status"
+          style={{ ...dateInput, fontWeight: 700 }}>
+          {STATUSES.map(s => (
+            <option key={s} value={s}>{s === "all" ? "Any outcome" : STATUS_META[s]?.label || s}</option>
+          ))}
+        </select>
+
+        <span style={{ color: C.dim, fontSize: 12, marginLeft: "auto" }}>
+          {loading ? "…" : `${rows.length}${more ? "+" : ""} call${rows.length === 1 ? "" : "s"}`}
+        </span>
+        {filtersOn && (
+          <button onClick={clearAll} style={{ background: "none", border: "none", color: C.glow,
+            fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>Clear filters</button>
+        )}
+        <ExportButton path="/api/export/calls.csv"
+          params={{ q: query, intent, status, from, to }}
+          label="Export CSV"
+          title="Download every call matching these filters — not just the ones on screen" />
+      </div>
+
+      {capped && (
+        <div style={{ background: C.gold + "0D", border: `1px solid ${C.gold}55`, borderRadius: 8,
+          padding: "9px 12px", marginBottom: 12, color: C.gold, fontSize: 12.5 }}>
+          Searched your most recent {capped.scanned.toLocaleString("en-IN")} calls. Narrow the dates to search further back.
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background: C.red + "0D", border: `1px solid ${C.red}55`, borderRadius: 8,
+          padding: "9px 12px", marginBottom: 12, color: C.red, fontSize: 12.5 }}>{error}</div>
+      )}
 
       <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
-          <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading calls...</div>
-        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 48, color: C.mid }}>
+            {query ? "Searching calls and transcripts…" : "Loading calls…"}
+          </div>
+        ) : rows.length === 0 ? (
           <div style={{ textAlign: "center", padding: 48, color: C.dim }}>
             <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Phone size={28} /></div>
-            {filter !== "all" || search ? (
+            {filtersOn ? (
               // A filter with no matches is not an empty account — the
               // "set up your voice profile" onboarding line showed here to a
               // clinic with 32 calls whenever a category was empty.
               <div>
-                No {filter !== "all" ? filter : ""} calls{search ? ` matching “${search}”` : ""} yet.
-                <button onClick={() => { setFilter("all"); setSearch(""); }} style={{
+                {query
+                  ? <>Nothing said on a call matches “{query}”.</>
+                  : <>No calls match these filters.</>}
+                <button onClick={clearAll} style={{
                   background: "none", border: "none", color: C.glow, fontSize: 13, cursor: "pointer",
                   display: "block", margin: "8px auto 0", fontFamily: "inherit",
                 }}>Show all calls →</button>
@@ -485,14 +634,22 @@ export default function CallsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(call => (
+              {rows.map(call => (
                 <tr key={call.id}
-                  style={{ borderBottom: "1px solid " + C.bord + "44", cursor: "pointer" }}
-                  onClick={() => setSelected(call)}
+                  style={{ borderBottom: "1px solid " + C.bord + "44", cursor: "pointer",
+                           opacity: opening === call.id ? 0.6 : 1 }}
+                  onClick={() => openCall(call.id)}
                   onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                   <td style={{ padding: "10px 12px", color: C.txt, fontSize: 13, fontWeight: 600 }}>
                     {call.caller_number || "Unknown"}
+                    {/* Why this call came back from a search, without opening it. */}
+                    {call.snippet && (
+                      <div style={{ color: C.mid, fontSize: 11.5, fontWeight: 400, marginTop: 3,
+                        maxWidth: 320, whiteSpace: "normal", lineHeight: 1.45 }}>
+                        “{call.snippet}”
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "10px 12px" }}>
                     <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
@@ -521,7 +678,9 @@ export default function CallsPage() {
                     {formatTime(call.created_at)}
                   </td>
                   <td style={{ padding: "10px 12px" }}>
-                    <span style={{ color: C.glow, fontSize: 12 }}>View →</span>
+                    <span style={{ color: C.glow, fontSize: 12 }}>
+                      {opening === call.id ? "Opening…" : "View →"}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -530,6 +689,18 @@ export default function CallsPage() {
           </div>
         )}
       </div>
+
+      {/* The old page stopped dead at 100 rows with nothing to say so. */}
+      {more && !loading && (
+        <div style={{ textAlign: "center", marginTop: 14 }}>
+          <button onClick={loadMore} disabled={loadingMore} style={{
+            padding: "9px 18px", borderRadius: 8, border: `1px solid ${C.bord}`,
+            background: C.hi, color: C.txt, fontSize: 13, fontWeight: 700,
+            cursor: loadingMore ? "wait" : "pointer" }}>
+            {loadingMore ? "Loading…" : "Load more calls"}
+          </button>
+        </div>
+      )}
     </Shell>
   );
 }

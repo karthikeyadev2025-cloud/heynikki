@@ -19,6 +19,11 @@
  *     unless they opened the dashboard. This sends an end-of-day WhatsApp:
  *     calls answered, appointments booked, leads worth calling back.
  *
+ * 3b. MORNING BRIEFING — the evening summary arrives after the shop has shut,
+ *     when nothing in it can be acted on. This sends the same facts at 08:30
+ *     IST, when they are still a to-do list: yesterday's answered and missed
+ *     calls, today's diary, who is worth ringing back, minutes left.
+ *
  *  4. CALL QUALITY — scores completed calls from the transcript already
  *     stored on them. Nothing has ever read those transcripts back except a
  *     person opening one call at a time; this reviews all of them so a
@@ -39,6 +44,8 @@ import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
 import { resolveGeminiModel } from "../gemini.js";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "../recordings";
+import { sendOwnerEmail, sendOwnerTemplate } from "../owner-alerts";
+import { minutesGate } from "../usage";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -500,6 +507,212 @@ export async function runDailySummaries(): Promise<number> {
   return sent;
 }
 
+/* ── 3b. Morning briefing to the business owner ─────────────── */
+/**
+ * The other half of the day.
+ *
+ * runDailySummaries above sends an EVENING message about the day that just
+ * happened — useful, but it arrives after the shop is shut, when nothing in
+ * it can be acted on. The three things an owner can still do something about
+ * are all morning things: ring back the people who did not get through
+ * yesterday, know who is walking in today, and see the minutes running out
+ * before the day's calls stop being answered.
+ *
+ * Deliberately NOT the evening summary moved earlier. It carries YESTERDAY's
+ * outcome and TODAY's diary, which is what the approved
+ * `daily_business_summary` template was written for — its fixed text opens
+ * "నిన్నటి summary" (yesterday's summary), so the evening job has always been
+ * sending it a day out of step with its own wording.
+ *
+ * Channel: the approved template to the business's WhatsApp number, exactly
+ * as the evening summary does. A scheduled message is by definition outside
+ * Meta's 24-hour service window, so free text is accepted and then dropped —
+ * a template is the only form that arrives. A tenant with no WhatsApp number
+ * gets an email instead, which is also where the fuller version lives: the
+ * template has four slots and cannot carry named leads or a minutes balance.
+ *
+ * One per tenant per IST day, idempotent across the 15-minute ticks, and
+ * silent for a business that had no calls yesterday and nothing booked
+ * today — a message that says "nothing happened" every morning is the
+ * reason people mute a number.
+ */
+const BRIEFING_FROM_MIN = 8 * 60 + 30;   // 08:30 IST
+const BRIEFING_TO_MIN   = 9 * 60 + 30;   // …to 09:30, so one missed tick is not a missed day
+
+/** Both message types are markers for the SAME once-a-day briefing. They are
+ *  separate only so the dispatch row is honest about which channel it went
+ *  out on; the guard below reads both. */
+const BRIEFING_TYPES = ["morning_briefing", "morning_briefing_email"];
+
+export async function runMorningBriefings(): Promise<number> {
+  const nowMin = istMinutesNow();
+  if (nowMin < BRIEFING_FROM_MIN || nowMin >= BRIEFING_TO_MIN) return 0;
+
+  // An off switch that does not need a deploy. This job puts a message on a
+  // paying customer's phone every morning; if the wording is wrong, or Meta
+  // flags the template, or an owner simply asks to stop, somebody needs to be
+  // able to stop it from the Platform Config screen at the time it is going
+  // wrong. Default ON — set platform_config.morning_briefing to "off".
+  const { data: toggle, error: toggleErr } = await sb.from("platform_config")
+    .select("value").eq("key", "morning_briefing").maybeSingle();
+  if (toggleErr) { log("briefing: config read failed — not sending:", toggleErr.message); return 0; }
+  if (String(toggle?.value ?? "on").trim().toLowerCase() === "off") return 0;
+
+  const today     = istDateString(0);
+  const yesterday = istDateString(-1);
+  // Offsets spelled out. A bare "T00:00:00" is parsed as UTC — 05:30 IST — so
+  // every window would start and end five and a half hours late and
+  // "yesterday" would include this morning's calls.
+  const dayStart = `${today}T00:00:00+05:30`;
+  const yStart   = `${yesterday}T00:00:00+05:30`;
+
+  // Demo rows and suspended accounts are not businesses to brief.
+  const { data: tenants, error } = await sb.from("tenants")
+    .select("id, name, owner_id, is_demo, status")
+    .neq("status", "suspended");
+  if (error) { log("briefing: tenant read failed:", error.message); return 0; }
+  if (!tenants?.length) return 0;
+
+  let sent = 0;
+  for (const t of tenants) {
+    if (t.is_demo) continue;
+
+    // Fails CLOSED. A read error that read as "not sent yet" would put a
+    // briefing on the owner's phone on every tick for a whole hour.
+    const { data: already, error: alreadyErr } = await sb.from("wa_dispatch_log")
+      .select("id").eq("tenant_id", t.id).in("message_type", BRIEFING_TYPES)
+      // sent_at — wa_dispatch_log has no created_at column.
+      .gte("sent_at", dayStart).limit(1);
+    if (alreadyErr) { log(`briefing: history lookup failed for ${t.id} — not sending:`, alreadyErr.message); continue; }
+    if (already?.length) continue;
+
+    const [profileRes, callsRes, apptsRes, leadsRes] = await Promise.all([
+      sb.from("voice_profiles").select("id, business_name, whatsapp_number")
+        .eq("tenant_id", t.id).limit(1).maybeSingle(),
+      sb.from("calls").select("id, status")
+        .eq("tenant_id", t.id).gte("created_at", yStart).lt("created_at", dayStart),
+      // The diary for the day ahead, by the business-local slot date — not by
+      // when the booking was taken.
+      sb.from("appointments").select("id")
+        .eq("tenant_id", t.id).eq("slot_date", today).in("status", ["pending", "confirmed"]),
+      // The same worklist the dashboard shows: warm and not yet closed.
+      sb.from("leads").select("id, name, phone, score")
+        .eq("tenant_id", t.id).not("stage", "in", '("won","lost")').gte("score", 50)
+        .order("score", { ascending: false }).limit(5),
+    ]);
+
+    // Fail CLOSED on every count. A briefing built on a failed query is a
+    // briefing that tells an owner they had no calls yesterday when they had
+    // forty — worse than no briefing at all, because they will believe it.
+    if (callsRes.error || apptsRes.error || leadsRes.error) {
+      log(`briefing: data read failed for ${t.id} — not sending:`,
+          callsRes.error?.message || apptsRes.error?.message || leadsRes.error?.message);
+      continue;
+    }
+
+    const calls    = callsRes.data || [];
+    const missed   = calls.filter((c: any) => c.status === "missed").length;
+    const answered = calls.length - missed;
+    const booked   = apptsRes.data?.length ?? 0;
+    const hot      = leadsRes.data ?? [];
+
+    // Nothing happened yesterday and nothing is booked today: say nothing.
+    //
+    // Deliberately NOT triggered by the lead list. Leads sit in "worth calling
+    // back" until somebody changes their stage, so a shop with two stale leads
+    // and no calls would get an identical email every morning forever — which
+    // is the behaviour that gets a sender muted. Leads are content when there
+    // is already a reason to write; they are never the reason.
+    if (calls.length === 0 && booked === 0) continue;
+
+    const profile  = profileRes.data as any;
+    const business = (profile?.business_name || t.name || "your business").trim();
+    const gate     = await minutesGate(sb, t.id);
+    const minsLeft = gate.paid
+      ? Math.max(0, gate.limitMinutes - gate.usedMinutes)
+      : Math.round(gate.credits);
+    const minsLine = gate.paid && gate.limitMinutes <= 0
+      ? ""                                    // no published allowance: no honest number to quote
+      : `${minsLeft} minute${minsLeft === 1 ? "" : "s"} left ${gate.paid ? "this month" : "on your free credit"}`;
+
+    // The three template slots, phrased so each value still reads correctly
+    // under the template's own fixed labels (Calls / Appointments / New leads)
+    // and stays inside Meta's 60-character parameter cap.
+    const callsParam = calls.length === 0 ? "none yesterday"
+      : missed ? `${answered} answered · ${missed} missed` : `${answered} answered`;
+    const apptParam  = booked ? `${booked} today` : "none today";
+    const leadParam  = hot.length ? `${hot.length} worth calling back` : "none waiting";
+
+    const body =
+      `Yesterday: ${callsParam}. Appointments today: ${apptParam}. ` +
+      `Leads: ${leadParam}.${minsLine ? ` ${minsLine}.` : ""}`;
+
+    if (profile?.whatsapp_number) {
+      const ok = await sendOwnerTemplate(sb, {
+        to:              profile.whatsapp_number,
+        tenantId:        t.id,
+        voiceProfileId:  profile.id || null,
+        messageType:     "morning_briefing",
+        template:        "daily_business_summary",
+        lang:            "te",
+        params:          [business, callsParam, apptParam, leadParam],
+        logBody:         body,
+      });
+      if (ok) sent++;
+      continue;   // sendOwnerTemplate has already written the marker row
+    }
+
+    // No WhatsApp number on the profile — email the owner instead. This is
+    // also the only version that can carry the names and numbers to ring and
+    // the minutes balance; four template slots cannot.
+    const email = await ownerEmail(t.owner_id);
+    if (!email) continue;                     // no destination at all
+    const rows = hot.map(l => `<li>${escapeHtml(l.name || "Unknown caller")} — ${escapeHtml(l.phone || "")}</li>`).join("");
+    const html =
+      // The caller-facing name, the same one in the subject — tenants.name is
+      // the internal label ("sai clinic ", trailing space and all).
+      `<p>Good morning, ${escapeHtml(business)}.</p>` +
+      `<p><strong>Yesterday:</strong> ${escapeHtml(callsParam)}.<br>` +
+      `<strong>Booked in for today:</strong> ${escapeHtml(apptParam)}.</p>` +
+      (hot.length ? `<p><strong>Worth calling back:</strong></p><ul>${rows}</ul>` : "") +
+      (minsLine ? `<p>${escapeHtml(minsLine)}.</p>` : "") +
+      `<p><a href="https://heynikki.in/dashboard">Open your dashboard</a></p>`;
+    const ok = await sendOwnerEmail(email, `${business} — this morning's briefing`, html);
+
+    // Same marker the WhatsApp path leaves, so tomorrow's run can tell
+    // "already briefed" from "never tried" whichever channel was used.
+    const { error: logErr } = await sb.from("wa_dispatch_log").insert({
+      tenant_id: t.id, voice_profile_id: profile?.id || null,
+      message_type: "morning_briefing_email", to_number: email,
+      message_body: body, status: ok ? "sent" : "failed",
+    });
+    if (logErr) log("briefing: marker write failed:", logErr.message);
+    if (ok) sent++;
+  }
+
+  if (sent) log(`sent ${sent} morning briefing${sent === 1 ? "" : "s"}`);
+  return sent;
+}
+
+/** The owner's login email. Lives in auth, not in tenants. */
+async function ownerEmail(ownerId: string | null): Promise<string | null> {
+  if (!ownerId) return null;
+  try {
+    const { data } = await sb.auth.admin.getUserById(ownerId);
+    return data?.user?.email || null;
+  } catch (e: any) {
+    log("briefing: owner email lookup failed:", e?.message || e);
+    return null;
+  }
+}
+
+/** Lead names come from call transcripts, so they are arbitrary text going
+ *  into an HTML email. Escaped rather than trusted. */
+function escapeHtml(s: string): string {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 /* ── entry point ────────────────────────────────────────────── */
 
 
@@ -728,6 +941,9 @@ export async function runScheduler() {
   await runEmbedKnowledge();
   await runAppointmentReminders();
   await runIncompleteBookings();
+  // Morning first, evening second — each is a no-op outside its own IST
+  // window, so the order only decides which one is checked first.
+  await runMorningBriefings();
   await runDailySummaries();
   await runCallQuality();
   await runCloseAbandonedCalls();

@@ -11,7 +11,8 @@ import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
-  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic } from "lucide-react";
+  X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic,
+  HeartPulse, Beaker, Mail, Send, Eye, Ban, Timer } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -92,11 +93,14 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
 // Order within each group runs in the order the work actually happens.
 const NAV_GROUPS: { title: string; labels: string[] }[] = [
   { title: "Overview",  labels: ["Dashboard"] },
-  { title: "Customers", labels: ["Tenants", "KYC Review", "Billing", "CRM", "Revenue"] },
+  { title: "Customers", labels: ["Tenants", "Demo Tenants", "KYC Review", "Billing", "CRM", "Revenue"] },
   { title: "Telephony", labels: ["Live Calls", "Numbers", "WhatsApp", "FreeSWITCH"] },
   { title: "Quality",   labels: ["Call Quality", "Agent Versions", "Voice Lab"] },
   { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
-  { title: "Platform",  labels: ["Operations", "API Health", "Platform Config",
+  // Platform Health leads the group because it is the screen an operator
+  // opens first: it is the only one that answers "is anything stuck, and
+  // since when" without knowing which subsystem to suspect.
+  { title: "Platform",  labels: ["Platform Health", "Operations", "API Health", "Platform Config",
                                  "Pricing Engine", "Audit Log"] },
 ];
 
@@ -121,6 +125,11 @@ const TABS = [
   { label: "Platform Config", icon: Settings },
   { label: "FreeSWITCH",      icon: SignalHigh },
   { label: "Pricing Engine",  icon: CreditCard },
+  // Appended, never inserted: `panels` below is indexed by position in this
+  // array, so putting a new tab in the middle silently renders the wrong
+  // screen for every tab after it. NAV_GROUPS decides the visible order.
+  { label: "Demo Tenants",    icon: Beaker },
+  { label: "Platform Health", icon: HeartPulse },
 ];
 
 
@@ -168,6 +177,8 @@ export default function SuperAdminPage() {
     <PlatformConfigPanel key="cfg"   token={token} />,
     <FreeSwitchPanel     key="fs"    token={token} />,
     <PricingEnginePanel  key="price" token={token} />,
+    <DemoTenantsPanel    key="demo"  token={token} />,
+    <PlatformHealthPanel key="hlth"  token={token} />,
   ];
 
 
@@ -2646,80 +2657,628 @@ function APIHealthPanel({ token }: { token: string }) {
 }
 
 // ── BROADCAST PANEL ───────────────────────────────────────
+/**
+ * Broadcast — an announcement that actually leaves the building.
+ *
+ * The channel is email, one message per tenant OWNER, through the same Resend
+ * account that sends billing and usage mail. WhatsApp is not an option:
+ * Meta approves templates by name and there is no approved operator
+ * announcement template, so free text would be rejected and would cost the
+ * business number its quality rating. Push is not configured.
+ *
+ * Two things this screen refuses to do, both of which the old one did:
+ *   1. Send without showing who. The dry run lists every business and the
+ *      exact address it would be mailed at, and Send stays disabled until the
+ *      preview matches the message and audience currently on screen.
+ *   2. Report a total. "Sent to 40 tenants" hides the three that bounced.
+ *      Every recipient gets its own line and its own outcome.
+ */
 function BroadcastPanel({ token }: { token: string }) {
+  const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
-  const [filter, setFilter]   = useState("all");
-  const [sending, setSending] = useState(false);
-  const [result, setResult]   = useState<string | null>(null);
+  const [plan, setPlan]       = useState("all");
+  const [status, setStatus]   = useState("all");
+  const [hasDid, setHasDid]   = useState("any");
+  const [includeDemo, setIncludeDemo] = useState(false);
 
-  const send = async () => {
-    if (!message.trim()) return;
-    setSending(true);
-    setResult(null);
-    const resp = await fetch(`${API}/api/admin/broadcast`, {
+  const [preview, setPreview] = useState<any>(null);
+  // The exact filters + text the preview was taken for. Change any of them
+  // and Send locks again — a preview of the Growth plan followed by a send to
+  // everyone is the mistake this exists to make impossible.
+  const [previewOf, setPreviewOf] = useState("");
+  const [busy, setBusy]       = useState<"preview" | "send" | null>(null);
+  const [error, setError]     = useState("");
+  const [result, setResult]   = useState<any>(null);
+  const [history, setHistory] = useState<any>(null);
+
+  const audience = { plan, status, has_did: hasDid, include_demo: includeDemo };
+  const stamp    = JSON.stringify({ ...audience, subject, message });
+  const ready    = subject.trim().length > 0 && message.trim().length >= 10;
+  const canSend  = ready && preview && previewOf === stamp
+                   && (preview.counts?.reachable || 0) > 0 && busy === null;
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/api/admin/broadcast/history`, {
+        headers: { Authorization: `Bearer ${token}` } });
+      setHistory(await r.json());
+    } catch { setHistory(null); }
+  }, [token]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  const call = async (path: string, body: any) => {
+    const r = await fetch(`${API}/api/admin/broadcast/${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ message, plan_filter: filter === "all" ? undefined : filter }),
+      body: JSON.stringify(body),
     });
-    const data = await resp.json();
-    // Never claim delivery the server did not make: this said "Sent to N
-    // tenants" for an endpoint that only logged the message.
-    setResult(resp.ok && data.ok
-      ? `Sent to ${data.sent_to || 0} tenants`
-      : (data.error || "Broadcast failed — nothing was sent."));
-    setSending(false);
-    if (resp.ok && data.ok) setMessage("");
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Failed (${r.status})`);
+    return j;
+  };
+
+  const runPreview = async () => {
+    setBusy("preview"); setError(""); setResult(null);
+    try {
+      const j = await call("preview", audience);
+      setPreview(j); setPreviewOf(stamp);
+    } catch (e: any) { setError(e.message); setPreview(null); }
+    setBusy(null);
+  };
+
+  const send = async () => {
+    const n = preview?.counts?.reachable || 0;
+    if (!window.confirm(`Email this announcement to ${n} business owner${n === 1 ? "" : "s"}? It cannot be un-sent.`)) return;
+    setBusy("send"); setError("");
+    try {
+      const j = await call("send", { ...audience, subject, message });
+      setResult(j);
+      setPreview(null); setPreviewOf("");
+      loadHistory();
+    } catch (e: any) { setError(e.message); }
+    setBusy(null);
+  };
+
+  const stateColor = (s: string) =>
+    s === "sent" ? C.grn : s === "failed" ? C.red : s === "no_email" ? C.gold : C.dim;
+
+  const Recipient = ({ r }: { r: any }) => (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const,
+      padding: "6px 0", borderBottom: `1px solid ${C.bord}33`, fontSize: TYPE.sm }}>
+      <span style={{ color: C.txt, fontWeight: 700, minWidth: 150 }}>{r.tenant_name || r.tenant}</span>
+      <span style={{ color: C.mid, flex: "1 1 200px", overflow: "hidden",
+        textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+        {r.email || "— no owner email on file —"}
+      </span>
+      {r.plan && <span style={{ color: C.dim, fontSize: TYPE.xs }}>{r.plan} · {r.status}</span>}
+      <Pill label={r.state === "ready" ? "will send" : r.state.replace("_", " ")}
+        color={r.state === "ready" ? C.gbr : stateColor(r.state)} />
+      {r.error && <span style={{ color: C.red, fontSize: TYPE.xs, flexBasis: "100%" }}>{r.error}</span>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: SPACE.md,
+        flexWrap: "wrap" as const }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Broadcast</div>
+        <Pill label="email only" color={C.gbr} />
+        {preview && preview.channel_ready === false &&
+          <Pill label="RESEND_API_KEY not set" color={C.red} />}
+      </div>
+
+      <Card style={{ marginBottom: SPACE.sm }}>
+        <div style={{ color: C.dim, fontSize: TYPE.xs, lineHeight: 1.6 }}>
+          Goes to each tenant&apos;s <strong style={{ color: C.mid }}>owner</strong> by email, from{" "}
+          {preview?.sender || "noreply@heynikki.in"}. There is no approved WhatsApp template for an
+          operator announcement and push is not configured, so email is the only channel that can
+          honestly say it delivered.
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: SPACE.sm }}>
+        <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>
+          1 · Audience
+        </div>
+        <div style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap" as const, alignItems: "center" }}>
+          <select value={plan} onChange={e => { setPlan(e.target.value); setPreview(null); }}
+            style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+              borderRadius: 8, padding: "8px 10px", fontSize: TYPE.sm }}>
+            <option value="all">Every plan</option>
+            <option value="trial">Trial</option>
+            <option value="starter">Starter</option>
+            <option value="growth">Growth</option>
+            <option value="scale">Scale</option>
+          </select>
+          <select value={status} onChange={e => { setStatus(e.target.value); setPreview(null); }}
+            style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+              borderRadius: 8, padding: "8px 10px", fontSize: TYPE.sm }}>
+            <option value="all">Any status</option>
+            <option value="trial">Trial</option>
+            <option value="active">Active</option>
+            <option value="suspended">Suspended</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <PillToggle
+            options={[{ label: "Any number", value: "any" },
+                      { label: "Has a DID", value: "yes" },
+                      { label: "No DID", value: "no" }]}
+            value={hasDid} onChange={v => { setHasDid(v); setPreview(null); }} />
+          <label style={{ color: C.dim, fontSize: TYPE.xs, display: "inline-flex",
+            alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={includeDemo}
+              onChange={e => { setIncludeDemo(e.target.checked); setPreview(null); }} />
+            {/* A demo is a sandbox with a throwaway address, not a customer. */}
+            Include demo tenants
+          </label>
+          <button onClick={runPreview} disabled={busy !== null}
+            style={{ marginLeft: "auto", background: "none", border: "1px solid " + C.gbr + "66",
+              color: C.gbr, borderRadius: 7, padding: "7px 14px", fontSize: TYPE.xs,
+              fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Eye size={13} /> {busy === "preview" ? "Checking…" : "Dry run — who gets this"}
+          </button>
+        </div>
+      </Card>
+
+      {preview && (
+        <Card style={{ marginBottom: SPACE.sm, borderColor: C.gbr + "55" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8,
+            flexWrap: "wrap" as const }}>
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>Dry run — nothing sent</span>
+            <Pill label={`${preview.counts?.reachable || 0} will receive`} color={C.grn} />
+            {(preview.counts?.no_email || 0) > 0 &&
+              <Pill label={`${preview.counts.no_email} have no owner email`} color={C.gold} />}
+            {previewOf !== stamp &&
+              <Pill label="message or audience changed — run again" color={C.red} />}
+          </div>
+          {(preview.recipients || []).length === 0
+            ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>No tenant matches this filter.</div>
+            : (preview.recipients || []).map((r: any) => <Recipient key={r.tenant_id} r={r} />)}
+        </Card>
+      )}
+
+      <Card style={{ marginBottom: SPACE.sm }}>
+        <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>
+          2 · Message
+        </div>
+        <input value={subject} onChange={e => setSubject(e.target.value)}
+          placeholder="Subject line — this is what lands in their inbox"
+          maxLength={150}
+          style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+            borderRadius: 8, padding: "10px 12px", fontSize: TYPE.sm, width: "100%",
+            marginBottom: SPACE.sm }} />
+        <textarea value={message} onChange={e => setMessage(e.target.value)}
+          placeholder="Plain text. Blank lines become paragraphs; the business name is greeted for you."
+          rows={6} maxLength={4000}
+          style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
+            borderRadius: 8, padding: "10px 12px", fontSize: TYPE.sm, width: "100%",
+            resize: "vertical" }} />
+        <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 6 }}>{message.length}/4000</div>
+      </Card>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
+        <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div></Card>}
+
+      <Card style={{ marginBottom: SPACE.md }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" as const }}>
+          <button onClick={send} disabled={!canSend}
+            style={{ background: canSend ? C.glow : C.bord, color: canSend ? "#fff" : C.dim,
+              border: "none", borderRadius: 8, padding: "11px 22px", fontSize: TYPE.sm,
+              fontWeight: 800, cursor: canSend ? "pointer" : "not-allowed",
+              display: "inline-flex", alignItems: "center", gap: 7 }}>
+            <Send size={14} /> {busy === "send"
+              ? `Sending to ${preview?.counts?.reachable || 0}…`
+              : `Send to ${preview && previewOf === stamp ? preview.counts?.reachable || 0 : "…"}`}
+          </button>
+          <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+            {!ready ? "A subject and at least ten characters of message."
+              : !preview || previewOf !== stamp ? "Run the dry run for this exact message and audience first."
+              : (preview.counts?.reachable || 0) === 0 ? "Nobody in this audience has an owner email."
+              : "Sent in batches of 25 with a rate-limit gap, so a hundred owners do not hammer Resend."}
+          </span>
+        </div>
+      </Card>
+
+      {result && (
+        <Card style={{ marginBottom: SPACE.md,
+          borderColor: (result.counts?.failed || 0) ? C.red + "55" : C.grn + "55" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10,
+            flexWrap: "wrap" as const }}>
+            {/* Counted, never summarised: three failures out of forty is a
+                sentence about three businesses, not a green tick. */}
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>Delivery result</span>
+            <Pill label={`${result.counts?.sent || 0} sent`} color={C.grn} />
+            {(result.counts?.failed || 0) > 0 && <Pill label={`${result.counts.failed} failed`} color={C.red} />}
+            {(result.counts?.no_email || 0) > 0 && <Pill label={`${result.counts.no_email} no email`} color={C.gold} />}
+          </div>
+          {(result.recipients || []).map((r: any) => <Recipient key={r.tenant_id} r={r} />)}
+          {/* "sent" is what Resend accepted, which is not the same as what an
+              inbox received — a later bounce arrives on Resend's webhook and
+              nothing subscribes to it yet. Said here rather than implied. */}
+          <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 10 }}>
+            &ldquo;Sent&rdquo; means Resend accepted the message and gave it an id. A bounce after
+            that is not reported back here.
+          </div>
+          {(result.counts?.failed || 0) > 0 && (
+            <div style={{ color: C.gold, fontSize: TYPE.xs, marginTop: 10, lineHeight: 1.6 }}>
+              A failed row was never delivered. Fix the address and send again to just those
+              tenants — Resend reports the reason on each line above.
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <Mail size={14} color={C.dim} />
+          <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>Previous broadcasts</span>
+          {history?.source === "audit_log" &&
+            <Pill label="from the audit log" color={C.gold} />}
+        </div>
+        {history?.note && <div style={{ color: C.dim, fontSize: TYPE.xs, marginBottom: 8 }}>{history.note}</div>}
+        {!history?.broadcasts?.length
+          ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Nothing has been broadcast yet.</div>
+          : history.broadcasts.map((b: any) => (
+            <details key={b.id} style={{ borderBottom: `1px solid ${C.bord}33`, padding: "8px 0" }}>
+              <summary style={{ cursor: "pointer", color: C.txt, fontSize: TYPE.sm,
+                display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
+                <span style={{ fontWeight: 700 }}>{b.subject || "(no subject)"}</span>
+                <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+                  {new Date(b.created_at).toLocaleString("en-IN")}
+                </span>
+                <Pill label={`${b.sent_count ?? 0} sent`} color={C.grn} />
+                {(b.failed_count || 0) > 0 && <Pill label={`${b.failed_count} failed`} color={C.red} />}
+                {(b.no_email_count || 0) > 0 && <Pill label={`${b.no_email_count} no email`} color={C.gold} />}
+              </summary>
+              <div style={{ paddingLeft: SPACE.sm, marginTop: 6 }}>
+                {(b.recipients || []).map((r: any, i: number) => <Recipient key={r.tenant_id || i} r={r} />)}
+              </div>
+            </details>
+          ))}
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * Demo tenants.
+ *
+ * POST /api/admin/demo-tenants has existed since migration 007 with no caller
+ * anywhere — the only way to make a demo was an HTTP request typed by hand,
+ * so demos were made as ordinary tenants instead and two of them sat on the
+ * platform for two months.
+ *
+ * The expiry is not decoration. jobs/scheduler.ts suspends a demo whose
+ * demo_expires_at has passed AND whose status is still 'trial'; anything else
+ * it skips. So this screen shows the expiry, whether the sweeper can still
+ * see the row, and what the demo actually used while it was alive.
+ */
+function DemoTenantsPanel({ token }: { token: string }) {
+  const [rows, setRows]     = useState<any[]>([]);
+  const [counts, setCounts] = useState<any>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError]   = useState("");
+  const [name, setName]     = useState("");
+  const [days, setDays]     = useState(7);
+  const [busy, setBusy]     = useState<string | null>(null);
+  const [extend, setExtend] = useState<Record<string, number>>({});
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/demo-tenants`, {
+        headers: { Authorization: `Bearer ${token}` } });
+      const j = await r.json();
+      if (!r.ok) setError(j.error || `Failed (${r.status})`);
+      else { setRows(j.demos || []); setCounts(j.counts || {}); }
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const post = async (path: string, body?: any) => {
+    const r = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Failed (${r.status})`);
+    return j;
+  };
+
+  const create = async () => {
+    setBusy("create"); setError("");
+    try {
+      await post("/api/admin/demo-tenants", { name: name.trim(), days });
+      setName(""); await load();
+    } catch (e: any) { setError(e.message); }
+    setBusy(null);
+  };
+
+  const act = async (id: string, what: "extend" | "expire") => {
+    setBusy(id + what); setError("");
+    try {
+      await post(`/api/admin/demo-tenants/${id}/${what}`,
+                 what === "extend" ? { days: extend[id] || 7 } : undefined);
+      await load();
+    } catch (e: any) { setError(e.message); }
+    setBusy(null);
   };
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <Card>
-        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginBottom: 16 }}>
-          Broadcast Announcement
-        </div>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: SPACE.md,
+        flexWrap: "wrap" as const }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Demo tenants</div>
+        <Pill label={`${counts.live ?? 0} live`} color={C.grn} />
+        {(counts.expired ?? 0) > 0 && <Pill label={`${counts.expired} expired`} color={C.dim} />}
+        {(counts.unswept ?? 0) > 0 &&
+          <Pill label={`${counts.unswept} past expiry the sweeper cannot see`} color={C.gold} />}
+        <button onClick={load} style={{ marginLeft: "auto", background: "none",
+          border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
+          padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Refresh</button>
+      </div>
 
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ color: C.mid, fontSize: TYPE.sm, fontWeight: 600, display: "block", marginBottom: 6 }}>
-            Target Audience
-          </label>
-          <select value={filter} onChange={e => setFilter(e.target.value)}
+      <Card style={{ marginBottom: SPACE.sm }}>
+        <div style={{ display: "flex", gap: SPACE.sm, alignItems: "center", flexWrap: "wrap" as const }}>
+          <div style={{ color: C.mid, fontSize: TYPE.sm, fontWeight: 700 }}>New demo</div>
+          <input value={name} onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && name.trim().length >= 3) create(); }}
+            placeholder="Business name shown in the demo"
+            style={{ padding: "7px 10px", borderRadius: 7, fontSize: TYPE.sm, minWidth: 230,
+              background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+          <select value={days} onChange={e => setDays(Number(e.target.value))}
             style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-              borderRadius: 8, padding: "10px 12px", fontSize: TYPE.sm, width: "100%" }}>
-            <option value="all">All Tenants</option>
-            <option value="trial">Trial Users Only</option>
-            <option value="starter">Starter Plan</option>
-            <option value="growth">Growth Plan</option>
-            <option value="scale">Scale Plan</option>
+              borderRadius: 7, padding: "7px 10px", fontSize: TYPE.sm }}>
+            {[3, 7, 14, 30].map(d => <option key={d} value={d}>{d} days</option>)}
           </select>
+          <button onClick={create} disabled={busy === "create" || name.trim().length < 3}
+            style={{ padding: "7px 14px", borderRadius: 7, border: "none",
+              background: name.trim().length < 3 ? C.bord : C.grn,
+              color: name.trim().length < 3 ? C.dim : "#04120a",
+              fontSize: TYPE.sm, fontWeight: 800,
+              cursor: name.trim().length < 3 ? "not-allowed" : "pointer" }}>
+            {busy === "create" ? "Creating…" : "Create demo"}
+          </button>
+          <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+            Created as <strong style={{ color: C.mid }}>[demo] name</strong>, trial plan, with a
+            stamped expiry the scheduler enforces.
+          </span>
         </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ color: C.mid, fontSize: TYPE.sm, fontWeight: 600, display: "block", marginBottom: 6 }}>
-            Message
-          </label>
-          <textarea value={message} onChange={e => setMessage(e.target.value)}
-            placeholder="Type your announcement..."
-            rows={4}
-            style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-              borderRadius: 8, padding: "10px 12px", fontSize: TYPE.sm, width: "100%",
-              resize: "vertical" }} />
-        </div>
-
-        {result && (
-          <div style={{ background: C.grn + "22", border: "1px solid " + C.grn + "44",
-            borderRadius: 8, padding: "10px 12px", color: C.grn, fontSize: TYPE.sm, marginBottom: 14,
-            display: "flex", alignItems: "center", gap: 6 }}>
-            <Check size={14} /> {result}
-          </div>
-        )}
-
-        <button onClick={send} disabled={sending || !message.trim()}
-          style={{ background: C.glow, color: "#fff", border: "none",
-            borderRadius: 8, padding: "12px 24px", fontSize: TYPE.base, fontWeight: 700,
-            opacity: (sending || !message.trim()) ? 0.6 : 1, cursor: "pointer" }}>
-          {sending ? "Sending..." : "Send Broadcast"}
-        </button>
       </Card>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
+        <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div></Card>}
+
+      {loading ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Loading…</div>
+        : rows.length === 0
+        ? <Card><div style={{ color: C.dim, fontSize: TYPE.sm }}>
+            No demo tenants. Anything created here is disposable by construction — the sweeper
+            suspends it on its expiry date without anyone remembering to.
+          </div></Card>
+        : (
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+          {rows.map(d => (
+            <Card key={d.id} hover>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" as const, alignItems: "center" }}>
+                <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+                  <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>{d.name}</div>
+                  <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                    {d.plan} · {d.status}
+                    {d.demo_phone ? ` · ${d.demo_phone}` : ""}
+                    {` · ${d.calls_total} call${d.calls_total === 1 ? "" : "s"}, ${d.minutes_used} min`}
+                    {d.last_call_ist ? ` · last ${d.last_call_ist}` : " · never called"}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" as const, minWidth: 150 }}>
+                  <div style={{ color: d.expired ? C.red : C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                    {d.expired ? "Expired" : "Expires"} {d.expires_in || "—"}
+                  </div>
+                  <div style={{ color: C.dim, fontSize: TYPE.xs }}>{d.expires_at_ist || "no expiry set"} IST</div>
+                </div>
+                {/* Past its date but not status 'trial': runExpireDemos filters
+                    on status = 'trial', so this row will never be swept. */}
+                {d.expired && !d.swept_by_scheduler &&
+                  <Pill label="sweeper skips this" color={C.gold} />}
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <select value={extend[d.id] || 7}
+                    onChange={e => setExtend(p => ({ ...p, [d.id]: Number(e.target.value) }))}
+                    style={{ background: C.bg, border: "1px solid " + C.bord, borderRadius: 6,
+                      padding: "6px 8px", color: C.txt, fontSize: TYPE.xs }}>
+                    {[3, 7, 14, 30].map(x => <option key={x} value={x}>+{x}d</option>)}
+                  </select>
+                  <button onClick={() => act(d.id, "extend")} disabled={busy === d.id + "extend"}
+                    style={{ background: C.grn + "22", color: C.grn, border: "1px solid " + C.grn + "55",
+                      borderRadius: 6, padding: "6px 12px", fontSize: TYPE.xs, fontWeight: 700,
+                      cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <Timer size={12} /> {busy === d.id + "extend" ? "…" : "Extend"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Suspends the tenant immediately — a demo in front of a
+                      // prospect stops working the moment this is clicked.
+                      if (window.confirm(`Expire ${d.name} now? It is suspended immediately.`))
+                        act(d.id, "expire");
+                    }}
+                    disabled={busy === d.id + "expire" || d.status === "suspended"}
+                    style={{ background: C.red + "18", color: d.status === "suspended" ? C.dim : C.red,
+                      border: "1px solid " + C.red + "44", borderRadius: 6, padding: "6px 12px",
+                      fontSize: TYPE.xs, fontWeight: 700,
+                      cursor: d.status === "suspended" ? "not-allowed" : "pointer",
+                      display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <Ban size={12} /> {busy === d.id + "expire" ? "…" : "Expire now"}
+                  </button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Platform Health — the page an operator opens at 9am.
+ *
+ * Operations answers "did the automations run last night". This answers the
+ * other question: "is anything stuck right now, and since when". Every row
+ * carries exactly three things — what is wrong, how long it has been wrong,
+ * and the single action that fixes it. A row whose own query failed reads
+ * "unknown", never green, because a check that breaks quietly is the fault
+ * this board exists to catch.
+ *
+ * Read-only except for closing calls stuck 'active'. Requeueing a stuck
+ * campaign recipient is deliberately not a button: it makes the dispatcher
+ * ring a real person's phone.
+ */
+function PlatformHealthPanel({ token }: { token: string }) {
+  const [data, setData]     = useState<any>(null);
+  const [loading, setLoad]  = useState(true);
+  const [error, setError]   = useState("");
+  const [busy, setBusy]     = useState(false);
+  const [open, setOpen]     = useState<Record<string, boolean>>({});
+
+  const load = useCallback(async () => {
+    setLoad(true); setError("");
+    try {
+      const r = await fetch(`${API}/api/admin/platform-health`, {
+        headers: { Authorization: `Bearer ${token}` } });
+      const j = await r.json();
+      if (!r.ok) setError(j.error || `Failed (${r.status})`);
+      else setData(j);
+    } catch (e: any) { setError(e.message); }
+    setLoad(false);
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const closeStuck = async () => {
+    if (!window.confirm("Close every call row stuck 'active' for over two hours? They are marked failed; no live call can be that old.")) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/api/admin/platform-health/close-stuck-calls`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ older_than_minutes: 120 }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setError(j.error || `Failed (${r.status})`);
+      else await load();
+    } catch (e: any) { setError(e.message); }
+    setBusy(false);
+  };
+
+  const tone = (s: string) =>
+    s === "critical" ? C.red : s === "warn" ? C.gold : s === "unknown" ? C.dim : C.grn;
+
+  const s = data?.summary || {};
+  const groups: string[] = Array.from(new Set((data?.rows || []).map((r: any) => String(r.group))));
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: SPACE.md,
+        flexWrap: "wrap" as const }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 900 }}>Platform health</div>
+        {(s.critical || 0) > 0 && <Pill label={`${s.critical} critical`} color={C.red} />}
+        {(s.warn || 0) > 0 && <Pill label={`${s.warn} needs attention`} color={C.gold} />}
+        {(s.unknown || 0) > 0 && <Pill label={`${s.unknown} unknown`} color={C.dim} />}
+        {!s.critical && !s.warn && !s.unknown && data && <Pill label="all clear" color={C.grn} />}
+        <button onClick={load} style={{ marginLeft: "auto", background: "none",
+          border: "1px solid " + C.bord, color: C.dim, borderRadius: 7,
+          padding: "5px 11px", fontSize: TYPE.xs, cursor: "pointer" }}>Re-check</button>
+      </div>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: SPACE.sm }}>
+        <div style={{ color: C.red, fontSize: TYPE.sm }}>{error}</div></Card>}
+
+      {loading && !data ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>Checking…</div> : (
+        <div>
+          {groups.map(g => (
+            <div key={g} style={{ marginBottom: SPACE.md }}>
+              <div style={{ color: C.dim, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em",
+                textTransform: "uppercase" as const, marginBottom: SPACE.xs + 2 }}>{g}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+                {(data?.rows || []).filter((r: any) => r.group === g).map((r: any) => (
+                  <Card key={r.id} hover style={{
+                    borderColor: r.severity === "ok" ? C.bord : tone(r.severity) + "55" }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" as const }}>
+                      <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                        background: tone(r.severity), marginTop: 6, flexShrink: 0,
+                        boxShadow: r.severity === "ok" ? "none" : "0 0 8px " + tone(r.severity) }} />
+                      <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" as const }}>
+                          <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{r.title}</span>
+                          {/* Since when. A count without an age cannot tell a
+                              backlog that is clearing from one that is stuck. */}
+                          {r.since_label && <span style={{ color: tone(r.severity), fontSize: TYPE.xs,
+                            fontWeight: 700 }}>{r.since_label}</span>}
+                        </div>
+                        <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 4, lineHeight: 1.6 }}>
+                          {r.detail}
+                        </div>
+                        {r.severity !== "ok" && (
+                          <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 6, lineHeight: 1.6 }}>
+                            <strong style={{ color: C.gbr }}>Fix:</strong> {r.action}
+                          </div>
+                        )}
+                        {r.action_endpoint?.includes("close-stuck-calls") && (
+                          <button onClick={closeStuck} disabled={busy}
+                            style={{ marginTop: 8, background: C.gold + "18", color: C.gold,
+                              border: "1px solid " + C.gold + "55", borderRadius: 6,
+                              padding: "5px 12px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                            {busy ? "Closing…" : "Close the ones over two hours"}
+                          </button>
+                        )}
+                        {(r.items || []).length > 0 && (
+                          <button onClick={() => setOpen(p => ({ ...p, [r.id]: !p[r.id] }))}
+                            style={{ marginTop: 8, background: "none", border: "none", padding: 0,
+                              color: C.gbr, fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                            {open[r.id] ? "Hide" : `Show ${r.items.length}`}
+                          </button>
+                        )}
+                        {open[r.id] && (
+                          <div style={{ marginTop: 8 }}>
+                            {r.items.map((it: any, i: number) => (
+                              <div key={it.id || it.tenant_id || i}
+                                style={{ display: "flex", gap: 10, flexWrap: "wrap" as const,
+                                  padding: "5px 0", borderBottom: `1px solid ${C.bord}33`,
+                                  fontSize: TYPE.xs, color: C.mid }}>
+                                <span style={{ color: C.txt, fontWeight: 700, minWidth: 140 }}>
+                                  {it.name || it.phone || it.to || it.caller || it.file_name || it.id?.slice(0, 8)}
+                                </span>
+                                {it.pct !== undefined &&
+                                  <span style={{ color: it.blocked ? C.red : C.gold, fontWeight: 700 }}>
+                                    {it.used}/{it.limit} min ({it.pct}%)
+                                    {it.blocked ? " — not answering" : it.credits ? ` · ${it.credits} credit min left` : ""}
+                                  </span>}
+                                {it.doc_type && <span>{it.doc_type}</span>}
+                                {it.type && <span>{it.type}</span>}
+                                {it.window && <span>window {it.window}</span>}
+                                {it.has_recipients_waiting && <span style={{ color: C.gold }}>recipients waiting</span>}
+                                {it.plan && <span>{it.plan} · {it.status}</span>}
+                                {it.since_label && <span style={{ marginLeft: "auto", color: C.dim }}>{it.since_label}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {r.count !== null && r.count !== undefined && (
+                        <div style={{ color: tone(r.severity), fontSize: 20, fontWeight: 900 }}>{r.count}</div>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ))}
+          {data?.generated_at_ist && (
+            <div style={{ color: C.dim, fontSize: TYPE.xs }}>
+              Checked {data.generated_at_ist} IST · day boundaries are IST, not UTC
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2853,6 +3412,14 @@ function PlatformConfigPanel({ token }: { token: string }) {
             </button>
           </Row>
         ))}
+
+        <Row label="Morning Briefing" desc="08:30 IST WhatsApp/email to every owner: yesterday's calls, today's bookings, who to ring back. OFF stops it platform-wide, immediately.">
+          <PillToggle
+            options={[{ label: "ON", value: "on" }, { label: "OFF", value: "off" }]}
+            value={cfg["morning_briefing"] || "on"}
+            onChange={v => saveKey("morning_briefing", v)}
+          />
+        </Row>
 
         <Row label="Telephony Engine" desc="FreeSWITCH = Jio/Vi SIP primary. Exotel = legacy fallback.">
           <PillToggle

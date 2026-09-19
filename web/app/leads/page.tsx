@@ -22,9 +22,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
-import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList, Plus, Upload, Search, MessageCircle, Flame } from "lucide-react";
+import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList, Plus, Upload, Search, MessageCircle, Flame, Bell, SlidersHorizontal } from "lucide-react";
 import LeadDetail, { type Stage } from "../../components/LeadDetail";
 import { toast } from "../../components/Toast";
+import ExportButton from "../../components/ExportButton";
+import FollowUp, {
+  followUpSupported, followUpLabel, isDue, isOverdue, istToday,
+  type FollowUpFields,
+} from "../../components/FollowUp";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -51,7 +56,10 @@ type Lead = {
   assigned_to: string | null;
   deal_value_paise: number | null;
   tags: string[] | null;
-};
+// Follow-up reminders arrive in supabase/056. Optional, because this build
+// may be talking to a database that has not had it applied — see
+// followUpSupported() in components/FollowUp.tsx.
+} & FollowUpFields;
 
 // The fallback, and the platform defaults. crm_pipeline_stages holds the
 // same five rows with tenant_id null, plus any a business defines for
@@ -242,6 +250,10 @@ function AddLead({ tenantId, onDone, onCancel }: { tenantId: string | null; onDo
   );
 }
 
+// One screenful of leads. Anything past this is reached by narrowing the
+// filters or by the CSV, which pages through the lot server-side.
+const PAGE_SIZE = 500;
+
 type SortKey = "recent" | "score" | "calls" | "newest";
 const SORTS: Array<{ id: SortKey; label: string }> = [
   { id: "recent", label: "Last contact" }, { id: "score", label: "Highest score" },
@@ -257,9 +269,32 @@ export default function LeadsPage() {
   const [error, setError] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [hotOnly, setHotOnly] = useState(false);
+  const [dueOnly, setDueOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>("recent");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState("");     // what is in the box
+  const [query, setQuery] = useState("");       // what has been searched for
   const [adding, setAdding] = useState(false);
+  // The search used to run over whatever rows happened to be loaded, so a
+  // lead outside the first 500 could not be found at all. Every filter below
+  // is applied by Postgres now, which is also what the CSV export applies.
+  const [moreFilters, setMoreFilters] = useState(false);
+  const [tag, setTag] = useState("");
+  const [scoreMin, setScoreMin] = useState("");
+  const [scoreMax, setScoreMax] = useState("");
+  const [contactedFrom, setContactedFrom] = useState("");
+  const [contactedTo, setContactedTo] = useState("");
+  // Counted over every lead, not the page that is on screen, so the chips
+  // do not disagree with the list the moment a filter is applied.
+  const [counts, setCounts] = useState<{ stage: Record<string, number>; total: number; hot: number; due: number }>(
+    { stage: {}, total: 0, hot: 0, due: 0 });
+  // supabase/056 may not be applied. Until it is, no reminder UI is drawn —
+  // a button that answers "column leads.follow_up_at does not exist" is
+  // worse than no button.
+  const [followUps, setFollowUps] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  // Nothing is fetched until sign-in, the tenant and the follow-up probe are
+  // settled, so the list is not read twice on every page load.
+  const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   // Click-to-Call + Disposition state
@@ -364,8 +399,95 @@ export default function LeadsPage() {
     setDispSaving(null);
   };
 
-  const load = useCallback(async () => {
+  // The list filters, exactly as the CSV export receives them. Kept in one
+  // place so "download what I am looking at" cannot drift from what is on
+  // screen — api-server/src/search-export.ts applies the same set.
+  const exportParams = {
+    q: query, stage: stageFilter, tag,
+    score_min: hotOnly && !scoreMin ? "70" : scoreMin,
+    score_max: scoreMax,
+    contacted_from: contactedFrom, contacted_to: contactedTo,
+    // Only ever sent once the follow-up columns are known to exist; the
+    // export would 400 on a database without supabase/056.
+    due: dueOnly && followUps ? "1" : "",
+  };
+
+  /**
+   * Read the leads that match the filters.
+   *
+   * Filtering used to happen in the browser over whatever came back first,
+   * so on an account with more than 500 leads a search for a customer by
+   * name simply found nothing and said "No leads match". Postgres does the
+   * work now; RLS still scopes every row to this tenant (011's
+   * leads_select), so no tenant id is needed for the read.
+   */
+  const fetchLeads = useCallback(async (canFollowUp: boolean) => {
     setLoading(true);
+    const sb = createClient();
+
+    let q = sb.from("leads").select("*");
+    if (stageFilter !== "all") q = q.eq("stage", stageFilter);
+    if (hotOnly) q = q.gte("score", 70);
+    if (tag.trim()) q = q.contains("tags", [tag.trim()]);
+    const lo = Number(scoreMin), hi = Number(scoreMax);
+    if (scoreMin !== "" && Number.isFinite(lo)) q = q.gte("score", lo);
+    if (scoreMax !== "" && Number.isFinite(hi)) q = q.lte("score", hi);
+    // The bounds are IST days. +05:30 keeps a lead contacted at 9pm on the
+    // day the business remembers contacting them.
+    if (contactedFrom) q = q.gte("last_contacted_at", `${contactedFrom}T00:00:00+05:30`);
+    if (contactedTo)   q = q.lte("last_contacted_at", `${contactedTo}T23:59:59.999+05:30`);
+    if (dueOnly && canFollowUp) {
+      q = q.not("follow_up_at", "is", null).is("follow_up_done_at", null)
+           .lte("follow_up_at", `${istToday()}T23:59:59.999+05:30`);
+    }
+    if (query) {
+      // or= is a comma-separated list inside parentheses, so a needle with
+      // a comma or bracket in it would be parsed as more conditions.
+      const pat = query.replace(/[,()\\%_]/g, " ").trim();
+      if (pat) q = q.or(`name.ilike.%${pat}%,phone.ilike.%${pat}%,interest.ilike.%${pat}%,notes.ilike.%${pat}%`);
+    }
+
+    const col = sort === "score" ? "score" : sort === "calls" ? "call_count"
+              : sort === "newest" ? "created_at" : "last_contacted_at";
+    const { data, error: e } = await q.order(col, { ascending: false }).limit(PAGE_SIZE);
+
+    if (e) setError(e.message);
+    else { setError(""); setLeads((data || []) as Lead[]); }
+    // Exactly a full page means there is probably more behind it. Saying so
+    // is the difference between a list and a list that lies.
+    setTruncated((data?.length || 0) >= PAGE_SIZE);
+    setLoading(false);
+  }, [stageFilter, hotOnly, dueOnly, tag, scoreMin, scoreMax, contactedFrom, contactedTo, query, sort]);
+
+  /**
+   * Chip counts, over every lead rather than the page on screen.
+   *
+   * Four small columns, so even a tenant with thousands of leads is one or
+   * two requests. PostgREST caps a response at 1000 rows, which is why this
+   * pages instead of trusting one read.
+   */
+  const loadCounts = useCallback(async (canFollowUp: boolean) => {
+    const sb = createClient();
+    const cols = "id,stage,score" + (canFollowUp ? ",follow_up_at,follow_up_done_at" : "");
+    const all: any[] = [];
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data, error: e } = await sb.from("leads").select(cols)
+        .order("id").range(from, from + 999);
+      if (e) return;                       // counts are a nicety; never a red banner
+      all.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const stage: Record<string, number> = {};
+    for (const l of all) stage[l.stage] = (stage[l.stage] || 0) + 1;
+    setCounts({
+      stage, total: all.length,
+      hot: all.filter(l => l.score >= 70 && !["won", "lost"].includes(l.stage)).length,
+      due: canFollowUp ? all.filter(l => isDue(l)).length : 0,
+    });
+  }, []);
+
+  /** Sign-in, tenant, stage names, deep links — once, before anything else. */
+  const bootstrap = useCallback(async () => {
     const sb = createClient();
     const { data: auth } = await sb.auth.getUser();
     if (!auth.user) { window.location.href = "/login"; return; }
@@ -385,24 +507,42 @@ export default function LeadsPage() {
       setStages(rows.map((x: any) => ({ id: x.name, label: titleCase(x.name), color: x.color || C.dim })));
     }
 
-    const { data, error: e } = await sb.from("leads")
-      .select("*")
-      .order("last_contacted_at", { ascending: false })
-      .limit(500);
-    if (e) setError(e.message);
-    else setLeads((data || []) as Lead[]);
-    setLoading(false);
+    const canFollowUp = await followUpSupported();
+    setFollowUps(canFollowUp);
+    loadCounts(canFollowUp);
+
     // Deep links from the Human Desk and the live board: ?lead=<id> opens
     // that lead, ?phone=<10 digits> filters to it.
     try {
-      const q = new URLSearchParams(window.location.search);
-      const wantId = q.get("lead"), wantPhone = q.get("phone");
-      if (wantId) { const hit = (data || []).find((l: any) => l.id === wantId); if (hit) setOpenLead(hit as Lead); }
-      else if (wantPhone) setSearch(wantPhone.replace(/\D/g, "").slice(-10));
+      const p = new URLSearchParams(window.location.search);
+      const wantId = p.get("lead"), wantPhone = p.get("phone");
+      if (wantId) {
+        const { data: hit } = await sb.from("leads").select("*").eq("id", wantId).maybeSingle();
+        if (hit) setOpenLead(hit as Lead);
+      } else if (wantPhone) {
+        const digits = wantPhone.replace(/\D/g, "").slice(-10);
+        setSearch(digits); setQuery(digits);
+      }
     } catch { /* no window */ }
-  }, []);
+    setReady(true);
+  }, [loadCounts]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { bootstrap(); }, [bootstrap]);
+
+  // Typing fires a request per keystroke otherwise; a third of a second is
+  // below the pause between words.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => { if (ready) fetchLeads(followUps); }, [ready, followUps, fetchLeads]);
+
+  /** Refresh after something changed a lead: the list AND the chip counts. */
+  const load = useCallback(() => {
+    fetchLeads(followUps);
+    loadCounts(followUps);
+  }, [fetchLeads, followUps, loadCounts]);
 
   // The drawer shows the row it was opened with; keep it in step with the
   // list so a stage click in the drawer is reflected in the header at once.
@@ -439,28 +579,19 @@ export default function LeadsPage() {
     setSelected(new Set());
   };
 
-  const q = search.trim().toLowerCase();
-  const shown = leads.filter(l => {
-    if (stageFilter !== "all" && l.stage !== stageFilter) return false;
-    if (hotOnly && l.score < 70) return false;
-    if (!q) return true;
-    return (l.name || "").toLowerCase().includes(q)
-        || l.phone.includes(q)
-        || (l.interest || "").toLowerCase().includes(q)
-        || (l.tags || []).some(t => t.toLowerCase().includes(q));
-  }).sort((a, b) => {
-    if (sort === "score") return b.score - a.score;
-    if (sort === "calls") return (b.call_count || 0) - (a.call_count || 0);
-    if (sort === "newest") return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    return new Date(b.last_contacted_at || b.created_at).getTime() - new Date(a.last_contacted_at || a.created_at).getTime();
-  });
-
-  const counts = stages.reduce((acc, s) => {
-    acc[s.id] = leads.filter(l => l.stage === s.id).length;
-    return acc;
-  }, {} as Record<string, number>);
-  const hotCount = leads.filter(l => l.score >= 70 && !["won", "lost"].includes(l.stage)).length;
+  // Postgres has already applied every filter and the sort (see fetchLeads),
+  // and a tag is matched against the whole tag rather than a fragment of it,
+  // which is what `tags @> {vip}` means.
+  const shown = leads;
   const allShownSelected = shown.length > 0 && shown.every(l => selected.has(l.id));
+
+  const filtersOn = stageFilter !== "all" || hotOnly || dueOnly || !!query
+    || !!tag || scoreMin !== "" || scoreMax !== "" || !!contactedFrom || !!contactedTo;
+  const clearFilters = () => {
+    setStageFilter("all"); setHotOnly(false); setDueOnly(false);
+    setSearch(""); setQuery(""); setTag("");
+    setScoreMin(""); setScoreMax(""); setContactedFrom(""); setContactedTo("");
+  };
 
   const toggle = (id: string) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -568,15 +699,23 @@ export default function LeadsPage() {
       {/* Stage filter — the pipeline at a glance, click to narrow. */}
       <div className="nk-scroll" style={{ display: "flex", gap: 6, marginBottom: 12, paddingBottom: 2 }}>
         <button onClick={() => setStageFilter("all")} style={chip(stageFilter === "all", C.teal)}>
-          All <span style={{ opacity: 0.7 }}>{leads.length}</span>
+          All <span style={{ opacity: 0.7 }}>{counts.total}</span>
         </button>
         {stages.map(s => (
           <button key={s.id} onClick={() => setStageFilter(stageFilter === s.id ? "all" : s.id)} style={chip(stageFilter === s.id, s.color)}>
-            {s.label} <span style={{ opacity: 0.7 }}>{counts[s.id] ?? 0}</span>
+            {s.label} <span style={{ opacity: 0.7 }}>{counts.stage[s.id] ?? 0}</span>
           </button>
         ))}
-        <button onClick={() => setHotOnly(v => !v)} style={{ ...chip(hotOnly, C.acc), marginLeft: "auto" }} title="Score 70 and above">
-          <Flame size={13} /> Hot <span style={{ opacity: 0.7 }}>{hotCount}</span>
+        {/* Today's callbacks, and anything promised earlier and missed.
+            Hidden entirely until supabase/056 is applied. */}
+        {followUps && (
+          <button onClick={() => setDueOnly(v => !v)} style={{ ...chip(dueOnly, C.gold), marginLeft: "auto" }}
+            title="Leads you said you would follow up today or earlier">
+            <Bell size={13} /> Follow up today <span style={{ opacity: 0.7 }}>{counts.due}</span>
+          </button>
+        )}
+        <button onClick={() => setHotOnly(v => !v)} style={{ ...chip(hotOnly, C.acc), marginLeft: followUps ? 0 : "auto" }} title="Score 70 and above">
+          <Flame size={13} /> Hot <span style={{ opacity: 0.7 }}>{counts.hot}</span>
         </button>
       </div>
 
@@ -585,7 +724,7 @@ export default function LeadsPage() {
           <Search size={14} style={{ position: "absolute", left: 11, top: 12, color: C.dim }} />
           <input
             style={{ ...inputStyle, width: "100%", paddingLeft: 32 }}
-            placeholder="Search name, phone, interest or tag…"
+            placeholder="Search name, phone, interest or note…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -593,7 +732,60 @@ export default function LeadsPage() {
         <select value={sort} onChange={e => setSort(e.target.value as SortKey)} style={{ ...inputStyle, flex: "0 0 auto" }} aria-label="Sort">
           {SORTS.map(s => <option key={s.id} value={s.id}>Sort: {s.label}</option>)}
         </select>
+        <button onClick={() => setMoreFilters(v => !v)} style={{ ...inputStyle, fontWeight: 700,
+          color: moreFilters ? C.teal : C.mid, borderColor: moreFilters ? C.teal + "88" : C.bord }}>
+          <SlidersHorizontal size={13} style={{ verticalAlign: "-2px", marginRight: 6 }} />
+          More filters
+        </button>
+        <ExportButton path="/api/export/leads.csv" params={exportParams}
+          title="Download every lead matching these filters — not just the ones on screen" />
       </div>
+
+      {moreFilters && (
+        <div style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 14, marginBottom: 12,
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, alignItems: "end" }}>
+          <div>
+            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>TAG</div>
+            <input value={tag} onChange={e => setTag(e.target.value)} placeholder="e.g. vip"
+              style={{ ...inputStyle, width: "100%" }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>SCORE</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input value={scoreMin} onChange={e => setScoreMin(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric" placeholder="0" aria-label="Lowest score" style={{ ...inputStyle, width: "100%" }} />
+              <span style={{ color: C.dim, fontSize: 12 }}>to</span>
+              <input value={scoreMax} onChange={e => setScoreMax(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric" placeholder="100" aria-label="Highest score" style={{ ...inputStyle, width: "100%" }} />
+            </div>
+          </div>
+          <div style={{ gridColumn: "span 2", minWidth: 0 }}>
+            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>LAST CONTACTED</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="date" value={contactedFrom} max={contactedTo || undefined}
+                onChange={e => setContactedFrom(e.target.value)} aria-label="Contacted from"
+                style={{ ...inputStyle, width: "100%" }} />
+              <span style={{ color: C.dim, fontSize: 12 }}>to</span>
+              <input type="date" value={contactedTo} min={contactedFrom || undefined}
+                onChange={e => setContactedTo(e.target.value)} aria-label="Contacted until"
+                style={{ ...inputStyle, width: "100%" }} />
+            </div>
+          </div>
+          {filtersOn && (
+            <button onClick={clearFilters} style={{ background: "none", border: `1px solid ${C.bord}`,
+              color: C.mid, borderRadius: 9, padding: "9px 12px", fontSize: 13 }}>Clear all filters</button>
+          )}
+        </div>
+      )}
+
+      {/* A list that stops at 500 without saying so reads as "that is all
+          your leads", which for a growing business is simply false. */}
+      {truncated && (
+        <div style={{ background: C.gold + "0D", border: `1px solid ${C.gold}55`, borderRadius: 10,
+          padding: "9px 12px", marginBottom: 12, color: C.gold, fontSize: 12.5 }}>
+          Showing the first {PAGE_SIZE} leads. Narrow the filters to see the rest, or download the CSV for all of them.
+        </div>
+      )}
 
       {/* Bulk bar */}
       {selected.size > 0 && (
@@ -619,13 +811,20 @@ export default function LeadsPage() {
           borderRadius: 12, padding: 40, textAlign: "center" }}>
           <div style={{ marginBottom: 10, display: "flex", justifyContent: "center", color: C.dim }}><Users size={28} /></div>
           <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>
-            {leads.length === 0 ? "No leads yet" : "No leads match"}
+            {filtersOn ? "No leads match" : counts.total === 0 ? "No leads yet" : "No leads here"}
           </h3>
           <p style={{ color: C.mid, fontSize: 14, margin: 0, lineHeight: 1.5 }}>
-            {leads.length === 0
-              ? "Every call Nikki answers becomes a lead here automatically — or add one above."
-              : "Try another stage, clear the search, or turn off Hot."}
+            {filtersOn
+              ? dueOnly ? "Nothing is due for a follow-up today. Good place to be."
+                : "Nothing matches these filters."
+              : "Every call Nikki answers becomes a lead here automatically — or add one above."}
           </p>
+          {filtersOn && (
+            <button onClick={clearFilters} style={{ background: "none", border: "none", color: C.teal,
+              fontSize: 13.5, marginTop: 10, fontFamily: "inherit", cursor: "pointer" }}>
+              Clear filters →
+            </button>
+          )}
         </div>
       ) : (
         <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, overflow: "hidden" }}>
@@ -692,11 +891,28 @@ export default function LeadsPage() {
                   </select>
                 </div>
 
-                {/* last contact */}
-                <div className="nk-lead-when" style={{ fontSize: 12, color: C.dim, whiteSpace: "nowrap" }}>{timeAgo(l.last_contacted_at || l.created_at)}</div>
+                {/* last contact, and what was promised next */}
+                <div className="nk-lead-when" style={{ fontSize: 12, color: C.dim, whiteSpace: "nowrap" }}>
+                  {timeAgo(l.last_contacted_at || l.created_at)}
+                  {followUps && l.follow_up_at && !l.follow_up_done_at && (
+                    <div style={{ color: isOverdue(l) ? C.red : C.gold, fontSize: 11, fontWeight: 700, marginTop: 3 }}
+                      title={l.follow_up_note || "Follow-up reminder"}>
+                      {isOverdue(l) ? "Overdue · " : "Due "}{followUpLabel(l.follow_up_at)}
+                    </div>
+                  )}
+                </div>
 
                 {/* actions */}
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
+                  {followUps && (
+                    <FollowUp lead={l} compact
+                      onSaved={patch => {
+                        patchLocal(l.id, patch as Partial<Lead>);
+                        // The "follow up today" count is over every lead, not
+                        // the page on screen, so it has to be re-read.
+                        loadCounts(true);
+                      }} />
+                  )}
                   <button onClick={() => handleClickToCall(l)} disabled={ctcLoading === l.id || onCall} title="Call from your phone via Nikki's number" style={{
                     background: onCall ? C.grn : C.grn + "1A", color: onCall ? "#fff" : C.grn, border: `1px solid ${C.grn}44`,
                     borderRadius: 8, padding: "7px 10px", fontSize: 12, fontWeight: 700,

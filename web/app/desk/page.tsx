@@ -167,6 +167,7 @@ export default function DeskPage() {
           <div style={{ display: "grid", gap: 16 }}>
             <Dialer d={d} api={api} onDone={load} prefill={prefill} />
             <LiveBoard calls={live} tick={tick} />
+            <NeedsCallback d={d} onCallBack={callBack} />
             <TeamCalls d={d} onCallBack={callBack} />
             <RecentCalls d={d} api={api} onSaved={load} />
           </div>
@@ -513,6 +514,66 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
           })}
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── Needs callback ────────────────────────────────────────────────────
+/**
+ * The promises the desk has made and not yet kept.
+ *
+ * "Call back" is the most-used outcome on the dispositions below, and until
+ * now it went straight into the flat log with everything else — the seat had
+ * to remember, or scroll. This is the same rows, filtered to the ones still
+ * outstanding, so the queue is a list rather than a memory.
+ *
+ * Outstanding means: the MOST RECENT desk call to that number was dispositioned
+ * "callback". A later call to the same number — whatever its outcome, or still
+ * running — is the callback happening, so the number drops off by itself and
+ * nothing has to be ticked off by hand.
+ *
+ * Derived entirely from what /api/desk already returned. No extra request.
+ */
+function NeedsCallback({ d, onCallBack }: { d: Desk | null; onCallBack: (n: string) => void }) {
+  // d.recent arrives newest-first, so the first row seen for a number is the
+  // latest attempt at it.
+  const latest = new Map<string, Recent>();
+  for (const r of d?.recent || []) if (!latest.has(r.number)) latest.set(r.number, r);
+  const due = [...latest.values()].filter(r => r.disposition === "callback");
+
+  if (!d || due.length === 0) return null;   // an empty queue is not news
+
+  return (
+    <Card title="Needs a callback" icon={<PhoneOutgoing size={15} />}
+      right={<span style={{ background: C.gold + "18", color: C.gold, borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>{due.length}</span>}>
+      <div style={{ display: "grid", gap: 8 }}>
+        {due.map(r => (
+          <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+            gap: 10, flexWrap: "wrap", background: C.hi, border: `1px solid ${C.bord}`,
+            borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ minWidth: 0, flex: "1 1 180px" }}>
+              <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700 }}>
+                {r.lead_name || prettyNum(r.number)}
+              </div>
+              <div style={{ color: C.dim, fontSize: 11.5 }}>
+                {r.lead_name && <span style={{ fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)} · </span>}
+                asked for a callback {fmtTime(r.created_at)}
+              </div>
+              {r.notes && (
+                <div style={{ color: C.mid, fontSize: 12, marginTop: 3, fontStyle: "italic" }}>{r.notes}</div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+              {r.number.length === 10 && (
+                <button onClick={() => onCallBack(r.number)} style={{ ...btnStyle(C.gold), padding: "5px 12px", fontSize: 12 }}>
+                  <PhoneOutgoing size={12} /> Call back
+                </button>
+              )}
+              {r.lead_id && <a href={`/leads?lead=${r.lead_id}`} style={{ color: C.glow, fontSize: 12 }}>lead →</a>}
+            </div>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

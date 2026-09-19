@@ -2,6 +2,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import Shell from "../../components/Shell";
+import OwnerAlerts from "../../components/OwnerAlerts";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord, Appointment } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -269,6 +270,11 @@ export default function DashboardPage() {
 
   return (
     <Shell title="Reception Log">
+      {/* Above everything, and outside the loading gate: when Nikki has
+          stopped answering calls, that is the first thing on the page and it
+          must not wait on the reception log's queries to say so. Renders
+          nothing at all when nothing is wrong. */}
+      <OwnerAlerts />
       {loading ? (
         <div style={{ textAlign: "center", padding: 60, color: C.mid }}>
           <div style={{ fontSize: 24, animation: "spin 1s linear infinite", display: "inline-block" }}>◌</div>

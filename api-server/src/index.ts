@@ -4665,6 +4665,9 @@ import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
+import { mountSearchExport } from "./search-export";
+import { mountOwnerAlerts } from "./owner-alerts";
+import { mountAdminExtras } from "./admin-extras";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 import { notifyApiCallback, publicOutboundCall, API_CALL_SOURCE } from "./api-callbacks";
 import { makeOwnerAssistant } from "./owner-tools";
@@ -4680,6 +4683,12 @@ mountCampaignImport(app, sb, verifyJWT, getTenantId, audit, planAllows);
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
+// Search across calls and transcripts, CSV exports, lead follow-ups.
+mountSearchExport(app, { sb, verifyJWT, apiLimiter, getTenantId, audit });
+// The dashboard's "something is wrong" banner.
+mountOwnerAlerts(app, { sb, verifyJWT, getTenantId });
+// Broadcast that actually delivers, demo tenants, platform health.
+mountAdminExtras(app, { sb, verifySuperAdmin });
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.

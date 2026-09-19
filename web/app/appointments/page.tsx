@@ -17,6 +17,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
+import AddToCalendar from "../../components/AddToCalendar";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Calendar, Hash } from "lucide-react";
@@ -180,6 +181,10 @@ export default function AppointmentsPage() {
   const [filter, setFilter] = useState<"upcoming" | "all">("all");
   const [notice, setNotice] = useState("");
   const [tenantId, setTenantId] = useState<string | null>(null);
+  // The name a caller knows the business by — it titles the calendar event.
+  // tenants.name is the internal one; voice_profiles.business_name is what
+  // Nikki says on the phone, and what the server's .ics already uses.
+  const [business, setBusiness] = useState("Appointment");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -188,7 +193,12 @@ export default function AppointmentsPage() {
     if (!auth.user) { window.location.href = "/login"; return; }
     const { data: tu } = await sb.from("tenant_users").select("tenant_id")
       .eq("user_id", auth.user.id).maybeSingle();
-    if (tu?.tenant_id) setTenantId(tu.tenant_id);
+    if (tu?.tenant_id) {
+      setTenantId(tu.tenant_id);
+      const { data: vp } = await sb.from("voice_profiles").select("business_name")
+        .eq("tenant_id", tu.tenant_id).limit(1).maybeSingle();
+      if (vp?.business_name) setBusiness(vp.business_name);
+    }
 
     const { data, error: e } = await sb.from("appointments")
       .select("*")
@@ -332,6 +342,11 @@ export default function AppointmentsPage() {
                   </div>
 
                   {/* actions */}
+                  {/* Whatever its status, a booking with a date can go in a
+                      calendar — including a cancelled one somebody wants a
+                      record of. The button hides itself when there is no date
+                      to put anywhere. */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flexDirection: "column", alignItems: "flex-start" }}>
                   {a.status === "pending" && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <button onClick={() => updateStatus(a.id, "confirmed")} style={{
@@ -360,6 +375,8 @@ export default function AppointmentsPage() {
                       }}>Cancel</button>
                     </div>
                   )}
+                  <AddToCalendar appointment={a} business={business} />
+                  </div>
                 </div>
               );
             })}
