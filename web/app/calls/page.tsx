@@ -7,6 +7,8 @@ import type { CallRecord } from "../../lib/supabase";
 import { Check, X, Bot, User, Phone, Search } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
 import ExportButton from "../../components/ExportButton";
+import IntentBadge from "../../components/IntentBadge";
+import { intentLabel } from "../../lib/intent";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -15,32 +17,9 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-// Intents are enquiry/appointment/order/callback/transfer/emergency/unknown, but
-// legacy rows also carry `wa_otp_<code>` (a WhatsApp verification call
-// surfaced through the pipeline). That is an internal marker, not a
-// caller intent, so it is shown as a readable label and never raw.
-function intentLabel(intent: string | null | undefined): string {
-  if (!intent) return "unknown";
-  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
-  return intent;
-}
-
-function IntentBadge({ intent }: { intent: string | null | undefined }) {
-  const map: Record<string, string> = {
-    appointment: C.grn, enquiry: C.cyn, callback: C.gold,
-    transfer: C.gbr, emergency: C.red, unknown: C.dim, order: C.gold,
-    "WhatsApp OTP": C.cyn,
-  };
-  const label = intentLabel(intent);
-  const col = map[label] || C.dim;
-  return (
-    <span style={{ background: col + "22", color: col, border: "1px solid " + col + "44",
-      borderRadius: 4, padding: "2px 7px", fontSize: 10, fontWeight: 700,
-      textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>
-      {label}
-    </span>
-  );
-}
+// Intent labels and colours come from lib/intent.ts, which knows BOTH
+// vocabularies the product stores (calls.intent and leads.intent) and never
+// returns a raw key. This file used to carry its own half of that map.
 
 // calls.status was selected and exported to CSV but never drawn, so a
 // missed, failed or human-answered call looked identical to a completed
@@ -81,8 +60,10 @@ function formatTime(ts: string) {
   });
 }
 
-function CallDetail({ call, onClose, onRecordingDeleted }: {
+function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
   call: CallRecord; onClose: () => void; onRecordingDeleted: (id: string) => void;
+  /** plans.recording_days for this account; null while unknown. */
+  recordingDays: number | null;
 }) {
   const transcript: Array<{ role: string; content: string; ts: string }> =
     Array.isArray(call.transcript) ? call.transcript : [];
@@ -123,7 +104,7 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
               {[
                 "Call Received",
-                `Intent: ${intentLabel(call.intent)}`,
+                `Why they called: ${intentLabel(call.intent)}`,
                 call.status === "transferred" ? "Answered by team" : null,
                 call.appointment_created ? "Appointment Booked" : null,
                 call.wa_sent ? "WhatsApp Sent" : null,
@@ -147,11 +128,19 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
               nothing has ever written — every recording lives in
               r2_object_key — so no customer could play a single call. */}
           {/* recording_size_bytes survives the purge, so a call that HAD audio
-              can say what happened to it instead of looking like it never
-              had any. Retention is by plan — seven days on trial. */}
+              can say what happened to it instead of looking like it never had
+              any — and instead of offering a player for a file that is gone.
+              Retention is plans.recording_days, so say the actual number
+              rather than "the time your plan keeps call audio". */}
           {(!call.r2_object_key && !call.recording_url && (call as any).recording_size_bytes) ? (
-            <div style={{ marginBottom: 16, color: C.dim, fontSize: 12.5 }}>
-              Recording deleted — removed from this page, or past the time your plan keeps call audio.
+            <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 8,
+              background: C.hi, border: "1px solid " + C.bord,
+              color: C.mid, fontSize: 12.5, lineHeight: 1.55 }}>
+              {recordingDays
+                ? <>Recordings are kept for <strong style={{ color: C.txt }}>{recordingDays} days</strong> on
+                   your plan. This one has been deleted — the written transcript below is kept.</>
+                : <>This recording has been deleted, either by you or because your plan&apos;s
+                   storage time for call audio has passed. The written transcript below is kept.</>}
             </div>
           ) : null}
           {(call.r2_object_key || call.recording_url) && (
@@ -161,6 +150,11 @@ function CallDetail({ call, onClose, onRecordingDeleted }: {
                 Recording
               </div>
               <RecordingPlayer callId={call.id} publicUrl={call.recording_url} />
+              {!!recordingDays && (
+                <div style={{ color: C.dim, fontSize: 11.5, marginTop: 6 }}>
+                  Kept for {recordingDays} days after the call, then deleted automatically.
+                </div>
+              )}
               <DeleteRecording callId={call.id} onDeleted={() => onRecordingDeleted(call.id)} />
             </div>
           )}
@@ -351,6 +345,7 @@ export default function CallsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError]       = useState("");
   const [tenantId, setTenantId] = useState<string | null>(null);
+  const [recordingDays, setRecordingDays] = useState<number | null>(null);
 
   const [intent, setIntent] = useState("all");
   const [status, setStatus] = useState("all");
@@ -479,6 +474,20 @@ export default function CallsPage() {
         .select("tenant_id").eq("user_id", data.user.id).maybeSingle();
       if (!tu) { setLoading(false); setError("No business is linked to this login yet."); return; }
       setTenantId(tu.tenant_id);
+
+      // How long this plan keeps call audio, so a purged recording can say
+      // "kept for N days" rather than a vague sentence about "your plan".
+      // /api/platform/pricing, not the plans table: plans has RLS on with no
+      // policy for a browser, so reading it directly returns [].
+      (async () => {
+        try {
+          const { data: t } = await sb.from("tenants").select("plan").eq("id", tu.tenant_id).maybeSingle();
+          const pr = await fetch(`${API}/api/platform/pricing`).then(r => r.json());
+          const tier = (pr?.tiers || []).find((x: any) => x.id === String(t?.plan || "trial"));
+          const d = Number(tier?.recording_days);
+          if (d > 0) setRecordingDays(d);
+        } catch { /* the panel falls back to the vaguer sentence */ }
+      })();
       // Deep links from a lead's timeline: /calls?call=<id> opens that call,
       // which may be far older than the first page of the list.
       try {
@@ -517,6 +526,7 @@ export default function CallsPage() {
     <Shell title="Call History">
       {selected && (
         <CallDetail call={selected} onClose={() => setSelected(null)}
+          recordingDays={recordingDays}
           onRecordingDeleted={(id) => {
             // Mirror what the API did to the row: key and URL gone,
             // recording_size_bytes kept so the panel says "deleted".
@@ -555,7 +565,8 @@ export default function CallsPage() {
           {INTENTS.map(f => (
             <button key={f} onClick={() => setIntent(f)}
               style={chip(intent === f, f === "emergency" ? C.red : C.glow)}>
-              {f === "all" ? "All intents" : f.charAt(0).toUpperCase() + f.slice(1)}
+              {/* The chip filters on the stored key but never prints it. */}
+              {f === "all" ? "All reasons" : intentLabel(f)}
             </button>
           ))}
         </div>
@@ -626,7 +637,7 @@ export default function CallsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: C.hi }}>
-                {["Caller","Direction","Status","Duration","Intent","WA Sent","Appt","Time",""].map(h => (
+                {["Caller","Direction","Status","Duration","Reason","WhatsApp","Booked","Time",""].map(h => (
                   <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: "0.08em",
                     padding: "10px 12px", textAlign: "left" }}>{h}</th>

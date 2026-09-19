@@ -179,7 +179,10 @@ export default function AppointmentsPage() {
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<"upcoming" | "all">("all");
+  // "Upcoming" is the useful default: on "all" a completed booking from two
+  // days ago sorts above tomorrow's, and the one question this page answers
+  // is "who is coming in". "All" is one tap away.
+  const [filter, setFilter] = useState<"upcoming" | "all">("upcoming");
   const [notice, setNotice] = useState("");
   const [tenantId, setTenantId] = useState<string | null>(null);
   // The name a caller knows the business by — it titles the calendar event.
@@ -272,7 +275,7 @@ export default function AppointmentsPage() {
               border: `1px solid ${filter === f ? C.glow : C.bord}`,
               borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600,
               cursor: "pointer", textTransform: "capitalize",
-            }}>{f}</button>
+            }}>{f === "upcoming" ? "Upcoming" : "All bookings"}</button>
           ))}
           <div style={{ marginLeft: "auto" }}>
             <ExportButton path="/api/export/appointments.csv" label="Download CSV"
@@ -287,12 +290,23 @@ export default function AppointmentsPage() {
             padding: 40, textAlign: "center" }}>
             <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Calendar size={28} /></div>
             <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>
-              {filter === "upcoming" ? "No upcoming appointments" : "No appointments yet"}
+              {filter === "upcoming" ? "Nothing booked from today onward" : "No appointments yet"}
             </h3>
+            {/* An owner with a full month of past bookings and an empty week
+                ahead was told "it appears here automatically", as though the
+                page had never worked. Say which of the two it is. */}
             <p style={{ color: C.mid, fontSize: 14, margin: 0, lineHeight: 1.5 }}>
-              When Hey Nikki books an appointment on a call, it appears here
-              automatically.
+              {filter === "upcoming" && appts.length > 0
+                ? "Older bookings are still here."
+                : "When Hey Nikki books an appointment on a call, it appears here automatically."}
             </p>
+            {filter === "upcoming" && appts.length > 0 && (
+              <button onClick={() => setFilter("all")} style={{
+                marginTop: 12, background: "none", border: `1px solid ${C.bord}`,
+                color: C.glow, borderRadius: 8, padding: "8px 16px",
+                fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              }}>Show all bookings</button>
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

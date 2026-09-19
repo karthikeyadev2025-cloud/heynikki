@@ -130,7 +130,8 @@ async function cachedAnswer(sb: SupabaseClient, phone: string): Promise<ScrubAns
 }
 
 async function record(
-  sb: SupabaseClient, phone: string, a: ScrubAnswer, source: "provider" | "unavailable",
+  sb: SupabaseClient, phone: string, a: ScrubAnswer,
+  source: "provider" | "unavailable" | "consent" | "opted_out",
 ): Promise<void> {
   const now = new Date();
   const { error } = await sb.from("dnd_scrub_results").insert({
@@ -164,12 +165,21 @@ export async function scrubDnd(
   // 1. Withdrawal beats everything, including consent. Someone who said
   //    stop has said stop.
   if (await isOptedOut(sb, tenantId, phone)) {
-    return { blocked: true, reason: "opted_out" };
+    const answer = { blocked: true, reason: "opted_out" };
+    await record(sb, phone, answer, "opted_out");
+    return answer;
   }
 
   // 2. Solicited contact.
   if (consented) {
-    return { blocked: false, reason: "self_submitted_enquiry_consent" };
+    // Recorded, not just returned. Every call this platform actually places
+    // takes THIS branch — no DND provider is configured, so everything else
+    // is blocked — which meant the compliance ledger was empty of precisely
+    // the calls that were made. An auditor asking "on what basis did you
+    // ring this person" needs a row, not an absence of one.
+    const answer = { blocked: false, reason: "self_submitted_enquiry_consent" };
+    await record(sb, phone, answer, "consent");
+    return answer;
   }
 
   // 3. The registry.

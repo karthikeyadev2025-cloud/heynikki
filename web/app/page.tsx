@@ -18,6 +18,7 @@ import { useState } from "react";
 import CallConsole from "../components/CallConsole";
 import WakeWordNikki from "../components/WakeWordNikki";
 import NikkiLogo from "../components/NikkiLogo";
+import MobileCta from "../components/MobileCta";
 import {
   Phone, Users, ShieldCheck, MessageCircle, Languages,
   Clock, ArrowRight, Plus, Minus, IndianRupee,
@@ -1231,6 +1232,12 @@ export default function Home() {
           .nk-navlink { display: none !important; }
         }
       `}</style>
+
+      {/* Below 768px the header nav and its CTA are both hidden and the
+          header cannot stick, so after the hero there was nothing to tap
+          until the pricing band. This is that missing control — and it
+          stands down while the demo console is on screen. */}
+      <MobileCta />
     </main>
   );
 }

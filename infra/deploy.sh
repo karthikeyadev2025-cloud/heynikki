@@ -101,25 +101,56 @@ echo "── restarting (FreeSWITCH untouched) ──"
 # That is the right way round. They reconnect on their own; restarting a
 # live PBX to satisfy a dependency check does not undo a dropped call.
 docker compose up -d --no-deps api-server voice-pipeline
-# --force-recreate for these two, which is what went wrong for a week.
+
 # scheduler and outbound-dispatcher have no build: of their own, only
 # `image: infra-api-server:latest`, so compose sees an unchanged config and
 # leaves them running the OLD image when that tag moves. The scheduler ran a
 # 4 Sep build until 16 Sep — without the one-chase-per-booking guard — and
-# rang one caller five times about the same abandoned booking.
+# rang one caller five times about the same abandoned booking. A blanket
+# --force-recreate was the fix for that, and it bought a second bug:
+#
+#   RECREATING A CONTAINER DELETES ITS LOG. Docker's json-file log belongs to
+#   the container, not the image, so every deploy — including the eight that
+#   changed nothing in these two services — threw away everything they had
+#   ever printed. A week of api-server and pipeline history went that way
+#   during an audit, and with SENTRY_DSN empty there was no second copy.
+#
+# So: recreate only when the image ACTUALLY moved. The digest comparison that
+# used to run after the deploy as a warning now runs before it as the
+# decision, which is the same check doing something useful. A deploy that
+# does not change the API image leaves both containers — and their logs —
+# exactly where they were.
 #
 # Both sit behind compose profiles so the EC2 host that shares this compose
 # file never starts a second copy with a bare `up -d` (two schedulers send
 # every reminder twice). This host is the one that runs them, so name the
 # profiles explicitly.
-docker compose --profile scheduler up -d --no-deps --force-recreate scheduler
-docker compose --profile outbound up -d --no-deps --force-recreate outbound-dispatcher
+want=$(docker image inspect infra-api-server:latest --format '{{.Id}}')
+
+recreate_if_stale() {
+  # $1 container name, $2 compose profile, $3 compose service
+  local have
+  have=$(docker inspect "$1" --format '{{.Image}}' 2>/dev/null || echo missing)
+  if [ "$have" = "$want" ]; then
+    echo "  $3 already on the new image — leaving it (and its logs) alone"
+    # Still an `up -d`, so a container that is stopped or missing a config
+    # change is brought back. Without a changed image this is a no-op.
+    docker compose --profile "$2" up -d --no-deps "$3"
+  else
+    echo "  $3 is on $have — recreating onto the new image"
+    docker compose --profile "$2" up -d --no-deps --force-recreate "$3"
+  fi
+}
+
+recreate_if_stale heynikki-scheduler scheduler scheduler
+recreate_if_stale heynikki-outbound  outbound  outbound-dispatcher
 
 echo "── health ──"
 sleep 8
 docker compose --profile scheduler --profile outbound ps --format '  {{.Name}}  {{.Status}}'
-# Fail loudly if anything built from the api-server image is still on an old one.
-want=$(docker image inspect infra-api-server:latest --format '{{.Id}}')
+# Belt and braces: the decision above should have made this impossible, but a
+# container left on an old image is the failure that ran for twelve days
+# unnoticed, so it is still checked out loud.
 for c in heynikki-api heynikki-scheduler heynikki-outbound; do
   have=$(docker inspect "$c" --format '{{.Image}}' 2>/dev/null || echo missing)
   [ "$have" = "$want" ] || echo "  !! $c is NOT on the new image ($have)" >&2

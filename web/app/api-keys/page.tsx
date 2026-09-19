@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
-import { Check, ClipboardCopy, Key, BarChart3, Clock, BookOpen } from "lucide-react";
+import { Check, ClipboardCopy, Key, BarChart3, Clock, BookOpen, Lock } from "lucide-react";
 
 const J = {
   bg: NIKKI.bg, vault: NIKKI.vault, surface: NIKKI.surface,
@@ -53,6 +53,12 @@ export default function ApiKeysPage() {
   const [revokeError, setRevokeError] = useState("");
   const [revoking, setRevoking]       = useState<string | null>(null);
 
+  // Whether this account's plan includes API access at all. null = not
+  // known yet (or the check failed), which must not lock a paying customer
+  // out of a form they are entitled to — the API is the real gate either way.
+  const [apiAllowed, setApiAllowed] = useState<boolean | null>(null);
+  const [planName, setPlanName]     = useState("");
+
   // Issue form
   const [showIssueForm, setShowIssueForm] = useState(false);
   const [name, setName]                   = useState("");
@@ -75,6 +81,29 @@ export default function ApiKeysPage() {
         .eq("tenant_id", tu.tenant_id)
         .order("created_at", { ascending: false });
       setKeys(ks || []);
+
+      // API access is a plan feature (plans.api_access) and POST /api/keys/mine
+      // refuses with "API access is on the Scale plan." — but only AFTER the
+      // owner had named the key, picked permissions, chosen an expiry and
+      // pressed the button. Ask the same question before they type a word.
+      //
+      // The feature flags come from /api/platform/pricing, not the plans
+      // table: /campaigns learned the hard way that plans has RLS on with no
+      // policy for a browser, so reading it directly returns [] and every
+      // account looks ungated.
+      try {
+        const { data: t } = await sb.from("tenants").select("plan").eq("id", tu.tenant_id).maybeSingle();
+        const plan = String(t?.plan || "trial");
+        const pr   = await fetch(`${API_URL}/api/platform/pricing`).then(r => r.json());
+        const tier = (pr?.tiers || []).find((x: any) => x.id === plan);
+        setPlanName(tier?.name || (plan === "trial" ? "the free trial" : plan));
+        // Trial has no tier row, and a trial does not include API access.
+        setApiAllowed(!!tier?.api_access);
+      } catch {
+        // A failed lookup leaves the form open rather than blocking a Scale
+        // customer; the server still enforces the real gate.
+        setApiAllowed(null);
+      }
       setLoading(false);
     })();
   }, []);
@@ -156,8 +185,16 @@ export default function ApiKeysPage() {
     }
   }
 
+  // One date format on this page, and the same one the rest of the dashboard
+  // uses ("19 Sep 2026"). The key list printed a browser-locale timestamp
+  // beside this, so two dates in the same row read in two different orders.
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const fmtDateTime = (iso: string) =>
+    new Date(iso).toLocaleString("en-IN", {
+      day: "numeric", month: "short", year: "numeric",
+      hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata",
+    });
 
   return (
     <Shell title="API keys">
@@ -172,7 +209,7 @@ export default function ApiKeysPage() {
               For integrating Nikki with your CRM, Zapier, or custom backend.
             </p>
           </div>
-          {!showIssueForm && !newKey && (
+          {!showIssueForm && !newKey && apiAllowed !== false && (
             <button
               onClick={() => setShowIssueForm(true)}
               style={{
@@ -183,6 +220,33 @@ export default function ApiKeysPage() {
             </button>
           )}
         </div>
+
+        {/* Said BEFORE the form, not after it is submitted. The old page let
+            an owner name a key, tick permissions and choose an expiry, then
+            answered the press with "API access is on the Scale plan." */}
+        {apiAllowed === false && (
+          <div style={{
+            background: J.vault, border: `1px solid ${J.borderHi}`,
+            borderRadius: 16, padding: 20, marginBottom: 24,
+            display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap",
+          }}>
+            <Lock size={18} color={J.surya} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+              <div style={{ color: J.chandra, fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
+                API keys come with the Scale plan
+              </div>
+              <p style={{ color: J.textMid, fontSize: 13.5, lineHeight: 1.6, margin: 0 }}>
+                You are on {planName || "a plan"}, which does not include them. Move up to
+                Scale and you can issue a key here straight away — everything else on your
+                account stays exactly as it is.
+              </p>
+            </div>
+            <a href="/billing" style={{
+              padding: "10px 18px", background: J.grad, color: J.bg, textDecoration: "none",
+              borderRadius: 10, fontWeight: 700, fontSize: 14, whiteSpace: "nowrap",
+            }}>See plans</a>
+          </div>
+        )}
 
         {/* New-key one-time reveal */}
         {newKey && (
@@ -223,7 +287,7 @@ export default function ApiKeysPage() {
         )}
 
         {/* Issue form */}
-        {showIssueForm && (
+        {showIssueForm && apiAllowed !== false && (
           <form onSubmit={issueKey} style={{
             background: J.vault, border: `1px solid ${J.border}`,
             borderRadius: 16, padding: 24, marginBottom: 24,
@@ -321,7 +385,9 @@ export default function ApiKeysPage() {
             borderRadius: 16, padding: 40, textAlign: "center", color: J.textMid,
           }}>
             <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><Key size={28} /></div>
-            No API keys yet. Issue one above to start integrating.
+            {apiAllowed === false
+              ? "No API keys on this account."
+              : "No API keys yet. Issue one above to start integrating."}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
@@ -355,7 +421,7 @@ export default function ApiKeysPage() {
                   </div>
                   <div style={{ display: "flex", gap: 16, fontSize: 12, color: J.textMid, flexWrap: "wrap" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><BarChart3 size={12} /> {k.request_count?.toLocaleString() || 0} requests</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {k.last_used_at ? `last used ${new Date(k.last_used_at).toLocaleString()}` : "never used"}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {k.last_used_at ? `last used ${fmtDateTime(k.last_used_at)}` : "never used"}</span>
                     <span>{k.expires_at ? `${expired ? "expired" : "expires"} ${fmtDate(k.expires_at)}` : "never expires"}</span>
                     <span style={{ color: J.textDim }}>{(k.scopes || []).join(" · ") || "no scopes"}</span>
                   </div>

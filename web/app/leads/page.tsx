@@ -22,6 +22,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
+import { intentLabel } from "../../lib/intent";
 import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList, Plus, Upload, Search, MessageCircle, Flame, Bell, SlidersHorizontal } from "lucide-react";
 import LeadDetail, { type Stage } from "../../components/LeadDetail";
 import { toast } from "../../components/Toast";
@@ -76,17 +77,9 @@ const STAGES: Stage[] = [
 const titleCase = (s: string) =>
   String(s).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
-const INTENT_LABELS: Record<string, string> = {
-  book_appointment:     "Wants to book",
-  reschedule:           "Reschedule",
-  cancel:               "Cancel",
-  pricing_enquiry:      "Asked pricing",
-  service_enquiry:      "Service question",
-  location_hours:       "Location / hours",
-  complaint:            "Complaint",
-  follow_up:            "Follow-up",
-  other:                "Other",
-};
+// Intent labels live in lib/intent.ts now — the same map /calls, /dashboard
+// and /analytics read, so a lead's key and a call's key can no longer be
+// written two different ways on two different screens.
 
 // What the seat can record after a dialled call. The hint says what the
 // server's /api/calls/disposition does to the lead's stage — "busy" is
@@ -875,7 +868,7 @@ export default function LeadsPage() {
                 {/* wants */}
                 <div className="nk-lead-wants" style={{ fontSize: 13, color: C.txt, minWidth: 0 }}>
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any }}>
-                    {l.interest || (l.intent ? (INTENT_LABELS[l.intent] || titleCase(l.intent)) : <span style={{ color: C.dim }}>—</span>)}
+                    {l.interest || (l.intent ? intentLabel(l.intent) : <span style={{ color: C.dim }}>—</span>)}
                   </div>
                   {l.notes && <div style={{ fontSize: 11.5, color: C.dim, fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.notes}</div>}
                 </div>

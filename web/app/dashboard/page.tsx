@@ -3,6 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import Shell from "../../components/Shell";
 import OwnerAlerts from "../../components/OwnerAlerts";
+// One badge for both intent vocabularies: this page shows a LEAD's intent
+// (book_appointment, pricing_enquiry) beside a CALL's (appointment, enquiry),
+// and its own map only knew the second set.
+import IntentBadge from "../../components/IntentBadge";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord, Appointment } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -22,14 +26,6 @@ const C = {
 
 const PAID_PLANS = ["starter", "growth", "scale"];
 
-// Legacy rows carry `wa_otp_<code>` in calls.intent — an internal marker
-// for a WhatsApp verification call, not something a caller asked for.
-function intentLabel(intent: string | null | undefined): string {
-  if (!intent) return "unknown";
-  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
-  return intent;
-}
-
 const APPT_STATUS: Record<string, { label: string; color: string }> = {
   pending:     { label: "Needs confirmation", color: NIKKI.gold },
   confirmed:   { label: "Confirmed",          color: NIKKI.emerald },
@@ -42,28 +38,6 @@ const APPT_STATUS: Record<string, { label: string; color: string }> = {
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <div style={{ background: C.surf, border: "1px solid " + C.bord,
     borderRadius: 10, padding: 16, ...style }}>{children}</div>;
-}
-
-function IntentBadge({ intent }: { intent: string | null | undefined }) {
-  const map: Record<string, [string, string]> = {
-    appointment:    [C.grn + "22",  C.grn],
-    enquiry:        [C.cyn + "22",  C.cyn],
-    callback:       [C.gold + "22", C.gold],
-    order:          [C.gold + "22", C.gold],
-    transfer:       [C.gbr + "22",  C.gbr],
-    emergency:      [C.red + "22",  C.red],
-    unknown:        [C.dim + "22",  C.dim],
-    "WhatsApp OTP": [C.cyn + "22",  C.cyn],
-  };
-  const label = intentLabel(intent);
-  const [bg, fg] = map[label] || map.unknown;
-  return (
-    <span style={{ background: bg, color: fg, border: "1px solid " + fg + "44",
-      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700,
-      textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>
-      {label}
-    </span>
-  );
 }
 
 function StatCard({ icon: Icon, value, label, color }: { icon: React.ComponentType<{ size?: number }>; value: string | number; label: string; color: string }) {

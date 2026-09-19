@@ -1702,6 +1702,10 @@ const META_TPL_VARS: Record<string, string[]> = {
   appointment_reminder:       ["Business name", "Time"],
   appointment_reminder_today: ["Business name", "Time"],
   booking_incomplete_callback:["Business name"],
+  // order_confirmed is an approved template with four blanks and had no
+  // entry, so the send dialog labelled its boxes "Value 1"…"Value 4" and the
+  // preview had nothing to fill in.
+  order_confirmed:            ["Business name", "Order number", "Items", "Total"],
   lead_brochure_details:      ["Business / service name"],
   lead_capture_ack:           ["Business name"],
   appointment_confirmed:      ["Business name"],
@@ -3131,6 +3135,16 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
+  // TRAI hours apply to this dial too. Every other outbound path clamps to
+  // 09:00–21:00 IST; this one did not, so the one button in the product that
+  // says "ring my phone now" was also the one that would do it at 2am.
+  const istMin = Math.floor((Date.now() + 5.5 * 3600_000) / 60000) % 1440;
+  if (istMin < 9 * 60 || istMin >= 21 * 60) {
+    return res.status(409).json({
+      error: "Test calls run between 9am and 9pm IST — the same hours we're allowed to call your customers.",
+    });
+  }
+
   const [{ data: did }, { data: owner }, { data: tenant }] = await Promise.all([
     sb.from("dids").select("number").eq("tenant_id", tenantId)
       .eq("status", "assigned").limit(1).maybeSingle(),
@@ -4402,10 +4416,15 @@ app.post("/api/admin/voice-lab/samples", verifySuperAdmin, async (req: any, res)
 app.post("/api/admin/onboarding-call/:tenantId", verifySuperAdmin, async (req: any, res) => {
   const tenantId = req.params.tenantId;
 
-  const { data: owner } = await sb.from("tenant_users")
-    .select("phone, display_name").eq("tenant_id", tenantId)
-    .not("phone", "is", null).order("role")
-    .not("phone", "is", null).limit(1).maybeSingle();
+  // The OWNER, not whoever sorts first. `.order("role")` is alphabetical, so
+  // "admin" and "member" both come before "owner" — on a tenant with staff,
+  // the onboarding interview rang an employee and asked them to describe
+  // their employer's business. Ask for the owner, and only fall back to
+  // anyone with a phone if the owner has not given one.
+  const { data: staff } = await sb.from("tenant_users")
+    .select("phone, display_name, role").eq("tenant_id", tenantId)
+    .not("phone", "is", null);
+  const owner = (staff || []).find(u => u.role === "owner") || (staff || [])[0];
   if (!owner?.phone) {
     return res.status(400).json({
       error: "No owner phone on file. It is collected at signup; this tenant predates that.",
@@ -4802,8 +4821,9 @@ app.get("/api/admin/audit-log", verifySuperAdmin, async (req, res) => {
  * key, written BEFORE the email so two calls in the same second send one.
  */
 async function warnUsage(tenantId: string, pct: 80 | 100,
-                         gate: { usedMinutes: number; limitMinutes: number }) {
-  const action = `usage.warning.${pct}.${istMonthKey()}`;
+                         gate: { usedMinutes: number; limitMinutes: number; paid?: boolean; credits?: number }) {
+  const trial = gate.paid === false;
+  const action = `usage.warning.${trial ? "trial" : pct}.${istMonthKey()}`;
   try {
     const { data: seen, error } = await sb.from("audit_log").select("id")
       .eq("tenant_id", tenantId).eq("action", action).limit(1);
@@ -4813,7 +4833,7 @@ async function warnUsage(tenantId: string, pct: 80 | 100,
       metadata: { used: gate.usedMinutes, limit: gate.limitMinutes },
     });
     if (insErr) return;
-    await sendEmail(tenantId, pct === 100 ? "usage_100" : "usage_80",
+    await sendEmail(tenantId, trial ? "trial_exhausted" : (pct === 100 ? "usage_100" : "usage_80"),
                     { used: gate.usedMinutes, limit: gate.limitMinutes });
     console.log(`[usage] tenant ${tenantId} warned at ${pct}% (${gate.usedMinutes}/${gate.limitMinutes})`);
   } catch (e: any) {
@@ -4846,6 +4866,11 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
     usage_100: {
       subject: "Your Nikki minutes for this month are used up",
       html: `<p>Hi ${tenant.name}, all ${data.limit} minutes in your plan are used for this month, so Nikki has stopped answering calls to your number. <a href="https://heynikki.in/billing">Upgrade your plan</a> to switch her back on straight away.</p>`,
+    },
+    trial_exhausted: {
+      subject: "Your free Nikki minutes have run out",
+      html: `<p>Hi ${tenant.name}, the 100 free minutes on your account are used up, so Nikki has stopped answering calls to your number.</p>
+             <p>Nothing has been deleted — your calls, recordings and customers are all still there. <a href="https://heynikki.in/billing">Choose a plan</a> and she starts answering again straight away.</p>`,
     },
     trial_expiry: {
       subject: `Your free Nikki minutes are running low`,
@@ -6052,7 +6077,11 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     if (!gate.ok) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} ${gate.reason} ` +
         `(${gate.usedMinutes}/${gate.limitMinutes} min, credits ${gate.credits}) — refusing`);
-      if (gate.reason === "plan_minutes_exhausted") void warnUsage(did.tenant_id, 100, gate);
+      // Both kinds of "your line just stopped". A paid tenant was emailed at
+      // 100%; a TRIAL whose free minutes ran out was told nothing at all —
+      // their number simply stopped answering, which reads as a broken
+      // product rather than an empty balance.
+      void warnUsage(did.tenant_id, 100, gate);
       return res.json({
         ok: false, reason: gate.reason, routing_mode: "reject", message: gate.message,
       });

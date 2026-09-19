@@ -401,12 +401,16 @@ function leadsQuery(sb: SupabaseClient, tenantId: string, query: any, columns: s
  * underscores opened up, so a new key is ugly rather than blank.
  */
 const LABELS: Record<string, string> = {
-  // intents (both vocabularies the product uses)
-  book_appointment: "Appointment", appointment: "Appointment", booking: "Appointment",
-  pricing_enquiry: "Pricing", service_enquiry: "Service question", enquiry: "Enquiry",
+  // Intents, both vocabularies. These strings must READ THE SAME as the
+  // dashboard's web/lib/intent.ts — the same row said "Appointment" on screen
+  // and "Booking" in the spreadsheet, which is the kind of difference that
+  // makes an owner distrust both.
+  appointment: "Booking", enquiry: "Enquiry", callback: "Callback",
+  transfer: "Asked for a person", emergency: "Urgent", order: "Order",
+  book_appointment: "Wants to book", reschedule: "Reschedule", cancel: "Cancel",
+  pricing_enquiry: "Asked the price", service_enquiry: "Service question",
   location_hours: "Location / hours", complaint: "Complaint", follow_up: "Follow-up",
-  reschedule: "Reschedule", cancel: "Cancellation", callback: "Callback",
-  transfer: "Transferred to a person", order: "Order", emergency: "Emergency", other: "Other",
+  other: "Something else", unknown: "Not captured",
   // lead stages
   new: "New", contacted: "Contacted", qualified: "Qualified", won: "Won", lost: "Lost",
   // lead sources
@@ -533,7 +537,7 @@ export function mountSearchExport(app: Express, d: SearchExportDeps) {
     let read = 0;
     const n = await streamCsv(res, `heynikki-calls-${istToday()}.csv`,
       ["Date (IST)", "Caller", "Direction", "Status", "Duration (seconds)",
-       "Intent", "WhatsApp sent", "Appointment booked", "Transcript"],
+       "Reason", "WhatsApp sent", "Appointment booked", "Transcript"],
       async () => {
         const { data, error } = await callsQuery(sb, tenantId, f, `${LIST_COLUMNS},transcript`)
           // created_at alone is not a stable sort: two calls in the same
@@ -566,7 +570,7 @@ export function mountSearchExport(app: Express, d: SearchExportDeps) {
     // select("*") rather than a column list: supabase/056's follow-up
     // columns may or may not exist yet, and naming one that does not turns
     // the whole export into a 400.
-    const header = ["Name", "Phone", "Stage", "Score", "Wants", "Intent", "Notes",
+    const header = ["Name", "Phone", "Stage", "Score", "Wants", "Reason", "Notes",
                     "Tags", "Source", "Calls", "Deal value (₹)",
                     "Last contacted (IST)", "Added (IST)", "Follow-up (IST)", "Follow-up note"];
 

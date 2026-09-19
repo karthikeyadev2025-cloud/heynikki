@@ -353,7 +353,19 @@ export default function BillingPage() {
               <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
                 letterSpacing: "0.1em", marginBottom: 10 }}>Minutes Usage</div>
               {usage || trial ? (
-                <UsageRing used={ring.used} total={ring.total} period={ring.period} />
+                <>
+                  <UsageRing used={ring.used} total={ring.total} period={ring.period} />
+                  {/* What actually happens at zero. The owner watching this
+                      ring needs to know calls stop rather than that a bill
+                      quietly grows. */}
+                  <div style={{ color: C.dim, fontSize: 11.5, lineHeight: 1.55, marginTop: 10 }}>
+                    When these run out Nikki stops answering until you move up a plan —
+                    nothing extra is charged to you.{" "}
+                    {ring.total > 0 && ring.used >= ring.total
+                      ? <span style={{ color: C.gold, fontWeight: 700 }}>They have run out now.</span>
+                      : null}
+                  </div>
+                </>
               ) : (
                 <div style={{ color: C.dim, fontSize: 12 }}>No usage data yet</div>
               )}
@@ -449,8 +461,17 @@ export default function BillingPage() {
             </div>
           </div>
 
-          <div style={{ textAlign: "center", marginTop: 14, color: C.dim, fontSize: 11 }}>
-            New accounts start with 100 free minutes · Overage: ₹15/extra minute · Cancel anytime
+          {/* "Overage: Rs 15/extra minute" was a figure nobody is ever charged.
+              minutesGate() in api-server/src/usage.ts REFUSES further calls
+              once the plan's minutes are gone; there is no top-up purchase
+              flow in the product, so nothing can be billed for going over.
+              /pricing and /refund-policy already say this — this page was the
+              last one quoting a price that does not exist. Do not put a rate
+              back here unless a checkout that can actually sell minutes
+              ships with it. */}
+          <div style={{ textAlign: "center", marginTop: 14, color: C.dim, fontSize: 11, lineHeight: 1.6 }}>
+            New accounts start with 100 free minutes · You are never charged for going over ·
+            Cancel anytime
           </div>
         </>
       )}

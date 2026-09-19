@@ -22,6 +22,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "../lib/supabase";
 import { NIKKI } from "../lib/brand";
+import { intentLabel } from "../lib/intent";
 import { toast } from "./Toast";
 import {
   X, Plus, Loader2, Tag as TagIcon, IndianRupee, User, Phone, PhoneIncoming,
@@ -162,7 +163,8 @@ export default function LeadDetail({
              : team ? (inbound ? "Called in · answered by your team" : "Your team called")
              : inbound ? "Called in · Nikki answered" : "Nikki called them",
         body: missed ? (c.wa_sent ? "Nikki sent them a WhatsApp so they know you'll call back." : null) : gist(c.transcript),
-        meta: [c.intent && !String(c.intent).startsWith("wa_otp") ? String(c.intent) : null,
+        // The raw key ("pricing_enquiry") used to be printed here verbatim.
+        meta: [c.intent && !String(c.intent).startsWith("wa_otp") ? intentLabel(c.intent) : null,
                c.duration_seconds ? fmtDur(c.duration_seconds) : null,
                c.appointment_created ? "booked an appointment" : null,
                (c.r2_object_key || c.recording_url) ? "recording" : null].filter(Boolean).join(" · "),
@@ -378,7 +380,7 @@ export default function LeadDetail({
           {(lead.interest || lead.intent) && (
             <div style={{ marginTop: 10, fontSize: 13, color: C.txt, lineHeight: 1.45 }}>
               <span style={{ color: C.dim }}>Wants: </span>
-              {lead.interest || String(lead.intent).replace(/_/g, " ")}
+              {lead.interest || intentLabel(lead.intent)}
             </div>
           )}
 

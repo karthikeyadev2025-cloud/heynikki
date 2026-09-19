@@ -79,6 +79,23 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   robots: { index: true, follow: true },
+  // app/icon.svg alone gave us a page whose only declared icon was an SVG,
+  // and /favicon.ico — which browsers and link-preview crawlers request by
+  // convention whether or not the HTML mentions it — was a 404. public/
+  // now holds a real .ico (16/32/48), and both are declared here so a client
+  // that cannot render SVG still has something to draw.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml", sizes: "any" },
+      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+    ],
+    // public/apple-icon.png, not app/apple-icon.svg: that file is not built
+    // into a route (nothing under .next serves it, and /apple-icon.svg is a
+    // 404), so the site has never actually had an apple-touch-icon. The PNG
+    // in public/ is the same mark and does serve.
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+    shortcut: ["/favicon.ico"],
+  },
   // Search Console and Bing Webmaster verification.
   //
   // Read from env rather than hardcoded: these are per-property tokens, and

@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer } from "recharts";
 import { NIKKI } from "../lib/brand";
+import VoiceAssistant from "../components/VoiceAssistant";
 import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
@@ -283,6 +284,11 @@ export default function SuperAdminPage() {
           {panels[tab]}
         </main>
       </div>
+
+      {/* Inside the auth gate, on purpose. Mounted in layout.tsx it rendered
+          on the login screen — an unauthenticated page — where it had no
+          session to ask with and nothing to ask about. */}
+      <VoiceAssistant />
     </div>
   );
 }

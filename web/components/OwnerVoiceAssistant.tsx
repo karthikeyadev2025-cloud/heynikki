@@ -589,8 +589,12 @@ export default function OwnerVoiceAssistant() {
   return (
     <>
       <style>{`
+        /* --nk-cookie-h is set by CookieBanner while its bar is on screen
+           (0 otherwise). Everything pinned to the bottom lifts by it, so the
+           notice can never sit on top of the Ask-Nikki button — the one
+           control on a dashboard page a phone user reaches for. */
         .nkv-panel{
-          position:fixed; bottom:92px; right:24px; z-index:9999;
+          position:fixed; bottom:calc(92px + var(--nk-cookie-h, 0px)); right:24px; z-index:9999;
           width:420px; max-width:calc(100vw - 32px);
           max-height:min(640px, calc(100vh - 132px));
           display:flex; flex-direction:column; overflow:hidden;
@@ -598,16 +602,18 @@ export default function OwnerVoiceAssistant() {
           box-shadow:0 18px 48px rgba(15,23,42,0.18), 0 2px 6px rgba(15,23,42,0.06);
           animation:nkv-rise 180ms cubic-bezier(.2,.8,.3,1);
         }
-        .nkv-fab{ position:fixed; bottom:24px; right:24px; z-index:10000; }
-        .nkv-wake{ position:fixed; bottom:88px; right:24px; z-index:9998; }
-        .nkv-note{ position:fixed; bottom:132px; right:24px; z-index:9998; max-width:260px; }
+        .nkv-fab{ position:fixed; bottom:calc(24px + var(--nk-cookie-h, 0px)); right:24px; z-index:10000; }
+        .nkv-wake{ position:fixed; bottom:calc(88px + var(--nk-cookie-h, 0px)); right:24px; z-index:9998; }
+        .nkv-note{ position:fixed; bottom:calc(132px + var(--nk-cookie-h, 0px)); right:24px; z-index:9998; max-width:260px; }
         @media (max-width:480px){
           /* Near-full width on a 390px phone, and the FAB stays clear of it. */
           .nkv-panel{ left:10px; right:10px; width:auto; max-width:none;
-                      bottom:82px; max-height:calc(100dvh - 104px); border-radius:14px; }
-          .nkv-fab{ bottom:16px; right:16px; }
-          .nkv-wake{ bottom:80px; right:16px; }
-          .nkv-note{ bottom:124px; right:16px; left:16px; max-width:none; }
+                      bottom:calc(82px + var(--nk-cookie-h, 0px));
+                      max-height:calc(100dvh - 104px - var(--nk-cookie-h, 0px));
+                      border-radius:14px; }
+          .nkv-fab{ bottom:calc(16px + var(--nk-cookie-h, 0px)); right:16px; }
+          .nkv-wake{ bottom:calc(80px + var(--nk-cookie-h, 0px)); right:16px; }
+          .nkv-note{ bottom:calc(124px + var(--nk-cookie-h, 0px)); right:16px; left:16px; max-width:none; }
         }
         .nkv-turn{ animation:nkv-rise 200ms ease; }
         .nkv-row:hover{ background:${C.vault}; }

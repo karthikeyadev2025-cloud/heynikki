@@ -90,6 +90,77 @@ const typeLabel = (t: string | null) => {
   return t.replace(/_/g, " ").replace(/^\w/, ch => ch.toUpperCase());
 };
 
+// ── TEMPLATES, IN WORDS ───────────────────────────────────────
+// Meta names templates for Meta: "booking_incomplete_callback". It numbers
+// their blanks {{1}}, {{2}}. Neither is something a shop owner has ever
+// agreed to read, and this page used to print both — a slug as the card
+// title, and the body with the numbers still in it.
+//
+// So: a written name per template, and a preview with the blanks FILLED IN,
+// using the owner's own business name and a real-looking date and time, so
+// the card shows the message as the customer will receive it.
+const TEMPLATE_TITLE: Record<string, string> = {
+  appointment_confirmed:       "Appointment confirmed",
+  appointment_confirmed_slot:  "Appointment confirmed, with the date and time",
+  appointment_reminder:        "Appointment reminder",
+  appointment_reminder_today:  "Reminder on the day",
+  booking_incomplete_callback: "They rang to book but no time was fixed",
+  lead_brochure_details:       "Sending your brochure",
+  interested_lead_brochure:    "Sending your brochure",
+  lead_capture_ack:            "Thanks for your enquiry",
+  missed_call_followup:        "We missed your call",
+  order_confirmed:             "Order confirmed",
+};
+/** Meta files templates under a language CODE; owners read languages. */
+const LANGUAGE_NAME: Record<string, string> = {
+  te: "Telugu", te_IN: "Telugu",
+  hi: "Hindi",  hi_IN: "Hindi",
+  en: "English", en_US: "English", en_GB: "English", en_IN: "English",
+};
+const languageName = (code: string) =>
+  LANGUAGE_NAME[code] || LANGUAGE_NAME[String(code).split(/[_-]/)[0]] || code;
+
+/** A written name for a template, never the slug Meta filed it under. */
+const templateTitle = (name: string) =>
+  TEMPLATE_TITLE[name] ||
+  name.replace(/_/g, " ").replace(/^\w/, ch => ch.toUpperCase());
+
+/**
+ * Example values for the blanks, in Meta's {{1}}, {{2}}… order. Driven off
+ * the variable LABELS the API sends (META_TPL_VARS in api-server), not off
+ * the template name, so a template this build has never heard of still
+ * previews with something sensible rather than "{{1}}".
+ */
+function exampleFor(label: string, business: string): string {
+  const l = label.toLowerCase();
+  const d = new Date(Date.now() + 86400000);
+  if (l.includes("business") || l.includes("service")) return business;
+  if (l.includes("date"))  return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+  if (l.includes("time"))  return "11:30 AM";
+  if (l.includes("order")) return "1042";
+  if (l.includes("name"))  return business;
+  return "…";
+}
+
+/**
+ * The template body with its blanks filled. `values` are what the owner has
+ * typed into the send dialog so far, keyed "1", "2", …; anything they have
+ * not typed falls back to the example, so the preview is never a number in
+ * curly braces.
+ */
+function fillTemplate(
+  body: string,
+  variables: string[],
+  business: string,
+  values?: Record<string, string>,
+): string {
+  return String(body || "").replace(/\{\{(\d+)\}\}/g, (_m, n: string) => {
+    const i = parseInt(n, 10) - 1;
+    const typed = (values?.[n] || "").trim();
+    return typed || exampleFor(variables[i] || "", business);
+  });
+}
+
 /** manual_template rows store `template:<name>` in message_body. */
 const templateOf = (d: { message_type?: string | null; message_body?: string | null }) =>
   d.message_type === "manual_template" && d.message_body?.startsWith("template:")
@@ -109,6 +180,9 @@ export default function WhatsAppPage() {
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [toast, setToast]         = useState<string | null>(null);
+  // The name Nikki says on the phone — what fills {{1}} in nearly every
+  // template, and so what the previews below use as their example.
+  const [business, setBusiness]   = useState("your business");
 
   const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -119,6 +193,10 @@ export default function WhatsAppPage() {
       const { data: tu } = await sb.from("tenant_users")
         .select("tenant_id").eq("user_id", data.user.id).single();
       if (!tu) return;
+
+      sb.from("voice_profiles").select("business_name")
+        .eq("tenant_id", tu.tenant_id).limit(1).maybeSingle()
+        .then(({ data: vp }) => { if (vp?.business_name) setBusiness(vp.business_name); });
 
       // Templates come from WhatsApp itself, not the wa_templates table:
       // that table was a seed that drifted (wrong languages, a template
@@ -220,10 +298,11 @@ export default function WhatsAppPage() {
       const n = last10(d.to_number); if (!map.has(n)) continue;   // only people who have written back
       map.get(n)!.push({
         id: "out:" + d.id, dir: "out",
-        // Manual template sends log "template:<name>" as the body — the text
-        // itself lives with Meta. Show it as a template card, not a slug.
+        // A manual template send logs "template:<name>" as the body; the
+        // text itself lives with Meta. Show the template's written name,
+        // not the slug with its underscores opened up.
         body: /^template:/.test(d.message_body || "")
-          ? "📋 " + d.message_body.slice(9).replace(/_/g, " ") + " (template)"
+          ? "📋 " + templateTitle(d.message_body.slice(9))
           : d.message_body || (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type),
         at: d.sent_at, status: d.status, label: d.message_type === "manual_reply" ? "you" : (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type) });
     }
@@ -320,20 +399,20 @@ export default function WhatsAppPage() {
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
             borderRadius: 12, padding: 28, width: 420, boxShadow: "0 20px 60px #0008" }}>
             <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Send size={15} /> Send Template</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Send size={15} /> Send this message</span>
             </div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 16 }}>
-              Template: <span style={{ color: C.gbr }}>{modal.template.name}</span>
+              {templateTitle(modal.template.name)}
             </div>
 
-
-
-            {/* Template preview */}
+            {/* What will actually be sent. Updates as the boxes below are
+                filled; anything still blank shows its example instead of a
+                number in curly braces. */}
             <div style={{ background: C.hi, borderRadius: 8, padding: 12, marginBottom: 16,
               border: "1px solid " + C.bord + "88" }}>
-              <div style={{ color: C.dim, fontSize: 10, marginBottom: 4 }}>PREVIEW</div>
-              <div style={{ color: C.txt, fontSize: 12, lineHeight: 1.5 }}>
-                {modal.template.body_text}
+              <div style={{ color: C.dim, fontSize: 10, marginBottom: 6 }}>WHAT THEY WILL SEE</div>
+              <div style={{ color: C.txt, fontSize: 12.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                {fillTemplate(modal.template.body_text, modal.template.variables || [], business, vars)}
               </div>
             </div>
 
@@ -350,11 +429,11 @@ export default function WhatsAppPage() {
             {(modal.template.variables || []).map((label: string, i: number) => (
               <div key={i} style={{ marginBottom: 12 }}>
                 <label style={{ color: C.mid, fontSize: 11, fontWeight: 600, display: "block", marginBottom: 6 }}>
-                  {`{{${i + 1}}}`} · {label}
+                  {label}
                 </label>
                 <input value={vars[String(i + 1)] || ""}
                   onChange={e => setVars(p => ({ ...p, [String(i + 1)]: e.target.value }))}
-                  placeholder={label}
+                  placeholder={exampleFor(label, business)}
                   style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
                     borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 13 }} />
               </div>
@@ -450,7 +529,9 @@ export default function WhatsAppPage() {
                   }}>{m.body}</div>
                   <div style={{ color: C.dim, fontSize: 10.5, marginTop: 2, textAlign: m.dir === "in" ? "left" : "right" }}>
                     {m.dir === "out" ? (m.label ? m.label + " · " : "you · ") : ""}
-                    {new Date(m.at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                    {new Date(m.at).toLocaleString("en-IN", {
+                      day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
+                      timeZone: "Asia/Kolkata" })}
                     {m.dir === "out" && m.status === "failed" && <span style={{ color: C.red, fontWeight: 800 }}> · failed</span>}
                   </div>
                 </div>
@@ -526,28 +607,35 @@ export default function WhatsAppPage() {
 
           {/* Template Library */}
           <div id="wa-templates" />
-          <SectionTitle icon={<ClipboardList size={14} />}>Template Library</SectionTitle>
+          <SectionTitle icon={<ClipboardList size={14} />}>Ready-made messages</SectionTitle>
           {templates.length === 0 && (
             <Card style={{ marginBottom: 24 }}>
               <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
-                No approved templates yet. Templates are approved by WhatsApp and appear here
-                once they are — contact support if you need one added.
+                No ready-made messages yet. WhatsApp has to approve each one before it can
+                be sent — they appear here once it has. Contact support if you need one added.
               </div>
             </Card>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, marginBottom: 24 }}>
             {templates.map(t => (
               <Card key={t.id}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-                  <div style={{ color: C.txt, fontSize: 12, fontWeight: 700 }}>{t.name}</div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+                  <div style={{ color: C.txt, fontSize: 12.5, fontWeight: 700 }}>{templateTitle(t.name)}</div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                     <Pill label={t.category} color={t.category === "utility" ? C.grn : t.category === "marketing" ? C.org : C.gbr} />
-                    <Pill label={t.language} color={C.cyn} />
+                    <Pill label={languageName(t.language)} color={C.cyn} />
                   </div>
                 </div>
-                <div style={{ color: C.mid, fontSize: 11, lineHeight: 1.6, marginBottom: 12,
-                  display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
-                  {t.body_text}
+                {/* The message as the customer receives it — the blanks filled
+                    in with this shop's name and an example date and time, not
+                    "{{1}}". */}
+                <div style={{ color: C.mid, fontSize: 11.5, lineHeight: 1.65, marginBottom: 10,
+                  whiteSpace: "pre-wrap",
+                  display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
+                  {fillTemplate(t.body_text, t.variables || [], business)}
+                </div>
+                <div style={{ color: C.dim, fontSize: 10, marginBottom: 12 }}>
+                  Example — the real name, date and time are filled in when you send it.
                 </div>
                 <button onClick={() => { setModal({ template: t }); setVars({}); }}
                   style={{ width: "100%", background: C.glow + "22", color: C.gbr,
@@ -591,7 +679,9 @@ export default function WhatsAppPage() {
                         onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
                         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                         <td style={{ padding: "10px", color: C.dim, fontSize: 11, whiteSpace: "nowrap" }}>
-                          {d.sent_at ? new Date(d.sent_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                          {d.sent_at ? new Date(d.sent_at).toLocaleString("en-IN", {
+                            day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
+                            timeZone: "Asia/Kolkata" }) : "—"}
                         </td>
                         <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
                           {d.to_number}
@@ -601,8 +691,8 @@ export default function WhatsAppPage() {
                         </td>
                         <td style={{ padding: "10px", color: C.mid, fontSize: 11, maxWidth: 320,
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                          title={d.message_body || ""}>
-                          {tplName ? <Pill label={tplName} color={C.gbr} /> : (d.message_body || "—")}
+                          title={tplName ? templateTitle(tplName) : (d.message_body || "")}>
+                          {tplName ? templateTitle(tplName) : (d.message_body || "—")}
                         </td>
                         <td style={{ padding: "10px" }}>
                           <Pill label={st.label} color={st.color} />

@@ -30,6 +30,18 @@
  *     supervisor can look at the worst ten instead of listening to two
  *     hundred.
  *
+ *  5. WATCHDOG (src/watchdog.ts) — the conditions nobody learned about: a
+ *     rejecting trunk, a health endpoint that stopped answering, calls stuck
+ *     'active', a line that has answered nothing all morning when last week
+ *     it was busy, a lease held by another host, WhatsApp sends failing,
+ *     Sarvam or Gemini erroring on live calls. Emails the platform owner
+ *     when one starts AND when it clears. Runs BEFORE the lease is taken —
+ *     see the comment in runScheduler.
+ *
+ *  6. BACKUP (src/backup.ts) — there was no backup of our own. Every table a
+ *     customer would notice losing, as gzipped NDJSON to R2 under
+ *     backups/YYYY-MM-DD/, once a night at 02:30 IST, 30 days retained.
+ *
  * Idempotency: every job checks a persisted flag before acting
  * (embedding IS NULL, wa_reminder_sent = false, summary keyed by date), so
  * running this more often than needed never double-sends.
@@ -46,6 +58,8 @@ import { resolveGeminiModel } from "../gemini.js";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "../recordings";
 import { sendOwnerEmail, sendOwnerTemplate, templateApproved } from "../owner-alerts";
 import { minutesGate } from "../usage";
+import { runWatchdog } from "../watchdog";
+import { runBackup } from "../backup";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -937,6 +951,25 @@ export async function runCloseAbandonedCalls(): Promise<number> {
 }
 
 export async function runScheduler() {
+  // BEFORE the lease, on purpose, and the only thing here that is.
+  //
+  // Half the watchdog's job is noticing that ANOTHER host holds the lease —
+  // and the host that lost it is the one that returns two lines below and
+  // does nothing for the rest of the day. A watchdog that only ran on the
+  // winner could never report that. It also means the API being down, the
+  // pipeline being down and a dead inbound line are still noticed on a box
+  // whose scheduled work has been taken over by somebody else.
+  //
+  // Safe to run on both hosts: the watchdog's own state row in
+  // platform_config is written with a compare-and-set and emails only go out
+  // after that write wins, so two copies cannot both send the same alert.
+  //
+  // Wrapped even though runWatchdog() is documented never to throw. The
+  // whole point of this module is the twelve jobs below it; it does not get
+  // to take them down.
+  try { await runWatchdog(); }
+  catch (e: any) { console.error("[scheduler] watchdog failed:", e?.message || e); }
+
   if (!await acquireSchedulerLease()) return;
   log("run start");
   // Sequential on purpose: these are small jobs and running them one at a
@@ -1001,6 +1034,17 @@ export async function runScheduler() {
 
   try { await runWhatsAppRegistrations(); }
   catch (e: any) { console.error("[scheduler] whatsapp registration sweep failed:", e.message); }
+
+  // LAST, and behind the lease. The nightly copy of every table that would
+  // hurt to lose, to R2. A no-op on every tick except the one inside the
+  // 02:30 IST window on a day that has not been backed up yet, so the cost
+  // of calling it here is one clock read and one platform_config lookup.
+  //
+  // Behind the lease because it is single-instance work by nature: two hosts
+  // exporting the same day would write the same objects twice and double the
+  // Supabase read load for nothing.
+  try { await runBackup(); }
+  catch (e: any) { console.error("[scheduler] backup failed:", e?.message || e); }
   log("run complete");
 }
 

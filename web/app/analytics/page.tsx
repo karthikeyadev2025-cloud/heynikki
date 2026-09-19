@@ -8,6 +8,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, ComposedChart } from "recharts";
 import { BarChart3, Trophy } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
+import { intentColor, intentLabel } from "../../lib/intent";
 
 const C = {
   surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -16,38 +17,11 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-const INTENT_COLORS: Record<string, string> = {
-  appointment: C.grn, enquiry: C.cyn, callback: C.gold,
-  transfer: C.gbr, emergency: C.red, unknown: C.dim,
-  "WhatsApp OTP": C.cyn,
-};
-
-// calls.intent is enquiry/appointment/callback/transfer/emergency/unknown,
-// can be null, and on legacy rows is `wa_otp_<code>` — an internal marker
-// for a WhatsApp verification call. Folded into one readable bucket so the
-// pie never shows a six-digit code as a slice.
-
-// How each bucket is WRITTEN on screen. The keys above are the values the
-// pipeline stores; a shop owner reading a pie chart should not be shown
-// "unknown" or a bare lowercase word lifted out of the database.
-const INTENT_DISPLAY: Record<string, string> = {
-  appointment: "Booked a slot", enquiry: "General enquiry", callback: "Wanted a callback",
-  transfer: "Asked for a person", emergency: "Urgent", order: "Placed an order",
-  pricing: "Asked the price", complaint: "Complaint", other: "Something else",
-  unknown: "Not captured", "WhatsApp OTP": "WhatsApp OTP",
-};
-/** The label for a slice/legend row, never a raw database value. */
-function intentDisplay(name: string): string {
-  if (INTENT_DISPLAY[name]) return INTENT_DISPLAY[name];
-  const words = name.replace(/_/g, " ").trim();
-  return words ? words[0].toUpperCase() + words.slice(1) : "Not captured";
-}
-
-function intentLabel(intent: string | null | undefined): string {
-  if (!intent) return "unknown";
-  if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
-  return intent;
-}
+// Slice labels and colours come from lib/intent.ts — the one map that knows
+// both intent vocabularies. This page carried its own, which meant a lead
+// vocabulary key (or anything new from the pipeline) drew a grey slice with
+// a database string next to it. `wa_otp_<code>` rows still fold into one
+// "WhatsApp OTP" bucket there, so the pie never shows a six-digit code.
 
 // Every date-based figure on this page is IST — open_time/close_time are
 // local business hours and the customers are in India — so bucketing by the
@@ -262,13 +236,18 @@ export default function AnalyticsPage() {
     };
   });
 
-  const intentCounts = calls.reduce((acc: Record<string, number>, c) => {
+  // Bucketed by the LABEL, so two stored keys that mean the same thing to a
+  // reader ("appointment" and "book_appointment") cannot draw two slices with
+  // identical captions. The colour is carried along from the first row in
+  // each bucket rather than looked up from the label afterwards.
+  const intentCounts = calls.reduce((acc: Record<string, { value: number; color: string }>, c) => {
     const k = intentLabel(c.intent);
-    acc[k] = (acc[k] || 0) + 1;
+    if (!acc[k]) acc[k] = { value: 0, color: intentColor(c.intent) };
+    acc[k].value += 1;
     return acc;
   }, {});
   const intentData = Object.entries(intentCounts)
-    .map(([name, value]) => ({ name, value: value as number }))
+    .map(([name, d]) => ({ name, value: d.value, color: d.color }))
     .sort((a, b) => b.value - a.value);
 
   const hourCounts = Array.from({ length: 24 }, (_, h) => ({
@@ -547,7 +526,7 @@ export default function AnalyticsPage() {
               <div style={{ color: C.dim, fontSize: 10, marginTop: 4, textAlign: "right" }}>{waConversionRate}% delivery rate</div>
             </Card>
 
-            <Card title="Call Intent Breakdown" subtitle={`What callers wanted (${range}-day)`}>
+            <Card title="Why people called" subtitle={`What callers wanted (last ${range} days)`}>
               {intentData.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 40 }}>No calls yet</div>
               ) : (
@@ -557,17 +536,17 @@ export default function AnalyticsPage() {
                       <Pie data={intentData} dataKey="value" nameKey="name"
                         cx="50%" cy="50%" outerRadius={55} innerRadius={28}>
                         {intentData.map((entry, i) => (
-                          <Cell key={i} fill={INTENT_COLORS[entry.name] || C.dim} />
+                          <Cell key={i} fill={entry.color} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(v: any, n: any) => [v, intentDisplay(String(n))]} />
+                      <Tooltip formatter={(v: any, n: any) => [v, String(n)]} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 }}>
                     {intentData.map(d => (
                       <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: INTENT_COLORS[d.name] || C.dim, flexShrink: 0 }} />
-                        <span style={{ color: C.mid, fontSize: 10 }}>{intentDisplay(d.name)}: {d.value}</span>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                        <span style={{ color: C.mid, fontSize: 10 }}>{d.name}: {d.value}</span>
                       </div>
                     ))}
                   </div>

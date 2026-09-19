@@ -150,7 +150,7 @@ export default function QualityPage() {
         ) : (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 14 }}>
-              <Stat label="Overall"    value={String(agg.overall)}    color={scoreColor(agg.overall)} sub={`${rows.length} calls`} />
+              <Stat label="Overall"    value={String(agg.overall)}    color={scoreColor(agg.overall)} sub={`${rows.length} call${rows.length === 1 ? "" : "s"}`} />
               <Stat label="Resolution" value={String(agg.resolution)} color={scoreColor(agg.resolution)} sub="got what they rang for" />
               <Stat label="Courtesy"   value={String(agg.courtesy)}   color={scoreColor(agg.courtesy)} />
               <Stat label="Compliance" value={String(agg.compliance)} color={scoreColor(agg.compliance)} />

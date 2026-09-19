@@ -104,8 +104,9 @@ export default function Pricing() {
             can grant them (notes.type === "addon_minutes" → credit_ledger),
             but NOTHING in the product creates such an order: there is no
             endpoint and no button, so a customer cannot buy them today. The
-            dashboard's billing page still prints "Overage: ₹15/extra minute",
-            which is the same unbuyable thing — flagged for that page's owner.
+            dashboard's billing page quoted "Overage: ₹15/extra minute" for
+            the same unbuyable thing; that line is gone now and the page says
+            calls stop instead.
             If a top-up flow ships, say so here and quote plan_overage_paise. */}
         If you need extra minutes before your next billing date and do not want to move
         up a plan, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> and

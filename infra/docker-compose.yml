@@ -3,6 +3,42 @@
 # Run: docker-compose up -d
 # ================================================================
 
+# ── Container log retention ───────────────────────────────────
+# Docker's json-file driver keeps EVERY line forever by default, and none of
+# these services had a logging: block, so the only thing that had ever
+# reclaimed the space was `--force-recreate` deleting the log outright. Both
+# halves of that are bugs:
+#
+#   - unbounded: a chatty pipeline restart loop fills the disk, and a full
+#     disk takes FreeSWITCH down with it — a telephony outage caused by a
+#     log file.
+#   - destroyed on deploy: a week of api-server and pipeline history was
+#     lost during an audit, because deploy.sh recreated both containers and
+#     Docker discards a container's log with the container. There was no
+#     copy anywhere; SENTRY_DSN is empty, so a container log IS the record.
+#
+# Rotation caps the first. It does NOT save a log from `--force-recreate` —
+# Docker deletes the whole rotated set with the container — so deploy.sh is
+# the other half of this fix: it no longer recreates a container whose image
+# did not change, which is what actually preserves the history.
+#
+# Two tiers, because they are not equally interesting. api-server and the
+# voice pipeline are what an incident is reconstructed from — every call,
+# every webhook, every vendor error — so they get 200 MB each. Everything
+# else gets 30 MB. Worst case for the whole stack is well under a gigabyte
+# on a 146 GB disk.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-logging-verbose: &verbose-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "10"
+
 services:
 
   # ── FreeSWITCH SIP Server ────────────────────────────────────
@@ -11,6 +47,7 @@ services:
       context: ./freeswitch
       dockerfile: Dockerfile
     container_name: heynikki-freeswitch
+    logging: *default-logging
     restart: always
     network_mode: host          # Required for SIP/RTP NAT traversal
     env_file: .env               # JIO_SIP_*, VI_SIP_*, FREESWITCH_ESL_PASSWORD,
@@ -46,6 +83,7 @@ services:
       context: ../voice-pipeline
       dockerfile: Dockerfile
     container_name: heynikki-pipeline
+    logging: *verbose-logging
     restart: always
     # network_mode: host, not a ports: mapping — same reason nginx uses it.
     # As a bridged container the pipeline's own 127.0.0.1 was a separate
@@ -87,6 +125,7 @@ services:
       context: ../api-server
       dockerfile: Dockerfile
     container_name: heynikki-api
+    logging: *verbose-logging
     restart: always
     # network_mode: host, matching freeswitch — NOT a bridged container
     # with a ports: mapping. freeswitch's ESL is bound strictly to
@@ -149,12 +188,19 @@ services:
   scheduler:
     image: infra-api-server:latest
     container_name: heynikki-scheduler
+    logging: *default-logging
     restart: always
     profiles: ["scheduler"]
     network_mode: host          # reaches api-server on 127.0.0.1:4000
     env_file: .env
     environment:
       - API_URL=http://127.0.0.1:4000
+      # The watchdog polls both health endpoints over loopback, which is how
+      # a call actually reaches them — a check through the public hostname
+      # would be testing Cloudflare's tunnel and would pass while the line
+      # was dead. Spelled out here rather than left to the code's default so
+      # this container's reachable surface is visible in one place.
+      - PIPELINE_URL=http://127.0.0.1:8000
     depends_on:
       - api-server
     command: >
@@ -179,6 +225,7 @@ services:
   outbound-dispatcher:
     image: infra-api-server:latest
     container_name: heynikki-outbound
+    logging: *default-logging
     restart: always
     profiles: ["outbound"]
     network_mode: host
@@ -199,6 +246,7 @@ services:
   n8n:
     image: n8nio/n8n:latest
     container_name: heynikki-n8n
+    logging: *default-logging
     restart: always
     ports:
       - "127.0.0.1:5678:5678"
@@ -246,6 +294,7 @@ services:
   activepieces:
     image: activepieces/activepieces:latest
     container_name: heynikki-activepieces
+    logging: *default-logging
     restart: always
     ports:
       - "127.0.0.1:8080:80"
@@ -311,6 +360,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: heynikki-tunnel
+    logging: *default-logging
     restart: always
     profiles: ["tunnel"]
     network_mode: host          # so 127.0.0.1 means the same as it does to
@@ -322,6 +372,7 @@ services:
   nginx:
     image: nginx:alpine
     container_name: heynikki-nginx
+    logging: *default-logging
     restart: always
     # network_mode: host, not a ports: mapping. nginx.conf proxies to
     # 127.0.0.1:4000 / :8000 / :5678 / :8080 for api-server /
