@@ -37,11 +37,36 @@ const PORT = process.env.PORT || 4000;
 // ── ENV ──────────────────────────────────────────────────
 const SUPABASE_URL    = process.env.SUPABASE_URL!;
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY!;
-const RZP_KEY_ID      = process.env.RAZORPAY_KEY_ID!;
-const RZP_SECRET      = process.env.RAZORPAY_KEY_SECRET!;
+// Razorpay credentials live in EITHER place: the environment, or
+// platform_config, editable by a super admin on the Platform Config screen.
+// The env wins where it is set. Without this, switching payments on meant
+// editing infra/.env on the box and redeploying — which is why this launched
+// with all three values empty and nobody able to pay.
+const RZP_KEY_ID      = process.env.RAZORPAY_KEY_ID || "";
+const RZP_SECRET      = process.env.RAZORPAY_KEY_SECRET || "";
 const META_WA_VERIFY_TOKEN = process.env.META_WA_VERIFY_TOKEN || "";
 const META_WA_APP_SECRET   = process.env.META_WA_APP_SECRET || "";
-const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET!;
+const RZP_WEBHOOK_SEC = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+
+/** Keys a super admin may set on the Platform Config screen instead of the env. */
+const RZP_CONFIG_KEYS = {
+  keyId:         "razorpay_key_id",
+  keySecret:     "razorpay_key_secret",
+  webhookSecret: "razorpay_webhook_secret",
+} as const;
+
+/** The values whose secrets must never be read back out of the API. */
+const SECRET_CONFIG_KEYS = new Set<string>([RZP_CONFIG_KEYS.keySecret, RZP_CONFIG_KEYS.webhookSecret]);
+
+async function razorpayCreds(): Promise<{ keyId: string; keySecret: string; webhookSecret: string }> {
+  const cfg = await getPlatformConfig().catch(() => ({} as Record<string, string>));
+  const pick = (env: string, key: string) => (env || String(cfg[key] || "")).trim();
+  return {
+    keyId:         pick(RZP_KEY_ID, RZP_CONFIG_KEYS.keyId),
+    keySecret:     pick(RZP_SECRET, RZP_CONFIG_KEYS.keySecret),
+    webhookSecret: pick(RZP_WEBHOOK_SEC, RZP_CONFIG_KEYS.webhookSecret),
+  };
+}
 // Read and validated in one place — see internal-secret.ts for what the
 // `!` that used to be here did when the variable was missing.
 import { INTERNAL_SECRET, internalSecretOk } from "./internal-secret";
@@ -404,13 +429,14 @@ app.post("/webhooks/razorpay", async (req, res) => {
   // With RAZORPAY_WEBHOOK_SECRET unset the HMAC key is "", which anyone can
   // compute — so an unset secret accepted forged events that set any
   // tenant's plan. No secret, no webhook.
-  if (!RZP_WEBHOOK_SEC) {
-    console.error("[Razorpay] RAZORPAY_WEBHOOK_SECRET not set — webhook refused");
+  const { webhookSecret } = await razorpayCreds();
+  if (!webhookSecret) {
+    console.error("[Razorpay] webhook secret not set (env or platform config) — webhook refused");
     return res.status(503).json({ error: "Webhook not configured" });
   }
   // HMAC verification — reject if invalid
   const expected = crypto
-    .createHmac("sha256", RZP_WEBHOOK_SEC)
+    .createHmac("sha256", webhookSecret)
     .update(rawBody)
     .digest("hex");
 
@@ -1973,13 +1999,14 @@ function safeHexEqual(given: unknown, expected: string): boolean {
   return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 }
 
-function paymentsConfigured(): boolean {
-  return !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
+async function paymentsConfigured(): Promise<boolean> {
+  const { keyId, keySecret } = await razorpayCreds();
+  return !!(keyId && keySecret);
 }
 
 app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
-  if (!paymentsConfigured()) {
-    console.error("[billing] RAZORPAY_KEY_ID / SECRET are not set — no customer can pay");
+  if (!await paymentsConfigured()) {
+    console.error("[billing] Razorpay key id/secret not set (env or platform config) — no customer can pay");
     return res.status(503).json({
       error: "Online payment isn't switched on yet — message us and we'll activate your plan.",
     });
@@ -2001,7 +2028,8 @@ app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
 
   try {
     // Create Razorpay order (for one-time) or subscription (for recurring)
-    const auth = Buffer.from(`${RZP_KEY_ID}:${RZP_SECRET}`).toString("base64");
+    const { keyId, keySecret } = await razorpayCreds();
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const resp = await fetch("https://api.razorpay.com/v1/orders", {
       method:  "POST",
       headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
@@ -2016,7 +2044,7 @@ app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
       order_id:  order.id,
       amount:    order.amount,
       currency:  "INR",
-      key_id:    RZP_KEY_ID,
+      key_id:    keyId,
       tenant_id: tenantId,
       plan_id,
     });
@@ -2034,7 +2062,7 @@ app.post("/api/billing/verify", verifyJWT, async (req, res) => {
   // order to this tenant, so one real signature upgraded anyone who replayed
   // it. The plan now comes from the order Razorpay holds, and only if that
   // order is paid and was created for this tenant.
-  if (!paymentsConfigured()) {
+  if (!await paymentsConfigured()) {
     return res.status(503).json({ error: "Online payment isn't switched on yet" });
   }
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
@@ -2042,8 +2070,9 @@ app.post("/api/billing/verify", verifyJWT, async (req, res) => {
   const tenantId = await getTenantId(userId);
   if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
 
+  const { keyId, keySecret } = await razorpayCreds();
   const expected = crypto
-    .createHmac("sha256", RZP_SECRET)
+    .createHmac("sha256", keySecret)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest("hex");
 
@@ -2054,7 +2083,7 @@ app.post("/api/billing/verify", verifyJWT, async (req, res) => {
   let plan_id: string;
   let annual = false;
   try {
-    const auth = Buffer.from(`${RZP_KEY_ID}:${RZP_SECRET}`).toString("base64");
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const r = await fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(String(razorpay_order_id))}`,
       { headers: { Authorization: `Basic ${auth}` } });
     const order = await r.json() as { status?: string; notes?: Record<string, string> };
@@ -6868,7 +6897,13 @@ app.get("/api/platform/config", verifyJWT, async (req: any, res) => {
     if (tu?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
 
     const { data } = await sb.from("platform_config").select("*");
-    res.json(data || []);
+    // A secret is write-only over the API. Returning it would put the
+    // Razorpay key in every admin's browser, in its network log, and in any
+    // screen recording of the panel; the panel only needs to know whether one
+    // is set. Editing still works — writing a new value replaces it.
+    res.json((data || []).map((row: any) => SECRET_CONFIG_KEYS.has(row.key)
+      ? { ...row, value: "", is_secret: true, has_value: !!String(row.value || "").trim() }
+      : row));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -6886,7 +6921,12 @@ app.post("/api/platform/config", verifyJWT, async (req: any, res) => {
     await sb.from("platform_config").upsert({ key, value, updated_by: req.user.id, updated_at: new Date().toISOString() });
     _platformConfigCache = null; // invalidate cache
 
-    await audit("platform_config_update", { actorId: req.user.id, metadata: { key, value } });
+    // The value is deliberately NOT audited for a secret — an audit trail
+    // that records the key it is protecting is a second copy of it.
+    await audit("platform_config_update", {
+      actorId: req.user.id,
+      metadata: SECRET_CONFIG_KEYS.has(key) ? { key, value: "<redacted>" } : { key, value },
+    });
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

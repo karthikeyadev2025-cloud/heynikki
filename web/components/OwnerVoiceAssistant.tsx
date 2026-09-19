@@ -35,7 +35,7 @@ import { createClient } from "../lib/supabase";
 import { isNativeApp, startHeyNikki, stopHeyNikki, heyNikkiRunning } from "../lib/native";
 import { NIKKI } from "../lib/brand";
 import {
-  Bot, Mic, Loader2, X, Square, Volume2, VolumeX, Send, Trash2,
+  Mic, Loader2, X, Square, Volume2, VolumeX, Send, Trash2,
   ArrowRight, Check, AlertCircle,
 } from "lucide-react";
 
@@ -625,7 +625,7 @@ export default function OwnerVoiceAssistant() {
               background: NIKKI.gradient, display: "flex", alignItems: "center",
               justifyContent: "center", flexShrink: 0,
             }}>
-              <Bot size={17} color="#fff" />
+              <NikkiMark size={20} speaking={status === "speaking"} />
               <span style={{
                 position: "absolute", right: -1, bottom: -1, width: 10, height: 10,
                 borderRadius: "50%", border: `2px solid ${C.vault}`,
@@ -889,9 +889,40 @@ export default function OwnerVoiceAssistant() {
           animation: !open ? "nkv-breathe 3.4s ease-in-out infinite" : "none",
           transition: "background 250ms ease, box-shadow 250ms ease",
         }}>
-        {open ? <X size={20} color="#fff" /> : <Bot size={22} color="#fff" />}
+        {open ? <X size={20} color="#fff" /> : <NikkiMark size={26} speaking={status === "speaking"} />}
       </button>
     </>
+  );
+}
+
+// ── The mark ──────────────────────────────────────────────────────────
+// The button and the header wore lucide's `Bot` — a generic robot glyph
+// that belongs to no brand and, at 22px on a gradient, reads as a toy. It
+// is the first thing an owner sees after logging in. This is the mark from
+// the logo (the speech bubble and its waveform), the same one the admin
+// panel's assistant already uses, so the assistant looks like the product
+// rather than like a chatbot bolted onto it.
+//
+// The bars carry `speaking`: flat while idle, tall while she talks. Same
+// signal the phone product shows, and it costs one prop.
+function NikkiMark({ size = 24, color = "#fff", speaking = false }:
+  { size?: number; color?: string; speaking?: boolean }) {
+  const H = speaking ? [34, 62, 84, 54, 30] : [26, 52, 74, 44, 22];
+  const Y = H.map(h => 116 - h / 2);
+  return (
+    <svg width={size} height={size} viewBox="0 0 256 256" role="img" aria-label="Nikki"
+         style={{ flexShrink: 0, display: "block" }}>
+      <path fill={color}
+        d="M82 62 h92 a26 26 0 0 1 26 26 v54 a26 26 0 0 1 -26 26 h-52
+           l-32 30 a5 5 0 0 1 -8.4 -4.4 l5.4 -25.6 h-5
+           a26 26 0 0 1 -26 -26 v-54 a26 26 0 0 1 26 -26 z" />
+      <g fill={NIKKI.teal} opacity="0.86">
+        {[76, 98, 120, 142, 164].map((x, i) => (
+          <rect key={x} x={x} y={Y[i]} width="12" height={H[i]} rx="6"
+                style={{ transition: "all .22s ease" }} />
+        ))}
+      </g>
+    </svg>
   );
 }
 

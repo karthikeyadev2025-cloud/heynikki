@@ -2751,6 +2751,8 @@ function PlatformConfigPanel({ token }: { token: string }) {
   const [cfg, setCfg]     = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved]   = useState<string | null>(null);
+  const [secretSet, setSecretSet] = useState<Record<string, boolean>>({});
+  const [rzp, setRzp] = useState<Record<string, string>>({});
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
   useEffect(() => {
@@ -2758,8 +2760,11 @@ function PlatformConfigPanel({ token }: { token: string }) {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => r.json()).then((rows: any[]) => {
       const m: Record<string, string> = {};
-      for (const r of rows) m[r.key] = r.value;
-      setCfg(m);
+      const secrets: Record<string, boolean> = {};
+      // A secret comes back with an empty value and has_value — the API never
+      // hands one out again once it is set (see SECRET_CONFIG_KEYS).
+      for (const r of rows) { m[r.key] = r.value; if (r.is_secret) secrets[r.key] = !!r.has_value; }
+      setCfg(m); setSecretSet(secrets);
     });
   }, [token, API_URL]);
 
@@ -2805,6 +2810,50 @@ function PlatformConfigPanel({ token }: { token: string }) {
       )}
 
       <Card>
+        {/* Payments. These three used to live only in infra/.env, so switching
+            online payment on meant editing a file on the server and
+            redeploying — and the platform ran for weeks with all three empty
+            and no customer able to pay. Set here, they apply everywhere
+            within a minute. A value set in the environment still wins. */}
+        <Row label="Razorpay Key ID" desc={`Public key from Razorpay → Settings → API Keys. ${cfg["razorpay_key_id"] ? "" : "Not set — customers cannot pay."}`}>
+          <input
+            type="text" placeholder="rzp_live_…"
+            defaultValue={cfg["razorpay_key_id"] || ""}
+            onChange={e => setRzp(p => ({ ...p, razorpay_key_id: e.target.value }))}
+            style={{ background: C.bg, color: C.txt, border: "1px solid " + C.bord, borderRadius: 8, padding: "7px 10px", fontSize: TYPE.sm, width: 260, fontFamily: "monospace" }}
+          />
+          <button onClick={() => saveKey("razorpay_key_id", (rzp["razorpay_key_id"] ?? cfg["razorpay_key_id"] ?? "").trim())}
+            disabled={saving === "razorpay_key_id"}
+            style={{ background: C.glow, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+            {saving === "razorpay_key_id" ? "Saving…" : "Save"}
+          </button>
+        </Row>
+
+        {([["razorpay_key_secret", "Razorpay Key Secret", "Shown by Razorpay once, when the key is created."],
+           ["razorpay_webhook_secret", "Razorpay Webhook Secret", "From Razorpay → Settings → Webhooks. Without it, payment webhooks are refused."]] as const).map(([key, label, desc]) => (
+          <Row key={key} label={label} desc={`${desc} ${secretSet[key] ? "Set — type a new value to replace it." : "Not set."}`}>
+            <input
+              type="password" placeholder={secretSet[key] ? "••••••••  (unchanged)" : "paste secret"}
+              value={rzp[key] || ""}
+              onChange={e => setRzp(p => ({ ...p, [key]: e.target.value }))}
+              style={{ background: C.bg, color: C.txt, border: "1px solid " + C.bord, borderRadius: 8, padding: "7px 10px", fontSize: TYPE.sm, width: 260, fontFamily: "monospace" }}
+            />
+            <button
+              onClick={async () => {
+                const v = (rzp[key] || "").trim();
+                if (!v) return;
+                await saveKey(key, v);
+                // Never keep it in the page after it is stored.
+                setRzp(p => ({ ...p, [key]: "" }));
+                setSecretSet(p => ({ ...p, [key]: true }));
+              }}
+              disabled={saving === key || !(rzp[key] || "").trim()}
+              style={{ background: (rzp[key] || "").trim() ? C.glow : C.bord, color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: TYPE.xs, fontWeight: 700, cursor: (rzp[key] || "").trim() ? "pointer" : "not-allowed" }}>
+              {saving === key ? "Saving…" : "Save"}
+            </button>
+          </Row>
+        ))}
+
         <Row label="Telephony Engine" desc="FreeSWITCH = Jio/Vi SIP primary. Exotel = legacy fallback.">
           <PillToggle
             options={[{ label: "FreeSWITCH", value: "freeswitch" }, { label: "Exotel", value: "exotel" }]}
