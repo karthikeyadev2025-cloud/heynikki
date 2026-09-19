@@ -146,6 +146,11 @@ function normalizeConfirm(raw: any): Confirm | undefined {
 // A person is sitting looking at this. Past half a minute the honest thing
 // is to say it did not work, not to keep the dots moving.
 const ASK_TIMEOUT_MS = 30_000;
+// A hard stop on the microphone, the same one the landing-page console has.
+// Without it a hand resting on the button recorded until the tab was closed,
+// and the speech service rejects a long clip outright — so the owner spoke
+// for two minutes and got an error instead of an answer.
+const MAX_REC_MS = 20_000;
 const SPEAK_CAP_MS   = 60_000;
 
 function askError(e: any): string {
@@ -184,6 +189,8 @@ export default function OwnerVoiceAssistant() {
   const [level, setLevel]   = useState(0);   // 0..1 mic energy while recording
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  const autoStopRef = useRef<number | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -369,6 +376,9 @@ export default function OwnerVoiceAssistant() {
       };
       recorder.start();
       mediaRecorderRef.current = recorder;
+      autoStopRef.current = window.setTimeout(() => {
+        if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+      }, MAX_REC_MS);
       startMeter(stream);
       setStatus("recording");
     } catch (e) {
@@ -379,10 +389,12 @@ export default function OwnerVoiceAssistant() {
   }, [startMeter, stopMeter]);
 
   const stopRecording = useCallback(() => {
+    if (autoStopRef.current) { clearTimeout(autoStopRef.current); autoStopRef.current = null; }
     mediaRecorderRef.current?.stop();
   }, []);
 
   const handleRecordingComplete = async (blob: Blob) => {
+    if (autoStopRef.current) { clearTimeout(autoStopRef.current); autoStopRef.current = null; }
     setStatus("thinking");
     try {
       const audioBase64 = await blobToBase64(blob);

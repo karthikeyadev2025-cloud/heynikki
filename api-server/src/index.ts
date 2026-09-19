@@ -1324,10 +1324,16 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       // Silence or unintelligible audio. Answer the way a person would
       // rather than erroring the UI out — this is a normal thing to
       // happen on a phone call, not an exception.
+      // Telugu script, and SPOKEN. Romanised Telugu is what a transliteration
+      // tool writes, not what a Telugu business writes, and returning it with
+      // audio_base64 null meant the one moment the visitor most needs to hear
+      // her — "I didn't catch that" — was silent, which reads as broken.
+      const heardNothing = "క్షమించండి అండి, వినిపించలేదు. మళ్ళీ చెప్తారా?";
       return res.json({
         transcript: "",
-        reply: "Sorry andi, vinipinchaledu. Malli cheptara?",
-        audio_base64: null,
+        reply: heardNothing,
+        audio_base64: await synthesizeTelugu(heardNothing).catch(() => ""),
+        audio_mime: "audio/wav",
         booking_confirmed: false,
         heard_nothing: true,
         turn: turnNo,
@@ -7505,8 +7511,16 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   // ── 1. Transcribe what the owner said (Sarvam Saaras v3) ──
   const audioBuffer = Buffer.from(audio_base64, "base64");
   const sttForm = new FormData();
-  const ext = (mime_type || "audio/webm").split("/")[1] || "webm";
-  sttForm.append("file", new Blob([audioBuffer], { type: mime_type || "audio/webm" }), `audio.${ext}`);
+  // Strip the codecs parameter, exactly as the landing-page widget learned to:
+  // a browser's MediaRecorder always reports "audio/webm;codecs=opus", Sarvam
+  // matches its allow-list on the EXACT string and answers "400 Invalid file
+  // type", and the filename became "audio.webm;codecs=opus" too. Measured: the
+  // dashboard's microphone failed on every attempt with "Sarvam STT error:
+  // 400" while the same bytes as bare "audio/webm" transcribe fine. The phone
+  // app sends audio/wav, which is why only the browser was affected.
+  const mime = (mime_type || "audio/webm").split(";")[0].trim();
+  const ext  = mime.split("/")[1] || "webm";
+  sttForm.append("file", new Blob([audioBuffer], { type: mime }), `audio.${ext}`);
   sttForm.append("model", "saaras:v3");
   // "unknown" = let Sarvam detect it. Pinned to te-IN, an owner asking "how
   // many calls today?" in English was transcribed into Telugu script
@@ -7520,7 +7534,20 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
     headers: { "api-subscription-key": SARVAM_KEY },
     body: sttForm as any,
   });
-  if (!sttResp.ok) throw new Error(`Sarvam STT error: ${sttResp.status}`);
+  if (!sttResp.ok) {
+    // A 4xx here is the CLIP, not the service: too long (the sync API stops
+    // well short of a monologue), or a container it will not take. Measured:
+    // a 400-second recording came back 400 and reached the browser as a bare
+    // 500 "Sarvam STT error: 400", which tells the owner nothing they can act
+    // on. Say the thing they can fix.
+    const detail = await sttResp.text().catch(() => "");
+    console.error(`[voice-query] Sarvam STT ${sttResp.status}: ${detail.slice(0, 200)}`);
+    const err: any = new Error(sttResp.status >= 400 && sttResp.status < 500
+      ? "That recording is too long or in a format I can't read — keep it under about 20 seconds."
+      : "The speech service is unavailable right now — please try again.");
+    err.status = sttResp.status >= 400 && sttResp.status < 500 ? 422 : 502;
+    throw err;
+  }
   const sttData = await sttResp.json() as any;
   const transcript: string = sttData.transcript || "";
   if (!transcript.trim()) throw new Error("Could not hear anything — please try again");
@@ -7647,6 +7674,10 @@ app.post("/api/tenant/voice-query", verifyJWT, async (req: any, res) => {
   } catch (err: any) {
     const msg = err?.message || "Voice query failed";
     if (/hear anything/i.test(msg)) return res.status(422).json({ error: msg });
+    // A status carried on the error means it was already turned into
+    // something the person can act on (clip too long, speech service down).
+    // Only an unexplained failure deserves a 500 and a stack trace.
+    if (err?.status) return res.status(err.status).json({ error: msg });
     console.error("[tenant voice-query]", err);
     res.status(500).json({ error: msg });
   }
