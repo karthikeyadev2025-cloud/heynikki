@@ -116,27 +116,34 @@ export default function OwnerAlerts() {
       {shown.map(a => {
         const { color, Icon } = TONE[a.severity] || TONE.warning;
         return (
+          // flexWrap, and the action + dismiss kept together in their own row.
+          // Without wrapping, the un-shrinkable button and X held their full
+          // width on a 360px phone and squeezed the message into a ~100px
+          // ribbon — "KYC / documents / not / uploaded", one word per line,
+          // as the first thing a new owner sees after signing up.
           <div key={a.id} style={{
             background: color + "0D", border: `1px solid ${color}55`, borderRadius: 10,
             padding: "13px 14px", display: "flex", gap: 12, alignItems: "flex-start",
+            flexWrap: "wrap",
           }}>
             <Icon size={18} color={color} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <div style={{ color: NIKKI.text, fontSize: 14, fontWeight: 800 }}>{a.title}</div>
               <div style={{ color: NIKKI.textMid, fontSize: 12.5, marginTop: 3, lineHeight: 1.55 }}>
                 {a.detail}
               </div>
             </div>
-            <a href={a.action.href} style={{
-              background: color, color: "#fff", borderRadius: 8, padding: "7px 14px",
-              fontSize: 12.5, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap",
-              flexShrink: 0, alignSelf: "center",
-            }}>{a.action.label}</a>
-            <button onClick={() => dismiss(a.id)} title="Hide until tomorrow" aria-label="Hide until tomorrow"
-              style={{ background: "none", border: "none", cursor: "pointer", color: NIKKI.textDim,
-                padding: 4, flexShrink: 0, alignSelf: "center" }}>
-              <X size={14} />
-            </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto", flexShrink: 0 }}>
+              <a href={a.action.href} style={{
+                background: color, color: "#fff", borderRadius: 8, padding: "7px 14px",
+                fontSize: 12.5, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap",
+              }}>{a.action.label}</a>
+              <button onClick={() => dismiss(a.id)} title="Hide until tomorrow" aria-label="Hide until tomorrow"
+                style={{ background: "none", border: "none", cursor: "pointer", color: NIKKI.textDim,
+                  padding: 4, flexShrink: 0 }}>
+                <X size={14} />
+              </button>
+            </div>
           </div>
         );
       })}

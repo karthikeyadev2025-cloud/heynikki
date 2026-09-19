@@ -390,6 +390,39 @@ function leadsQuery(sb: SupabaseClient, tenantId: string, query: any, columns: s
 
 // ── Routes ────────────────────────────────────────────────────
 
+/**
+ * The words the dashboard shows, in the file the customer opens.
+ *
+ * These columns were written straight out of the database, so a shop owner
+ * opening their own export read "pricing_enquiry", "qualified" and
+ * "inbound_call" — developer keys, in a spreadsheet they may forward to an
+ * accountant. The dashboard has always had label maps; the exports never
+ * used them. Anything unmapped falls back to the raw value with its
+ * underscores opened up, so a new key is ugly rather than blank.
+ */
+const LABELS: Record<string, string> = {
+  // intents (both vocabularies the product uses)
+  book_appointment: "Appointment", appointment: "Appointment", booking: "Appointment",
+  pricing_enquiry: "Pricing", service_enquiry: "Service question", enquiry: "Enquiry",
+  location_hours: "Location / hours", complaint: "Complaint", follow_up: "Follow-up",
+  reschedule: "Reschedule", cancel: "Cancellation", callback: "Callback",
+  transfer: "Transferred to a person", order: "Order", emergency: "Emergency", other: "Other",
+  // lead stages
+  new: "New", contacted: "Contacted", qualified: "Qualified", won: "Won", lost: "Lost",
+  // lead sources
+  inbound_call: "Inbound call", outbound_campaign: "Outbound campaign",
+  web_form: "Website form", widget: "Website chat", manual: "Added by hand", import: "Imported",
+  // call outcomes
+  completed: "Completed", missed: "Missed", failed: "Failed", active: "In progress",
+  transferred: "Transferred", confirmed: "Confirmed", pending: "Pending", cancelled: "Cancelled",
+  no_show: "No show", inbound: "Incoming", outbound: "Outgoing",
+};
+const label = (v: unknown) => {
+  const k = String(v ?? "").trim();
+  if (!k) return "";
+  return LABELS[k.toLowerCase()] || k.replace(/_/g, " ");
+};
+
 export function mountSearchExport(app: Express, d: SearchExportDeps) {
   const { sb, verifyJWT, apiLimiter, getTenantId, audit } = d;
 
@@ -514,8 +547,8 @@ export function mountSearchExport(app: Express, d: SearchExportDeps) {
         const rows = batch
           .filter(r => callMatches(r, needle, digits))
           .map(r => [
-            istStamp(r.created_at), r.caller_number || "", r.direction || "",
-            r.status || "", r.duration_seconds ?? 0, r.intent || "unknown",
+            istStamp(r.created_at), r.caller_number || "", label(r.direction),
+            label(r.status), r.duration_seconds ?? 0, label(r.intent) || "Unknown",
             r.wa_sent ? "yes" : "no", r.appointment_created ? "yes" : "no",
             flattenTranscript(r.transcript),
           ]);
@@ -547,10 +580,10 @@ export function mountSearchExport(app: Express, d: SearchExportDeps) {
         const batch = (data as any[]) || [];
         read += batch.length;
         const rows = batch.map(l => [
-          l.name || "", l.phone || "", l.stage || "", l.score ?? 0,
-          l.interest || "", l.intent || "", l.notes || "",
+          l.name || "", l.phone || "", label(l.stage), l.score ?? 0,
+          l.interest || "", label(l.intent), l.notes || "",
           (Array.isArray(l.tags) ? l.tags : []).join(" | "),
-          l.source || "", l.call_count ?? 0,
+          label(l.source), l.call_count ?? 0,
           l.deal_value_paise ? Math.round(l.deal_value_paise / 100) : "",
           istStamp(l.last_contacted_at), istStamp(l.created_at),
           istStamp(l.follow_up_at), l.follow_up_note || "",
@@ -601,8 +634,11 @@ export function mountSearchExport(app: Express, d: SearchExportDeps) {
             || String(a.caller_number || "").includes(needle)
             || String(a.service || "").toLowerCase().includes(needle))
           .map(a => [
-            a.slot_date || "", a.slot_time || "", a.caller_name || "", a.caller_number || "",
-            a.service || "", a.status || "", a.booking_ref || "",
+            // "20 Sep 2026", matching every other date in these files —
+            // slot_date alone printed 2026-09-20 beside "19 Sep 2026 13:57".
+            a.slot_date ? istStamp(`${a.slot_date}T00:00:00+05:30`).replace(/ \d{2}:\d{2}$/, "") : "",
+            a.slot_time || "", a.caller_name || "", a.caller_number || "",
+            a.service || "", label(a.status), a.booking_ref || "",
             a.wa_confirmed ? "yes" : "no", a.notes || "", istStamp(a.created_at),
           ]);
         return { rows, done: batch.length < PAGE };

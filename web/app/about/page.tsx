@@ -51,9 +51,9 @@ export default function Page() {
         the conversation, confirms on WhatsApp, and can call a customer list back.
       </p>
       <p>
-        Callers are told at the start of every call that they are speaking to an AI, as
-        TRAI requires. Call recordings are encrypted before storage and only the business
-        that owns them can play them.
+        Nikki never pretends to be a person: ask her and she says plainly that she is an
+        AI assistant, in whatever language the caller is speaking. Call recordings are
+        encrypted before storage and only the business that owns them can play them.
       </p>
 
       <h2>Where we operate</h2>

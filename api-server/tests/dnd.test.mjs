@@ -26,15 +26,24 @@ function makeSb({ optOut = null, optOutError = null, cached = null, onInsert = (
     from(table) {
       const q = {
         _table: table,
+        _forms: null,
         select() { return q; },
         eq()     { return q; },
         gt()     { return q; },
         order()  { return q; },
-        limit()  { return q; },
-        maybeSingle() {
+        // The opt-out lookup asks for every stored FORM of the number
+        // (10-digit, 91…, +91…, 0…) because that table holds bare digits
+        // while callers arrive as +91XXXXXXXXXX. Record what was asked for,
+        // so a test can prove the match is not exact-string.
+        in(_col, forms) { q._forms = forms; return q; },
+        limit()  {
           if (q._table === "outbound_opt_outs") {
-            return Promise.resolve({ data: optOut, error: optOutError });
+            const hit = optOut && (!q._forms || q._forms.includes(optOut.phone));
+            return Promise.resolve({ data: hit ? [optOut] : [], error: optOutError });
           }
+          return q;
+        },
+        maybeSingle() {
           return Promise.resolve({ data: cached, error: null });
         },
         insert(row) { inserts.push(row); onInsert(row); return Promise.resolve({ error: null }); },
@@ -217,4 +226,22 @@ test("DND_SCRUB_TTL_HOURS cannot push the window past seven days", async () => {
     if (prev === undefined) delete process.env.DND_SCRUB_TTL_HOURS;
     else process.env.DND_SCRUB_TTL_HOURS = prev;
   }
+});
+
+// The bug this stub now models: opt-outs are stored as ten bare digits (the
+// pipeline and the dashboard both write them that way) while every number
+// reaching the scrubber is +91XXXXXXXXXX. An exact match found nothing, so
+// "stop calling me" lost to the consent carve-out — the one order the module
+// header says can never be reversed.
+test("an opt-out stored as ten digits blocks a +91 number", async () => {
+  const sb = makeSb({ optOut: { phone: "9876543210" } });
+  const a = await scrubDnd(sb, "+919876543210", { tenantId: "t", consented: true });
+  assert.equal(a.blocked, true);
+  assert.equal(a.reason, "opted_out");
+});
+
+test("a different number is not blocked by someone else's opt-out", async () => {
+  const sb = makeSb({ optOut: { phone: "9876543210" } });
+  const a = await scrubDnd(sb, "+919000000001", { tenantId: "t", consented: true });
+  assert.equal(a.blocked, false);
 });

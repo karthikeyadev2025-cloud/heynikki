@@ -55,7 +55,11 @@ export default function Page() {
 
       <h2>4. A Telugu AI receptionist</h2>
       <p>
-        <strong>From ₹1,999 a month</strong>, answering every call at once, at any hour, in
+        {/* NOT "every call at once" — concurrency is capped by the plan
+            (2 on Starter, 5 on Growth, 10 on Scale, per the plans table).
+            "Several at once" is the honest version of the same advantage
+            over a receptionist, who handles exactly one. */}
+        <strong>From ₹1,999 a month</strong>, answering several calls at once, at any hour, in
         the language the caller chose. It knows your hours, services and prices because
         you uploaded your own brochure, books the appointment, and sends the WhatsApp
         confirmation.
@@ -82,7 +86,7 @@ export default function Page() {
 
       <Faq items={[
         { q: "Is an AI receptionist better than hiring a person?",
-          a: "Not better — different. A person is better at judgement and at regulars; an AI answers every call at once, at any hour, for about an eighth of the cost. If your volume already justifies a full-time receptionist, hire one." },
+          a: "Not better — different. A person is better at judgement and at regulars; an AI answers several calls at once, at any hour, for about an eighth of the cost. If your volume already justifies a full-time receptionist, hire one." },
         { q: "Why not just use an IVR menu?",
           a: "An IVR asks the caller to route themselves and cannot answer what they rang to ask, so it converts a missed call into an abandoned one. An AI receptionist answers the question instead of offering a menu." },
         { q: "How is this different from a call answering service?",

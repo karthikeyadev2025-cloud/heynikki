@@ -28,6 +28,7 @@
  *   4. No answer available -> BLOCK.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { phoneForms } from "./campaign-import";
 
 export interface ScrubAnswer {
   blocked: boolean;
@@ -94,8 +95,17 @@ async function queryProvider(phone: string): Promise<ScrubAnswer> {
 /** Has this business been told, by this person, to stop calling? */
 async function isOptedOut(sb: SupabaseClient, tenantId: string, phone: string): Promise<boolean> {
   if (!tenantId || !phone) return false;
+  // outbound_opt_outs stores TEN BARE DIGITS (written that way by the pipeline
+  // when a caller says "stop calling me", and by the dashboard), while every
+  // number reaching this function is +91XXXXXXXXXX — outbound_recipients.phone
+  // is normalised to E.164 on import. An exact .eq() therefore matched nothing,
+  // ever: step 1 of the order above — the one the header calls the whole point
+  // of a withdrawal, the one consent must never override — silently passed
+  // every opted-out number straight through to the consent carve-out below.
+  // Compare against every stored form, the same way campaign-import.ts and the
+  // dispatcher's own dial-time check already do.
   const { data, error } = await sb.from("outbound_opt_outs")
-    .select("phone").eq("tenant_id", tenantId).eq("phone", phone).maybeSingle();
+    .select("phone").eq("tenant_id", tenantId).in("phone", phoneForms(phone)).limit(1);
   // A failed lookup is not an absence of opt-out. Treat it as one — the
   // caller turns this into a block — rather than dialling someone who may
   // have withdrawn because Postgres blinked.
@@ -103,7 +113,7 @@ async function isOptedOut(sb: SupabaseClient, tenantId: string, phone: string): 
     console.error("[dnd] opt-out lookup failed:", error.message);
     return true;
   }
-  return !!data;
+  return !!data?.length;
 }
 
 /** The newest still-valid provider answer for this number, if any. */

@@ -135,6 +135,16 @@ export default function DevelopersPage() {
 
         {/* ── AUTH ─────────────────────────────────────────── */}
         <H2 id="auth">Authentication</H2>
+        {/* plans.api_access is true for "scale" only, and outbound over the
+            API additionally needs a plan with outbound_campaigns (Growth or
+            Scale) — which is what the documented 402 plan_upgrade_required
+            means. A developer should learn that here, not from a 402. */}
+        <P>
+          API access is included on the <Link href="/pricing" style={{ color: C.teal }}>Scale plan</Link>.
+          Outbound calling additionally requires a plan with outbound campaigns (Growth or
+          Scale); a request without it returns{" "}
+          <code style={{ fontFamily: mono }}>402 plan_upgrade_required</code>.
+        </P>
         <P>
           Every request carries an API key as a bearer token. Issue one in the dashboard
           under <Link href="/api-keys" style={{ color: C.teal }}>API keys</Link>; the key

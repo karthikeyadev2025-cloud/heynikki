@@ -941,15 +941,29 @@ export async function runScheduler() {
   log("run start");
   // Sequential on purpose: these are small jobs and running them one at a
   // time keeps log output readable and avoids hammering Gemini/Supabase.
-  await runEmbedKnowledge();
-  await runAppointmentReminders();
-  await runIncompleteBookings();
+  //
+  // Each job is isolated. The jobs below used to be bare `await`s while only
+  // the ones after them were wrapped, so ONE throw anywhere in the first seven
+  // — a Gemini response that parses to the wrong shape, a Supabase client that
+  // rejects instead of returning {error} — aborted runScheduler entirely and
+  // silently skipped plan expiry, the retention purge and the WhatsApp sweep.
+  // It then did exactly the same thing on the next cycle, and the only trace
+  // was a "run start" with no matching "run complete" in a log nobody reads
+  // (SENTRY_DSN is unset). One sick job must not take the other eleven down.
+  const step = async (name: string, fn: () => Promise<unknown>) => {
+    try { await fn(); }
+    catch (e: any) { console.error(`[scheduler] ${name} failed:`, e?.message || e); }
+  };
+
+  await step("embed knowledge",      runEmbedKnowledge);
+  await step("appointment reminders", runAppointmentReminders);
+  await step("incomplete bookings",  runIncompleteBookings);
   // Morning first, evening second — each is a no-op outside its own IST
   // window, so the order only decides which one is checked first.
-  await runMorningBriefings();
-  await runDailySummaries();
-  await runCallQuality();
-  await runCloseAbandonedCalls();
+  await step("morning briefings",    runMorningBriefings);
+  await step("daily summaries",      runDailySummaries);
+  await step("call quality",         runCallQuality);
+  await step("close abandoned calls", runCloseAbandonedCalls);
 
   // Onboarding messages from HeyNikki itself. Send-once is enforced by a
   // unique index, so running this every cycle is safe.

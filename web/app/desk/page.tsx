@@ -79,9 +79,12 @@ function Card({ title, icon, children, style, right }: {
   style?: React.CSSProperties; right?: React.ReactNode;
 }) {
   return (
-    <section style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 18, ...style }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <div style={{ color: C.txt, fontSize: 14.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+    <section style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 18, minWidth: 0, ...style }}>
+      {/* flexWrap + minWidth:0 — "Dial a number" beside "rings +91 90000
+          00001 first" could not shrink on a phone, and that single row set
+          a 436px floor under the whole column. */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ color: C.txt, fontSize: 14.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           {icon}{title}
         </div>
         {right}
@@ -178,7 +181,11 @@ export default function DeskPage() {
         </div>
       </div>
       <style>{`
-        @media (max-width: 900px) { .desk-grid { grid-template-columns: 1fr !important; } }
+        /* minmax(0,1fr), not 1fr. A bare 1fr is minmax(auto,1fr), so the
+           column refuses to go below the widest card's min-content — the
+           dialer row and the card headers — and on a 360px phone the whole
+           page grew to 488px and scrolled sideways. */
+        @media (max-width: 900px) { .desk-grid { grid-template-columns: minmax(0, 1fr) !important; } }
         @keyframes deskpulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
       `}</style>
     </Shell>

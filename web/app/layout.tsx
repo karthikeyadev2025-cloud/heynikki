@@ -216,7 +216,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Can my own software talk to it?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes — there is a REST API with scoped keys. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
+              text: "Yes — there is a REST API with scoped keys, included on the Scale plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
             },
           },
           {
@@ -224,7 +224,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Do I have to change my number?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "No. Forward your existing number to HeyNikki, or port it fully — both work. Your board, cards and Google listing stay exactly as they are.",
+              // Must match the visible FAQ on the homepage word for word in
+              // substance — Google discounts FAQ markup that does not. The
+              // page offers "forward, or use the new number we give you"; it
+              // does not offer porting, so neither does this.
+              text: "No. Forward your existing number to Nikki, or use the new number we give you. Your board, your cards and your Google listing all stay exactly as they are.",
             },
           },
           {

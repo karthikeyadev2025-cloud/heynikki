@@ -22,8 +22,12 @@ const C = {
   focus: "0 0 0 3px rgba(16,185,129,0.22)",
 };
 
+// 16px, not 14. Mobile Safari zooms the whole page in when a focused input's
+// text is under 16px, and the page never zooms back out — so an owner tapping
+// the email field on a phone got a sideways-scrolling, half-visible form on
+// the one screen that must not fight them.
 const inputBase: React.CSSProperties = {
-  width: "100%", padding: "12px 14px", fontSize: 14,
+  width: "100%", padding: "12px 14px", fontSize: 16,
   background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
   color: C.ink, outline: "none",
   transition: "border-color .15s ease, box-shadow .15s ease",
@@ -62,13 +66,37 @@ export default function LoginPage() {
     e.currentTarget.style.boxShadow = "none";
   };
 
+  // Supabase's own strings were going straight into the error box. The two a
+  // real customer actually hits on day one are "Invalid login credentials"
+  // (jargon — it does not say WHICH of the two was wrong, or what to do) and
+  // "Email not confirmed", which is the single most common first-login
+  // failure on this product and gave no hint that a confirmation mail is
+  // sitting unread. Unrecognised messages pass through unchanged so a genuine
+  // fault is never masked.
+  const humanLoginError = (raw: string): string => {
+    const m = (raw || "").toLowerCase();
+    if (m.includes("email not confirmed") || m.includes("not confirmed")) {
+      return "Your email isn't confirmed yet. Open the link we emailed you when you signed up — check spam too — then sign in.";
+    }
+    if (m.includes("invalid login credentials") || m.includes("invalid credentials")) {
+      return "That email and password don't match an account. Check them, or use 'Forgot password' below.";
+    }
+    if (m.includes("only request this after") || m.includes("rate limit") || m.includes("too many")) {
+      return "Too many attempts. Please wait about a minute and try again.";
+    }
+    if (m.includes("failed to fetch") || m.includes("network")) {
+      return "We couldn't reach our servers. Check your internet connection and try again.";
+    }
+    return raw;
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
     const sb = createClient();
     const { error: err } = await sb.auth.signInWithPassword({ email, password });
-    if (err) { setError(err.message); setLoading(false); return; }
+    if (err) { setError(humanLoginError(err.message)); setLoading(false); return; }
     window.location.href = await landingFor(sb);
   };
 

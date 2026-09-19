@@ -89,7 +89,27 @@ export default function Pricing() {
 
       <h2>If you go over your minutes</h2>
       <p>
-        Need more minutes? Upgrade to the next plan any time.
+        {/* Say the whole of it. The dashboard's billing page quotes "₹15/extra
+            minute" while this page previously said only "upgrade", so a
+            customer comparing the two found two different stories. What the
+            code does (usage.ts minutesGate): calls are REFUSED once the plan's
+            minutes are gone unless bought credit remains — nothing is ever
+            billed to them without a purchase. */}
+        You are never billed automatically for going over. When your included minutes run
+        out, calls stop until you upgrade to the next plan, which you can do at any time
+        from the billing page. Nothing is ever charged to you that you did not buy.
+      </p>
+      <p>
+        {/* Do NOT advertise buyable add-on minutes here. The Razorpay webhook
+            can grant them (notes.type === "addon_minutes" → credit_ledger),
+            but NOTHING in the product creates such an order: there is no
+            endpoint and no button, so a customer cannot buy them today. The
+            dashboard's billing page still prints "Overage: ₹15/extra minute",
+            which is the same unbuyable thing — flagged for that page's owner.
+            If a top-up flow ships, say so here and quote plan_overage_paise. */}
+        If you need extra minutes before your next billing date and do not want to move
+        up a plan, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> and
+        we will add them to your account and invoice you for them.
       </p>
 
       <h2>Numbers and seats</h2>
@@ -101,9 +121,15 @@ export default function Pricing() {
 
       <h2>Cancellation</h2>
       <p>
-        Cancel any month — message us on WhatsApp and it&apos;s done the same day. You keep access until the end of the
+        {/* Was "message us on WhatsApp and it's done the same day" — but no
+            WhatsApp support number is published anywhere on this site, and
+            cancellation is a super-admin action, so "same day" was a promise
+            nobody was on the hook for. Give the channels that actually exist. */}
+        Cancel any month. Email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a>{" "}
+        from the address on your account or call <a href="tel:+918633502031">+91 86335 02031</a>,
+        and we action it within one business day. You keep access until the end of the
         period you&apos;ve paid for, and your call recordings and transcripts stay
-        exportable.
+        exportable. See the <a href="/refund-policy">Refund Policy</a> for refunds.
       </p>
 
       <h2>Refunds</h2>

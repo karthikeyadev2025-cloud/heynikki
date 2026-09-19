@@ -15,8 +15,16 @@ export default function Refund() {
         Every new account starts with <strong>100 free minutes</strong> of answered calls.
         No card is required and there is no time limit — the minutes are used as calls are
         answered, and when they run out your calls stop until you choose a plan. Nothing is
-        charged for these minutes, so there is nothing to refund. If you never subscribe,
-        your account becomes read-only and is permanently deleted after 30 days.
+        charged for these minutes, so there is nothing to refund.
+      </p>
+      <p>
+        {/* This used to say the account is "permanently deleted after 30 days",
+            which contradicted the pricing page ("Nothing is deleted") and is not
+            what the platform does — no job deletes an unconverted trial. Saying
+            we delete data we in fact keep is the worse of the two errors. */}
+        If you never subscribe, the account simply stops taking calls. Your recordings,
+        transcripts and contacts stay exportable, and nothing is deleted unless you ask
+        us to delete it.
       </p>
 
       <h2>2. Monthly subscriptions</h2>
@@ -31,10 +39,15 @@ export default function Refund() {
           charge for a full refund. This applies only to the very first monthly charge
           and is available once per customer.
         </li>
+        {/* This said "more than 8 hours in a billing month" for every customer,
+            while Terms §6 promised a 99.5% target with the credit limited to
+            Scale. Two different thresholds and two different eligibilities for
+            the same credit. One number, stated once, in both places. */}
         <li>
-          <strong>Service outage:</strong> if Nikki is unavailable for more than 8 hours in
-          a single billing month, you can claim a 10% credit toward the next month's bill
-          by emailing us within 30 days.
+          <strong>Service outage:</strong> if inbound call handling falls below the{" "}
+          <strong>99.5% monthly uptime</strong> we target in{" "}
+          <a href="/terms">clause 6 of our Terms</a>, you can claim a 10% credit toward
+          the next month&apos;s bill by emailing us within 30 days of the end of that month.
         </li>
       </ul>
 
@@ -45,18 +58,36 @@ export default function Refund() {
         non-refundable, but cancellation prevents future renewals.
       </p>
 
-      <h2>4. Add-ons and overage charges</h2>
+      <h2>4. Add-on minutes</h2>
       <p>
-        Per-minute overage charges (calls beyond your plan's included minutes) are
-        non-refundable, since the underlying compute and telephony costs are already
-        incurred.
+        {/* There is no post-paid overage on this product. minutesGate() in
+            api-server/src/usage.ts refuses further calls once the plan's
+            minutes are gone; the only way past that is to upgrade or to buy
+            add-on minutes UP FRONT. Describing a charge that is never raised
+            invites a customer to expect a bill that never arrives — or worse,
+            to believe one might. */}
+        You are never billed automatically for going over your plan. When your included
+        minutes run out, calls stop until you upgrade. If we add extra minutes to your
+        account at your request and invoice you for them, those minutes are prepaid and
+        non-refundable once any part of the balance has been used, since the telephony
+        and compute behind them are already paid for. An entirely unused batch can be
+        refunded within 7 days.
       </p>
 
       <h2>5. Cancellation</h2>
       <p>
-        You can cancel anytime from <strong>Dashboard → Billing → Cancel</strong> or by
-        emailing <a href="mailto:support@heynikki.in">support@heynikki.in</a>. Cancellation takes
-        effect at the end of the current billing cycle — you keep service until then.
+        {/* There is no self-serve cancel control. The ONLY cancellation path in
+            the codebase is POST /api/admin/tenants/:id/cancel, which is behind
+            verifySuperAdmin — a member of our team has to run it. Pointing a
+            customer at "Dashboard → Billing → Cancel", which does not exist,
+            is the kind of thing Razorpay checks and a customer discovers at
+            the worst possible moment. */}
+        To cancel, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> or{" "}
+        <a href="mailto:support@heynikki.in">support@heynikki.in</a> from the address on
+        your account, or call <a href="tel:+918633502031">+91 86335 02031</a>. We action
+        cancellations within one business day and confirm by email. Cancellation takes
+        effect at the end of the current billing cycle — you keep service until then, and
+        your recordings, transcripts and contacts stay exportable.
       </p>
 
       <h2>6. How refunds are processed</h2>

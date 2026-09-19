@@ -83,7 +83,7 @@ export default function ForgotPasswordPage() {
                 onChange={e => setEmail(e.target.value)}
                 placeholder="you@business.in"
                 style={{
-                  width: "100%", padding: "12px 14px", fontSize: 14,
+                  width: "100%", padding: "12px 14px", fontSize: 16,
                   background: J.surface, border: `1px solid ${J.borderHi}`,
                   borderRadius: 10, color: J.chandra, marginBottom: 20, outline: "none",
                 }}

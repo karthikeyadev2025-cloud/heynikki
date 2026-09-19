@@ -21,6 +21,18 @@ import { createClient } from "../lib/supabase";
 import { toast } from "./Toast";
 import { NIKKI } from "../lib/brand";
 
+/**
+ * "heynikki-calls-2026-09-19.csv" — the same shape istToday() builds on the
+ * server, so a download named here and one named there are indistinguishable.
+ * The day is IST: at 23:00 UTC a Hyderabad shop is already on tomorrow, and a
+ * file stamped with yesterday's date is one they will mis-file.
+ */
+function fallbackName(path: string): string {
+  const base = (path.split("/").pop() || "export.csv").replace(/\.csv$/, "");
+  const ist = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  return `heynikki-${base}-${ist}.csv`;
+}
+
 export default function ExportButton({
   path, params, label = "Download CSV", disabled, title,
 }: {
@@ -57,11 +69,16 @@ export default function ExportButton({
         return;
       }
 
-      // The server names the file (heynikki-calls-2026-09-19.csv). Fall back
-      // to the route's own name rather than letting the browser save
-      // something called "calls.csv" from a URL with a query string on it.
+      // The server names the file (heynikki-calls-2026-09-19.csv) in
+      // Content-Disposition — but that header is NOT CORS-safelisted, and the
+      // API sends cors({origin:"*"}) with no exposedHeaders, so from the
+      // browser this reads back null on every real deployment (the dashboard
+      // and the API are different origins). Every download therefore landed
+      // as a bare "calls.csv", and a shop that exports twice in a week ends
+      // up with calls.csv and calls (1).csv and no idea which is which.
+      // Build the same name here so the file is dated either way.
       const cd = r.headers.get("content-disposition") || "";
-      const named = /filename="([^"]+)"/.exec(cd)?.[1];
+      const named = /filename="([^"]+)"/.exec(cd)?.[1] || fallbackName(path);
 
       const blob = await r.blob();
       // An export of zero rows is still a valid file with a header row, but
@@ -71,7 +88,7 @@ export default function ExportButton({
       url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = named || path.split("/").pop() || "heynikki.csv";
+      a.download = named;
       document.body.appendChild(a);
       a.click();
       a.remove();

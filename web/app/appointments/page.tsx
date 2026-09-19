@@ -18,6 +18,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import AddToCalendar from "../../components/AddToCalendar";
+import ExportButton from "../../components/ExportButton";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Calendar, Hash } from "lucide-react";
@@ -258,7 +259,12 @@ export default function AppointmentsPage() {
 
         {tenantId && <BookingNumberSettings tenantId={tenantId} onSaved={load} />}
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {/* The appointments export has existed on the API since exports were
+            built (GET /api/export/appointments.csv, paged past PostgREST's
+            1000-row ceiling) and no page has ever linked to it. /calls and
+            /leads both had a download button; the one list a clinic actually
+            wants in a spreadsheet — tomorrow's bookings — did not. */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
           {(["upcoming", "all"] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)} style={{
               background: filter === f ? C.glow : C.hi,
@@ -268,6 +274,10 @@ export default function AppointmentsPage() {
               cursor: "pointer", textTransform: "capitalize",
             }}>{f}</button>
           ))}
+          <div style={{ marginLeft: "auto" }}>
+            <ExportButton path="/api/export/appointments.csv" label="Download CSV"
+              title="Download every booking as a CSV for Excel or Sheets" />
+          </div>
         </div>
 
         {loading ? (

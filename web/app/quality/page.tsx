@@ -41,6 +41,19 @@ type Row = {
 
 const scoreColor = (s: number) => s >= 70 ? C.grn : s >= 45 ? C.gold : C.red;
 
+/** "3m 21s" — the same shape /calls and /dashboard use for a call length. */
+function fmtDuration(s: number): string {
+  if (!s) return "—";
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+}
+/** "18 Sept" in IST — matching /calls and the CSV exports. */
+function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+}
+
 function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 16 }}>
@@ -184,7 +197,9 @@ export default function QualityPage() {
                           {r.calls?.caller_number || "unknown"}
                         </span>
                         <span style={{ fontSize: 12, color: C.dim }}>
-                          {r.calls?.duration_seconds ?? 0}s · {r.calls ? new Date(r.calls.created_at).toLocaleDateString("en-IN") : ""}
+                          {/* "201s · 18/9/2026" was the only place on the site
+                              that printed raw seconds and a numeric date. */}
+                          {fmtDuration(r.calls?.duration_seconds ?? 0)} · {r.calls ? fmtDay(r.calls.created_at) : ""}
                         </span>
                         {r.sentiment === "negative" && (
                           <span style={{ background: C.red + "18", color: C.red, border: `1px solid ${C.red}44`,
@@ -220,7 +235,10 @@ export default function QualityPage() {
                     </div>
 
                     <div style={{ display: "flex", gap: 12, fontSize: 11, color: C.mid }}>
-                      {([["Res", r.resolution_score], ["Crt", r.courtesy_score], ["Cmp", r.compliance_score]] as const).map(([l, v]) => (
+                      {/* Was "Res / Crt / Cmp". Three-letter stubs of words the
+                          owner never sees spelled out anywhere on the page —
+                          the scores above them are meaningless without them. */}
+                      {([["Solved", r.resolution_score], ["Polite", r.courtesy_score], ["Rules", r.compliance_score]] as const).map(([l, v]) => (
                         <div key={l} style={{ textAlign: "center" }}>
                           <div style={{ fontWeight: 800, fontSize: 14, color: scoreColor(v) }}>{v}</div>
                           <div>{l}</div>

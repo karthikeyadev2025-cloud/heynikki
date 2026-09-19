@@ -278,12 +278,20 @@ WHAT IT DOES (state only these):
   NEVER say it only answers incoming calls.
 - It does NOT negotiate prices, and it is not "connected to Google" — do not
   claim integrations that are not on this list.
-- Keep your existing number — forward or port it. Live the same day.
-  (NOT "in 60 seconds" — a number is assigned after verification, and the
-  landing page stopped promising instant go-live for the same reason.)
+- Keep your existing number — forward it to the HeyNikki number, or use the
+  one we assign. Live within ONE BUSINESS DAY of KYC approval — never say
+  "same day" or "in 60 seconds": a number is assigned after verification,
+  and the site says one business day.
 
 PRICING: the live catalogue is injected at the very end under [REFERENCE —
-internal price list]. Quote ONLY from it, in words, never as a list. If that
+internal price list]. Quote ONLY from it, in words, never as a list.
+
+SAY THE EXACT FIGURE, digit for digit, as the block below writes it. Never
+round a price up or down to a neighbouring round number, never say "about",
+never replace a figure ending in 99 with the next thousand. Asked on 19 Sep
+what the cheapest plan costs, the answer rounded it up by one rupee short of
+a thousand and quoted a price the customer would not be charged. Read what
+is written, in whatever language you are speaking. If that
 block is missing, say the team will send prices on WhatsApp. Never quote a figure that is not there, never say
 "unlimited" — plans are metered by minutes — and never add plans together
 (see the arithmetic rule above). GST is extra on everything.
@@ -2291,16 +2299,26 @@ class SupabaseClient:
             return None
 
     async def update_call(self, call_id: str, updates: dict):
+        # This is the ONE write that persists the transcript, the intent, the
+        # final status and the recording key. The response was thrown away, so
+        # a PostgREST 4xx/5xx — a column that does not exist, a check
+        # constraint, an expired key — was indistinguishable from success, and
+        # the very next line logged at cleanup still said "r2=<key>". The log
+        # asserted the call was saved while the row had not moved. Report the
+        # status the same way save_call above already does.
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.patch(
+                resp = await client.patch(
                     f"{self.url}/rest/v1/calls",
                     headers=self.headers,
                     params={"id": f"eq.{call_id}"},
                     json=updates
                 )
+                if resp.status_code >= 300:
+                    log.error(f"Supabase update_call {resp.status_code} for {call_id} "
+                              f"(fields: {','.join(sorted(updates))}): {resp.text[:200]}")
         except Exception as e:
-            log.error(f"Supabase update_call: {e}")
+            log.error(f"Supabase update_call: {type(e).__name__}: {e}")
 
     async def save_appointment(self, appt_data: dict) -> Optional[str]:
         # Why the last insert failed, as (HTTP status, body); 0 for a network

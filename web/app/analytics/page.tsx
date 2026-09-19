@@ -26,6 +26,23 @@ const INTENT_COLORS: Record<string, string> = {
 // can be null, and on legacy rows is `wa_otp_<code>` — an internal marker
 // for a WhatsApp verification call. Folded into one readable bucket so the
 // pie never shows a six-digit code as a slice.
+
+// How each bucket is WRITTEN on screen. The keys above are the values the
+// pipeline stores; a shop owner reading a pie chart should not be shown
+// "unknown" or a bare lowercase word lifted out of the database.
+const INTENT_DISPLAY: Record<string, string> = {
+  appointment: "Booked a slot", enquiry: "General enquiry", callback: "Wanted a callback",
+  transfer: "Asked for a person", emergency: "Urgent", order: "Placed an order",
+  pricing: "Asked the price", complaint: "Complaint", other: "Something else",
+  unknown: "Not captured", "WhatsApp OTP": "WhatsApp OTP",
+};
+/** The label for a slice/legend row, never a raw database value. */
+function intentDisplay(name: string): string {
+  if (INTENT_DISPLAY[name]) return INTENT_DISPLAY[name];
+  const words = name.replace(/_/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Not captured";
+}
+
 function intentLabel(intent: string | null | undefined): string {
   if (!intent) return "unknown";
   if (intent.startsWith("wa_otp")) return "WhatsApp OTP";
@@ -505,7 +522,14 @@ export default function AnalyticsPage() {
                 {[
                   { label: "Sent",      value: waSent,                                  color: C.gbr  },
                   { label: "Delivered", value: waDelivered,                              color: C.grn  },
-                  { label: "Failed",    value: waLogs.filter(w => w.status === "failed").length, color: C.red },
+                  // custWa, not waLogs. "Sent" and "Delivered" count only
+                  // messages to CUSTOMERS; counting failures across every row
+                  // meant HeyNikki's own onboarding message to the owner —
+                  // which fails whenever their number isn't on WhatsApp —
+                  // rendered as "Sent 0 · Delivered 0 · Failed 1", i.e. the
+                  // shop being told its customer follow-ups are failing when
+                  // it has never sent one.
+                  { label: "Failed",    value: custWa.filter(w => w.status === "failed").length, color: C.red },
                   { label: "Est. Revenue", value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.gold },
                 ].map(s => (
                   <div key={s.label} style={{ background: C.hi, borderRadius: 8, padding: "10px 12px" }}>
@@ -536,14 +560,14 @@ export default function AnalyticsPage() {
                           <Cell key={i} fill={INTENT_COLORS[entry.name] || C.dim} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(v: any, n: any) => [v, n]} />
+                      <Tooltip formatter={(v: any, n: any) => [v, intentDisplay(String(n))]} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 }}>
                     {intentData.map(d => (
                       <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ width: 8, height: 8, borderRadius: "50%", background: INTENT_COLORS[d.name] || C.dim, flexShrink: 0 }} />
-                        <span style={{ color: C.mid, fontSize: 10 }}>{d.name}: {d.value}</span>
+                        <span style={{ color: C.mid, fontSize: 10 }}>{intentDisplay(d.name)}: {d.value}</span>
                       </div>
                     ))}
                   </div>

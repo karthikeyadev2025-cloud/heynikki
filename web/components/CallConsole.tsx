@@ -815,7 +815,7 @@ export default function CallConsole() {
                 style={{
                   flex: 1, padding: "11px 14px", borderRadius: 999,
                   border: `1px solid ${K.hairline}`, background: "rgba(255,255,255,0.05)",
-                  color: "#fff", fontSize: 14, outline: "none",
+                  color: "#fff", fontSize: 16, outline: "none",
                   fontFamily: "var(--font-telugu), var(--font-body), system-ui",
                 }}
               />
@@ -830,7 +830,11 @@ export default function CallConsole() {
 
             {turnsLeft !== null && turnsLeft <= 4 && (
               <p style={{ margin: "9px 2px 0", color: K.dimmer, fontSize: 11.5, fontFamily: "var(--font-mono), monospace" }}>
-                {turnsLeft} demo turns left · unlimited on a real number
+                {/* NOT "unlimited on a real number" — every plan is metered by
+                    minutes (200 / 600 / 1,500), and the agent's own prompt
+                    forbids the word for exactly that reason. The demo's cap is
+                    on TURNS; a real line's limit is minutes, so say that. */}
+                {turnsLeft} demo turns left · a real line runs on your plan&apos;s minutes
               </p>
             )}
           </div>

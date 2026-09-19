@@ -44,14 +44,30 @@ export default function Privacy() {
 
       <h2>3. Where your data is stored</h2>
       <p>
-        All caller data, account data, and call recordings are stored on servers in
-        <strong> Mumbai, India</strong> (AWS Asia Pacific — ap-south-1 region, via Supabase).
-        Backups are encrypted and retained for 30 days.
+        {/* The previous text said "All caller data, account data and call
+            recordings are stored on servers in Mumbai (AWS ap-south-1, via
+            Supabase)". That is not true of the recordings: call audio goes to
+            a Cloudflare R2 bucket (voice-pipeline/main.py, endpoint
+            <account>.r2.cloudflarestorage.com) with no jurisdiction pinned.
+            A residency claim is precisely what a careful buyer verifies, and
+            the landing page deliberately makes no such claim for that reason. */}
+        Your account data, call records, transcripts, appointments and leads are held in
+        our primary database, hosted on <strong>Supabase</strong>. Call <em>audio</em>{" "}
+        recordings are stored separately, encrypted, in a private{" "}
+        <strong>Cloudflare R2</strong> bucket. Voice calls themselves are carried on an
+        Indian SIP trunk and the telephony runs on our own servers in India.
       </p>
       <p>
         Limited operational metadata (e.g. login emails, plan tier) may be processed by
-        Vercel (USA) for web hosting and Resend (USA) for transactional emails. We have
-        signed Data Processing Agreements with these vendors.
+        Vercel (USA) for web hosting and Resend (USA) for transactional emails. Speech
+        recognition and synthesis are performed by our AI vendors, who receive call audio
+        and text in order to return a transcript or a spoken reply.
+      </p>
+      <p>
+        If your business needs a contractual commitment that a specific category of data
+        stays within India, email{" "}
+        <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a> and we will tell you
+        in writing exactly where each store sits before you sign anything.
       </p>
 
       <h2>4. How long we keep your data</h2>
@@ -81,12 +97,24 @@ export default function Privacy() {
         rights. We respond within 30 days.
       </p>
 
-      <h2>6. TRAI compliance for callers</h2>
+      <h2>6. Telling callers they are speaking to an AI</h2>
       <p>
-        Every inbound call answered by Nikki begins with a mandatory non-skippable
-        disclosure stating that the caller is speaking to an automated AI system. Callers
-        can request transfer to a human at any time by saying "human" or "operator", which
-        will end the AI session and forward to the configured fallback number.
+        Nikki is an automated assistant and does not pretend otherwise. Whenever a caller
+        asks whether they are speaking to a person or to a machine, she answers plainly
+        that she is an AI assistant, in whatever language the caller is using. She never
+        claims to be a member of the business&apos;s staff.
+      </p>
+      <p>
+        Callers can ask for a person at any time — saying &quot;human&quot;, &quot;operator&quot;,
+        &quot;manager&quot; or the equivalent in Telugu or Hindi — and the call is transferred
+        to the business&apos;s configured fallback number on the same line.
+      </p>
+      <p>
+        A spoken disclosure announcing the automated assistant at the very start of the
+        call is supported by the platform and can be switched on for your account on
+        request. Whether it is required of you depends on how you use the service and on
+        the TRAI regulations that apply to your business; we will turn it on for any
+        account that asks.
       </p>
 
       <h2>7. Cookies</h2>

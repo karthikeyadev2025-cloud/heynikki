@@ -93,7 +93,13 @@ function timeAgo(ts: string) {
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return new Date(ts).toLocaleDateString("en-IN");
+  // Anything older falls back to a written date. toLocaleDateString("en-IN")
+  // renders "18/9/2026" — the one numeric date on a dashboard where /calls,
+  // /appointments and the exports all say "18 Sept". Same day, three
+  // formats, and the ambiguous one is the day/month order people misread.
+  return new Date(ts).toLocaleDateString("en-IN", {
+    day: "numeric", month: "short", timeZone: "Asia/Kolkata",
+  });
 }
 
 export default function DashboardPage() {
@@ -301,7 +307,13 @@ export default function DashboardPage() {
           <div className="dash-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
             <StatCard icon={Phone}    value={stats.total}        label="Calls Today"          color={C.gbr}  />
             <StatCard icon={Calendar} value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
-            <StatCard icon={PhoneOff} value={stats.missed}       label="Missed (handled)"     color={C.gold} />
+            {/* NOT "Missed (handled)". These are calls with status "missed" —
+                nobody picked up, Nikki included. The only thing that may have
+                been done about one is a WhatsApp follow-up, and that is shown
+                per row below. Telling an owner a missed call was "handled"
+                when nothing went out is the one number they must be able to
+                trust, because a customer rang and got nothing. */}
+            <StatCard icon={PhoneOff} value={stats.missed}       label="Missed Calls"         color={C.gold} />
             <StatCard icon={Moon}     value={stats.afterHours}   label="After-Hours Caught"   color={C.cyn}  />
           </div>
 
@@ -321,11 +333,15 @@ export default function DashboardPage() {
                 <div style={{ flex: "1 1 260px" }}>
                   <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
                     This month, Hey Nikki caught{" "}
-                    <span style={{ color: C.cyn }}>{monthValue.afterHours} calls</span>
+                    <span style={{ color: C.cyn }}>
+                      {monthValue.afterHours} call{monthValue.afterHours === 1 ? "" : "s"}
+                    </span>
                     {" "}outside your business hours
                     {monthValue.booked > 0 && <>
                       {" "}and booked{" "}
-                      <span style={{ color: C.grn }}>{monthValue.booked} appointments</span>
+                      <span style={{ color: C.grn }}>
+                        {monthValue.booked} appointment{monthValue.booked === 1 ? "" : "s"}
+                      </span>
                     </>}.
                   </div>
                   <div style={{ color: C.mid, fontSize: 13 }}>
@@ -580,7 +596,7 @@ export default function DashboardPage() {
             {/* Missed calls */}
             <Card>
               <div style={{ color: C.gold, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PhoneOff size={15} /> Missed Calls — AI Handled</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PhoneOff size={15} /> Missed Calls</span>
               </div>
               {missedCalls.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
@@ -595,9 +611,16 @@ export default function DashboardPage() {
                       </div>
                       <div style={{ color: C.dim, fontSize: 11 }}>{timeAgo(call.created_at)}</div>
                     </div>
+                    {/* Say what happened either way. A bare "WA ✓" on some
+                        rows and nothing on the others left the owner to guess
+                        whether silence meant "no follow-up" or "not shown". */}
                     <div style={{ display: "flex", gap: 6 }}>
-                      {call.wa_sent && (
-                        <span style={{ color: C.cyn, fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 2 }}>WA <Check size={10} /></span>
+                      {call.wa_sent ? (
+                        <span style={{ color: C.cyn, fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          WhatsApp sent <Check size={10} />
+                        </span>
+                      ) : (
+                        <span style={{ color: C.gold, fontSize: 10, fontWeight: 700 }}>No follow-up yet</span>
                       )}
                     </div>
                   </div>
@@ -616,8 +639,15 @@ export default function DashboardPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
+                  {/* Six columns do not fit a 360px phone: Intent, WA and
+                      Time sat off the right edge behind a sideways scroll
+                      nobody discovers. Direction is the one column an owner
+                      never needs on the dashboard — practically every call to
+                      a shop is inbound — so it goes on mobile and the rest
+                      fit. /calls still shows it in full. */}
                   {["Caller", "Direction", "Duration", "Intent", "WA", "Time"].map(h => (
-                    <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
+                    <th key={h} className={h === "Direction" ? "nk-hide-mobile" : undefined}
+                      style={{ color: C.dim, fontSize: 10, fontWeight: 700,
                       textTransform: "uppercase", letterSpacing: "0.08em",
                       padding: "6px 8px", textAlign: "left",
                       borderBottom: "1px solid " + C.bord }}>
@@ -634,7 +664,7 @@ export default function DashboardPage() {
                     <td style={{ padding: "8px 8px", color: C.txt, fontSize: 12 }}>
                       {call.caller_number}
                     </td>
-                    <td style={{ padding: "8px 8px" }}>
+                    <td className="nk-hide-mobile" style={{ padding: "8px 8px" }}>
                       <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
                         fontSize: 11, fontWeight: 600 }}>
                         {call.direction === "inbound" ? "↙ In" : "↗ Out"}

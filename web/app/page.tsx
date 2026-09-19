@@ -14,7 +14,7 @@
 // WhatsApp), because that genuinely is a sequence — not decoration.
 // ────────────────────────────────────────────────────────────────
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import CallConsole from "../components/CallConsole";
 import WakeWordNikki from "../components/WakeWordNikki";
 import NikkiLogo from "../components/NikkiLogo";
@@ -72,14 +72,10 @@ export default function Home() {
   const [dailyCalls, setDailyCalls] = useState(40);
   const [dealValue, setDealValue]   = useState(2000);
   const [openFaq, setOpenFaq]       = useState<number | null>(0);
-  const [scrolled, setScrolled]     = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 12);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  // There was a `scrolled` state here, set by a scroll listener and read by
+  // nothing: the header on this page is not sticky, so no rule ever consumed
+  // it. It cost a setState on every scroll frame — cheap on a laptop, not free
+  // on the ₹8,000 Android this page is written for. Removed with its effect.
 
   // Deliberately framed as revenue recovered, NOT as a cost comparison.
   // The previous version computed "Hey Nikki: dailyCalls * 30 * 4" — which
@@ -352,7 +348,15 @@ export default function Home() {
             },
             {
               icon: ShieldCheck, t: "Says she is an AI",
-              d: "Every call opens with the disclosure TRAI requires, and she never claims to be a person when asked. Callers keep talking \u2014 the booking is done in under a minute.",
+              // Do NOT write "every call opens with a TRAI disclosure" here.
+              // The spoken opening disclosure is behind PLAY_AI_DISCLOSURE in
+              // voice-pipeline/main.py, which defaults to "0" and is unset in
+              // production \u2014 it was switched off on 5 Sep so the greeting could
+              // open the call. What IS true, and is a prompt rule that never
+              // changes, is that she answers the question honestly whenever a
+              // caller asks. Claiming the disclosure while it is off is the
+              // one claim on this page a regulator could check directly.
+              d: "Ask her and she says plainly that she is an AI assistant, in whatever language the caller is speaking \u2014 she never claims to be a person. Callers keep talking anyway; the booking is done in under a minute.",
             },
           ].map(({ icon: Icon, t, d }) => (
             <div key={t} style={{ background: C.card, padding: "28px 24px" }}>
@@ -523,7 +527,10 @@ export default function Home() {
             },
             {
               icon: Terminal, t: "Or drive it from your own software",
-              d: "A REST API for the calls she places and the orders she takes, with a signed webhook when each call finishes. Your booking system can ask her to ring somebody.",
+              // plans.api_access is true on Scale only. Advertising the API
+              // without saying so sends a Starter customer to /developers to
+              // find a key they cannot be issued.
+              d: "A REST API for the calls she places and the orders she takes, with a signed webhook when each call finishes. Your booking system can ask her to ring somebody. Included on the Scale plan.",
               link: { href: "/developers", label: "Read the API docs" },
             },
           ].map(({ icon: Icon, t, d, link }) => (
@@ -820,11 +827,24 @@ export default function Home() {
           {/* Internal links to the pages built to be found. A page no link
               points at is a page a crawler reaches only through the sitemap,
               which it treats as a suggestion rather than a structure. */}
-          <a href="/about" style={{ color: C.textMid, textDecoration: "none" }}>About Nikki Technologies</a>
-              <a href="/telugu-ai-receptionist" style={{ color: C.textMid, textDecoration: "none" }}>Telugu AI receptionist</a>
-          <a href="/ai-telecaller" style={{ color: C.textMid, textDecoration: "none" }}>AI telecaller</a>
-          <a href="/for/clinics" style={{ color: C.textMid, textDecoration: "none" }}>For clinics</a>
-          <a href="/for/real-estate" style={{ color: C.textMid, textDecoration: "none" }}>For real estate</a>
+          {/* Rendered from an array with an explicit separator. Written as
+              sibling <a> tags on their own lines, JSX strips the newline
+              whitespace BETWEEN elements, so the six links ran together as
+              one unreadable string: "About Nikki TechnologiesTelugu AI
+              receptionistAI telecaller…". A literal separator cannot be
+              dropped by the compiler. */}
+          {[
+            ["/about", "About Nikki Technologies"],
+            ["/telugu-ai-receptionist", "Telugu AI receptionist"],
+            ["/ai-telecaller", "AI telecaller"],
+            ["/for/clinics", "For clinics"],
+            ["/for/real-estate", "For real estate"],
+          ].map(([href, label]) => (
+            <span key={href}>
+              <a href={href} style={{ color: C.textMid, textDecoration: "underline", textUnderlineOffset: 3 }}>{label}</a>
+              {" · "}
+            </span>
+          ))}
           <a href="/privacy" style={{ color: C.teal }}>what we store and for how long</a>.
         </p>
       </Section>
@@ -867,7 +887,7 @@ export default function Home() {
             },
             {
               q: "Can my own software talk to it?",
-              a: "Yes \u2014 there is a REST API with scoped keys. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
+              a: "Yes \u2014 there is a REST API with scoped keys, included on the Scale plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
             },
             {
               q: "My customers call from the roadside. Will she hear them?",

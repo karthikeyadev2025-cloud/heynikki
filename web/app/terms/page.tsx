@@ -40,7 +40,12 @@ export default function Terms() {
       <h2>4. Billing</h2>
       <ul>
         <li>Plans are billed monthly via Razorpay. Prices are exclusive of GST.</li>
-        <li>Every new account gets 100 free minutes of calls and requires no card. Minutes are used as calls are answered; when they run out, calls stop until you choose a plan. There is no time limit on the free minutes. If you don't subscribe, your account becomes read-only and is deleted after 30 days.</li>
+        {/* "deleted after 30 days" contradicted both the pricing page
+            ("Nothing is deleted") and the platform, which runs no such job.
+            Also spell out that going over the plan is never auto-billed —
+            usage.ts stops the call instead. */}
+        <li>Every new account gets 100 free minutes of calls and requires no card. Minutes are used as calls are answered; when they run out, calls stop until you choose a plan. There is no time limit on the free minutes, and nothing is deleted if you never subscribe.</li>
+        <li>You are never charged automatically for exceeding your plan's included minutes. Calls stop instead, until you upgrade to a plan with more minutes.</li>
         <li>We may change pricing with 30 days' notice. Existing subscriptions are honoured at the old price until renewal.</li>
         <li>Failed payments lead to a 7-day grace period; service is paused after that until payment is settled.</li>
         <li>Refund eligibility is governed by our <a href="/refund-policy">Refund Policy</a>.</li>
@@ -62,9 +67,10 @@ export default function Terms() {
       <p>
         We target <strong>99.5% monthly uptime</strong> for inbound call handling.
         Scheduled maintenance is announced at least 48 hours in advance. If we fall below
-        99.5% in any calendar month, Scale-plan customers are eligible for a 10% credit
-        toward the next month's bill, claimable by emailing
-        <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 30 days.
+        99.5% in any calendar month, customers on a paid plan are eligible for a 10% credit
+        toward the next month&apos;s bill, claimable by emailing
+        <a href="mailto:support@heynikki.in"> support@heynikki.in</a> within 30 days. This
+        is the same credit described in our <a href="/refund-policy">Refund Policy</a>.
       </p>
 
       <h2>7. Third-party services</h2>
@@ -84,7 +90,11 @@ export default function Terms() {
 
       <h2>8. Termination</h2>
       <ul>
-        <li>You can cancel any month by messaging us on WhatsApp; it is done the same day. Cancellation takes effect at the end of the current billing cycle.</li>
+        {/* No WhatsApp support channel is published anywhere on this site, and
+            cancellation is a super-admin action — so "message us on WhatsApp,
+            done the same day" named a route that does not exist and a speed
+            nobody owned. */}
+        <li>You can cancel any month by emailing <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> from the address on your account, or by calling +91 86335 02031. We action it within one business day. Cancellation takes effect at the end of the current billing cycle.</li>
         <li>We may terminate immediately for material breach of these Terms or non-payment beyond the grace period.</li>
         <li>Upon termination: you can export your data for 30 days, after which it's permanently deleted (except records we must retain by law).</li>
       </ul>

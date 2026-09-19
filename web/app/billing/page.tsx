@@ -1,6 +1,7 @@
 // app/billing/page.tsx
 "use client";
 import { useState, useEffect } from "react";
+import Script from "next/script";
 import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
@@ -306,7 +307,14 @@ export default function BillingPage() {
 
   return (
     <Shell title="Billing">
-      <script src="https://checkout.razorpay.com/v1/checkout.js" async />
+      {/* next/script, not a bare <script> in JSX. React does not render a
+          raw script element the same way on the server and the client, and
+          this one threw "Hydration failed …" on every visit to /billing —
+          the one page where a customer hands over money. next/script also
+          de-duplicates by src, so this and the site-wide lazyOnload copy in
+          app/layout.tsx load Razorpay exactly once between them; this page
+          asks for it sooner because it is the page that needs it. */}
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
 
       {loading ? (
         <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading billing...</div>
@@ -321,8 +329,12 @@ export default function BillingPage() {
               <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
                 letterSpacing: "0.1em", marginBottom: 10 }}>Current Plan</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                {/* On a trial the `plan` column is just the tier the account
+                    was created against — nothing is paid for yet. Printing
+                    "Starter" beside a "FREE" badge read as though the shop
+                    were already subscribed to Starter. */}
                 <span style={{ color: C.txt, fontSize: 22, fontWeight: 900, textTransform: "capitalize" }}>
-                  {tenant?.plan || "Trial"}
+                  {tenant?.status === "trial" ? "Free trial" : (tenant?.plan || "Trial")}
                 </span>
                 {tenant?.status === "trial" && (
                   <span style={{ background: C.gold + "22", color: C.gold,
@@ -370,7 +382,14 @@ export default function BillingPage() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 14 }}>
               {PLANS.map(plan => {
-                const isCurrent = tenant?.plan === plan.id;
+                // A tenant on a TRIAL carries a plan name in `tenants.plan`
+                // (new accounts land on "starter") but has paid for nothing —
+                // api-server only sets status:"active" once Razorpay confirms.
+                // Keying "current" off the plan name alone put a disabled
+                // "Current Plan" button on the Starter card for every trial
+                // account, so the one plan most of them want to buy was the
+                // one they could not click. Status is what says "subscribed".
+                const isCurrent = tenant?.status !== "trial" && tenant?.plan === plan.id;
                 // "Upgrade to Starter" on a Growth account was a lie; say
                 // which way the switch goes.
                 const rank = (id?: string | null) => PAID_PLANS.indexOf(String(id || ""));

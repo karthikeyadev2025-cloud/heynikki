@@ -47,6 +47,16 @@ type Item = {
 };
 
 const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+
+/** A booking's slot_date ("2026-09-20") written the way the rest of the app
+ *  writes a date. Returns null for a booking whose date was never captured,
+ *  so it drops out of the line rather than printing an empty separator. */
+function fmtSlot(d: string | null | undefined): string | null {
+  if (!d) return null;
+  const dt = new Date(`${d}T00:00:00`);
+  if (isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
 const last10 = (n: unknown) => String(n || "").replace(/\D/g, "").slice(-10);
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -185,7 +195,10 @@ export default function LeadDetail({
     for (const a of (appts.data || []) as any[]) {
       out.push({ id: `appt-${a.id}`, at: a.created_at, kind: "appt", tone: a.status === "cancelled" ? C.dim : C.cyn,
         title: `Appointment ${a.status === "pending" ? "needs confirmation" : a.status}`,
-        body: [a.service, a.slot_date, a.slot_time].filter(Boolean).join(" · ") || null,
+        // slot_date is a bare "2026-09-20". Dropped into the timeline raw it
+        // was the only ISO date on a panel where every other line reads
+        // "19 Sept, 1:57 pm".
+        body: [a.service, fmtSlot(a.slot_date), a.slot_time].filter(Boolean).join(" · ") || null,
         href: "/appointments" });
     }
     for (const a of (acts.data || []) as any[]) {
@@ -440,7 +453,8 @@ export default function LeadDetail({
             }}>{l}</button>
           ))}
           <div style={{ marginLeft: "auto", alignSelf: "center", color: C.dim, fontSize: 11 }}>
-            {counts.calls} calls · {counts.wa} messages{counts.appts ? ` · ${counts.appts} bookings` : ""}
+            {counts.calls} call{counts.calls === 1 ? "" : "s"} · {counts.wa} message{counts.wa === 1 ? "" : "s"}
+            {counts.appts ? ` · ${counts.appts} booking${counts.appts === 1 ? "" : "s"}` : ""}
           </div>
         </div>
 

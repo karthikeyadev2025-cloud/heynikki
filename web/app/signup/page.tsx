@@ -13,6 +13,33 @@ const J = {
   grad: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
 };
 
+// Supabase speaks to developers; this page speaks to a shop owner in
+// Hyderabad. Raw err.message was being printed straight into the red box, so
+// a person who mistyped and pressed the button twice got "For security
+// purposes, you can only request this after 33 seconds." — and one who had
+// already signed up got "User already registered" with no way forward.
+// Anything not recognised falls through to the original text rather than a
+// vague "something went wrong", so we never hide a real fault from ourselves.
+function humanSignupError(raw: string): string {
+  const m = (raw || "").toLowerCase();
+  if (m.includes("already registered") || m.includes("already been registered")) {
+    return "This email already has a Nikki account. Sign in instead, or use 'Forgot password' if you can't remember it.";
+  }
+  if (m.includes("only request this after") || m.includes("rate limit") || m.includes("too many")) {
+    return "You've tried a few times in quick succession. Please wait about a minute and try once more.";
+  }
+  if (m.includes("password")) {
+    return "That password is too short. Use at least 8 characters.";
+  }
+  if (m.includes("invalid format") || m.includes("validate email") || m.includes("invalid email")) {
+    return "That email address doesn't look right. Check it and try again.";
+  }
+  if (m.includes("failed to fetch") || m.includes("network")) {
+    return "We couldn't reach our servers. Check your internet connection and try again.";
+  }
+  return raw;
+}
+
 export default function SignupPage() {
   // An invited colleague arrives at /signup?invite=<token>. Their account is
   // created the normal way — the signup trigger even gives them their own
@@ -57,7 +84,7 @@ export default function SignupPage() {
           + (inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : ""),
       },
     });
-    if (err) { setError(err.message); setLoading(false); return; }
+    if (err) { setError(humanSignupError(err.message)); setLoading(false); return; }
     if (inviteToken) { try { localStorage.setItem("nikki_invite", inviteToken); } catch {} }
     setDone(true);
     setLoading(false);
@@ -82,9 +109,43 @@ export default function SignupPage() {
             We sent a confirmation link to<br />
             <span style={{ color: J.mercury, fontWeight: 700 }}>{email}</span>
           </p>
-          <p style={{ color: J.textDim, fontSize: 12, marginBottom: 24 }}>
-            Click the link to verify your account and start with 100 free minutes.
+          <p style={{ color: J.textDim, fontSize: 12, marginBottom: 20 }}>
+            Can&apos;t see it? Check your spam folder — it arrives within a minute.
           </p>
+
+          {/* The funnel used to end here: "check your email", then silence.
+              A new owner had no idea that a phone number is not instant, that
+              KYC exists, or that a human assigns the number — so the first
+              time they learned it was when they went looking for a number
+              that was not there. Say the sequence up front; it is short, and
+              every step of it is real. */}
+          <ol style={{
+            textAlign: "left", margin: "0 0 24px", padding: "16px 18px 16px 34px",
+            background: J.surface, border: `1px solid ${J.border}`, borderRadius: 12,
+            color: J.textMid, fontSize: 13, lineHeight: 1.65,
+          }}>
+            <li style={{ marginBottom: 8 }}>
+              <strong style={{ color: J.chandra }}>Confirm your email</strong> — then sign
+              in and set up Nikki: your business hours, your services and prices, and the
+              language your line should answer in.
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong style={{ color: J.chandra }}>Send your KYC</strong> — a business
+              proof and an ID, uploaded from your dashboard. An Indian phone number cannot
+              legally be assigned without it.
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong style={{ color: J.chandra }}>We assign your number</strong> — usually
+              within one business day of KYC approval. Forward your existing number to it,
+              or hand out the new one.
+            </li>
+            <li>
+              <strong style={{ color: J.chandra }}>Your 100 free minutes</strong> are
+              already on the account, and are used as real calls are answered. No card,
+              and nothing switches off at the end of a trial week.
+            </li>
+          </ol>
+
           <Link href="/login" style={{
             display: "inline-block", background: J.grad, color: J.bg,
             padding: "12px 28px", borderRadius: 10, textDecoration: "none",
@@ -134,7 +195,7 @@ export default function SignupPage() {
               type="text" value={businessName} onChange={e => setBusinessName(e.target.value)}
               required placeholder="Ravi Clinic, Banjara Hills"
               style={{
-                width: "100%", padding: "12px 14px", fontSize: 14,
+                width: "100%", padding: "12px 14px", fontSize: 16,
                 background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
                 color: J.chandra, marginBottom: 14, outline: "none",
               }}
@@ -154,7 +215,7 @@ export default function SignupPage() {
               pattern="^(\+?91)?[\s]*[6-9][0-9\s]{9,13}$"
               title="10-digit mobile starting 6-9"
               style={{
-                width: "100%", padding: "12px 14px", fontSize: 14,
+                width: "100%", padding: "12px 14px", fontSize: 16,
                 background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
                 color: J.chandra, marginBottom: 6, outline: "none",
               }}
@@ -170,7 +231,7 @@ export default function SignupPage() {
               type="email" value={email} onChange={e => setEmail(e.target.value)}
               required placeholder="you@business.in"
               style={{
-                width: "100%", padding: "12px 14px", fontSize: 14,
+                width: "100%", padding: "12px 14px", fontSize: 16,
                 background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
                 color: J.chandra, marginBottom: 14, outline: "none",
               }}
@@ -183,7 +244,7 @@ export default function SignupPage() {
               type="password" value={password} onChange={e => setPassword(e.target.value)}
               required minLength={8} placeholder="••••••••"
               style={{
-                width: "100%", padding: "12px 14px", fontSize: 14,
+                width: "100%", padding: "12px 14px", fontSize: 16,
                 background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
                 color: J.chandra, marginBottom: 20, outline: "none",
               }}
@@ -198,8 +259,14 @@ export default function SignupPage() {
               {loading ? "Creating account..." : "Start free →"}
             </button>
 
-            <p style={{ fontSize: 11, color: J.textDim, textAlign: "center", margin: 0 }}>
-              By signing up you agree to Nikki's Terms and Privacy Policy.
+            {/* These were plain text. An agreement the user cannot read before
+                accepting is not an agreement, and Razorpay's merchant review
+                looks for exactly this link pair on the signup surface. */}
+            <p style={{ fontSize: 11.5, color: J.textDim, textAlign: "center", margin: 0, lineHeight: 1.6 }}>
+              By creating an account you agree to our{" "}
+              <Link href="/terms" style={{ color: J.mercury, fontWeight: 600 }}>Terms of Service</Link>{" "}
+              and{" "}
+              <Link href="/privacy" style={{ color: J.mercury, fontWeight: 600 }}>Privacy Policy</Link>.
             </p>
           </form>
         </div>

@@ -117,7 +117,12 @@ async function audit(
 }
 
 // ── MIDDLEWARE ────────────────────────────────────────────
-app.use(cors({ origin: "*" }));
+// exposedHeaders, or the browser hides Content-Disposition from the page —
+// it is not CORS-safelisted. Every CSV the dashboard downloaded therefore
+// arrived as a bare "calls.csv" on any real deployment (the dashboard is on
+// a different origin to the API), losing the dated filename the server had
+// already set.
+app.use(cors({ origin: "*", exposedHeaders: ["Content-Disposition"] }));
 
 // Never let a 502 or 504 leave this process. The API sits behind a
 // Cloudflare tunnel, and Cloudflare replaces an origin 502/504 with its own
@@ -944,7 +949,14 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   // (business, date, time) where the fallback takes one; sending three to a
   // one-slot template is a 132000 parameter-count error, not a delivery.
   preferredParams?: string[]) {
-  const provider = (process.env.WHATSAPP_PROVIDER || "wati").toLowerCase();
+  // Default to the provider that is actually configured. WATI_API_KEY and
+  // WATI_API_URL are both empty, and sendViaWati returns "Wati not configured"
+  // without sending — so defaulting to "wati" meant that losing or misspelling
+  // WHATSAPP_PROVIDER in the environment silently turned off every WhatsApp
+  // message in the product, with each one recorded as a plain send failure.
+  // Meta is the live path (WHATSAPP_PROVIDER=meta today); an unset variable
+  // should fall back to the one that can work, not the one that cannot.
+  const provider = (process.env.WHATSAPP_PROVIDER || "meta").toLowerCase();
   const tpl = WA_TEMPLATES[messageType];
   const sender = await resolveWaSender(tenantId);
 
@@ -1193,7 +1205,11 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
   if (turnNo > turnCap) {
     return res.status(429).json({
       error: "demo_turn_limit",
-      reply: "Demo lo intha varake matladagalanu. Real number meeda unlimited — sign up cheyandi!",
+      // Telugu script, and never "unlimited": plans are metered by minutes,
+      // the agent's own prompt forbids the word for that reason, and this
+      // line was the one place the product still promised it — in romanised
+      // Telugu, which is not how a Telugu business writes either.
+      reply: "డెమోలో ఇంత వరకే మాట్లాడగలను. మీ సొంత నంబర్‌పై మీ ప్లాన్ నిమిషాల ప్రకారం పని చేస్తుంది — sign up చేయండి!",
     });
   }
 
@@ -1332,8 +1348,13 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       return res.json({
         transcript: "",
         reply: heardNothing,
-        audio_base64: await synthesizeTelugu(heardNothing).catch(() => ""),
-        audio_mime: "audio/wav",
+        // mp3, not wav: every spoken reply on the landing page was an
+        // uncompressed 22kHz WAV — measured at 1.7MB for one sentence, and
+        // twelve demo turns is ~20MB of a shop owner's mobile data before
+        // they have bought anything. The console decodes both through
+        // decodeAudioData, so this costs nothing but bytes.
+        audio_base64: await synthesizeTelugu(heardNothing, "mp3").catch(() => ""),
+        audio_mime: "audio/mpeg",
         booking_confirmed: false,
         heard_nothing: true,
         turn: turnNo,
@@ -1375,21 +1396,21 @@ app.post("/api/public/voice-turn", publicVoiceLimiter, async (req, res) => {
       if (act) {
         console.log(`[device-action] ${act.action.type} (guest): ${transcript.slice(0, 60)}`);
         const say = act.say || "సరే.";
-        const audio = await synthesizeTelugu(say);
+        const audio = await synthesizeTelugu(say, "mp3");
         console.log(`[app-timing] stt=${tStt - tStart}ms action+tts=${Date.now() - tStt}ms total=${Date.now() - tStart}ms`);
         return res.json({
-          transcript, reply: say, audio_base64: audio, audio_mime: "audio/wav",
+          transcript, reply: say, audio_base64: audio, audio_mime: "audio/mpeg",
           action: act.action, booking_confirmed: false,
           turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
         });
       }
       const reply = (await brainP) || "క్షమించండి, మళ్ళీ చెప్తారా?";
       const tBrain = Date.now();
-      const audio = await synthesizeTelugu(reply);
+      const audio = await synthesizeTelugu(reply, "mp3");
       console.log(`[app-assistant] ${sessionId.slice(0, 12)}: ${transcript.slice(0, 50)} → ${reply.slice(0, 50)}`);
       console.log(`[app-timing] stt=${tStt - tStart}ms brain=${tBrain - tStt}ms tts=${Date.now() - tBrain}ms total=${Date.now() - tStart}ms`);
       return res.json({
-        transcript, reply, audio_base64: audio, audio_mime: "audio/wav",
+        transcript, reply, audio_base64: audio, audio_mime: "audio/mpeg",
         booking_confirmed: false, turn: turnNo, turns_left: Math.max(0, turnCap - turnNo),
       });
     }
@@ -1779,6 +1800,17 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
 app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
   const { to, message, tenant_id, voice_profile_id, message_type, call_id, appointment_id } = req.body;
   if (!to || !message || !tenant_id) return res.status(400).json({ error: "Missing fields" });
+  // Both sibling endpoints (/send-as-tenant, /send-template) validate the
+  // number and this one did not, so whatever an internal caller passed went to
+  // Meta as-is. wa_dispatch_log carries the proof: a missed_call row sent to
+  // to_number "$1" on 4 Sep — an unsubstituted n8n placeholder, billed as a
+  // send and logged as one. Validate the same way the siblings do, but keep
+  // passing the ORIGINAL `to` downstream so every number that works today
+  // still takes the exact same path.
+  if (!/^[6-9]\d{9}$/.test(String(to).replace(/\D/g, "").slice(-10))) {
+    console.error(`[wa send] refused a malformed number (${String(to).slice(0, 24)}) for tenant ${tenant_id}`);
+    return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
+  }
 
   const ok = await sendWhatsApp(to, message, tenant_id, voice_profile_id,
     message_type, call_id, appointment_id, req.body.business_name,
@@ -5798,6 +5830,13 @@ app.get("/api/admin/health", verifySuperAdmin, async (_req, res) => {
   try {
     const cfg = await getPlatformConfig();
 
+    // "configured" must mean OUR side is set up, not that the vendor's domain
+    // answers a ping. Razorpay was hardcoded true, so the health screen showed
+    // Razorpay green while RAZORPAY_KEY_ID/SECRET were empty in both the env
+    // and platform_config — i.e. while no customer could pay at all. That is
+    // the one failure this screen exists to surface.
+    const razorpayConfigured = await paymentsConfigured();
+
     const [freeswitch, n8n, activepieces, r2, sarvam, gemini, razorpay, supabase] =
       await Promise.all([
         fsl.getStatus().then(s => ({ ok: s.uptime !== "unavailable", latencyMs: 0 }))
@@ -5820,7 +5859,7 @@ app.get("/api/admin/health", verifySuperAdmin, async (_req, res) => {
         { name: "Cloudflare R2",        configured: !!cfg.r2_public_url,     ...r2 },
         { name: "Sarvam AI (STT+TTS)",  configured: true,              ...sarvam },
         { name: "Gemini 2.5 Flash",     configured: true,              ...gemini },
-        { name: "Razorpay",             configured: true,              ...razorpay },
+        { name: "Razorpay",             configured: razorpayConfigured, ...razorpay },
         { name: "Supabase",             configured: true,              ...supabase },
       ],
     });
@@ -5938,11 +5977,23 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
 
     // Match the stored DID on its last 10 digits so a row saved as
     // "+918633502031" still matches a call that arrived as "08633502031".
-    const { data: did } = await sb.from("dids")
+    const { data: did, error: didErr } = await sb.from("dids")
       .select("tenant_id, voice_profile_id, routing_mode, missed_call_guard, fallback_message")
       .like("number", `%${didDigits}`)
       .single();
 
+    // The error was destructured away, so a Supabase timeout and a genuinely
+    // unknown number were indistinguishable: both left `did` null and both
+    // logged "Unknown DID". During an outage every inbound call to every live
+    // customer logged that line, and anyone reading the logs would go looking
+    // for a provisioning mistake that did not exist. The hangup handler below
+    // already separates these two cases; this one did not. PGRST116 is
+    // .single()'s "no rows", which IS an unknown DID — anything else is us.
+    if (didErr && didErr.code !== "PGRST116") {
+      console.error(`[FS Inbound] DID lookup FAILED for ${did_number} (normalised: ${didDigits}) — ` +
+                    `this is a database error, not an unknown number: ${didErr.message}`);
+      return res.status(503).json({ error: "DID lookup failed" });
+    }
     if (!did) {
       console.warn(`[FS Inbound] Unknown DID: ${did_number} (normalised: ${didDigits})`);
       return res.status(404).json({ error: "DID not found" });
