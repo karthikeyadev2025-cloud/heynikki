@@ -7007,6 +7007,16 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
         });
       }
       agentNumberUsed = agentNumber;
+      // Ringing yourself is not a call. On 19 Sep the desk bridged
+      // 8074347459 to 8074347459 — the agent's own phone as the "customer" —
+      // which rings, answers itself, bills a minute and teaches the operator
+      // nothing. It happens when someone presses Call on a lead whose number
+      // is their own, and the trunk will happily do it.
+      if (String(agentNumber).replace(/\D/g, "").slice(-10) === String(customer_number).replace(/\D/g, "").slice(-10)) {
+        return res.status(400).json({
+          error: "That's your own number — the call would just ring you back. Pick a different lead.",
+        });
+      }
       fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
     } else {
       // The Exotel branch is gone. It was the only other engine, and the
