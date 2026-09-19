@@ -452,6 +452,45 @@ export async function sendOwnerEmail(
  * Sends as the tenant's own verified number when they have one, exactly as
  * resolveWaSender does, so the owner sees their own business calling them.
  */
+/**
+ * Which template to send, when a better one is waiting on Meta's review.
+ *
+ * `daily_business_summary` is APPROVED but Meta reclassified it from UTILITY
+ * to MARKETING (the Graph API still shows previous_category: UTILITY), and a
+ * marketing template is withheld from anyone opted out of marketing — so the
+ * owners most likely to have opted out silently stop getting their own
+ * account's numbers. `daily_account_update` was submitted as UTILITY with the
+ * promotional closing line removed, and carries the same four parameters, so
+ * it is a drop-in the day it clears review.
+ *
+ * Checked against Meta rather than hard-coded, and cached, so the switch
+ * happens on its own without a deploy — and falls back the moment the
+ * preferred one is rejected or paused.
+ */
+const _tplCache = new Map<string, { approved: boolean; at: number }>();
+const TPL_TTL_MS = 30 * 60_000;
+
+export async function templateApproved(name: string): Promise<boolean> {
+  const hit = _tplCache.get(name);
+  if (hit && Date.now() - hit.at < TPL_TTL_MS) return hit.approved;
+  const token   = process.env.META_WA_TOKEN || "";
+  const version = process.env.META_WA_API_VERSION || "v21.0";
+  const waba    = process.env.META_WA_WABA_ID || "1082855697732160";
+  if (!token) return false;
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/${version}/${waba}/message_templates?name=${encodeURIComponent(name)}&limit=5`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8_000) });
+    const j = await r.json() as any;
+    const approved = (j?.data || []).some((t: any) => t.name === name && t.status === "APPROVED");
+    _tplCache.set(name, { approved, at: Date.now() });
+    return approved;
+  } catch {
+    // Unknown is not "approved": keep sending the template that works.
+    return false;
+  }
+}
+
 export async function sendOwnerTemplate(
   sb: SupabaseClient,
   o: {

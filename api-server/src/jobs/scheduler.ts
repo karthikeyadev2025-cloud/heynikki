@@ -44,7 +44,7 @@ import { runOnboardingEmails } from "./onboarding-emails";
 import { runOnboarding } from "./onboarding";
 import { resolveGeminiModel } from "../gemini.js";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "../recordings";
-import { sendOwnerEmail, sendOwnerTemplate } from "../owner-alerts";
+import { sendOwnerEmail, sendOwnerTemplate, templateApproved } from "../owner-alerts";
 import { minutesGate } from "../usage";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
@@ -653,7 +653,10 @@ export async function runMorningBriefings(): Promise<number> {
         tenantId:        t.id,
         voiceProfileId:  profile.id || null,
         messageType:     "morning_briefing",
-        template:        "daily_business_summary",
+        // The UTILITY replacement the moment Meta approves it; the MARKETING
+        // one until then. Same four parameters, so nothing else changes.
+        template:        await templateApproved("daily_account_update")
+                           ? "daily_account_update" : "daily_business_summary",
         lang:            "te",
         params:          [business, callsParam, apptParam, leadParam],
         logBody:         body,
