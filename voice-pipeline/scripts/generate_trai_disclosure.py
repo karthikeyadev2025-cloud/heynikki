@@ -8,17 +8,29 @@ SARVAM_KEY = os.getenv("SARVAM_API_KEY")
 if not SARVAM_KEY:
     sys.exit("ERROR: SARVAM_API_KEY not set.")
 
-DISCLOSURE_TEXT = (
-    "నమస్కారం. ఈ call ఒక automated AI assistant ద్వారా handle అవుతోంది. "
-    "మీరు ఏ సమయంలో అయినా 'human' అని చెబితే మన staff కి transfer చేస్తాను."
-)
+# ONE sentence, and it must match TRAI_DISCLOSURE in main.py — that constant
+# is what a missing asset falls back to synthesising, and a caller should not
+# hear two different disclosures depending on whether a file existed.
+#
+# It used to carry a second sentence offering a transfer to staff, which took
+# the recording to 7.0s on simran, 9.5s on shreya and 10.3s on aditya. That
+# plays BEFORE the greeting, so every caller waited that long to hear hello —
+# which is why the disclosure was switched off on 5 Sep rather than shortened.
+# The transfer offer is not lost: Nikki transfers whenever anyone asks for a
+# person, which is a prompt rule and does not depend on this file.
+DISCLOSURE_TEXT = "నమస్కారం. ఈ call automated assistant ద్వారా handle అవుతోంది."
 
 # Must cover EVERY speaker sku_voices in main.py can select, or that SKU
 # silently falls through to a runtime TTS round-trip at call start — and to
 # no disclosure at all if Sarvam is slow or down, which is a TRAI breach,
 # not a cosmetic miss. "aditya" was missing here, so the real_estate SKU
 # never had an asset.
-VOICES = ["priya", "shreya", "aditya", "kavya"]
+# EVERY voice that exists as an asset today, not just the ones sku_voices
+# names: "simran" is the standard SKU and the Hey Nikki line itself, and it
+# was missing from this list even though the file existed — so a regeneration
+# run would have left the most-used voice on the old, long recording.
+VOICES = ["simran", "shreya", "aditya", "kavya",
+          "priya", "manisha", "anushka", "vidya"]
 
 ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
