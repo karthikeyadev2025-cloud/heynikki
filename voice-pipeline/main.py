@@ -104,11 +104,22 @@ def _internal_ok(supplied: Optional[str]) -> bool:
         hashlib.sha256(supplied.encode("utf-8")).digest(),
         hashlib.sha256(INTERNAL_SECRET.encode("utf-8")).digest(),
     )
-# The "this call is handled by an automated assistant" line played before
-# the greeting on every inbound and outbound call. Switched off on 5 Sep at
-# the owner's request — the greeting now opens the call. Nikki still says
-# she is an AI assistant whenever a caller asks (prompt rule), which is the
-# part that must never change. Set PLAY_AI_DISCLOSURE=1 to bring it back.
+# The "this call is handled by an automated assistant" line, played before
+# the greeting on every inbound and outbound call.
+#
+# Switched off on 5 Sep so the greeting could open the call; switched back ON
+# on 19 Sep (PLAY_AI_DISCLOSURE=1 in infra/.env) because the site sells an AI
+# receptionist and a caller should hear that from the line itself, not infer
+# it. Nikki also says she is an AI whenever asked — a prompt rule that must
+# never change, whatever this flag says.
+#
+# What it costs the caller, measured from the assets in voice-pipeline/assets:
+# 7.0s on simran (standard + the Hey Nikki line), 9.5s on shreya (clinic),
+# 10.3s on aditya (real estate) — because the recorded script is TWO
+# sentences, the disclosure plus "say human any time and I will transfer
+# you", not the single line TRAI_DISCLOSURE below. Anyone shortening this
+# should regenerate every voice with scripts/generate_trai_disclosure.py;
+# a missing asset falls back to a runtime TTS round-trip at call start.
 PLAY_AI_DISCLOSURE = os.environ.get("PLAY_AI_DISCLOSURE", "0") == "1"
 API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 
