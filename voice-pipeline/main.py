@@ -9447,6 +9447,22 @@ async def _surface_wa_otp(agent, fs_uuid: str, caller_number: str, did_number: s
                             f"(caller {caller_number}, call {agent.call_id})")
                 if agent.call_id:
                     await agent.db.update_call(agent.call_id, {"intent": f"wa_otp_{digits}"})
+                # Finish the job instead of leaving it in a log line. Meta's
+                # code expires, and waiting for somebody to read the transcript
+                # and retype it is why the one business that started this in
+                # September is still not live. The API resolves the tenant from
+                # the DID that was CALLED — never from anything said on the
+                # call — and refuses a code for a number it is not registering.
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as c:
+                        r = await c.post(
+                            f"{API_SERVER_URL}/webhooks/whatsapp/verify-otp",
+                            headers={"X-Internal-Secret": INTERNAL_SECRET},
+                            json={"did_number": did_number, "code": digits,
+                                  "call_id": agent.call_id})
+                    log.warning(f"[wa-otp] {fs_uuid}: verify-otp -> {r.status_code} {r.text[:160]}")
+                except Exception as e:  # noqa: BLE001
+                    log.error(f"[wa-otp] {fs_uuid}: could not hand the code to the API: {e}")
                 return
         log.warning(f"[wa-otp] {fs_uuid}: verification cue heard but no six-digit run: {said[:200]!r}")
     except Exception as e:  # noqa: BLE001

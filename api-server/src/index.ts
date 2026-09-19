@@ -2593,8 +2593,172 @@ async function waRecentOtp(tenantId: string): Promise<{ code: string; heard_at: 
   return code ? { code, heard_at: data.created_at } : null;
 }
 
+/**
+ * Put a tenant's own HeyNikki number on WhatsApp without anybody driving it.
+ *
+ * The promise sold on the site is one number for calls and WhatsApp. The
+ * steps existed — add to the WABA, ask Meta for a code, verify, register —
+ * but each was a button somebody had to remember to press, in order, with
+ * the code copied out of a call transcript by hand. Nobody did: the one
+ * tenant who tried has sat in pending_verification since 2 September with
+ * "Verify code error" on the row.
+ *
+ * So: this runs the first half (add + ask for the code BY VOICE, because a
+ * SIP DID cannot receive SMS), the voice pipeline hears the code Meta reads
+ * out and posts it back to /webhooks/whatsapp/verify-otp, and that finishes
+ * the job. A human is only involved when Meta refuses.
+ *
+ * Safe to call repeatedly: an active sender returns immediately, a number
+ * already on the WABA is not added twice, and a code asked for in the last
+ * ten minutes is not asked for again (Meta rate-limits, and each request
+ * rings the number).
+ */
+async function startWhatsAppRegistration(
+  tenantId: string, opts: { displayName?: string; reason: string } = { reason: "auto" },
+): Promise<{ started: boolean; status: string; detail: string }> {
+  const [{ data: row }, { data: did }, { data: tenant }] = await Promise.all([
+    sb.from("tenant_whatsapp").select("*").eq("tenant_id", tenantId).maybeSingle(),
+    sb.from("dids").select("id, number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
+    sb.from("tenants").select("name").eq("id", tenantId).maybeSingle(),
+  ]);
+
+  if (row?.status === "active") return { started: false, status: "active", detail: "Already live on WhatsApp." };
+  if (!did?.number) return { started: false, status: row?.status || "none", detail: "No number assigned to this business yet." };
+
+  // KYC is Meta's requirement as much as ours: a sender added for a business
+  // that cannot prove itself is a sender that gets rejected, and the rejection
+  // lands on the WABA's record, not the tenant's.
+  const { data: kyc } = await sb.from("kyc_documents").select("status")
+    .eq("tenant_id", tenantId).eq("status", "approved").limit(1).maybeSingle();
+  if (!kyc) return { started: false, status: row?.status || "none", detail: "KYC is not approved yet." };
+
+  // OUR number only. A tenant who chose to register their OWN mobile is
+  // verified by Meta PHONING THAT MOBILE — a real person's handset, ringing
+  // with a robocall, reading out a code that Nikki never hears and nothing
+  // can complete. sai clinic has sat that way since 2 September; sweeping it
+  // would have rung their mobile every fifteen minutes. Their own number
+  // stays a deliberate, human step in the panel.
+  if (row?.phone_number && last10(row.phone_number) !== last10(did.number)) {
+    return {
+      started: false, status: row.status || "none",
+      detail: `This business registered its own number (${row.phone_number}), not the HeyNikki number. ` +
+              `Meta verifies that by calling it, so someone has to answer and read the code in.`,
+    };
+  }
+
+  const displayName = (opts.displayName || row?.display_name || tenant?.name || "").trim();
+  if (displayName.length < 3) {
+    return { started: false, status: row?.status || "none", detail: "The business name is too short for a WhatsApp display name." };
+  }
+
+  try {
+    // Step 1 — on the WABA. Returns the existing id when a previous attempt
+    // already added it, so this does not duplicate the sender.
+    const added = await waAddNumber(tenantId, displayName);
+
+    // Step 2 — the code, by VOICE. Not asked for again within ten minutes:
+    // Meta rate-limits request_code, and every request rings the number for
+    // real. `code_requested_at` is from migration 058; without it the guard
+    // falls back to the row's own updated_at, which is close enough to stop
+    // a retry loop.
+    const lastAsk = (row as any)?.code_requested_at || row?.updated_at;
+    const askedRecently = !!lastAsk && Date.now() - new Date(lastAsk).getTime() < 10 * 60_000;
+    if (row?.status === "pending_verification" && askedRecently) {
+      return { started: false, status: "pending_verification", detail: "A code was requested in the last ten minutes — waiting for Meta to call." };
+    }
+
+    await waRequestCode(tenantId, "VOICE");
+    const patch: Record<string, any> = {
+      status: "pending_verification", review_note: null, updated_at: new Date().toISOString(),
+    };
+    // Written only when 058 is applied; PostgREST rejects the whole update
+    // for an unknown column, so it is attempted separately.
+    const { error: stampErr } = await sb.from("tenant_whatsapp")
+      .update({ ...patch, code_requested_at: new Date().toISOString() }).eq("tenant_id", tenantId);
+    if (stampErr) await sb.from("tenant_whatsapp").update(patch).eq("tenant_id", tenantId);
+
+    await audit("whatsapp.registration_started", {
+      tenantId, metadata: { number: did.number, phone_number_id: added.phone_number_id, reason: opts.reason },
+    });
+    console.log(`[wa-auto] tenant ${tenantId}: ${did.number} on the WABA, voice code requested (${opts.reason})`);
+    return { started: true, status: "pending_verification", detail: `Meta is calling ${did.number} with the code. Nikki answers it.` };
+  } catch (e: any) {
+    const detail = e?.message || String(e);
+    await sb.from("tenant_whatsapp").update({ review_note: detail.slice(0, 300) }).eq("tenant_id", tenantId);
+    console.error(`[wa-auto] tenant ${tenantId}: ${detail}`);
+    return { started: false, status: row?.status || "none", detail };
+  }
+}
+
 const waStepFail = (res: express.Response, e: any) =>
   res.status(e instanceof WaStepError ? e.status : 500).json({ error: e.message });
+
+/**
+ * The code Meta just read out, straight from the call it made.
+ *
+ * Meta verifies a sender by PHONING it. Our DIDs are SIP numbers with no
+ * handset, so Nikki answers and the six digits land in the transcript; the
+ * pipeline pulls them out and posts them here. Until now they only reached a
+ * log line and the call's intent, and somebody had to notice, open the panel
+ * and retype them within Meta's window — which is exactly why the one tenant
+ * who started this never finished it.
+ *
+ * Internal only. The tenant is resolved from the DID that was CALLED, never
+ * from the body, so this cannot be pointed at another business's sender.
+ */
+app.post("/webhooks/whatsapp/verify-otp", verifyInternal, async (req, res) => {
+  const code = String((req.body as any)?.code || "").replace(/\D/g, "");
+  const dialed = last10(String((req.body as any)?.did_number || ""));
+  if (code.length !== 6 || !dialed) return res.status(400).json({ error: "did_number and a six-digit code are required" });
+
+  const { data: did } = await sb.from("dids")
+    .select("tenant_id, number").like("number", `%${dialed}`).limit(1).maybeSingle();
+  if (!did?.tenant_id) return res.status(404).json({ error: "No business owns that number" });
+
+  const { data: row } = await sb.from("tenant_whatsapp")
+    .select("status, phone_number").eq("tenant_id", did.tenant_id).maybeSingle();
+  if (!row) return res.json({ ok: false, skipped: "no_registration_started" });
+  if (row.status === "active") return res.json({ ok: true, skipped: "already_active" });
+  if (row.status !== "pending_verification") {
+    return res.json({ ok: false, skipped: `status_${row.status}` });
+  }
+  // The code belongs to the number being registered. A tenant registering
+  // their OWN mobile is verified by a call to THAT number, not to the DID
+  // Nikki answers, so a code heard here is not theirs.
+  if (last10(String(row.phone_number || "")) !== dialed) {
+    return res.json({ ok: false, skipped: "code_for_a_different_number" });
+  }
+
+  try {
+    await waVerifyCode(did.tenant_id, code);
+    await audit("whatsapp.verified_automatically", {
+      tenantId: did.tenant_id, metadata: { number: did.number },
+    });
+    console.log(`[wa-auto] tenant ${did.tenant_id}: ${did.number} verified and registered from the call`);
+    res.json({ ok: true, status: "active" });
+  } catch (e: any) {
+    // Meta refuses a wrong or expired code. The row already carries its
+    // reason (waVerifyCode writes review_note); the scheduler will ask for a
+    // fresh code, and the operator sees why in the panel.
+    console.error(`[wa-auto] tenant ${did.tenant_id}: verify failed — ${e?.message}`);
+    res.status(200).json({ ok: false, error: e?.message || "verify failed" });
+  }
+});
+
+// Start (or resume) the whole thing for one tenant, by hand, from the panel.
+app.post("/api/admin/whatsapp/:tenantId/auto-start", verifySuperAdmin, async (req: any, res) => {
+  const r = await startWhatsAppRegistration(req.params.tenantId, { reason: `admin:${req.user.id}` });
+  res.status(r.started ? 200 : 409).json(r);
+});
+
+// The scheduler's sweep: every tenant whose number should be on WhatsApp and
+// is not. Internal, so the job does not need an admin session.
+app.post("/webhooks/whatsapp/auto-sweep", verifyInternal, async (req, res) => {
+  const tenantId = String((req.body as any)?.tenant_id || "");
+  if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+  const r = await startWhatsAppRegistration(tenantId, { reason: "scheduler" });
+  res.json(r);
+});
 
 // 1. Add the tenant's assigned DID to our WABA as a new sender.
 app.post("/api/admin/whatsapp/:tenantId/add-number", verifySuperAdmin, async (req: any, res) => {
@@ -3618,6 +3782,14 @@ app.post("/api/admin/kyc/:id/review", verifySuperAdmin, async (req, res) => {
     } else {
       console.log(`[kyc review] tenant ${data.tenant_id} -> awaiting_signup` +
         (did?.number ? ` for DID ${did.number}` : " (no DID assigned yet)"));
+      // And actually start it. Opening a row in awaiting_signup and waiting
+      // for someone to press three buttons in order is how a client ends up
+      // approved for weeks with no WhatsApp. Fire and forget: the KYC
+      // decision is already recorded and must not fail on Meta being slow.
+      if (did?.number) {
+        void startWhatsAppRegistration(data.tenant_id, { reason: "kyc_approved" })
+          .then(r => console.log(`[wa-auto] after KYC: ${r.status} — ${r.detail}`));
+      }
     }
   }
 
@@ -4459,6 +4631,13 @@ app.post("/api/admin/dids/:number/assign", verifySuperAdmin, async (req, res) =>
     admin_user_id: adminId, action: "assign_did",
     target_tenant_id: tenant_id, metadata: { number, voice_profile_id: profile!.id },
   }).then(r => r.error && console.error("[assign_did] audit:", r.error.message));
+
+  // The number is theirs; put it on WhatsApp too. The product's promise is
+  // one number for calls and WhatsApp, and an assignment is the moment that
+  // becomes possible. No-ops when KYC is not approved yet — the KYC approval
+  // then starts it, so whichever happens second does the work.
+  void startWhatsAppRegistration(tenant_id, { reason: "did_assigned" })
+    .then(r => console.log(`[wa-auto] after DID assign: ${r.status} — ${r.detail}`));
 
   res.json({ ok: true, number: did.number, tenant: tenant.name, voice_profile_id: profile!.id });
 });

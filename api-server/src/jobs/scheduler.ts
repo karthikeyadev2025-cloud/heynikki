@@ -984,7 +984,62 @@ export async function runScheduler() {
 
   try { await runPlanExpiry(); }
   catch (e: any) { console.error("[scheduler] plan expiry failed:", e.message); }
+
+  try { await runWhatsAppRegistrations(); }
+  catch (e: any) { console.error("[scheduler] whatsapp registration sweep failed:", e.message); }
   log("run complete");
+}
+
+/* ── WhatsApp registration sweep ────────────────────────────── */
+/**
+ * Every business whose HeyNikki number should be on WhatsApp and is not.
+ *
+ * The product sells one number for calls and WhatsApp, but getting there was
+ * four manual steps in order, with Meta's code copied by hand out of a call
+ * transcript inside its expiry window. Predictably nobody finished it: the
+ * only tenant who started has sat in pending_verification since 2 September.
+ *
+ * The API decides whether a tenant is eligible and what to do (see
+ * startWhatsAppRegistration); this only finds candidates and asks. Daytime
+ * only, because asking for a code makes Meta RING the number, and a business
+ * whose phone is answered by Nikki still has staff who see the call.
+ *
+ * Deliberately gentle: at most a handful a run, and a tenant whose code was
+ * requested in the last ten minutes is left alone by the API itself.
+ */
+const WA_SWEEP_FROM_MIN = 9 * 60 + 30;   // 09:30 IST
+const WA_SWEEP_TO_MIN   = 19 * 60;       // 19:00 IST
+const WA_SWEEP_MAX      = 5;
+
+export async function runWhatsAppRegistrations(): Promise<number> {
+  const nowMin = istMinutesNow();
+  if (nowMin < WA_SWEEP_FROM_MIN || nowMin >= WA_SWEEP_TO_MIN) return 0;
+
+  // Candidates: a registration row that never finished. 'active' is done,
+  // and a row Meta rejected outright carries its reason for a human.
+  const { data: rows, error } = await sb.from("tenant_whatsapp")
+    .select("tenant_id, status, updated_at")
+    .in("status", ["awaiting_signup", "pending_verification"])
+    .order("updated_at", { ascending: true })
+    .limit(WA_SWEEP_MAX);
+  if (error) { log("whatsapp sweep: read failed:", error.message); return 0; }
+  if (!rows?.length) return 0;
+
+  let started = 0;
+  for (const r of rows) {
+    try {
+      const resp = await fetch(`${API_URL}/webhooks/whatsapp/auto-sweep`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": INTERNAL_SECRET },
+        body: JSON.stringify({ tenant_id: r.tenant_id }),
+      });
+      const j = await resp.json().catch(() => ({})) as any;
+      if (j?.started) { started++; log(`whatsapp: started for tenant ${r.tenant_id} — ${j.detail}`); }
+    } catch (e: any) {
+      log("whatsapp sweep: request failed:", e?.message || e);
+    }
+  }
+  return started;
 }
 
 /* ── Recording retention purge ──────────────────────────────── */
