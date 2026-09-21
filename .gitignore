@@ -74,3 +74,8 @@ docker-compose.override.yml
 # Next.js deps installed by the containerised typecheck/build
 web/node_modules/
 web/.next/
+
+# Backups written by infra/cloudflare-cache-rules.sh before it replaces the
+# zone's cache phase. Machine-generated recovery state, and the restore is
+# only ever run on the box that made it.
+infra/cloudflare-backups/
