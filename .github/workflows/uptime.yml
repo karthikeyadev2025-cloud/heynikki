@@ -1,0 +1,317 @@
+# Uptime — the one check that cannot run on the box being checked.
+#
+# WHY THIS EXISTS
+# api-server/src/watchdog.ts already covers twelve failure conditions and
+# emails the platform owner when one opens and again when it clears. It is
+# good at what it does and this file does not duplicate any of it.
+#
+# But the watchdog runs inside the scheduler container, on the on-prem host
+# `nikki-voice`. That host IS the public frontend: every public hostname is
+# served from it through the Cloudflare tunnel (the EC2 box that
+# docker-compose.override.yml still describes as the frontend is gone —
+# no ICMP, no :22, no :443). So when the host is off, the watchdog is off
+# with it, and the outage is invisible to the very thing built to report it.
+#
+# That is not hypothetical. On 20 Sep 2026 at 18:21:59 IST a console session
+# powered the machine down (systemd-logind: "System is powering down" — a
+# clean, deliberate poweroff, not a crash). It came back at 09:05:32 the next
+# morning. Fourteen hours and forty-three minutes with every public hostname
+# dark, and nothing told anyone — the same way the 55-minute outage on 15 Sep
+# went unnoticed, which is what the watchdog was written to fix. The watchdog
+# closed the "broken while up" gap. This closes the "not up" gap.
+#
+# GitHub Actions is the whole point: it runs on infrastructure that has no
+# dependency on the host, needs no new account, and costs nothing to add.
+#
+# THE RULE THIS FILE KEEPS
+# The same one watchdog.ts keeps: the mailbox must tell the truth. One
+# notification when the site goes down, one when it comes back, and silence
+# in between. A monitor that mails every ten minutes through an overnight
+# outage delivers ~88 emails by breakfast and teaches its owner to filter it,
+# which is worse than no monitor at all.
+#
+# State lives in a GitHub issue labelled `uptime`, because it needs to
+# survive between runs that share nothing, and because opening and closing an
+# issue is already a notification with dedupe built in. No secret required
+# for that path — GITHUB_TOKEN is automatic.
+#
+# WHAT IT DELIBERATELY DOES NOT CHECK
+# pipeline.heynikki.in has no DNS record at all. Nothing live needs it (the
+# real .env uses PIPELINE_URL=http://127.0.0.1:8000); only EC2-era docs still
+# name it. Probing it would make this workflow permanently red, and ci.yml
+# already records what a permanently-red job does to the people reading it.
+#
+# n8n and activepieces are not probed either. They ride the same tunnel as
+# api, so they add no signal about host reachability, and anything that
+# breaks them while the host is up is the watchdog's job.
+
+name: Uptime
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub's documented minimum is 5, but scheduled runs
+    # are queued at low priority and routinely fire late — sometimes much
+    # later. Treat this as "roughly every 10 minutes", which is ample for an
+    # outage measured in hours. Raising the frequency buys little and, on a
+    # private repo, spends Actions minutes for it.
+    - cron: "*/10 * * * *"
+  # So the check can be run on demand without waiting for the cron.
+  workflow_dispatch:
+
+# Opening, commenting on and closing the tracking issue.
+permissions:
+  contents: read
+  issues: write
+
+# A late cron firing on top of a still-running one must not let two jobs both
+# decide the state. Queue instead of cancelling: a cancelled run would leave
+# the issue mid-transition.
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe public endpoints
+    runs-on: ubuntu-latest
+    steps:
+      # ── Is the host answering? ──────────────────────────────────
+      #
+      # Three attempts, 20s apart, per target; a target passes if ANY attempt
+      # succeeds. This is watchdog.ts's anti-noise rule 3 applied to a
+      # workflow that has no memory of the previous run: a single Cloudflare
+      # hiccup or a tunnel reconnect (the tunnel log shows it redialling the
+      # edge on QUIC timeouts) must not open an incident.
+      #
+      # When the host is off, Cloudflare has no tunnel to reach and answers
+      # 502/530 rather than hanging, so a non-200 is the real signal here —
+      # not just a timeout.
+      - name: Probe
+        id: probe
+        run: |
+          set -uo pipefail
+
+          # api.heynikki.in/health is the primary signal: it is served by the
+          # api-server container on the host, so a good JSON body proves the
+          # whole path — host up, Docker up, tunnel registered, app healthy.
+          # A 200 alone is not enough; Cloudflare can serve its own 200 pages.
+          probe_api() {
+            body=$(curl -fsS --max-time 15 https://api.heynikki.in/health 2>/dev/null) || return 1
+            [ "$(printf '%s' "$body" | jq -r '.status // empty' 2>/dev/null)" = "ok" ] || return 1
+            printf '%s' "$body" > /tmp/api-health.json
+            return 0
+          }
+
+          # The apex is what a customer types. -L because it 308s to www.
+          probe_site() {
+            code=$(curl -fsS -o /dev/null -L -w '%{http_code}' --max-time 15 https://heynikki.in/ 2>/dev/null) || return 1
+            [ "$code" = "200" ] || return 1
+            return 0
+          }
+
+          api_ok=0; site_ok=0
+          for attempt in 1 2 3; do
+            [ "$api_ok"  = 1 ] || { probe_api  && api_ok=1  && echo "api ok (attempt $attempt)"; }
+            [ "$site_ok" = 1 ] || { probe_site && site_ok=1 && echo "site ok (attempt $attempt)"; }
+            [ "$api_ok" = 1 ] && [ "$site_ok" = 1 ] && break
+            [ "$attempt" = 3 ] || { echo "retrying in 20s (api=$api_ok site=$site_ok)"; sleep 20; }
+          done
+
+          failed=""
+          [ "$api_ok"  = 1 ] || failed="api.heynikki.in/health"
+          [ "$site_ok" = 1 ] || failed="${failed:+$failed, }heynikki.in"
+
+          if [ -n "$failed" ]; then
+            echo "state=down" >> "$GITHUB_OUTPUT"
+            echo "failed=$failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOWN — no response from: $failed"
+          else
+            echo "state=up" >> "$GITHUB_OUTPUT"
+            echo "failed=" >> "$GITHUB_OUTPUT"
+            # The host's own uptime, so the recovery notice can say how long
+            # the machine has been back and whether it rebooted.
+            up_ms=$(jq -r '.uptime_ms // empty' /tmp/api-health.json 2>/dev/null || true)
+            if [ -n "${up_ms:-}" ]; then
+              echo "host_uptime=$(( up_ms / 3600000 ))h $(( (up_ms % 3600000) / 60000 ))m" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # ── Open or clear the incident ──────────────────────────────
+      #
+      # The issue is both the state store and the notification. Transitions
+      # notify; a continuing state says nothing.
+      #
+      #   down + no open issue  -> open one          (one notification)
+      #   down + issue open     -> nothing           (silence, by design)
+      #   up   + issue open     -> comment and close (one notification)
+      #   up   + no open issue  -> nothing
+      - name: Open or clear incident
+        id: incident
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE:    ${{ steps.probe.outputs.state }}
+          FAILED:   ${{ steps.probe.outputs.failed }}
+          UPTIME:   ${{ steps.probe.outputs.host_uptime }}
+          REPO:     ${{ github.repository }}
+          RUN_URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # `gh issue create --label` fails outright if the label is missing,
+          # which would turn a real outage into a workflow error instead of an
+          # alert. Create it idempotently.
+          gh label create uptime \
+            --description "Automated external uptime check" \
+            --color B60205 >/dev/null 2>&1 || true
+
+          open_issue=$(gh issue list --repo "$REPO" --label uptime --state open \
+                         --limit 1 --json number --jq '.[0].number // empty')
+
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          now_ist=$(TZ=Asia/Kolkata date '+%Y-%m-%d %H:%M IST')
+
+          if [ "$STATE" = "down" ]; then
+            if [ -n "$open_issue" ]; then
+              echo "Still down; incident #$open_issue already open. Sending nothing."
+              echo "notify=none" >> "$GITHUB_OUTPUT"
+            else
+              body=$(cat <<EOF
+          **heynikki.in is not responding.**
+
+          No response from: \`$FAILED\`
+          First detected: $now ($now_ist)
+
+          Three attempts 20s apart failed, so this is not a single blip.
+
+          ### Most likely cause
+          The on-prem host \`nikki-voice\` is off or has lost its network.
+          Every public hostname is served from that machine through the
+          Cloudflare tunnel, so the host being down takes all of them down
+          together. There is no fallback — the old EC2 frontend is gone.
+
+          ### First thing to check
+          1. Is the machine powered on?
+          2. \`docker ps\` — are the containers up? \`restart: always\` should
+             have restored them on boot.
+          3. \`docker logs heynikki-tunnel --tail 50\` — is the tunnel
+             registered to the Cloudflare edge?
+
+          This issue closes itself when the site answers again, and the
+          closing comment records how long the outage lasted.
+
+          [Run log]($RUN_URL)
+          EOF
+              )
+              # `gh issue create` prints the new issue's URL; take the number
+              # from it. Do NOT reach for `--json number` with a second
+              # create as a fallback — on a gh build that rejects the flag
+              # the fallback is fine, but on one that accepts it and fails
+              # later you have opened two incidents for one outage.
+              url=$(gh issue create --repo "$REPO" --label uptime \
+                      --title "heynikki.in is down" --body "$body")
+              echo "Opened incident ${url##*/}: $url"
+              echo "notify=down" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            if [ -n "$open_issue" ]; then
+              opened_at=$(gh issue view "$open_issue" --repo "$REPO" --json createdAt --jq .createdAt)
+              mins=$(( ( $(date -u +%s) - $(date -u -d "$opened_at" +%s) ) / 60 ))
+              gh issue comment "$open_issue" --repo "$REPO" --body "$(cat <<EOF
+          **Back up** as of $now ($now_ist).
+
+          \`api.heynikki.in/health\` returned \`status: ok\` and the site
+          returned 200.
+
+          Down for approximately **$(( mins / 60 ))h $(( mins % 60 ))m** by this
+          check's clock (first detection to recovery, so the true start may be
+          up to 10 minutes earlier).
+          ${UPTIME:+
+          The host reports **$UPTIME** of process uptime, which indicates it rebooted rather than merely losing its network.}
+
+          Closing. [Run log]($RUN_URL)
+          EOF
+              )"
+              gh issue close "$open_issue" --repo "$REPO" >/dev/null
+              echo "Closed incident #$open_issue after ${mins}m"
+              echo "notify=recovered" >> "$GITHUB_OUTPUT"
+              echo "downtime=$(( mins / 60 ))h $(( mins % 60 ))m" >> "$GITHUB_OUTPUT"
+            else
+              echo "Up, nothing open. Sending nothing."
+              echo "notify=none" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # ── Optional: the same mailbox the watchdog uses ────────────
+      #
+      # The issue above already notifies whoever watches this repo. This step
+      # additionally delivers to the address watchdog.ts mails, so host-down
+      # and host-broken alerts arrive in one place.
+      #
+      # Entirely optional and skipped silently when the secrets are absent —
+      # never let a missing secret turn a working check into a red run. To
+      # enable, add repo secrets RESEND_API_KEY and ALERT_EMAIL_TO:
+      #   gh secret set RESEND_API_KEY   # same key as infra/.env
+      #   gh secret set ALERT_EMAIL_TO   # e.g. the platform owner's address
+      - name: Email on transition
+        if: steps.incident.outputs.notify == 'down' || steps.incident.outputs.notify == 'recovered'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          FROM_EMAIL:     ${{ vars.FROM_EMAIL || 'heynikki.in' }}
+          NOTIFY:         ${{ steps.incident.outputs.notify }}
+          FAILED:         ${{ steps.probe.outputs.failed }}
+          DOWNTIME:       ${{ steps.incident.outputs.downtime }}
+          RUN_URL:        ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${RESEND_API_KEY:-}" ] || [ -z "${ALERT_EMAIL_TO:-}" ]; then
+            echo "RESEND_API_KEY or ALERT_EMAIL_TO not set — skipping email (the issue already notified)."
+            exit 0
+          fi
+
+          if [ "$NOTIFY" = "down" ]; then
+            subject="heynikki.in is DOWN"
+            html="<p><strong>heynikki.in is not responding.</strong></p><p>No response from: <code>${FAILED}</code></p><p>Most likely the on-prem host <code>nikki-voice</code> is off or off-network — every public hostname is served from it through the Cloudflare tunnel, and there is no fallback.</p><p><a href=\"${RUN_URL}\">Run log</a></p>"
+          else
+            subject="heynikki.in is back up"
+            html="<p><strong>heynikki.in is answering again.</strong></p><p>Down for approximately <strong>${DOWNTIME:-unknown}</strong>.</p><p><a href=\"${RUN_URL}\">Run log</a></p>"
+          fi
+
+          code=$(curl -s -o /tmp/resend.out -w '%{http_code}' --max-time 15 \
+            -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer ${RESEND_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg to "$ALERT_EMAIL_TO" --arg from "Nikki <noreply@${FROM_EMAIL}>" \
+                       --arg subject "$subject" --arg html "$html" \
+                       '{from:$from, to:[$to], subject:$subject, html:$html}')")
+
+          # A failed email must not mask the probe result, which is already
+          # recorded in the issue.
+          if [ "$code" != "200" ]; then
+            echo "::warning::Resend returned $code: $(head -c 200 /tmp/resend.out)"
+          else
+            echo "Emailed $ALERT_EMAIL_TO"
+          fi
+
+      # ── Make the run page readable at a glance ──────────────────
+      #
+      # NOTE ON JOB STATUS: this job stays green when the site is down. That
+      # is deliberate. A red scheduled run emails whoever last touched the
+      # cron on EVERY firing, which is the ~88-emails-by-breakfast problem
+      # this file exists to avoid; the issue is the notification channel and
+      # it dedupes properly. Green here means "the check ran", not "the site
+      # is fine" — the summary and the open issue say which.
+      - name: Summary
+        if: always()
+        run: |
+          {
+            if [ "${{ steps.probe.outputs.state }}" = "up" ]; then
+              echo "## ✅ Up"
+              echo "\`api.heynikki.in/health\` → \`status: ok\`, \`heynikki.in\` → 200."
+              [ -n "${{ steps.probe.outputs.host_uptime }}" ] && echo "Host process uptime: **${{ steps.probe.outputs.host_uptime }}**."
+            else
+              echo "## ❌ Down"
+              echo "No response from: \`${{ steps.probe.outputs.failed }}\` after 3 attempts 20s apart."
+              echo "See the open issue labelled \`uptime\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
