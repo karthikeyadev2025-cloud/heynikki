@@ -202,10 +202,22 @@ voice-sample playback, nothing else), `GOOGLE_SITE_VERIFICATION`,
 `BING_SITE_VERIFICATION`.
 
 Get this wrong and the failure is the quiet kind: image builds, container
-reports healthy, every browser call goes to `undefined`. Both Dockerfiles
-carry a guard that fails the build naming the empty variable instead — if a
-deploy dies with `ERROR: build argument … is empty`, it is telling you the
-variable is set as runtime rather than build.
+reports healthy, every browser call goes somewhere wrong. Both Dockerfiles run
+`docker/check-build-env.sh`, which fails the build and names the variable:
+
+| Error says | Meaning |
+|---|---|
+| `… is empty` | set as runtime, not build — or not set |
+| `… must be a full https:// URL` | wrong value pasted (see below) |
+| `… contains whitespace or quote characters` | copy-paste debris |
+| `… must be a JWT` / `too short` | wrong or truncated anon key |
+| `… is a SERVICE_ROLE key` | **stop** — wrong key; it would have been public |
+
+**Paste only the value.** The first real deploy (22 Sep) shipped
+`NEXT_PUBLIC_API_URL` set to the literal text `NEXT_PUBLIC_API_URL` — the name
+pasted into the value field. The guard then only checked for empty, so it
+passed; marketing pages rendered and every dashboard API call was broken. The
+guard now checks shape, and that exact value fails the build.
 
 ### Deploy one at a time
 

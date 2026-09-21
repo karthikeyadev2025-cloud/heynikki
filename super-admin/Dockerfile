@@ -51,23 +51,11 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 # All three are required — this app reads no other environment at all.
-RUN set -e; \
-    for pair in \
-      "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
-      "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" \
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
-    ; do \
-      name=${pair%%=*}; value=${pair#*=}; \
-      if [ -z "$value" ]; then \
-        echo "" >&2; \
-        echo "ERROR: build argument $name is empty." >&2; \
-        echo "  NEXT_PUBLIC_* is inlined at build time. Set it as a BUILD-time" >&2; \
-        echo "  variable in Coolify, not a runtime one, or the deployed panel" >&2; \
-        echo "  will call 'undefined' from the browser." >&2; \
-        echo "" >&2; \
-        exit 1; \
-      fi; \
-    done
+# Checks SHAPE, not just presence: an earlier presence-only guard let a
+# variable's own name through as its value. Also refuses a service_role key in
+# the anon slot — on the cross-tenant operator panel of all places, that would
+# publish full database access. Identical to web/docker/check-build-env.sh.
+RUN sh docker/check-build-env.sh
 
 RUN npm run build
 

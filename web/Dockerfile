@@ -74,27 +74,12 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     BING_SITE_VERIFICATION=$BING_SITE_VERIFICATION
 
 # Fail loudly now rather than shipping an image that looks fine and is not.
-# A missing NEXT_PUBLIC_* does not break `next build`; it compiles the literal
-# `undefined` into the bundle and the break only shows up in a browser.
-RUN set -e; \
-    for pair in \
-      "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" \
-      "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" \
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
-    ; do \
-      name=${pair%%=*}; value=${pair#*=}; \
-      if [ -z "$value" ]; then \
-        echo "" >&2; \
-        echo "ERROR: build argument $name is empty." >&2; \
-        echo "  NEXT_PUBLIC_* is inlined at build time. Set it as a BUILD-time" >&2; \
-        echo "  variable in Coolify, not a runtime one, or the deployed app" >&2; \
-        echo "  will call 'undefined' from the browser." >&2; \
-        echo "" >&2; \
-        exit 1; \
-      fi; \
-    done; \
-    [ -n "$NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL" ] || \
-      echo "note: NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL unset — voice sample playback will be disabled."
+# A bad NEXT_PUBLIC_* does not break `next build`; it compiles the bad value
+# into the bundle and the break only shows up in a browser. This checks SHAPE,
+# not just presence — an earlier presence-only guard let the variable's own
+# name through as its value. It also refuses a service_role key in the anon
+# slot, which would publish full database access. See the script for details.
+RUN sh docker/check-build-env.sh
 
 RUN npm run build
 
