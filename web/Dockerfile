@@ -28,6 +28,25 @@
 # that kind, since it holds zero API routes and no server actions.
 # ─────────────────────────────────────────────────────────────
 
+# ── envcheck ─────────────────────────────────────────────────
+# Validates the build arguments FIRST, before any dependency install. It used
+# to run in the builder stage, after `npm ci` (95s) and the node_modules copy
+# (158s), so the first bad Coolify deploy took ~6 minutes to be told its API
+# URL was wrong. Here it fails in seconds.
+#
+# `deps` COPYs this stage's marker file, and that dependency is what makes it
+# run at all: BuildKit, which Coolify uses, builds only the stages the target
+# needs and silently skips an unreferenced one. The marker is empty and never
+# changes, so editing a build arg re-runs this check without invalidating the
+# cached `npm ci` below.
+FROM node:22-alpine AS envcheck
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_VOICE_SAMPLE_BASE_URL
+COPY docker/check-build-env.sh /check-build-env.sh
+RUN sh /check-build-env.sh && touch /build-env-ok
+
 # ── deps ─────────────────────────────────────────────────────
 # Node 22, not 20. Node 20 left LTS in April 2026, so it no longer receives
 # security updates, and @supabase/supabase-js warns on every boot under 20:
@@ -35,6 +54,9 @@
 # NOTE: .github/workflows/ci.yml still builds these apps on node 20, so a
 # green CI run does not by itself prove this image builds. Worth aligning.
 FROM node:22-alpine AS deps
+# Must stay the first step of this stage: it orders npm ci after the envcheck
+# stage, so a bad build arg stops the build before the install starts.
+COPY --from=envcheck /build-env-ok /tmp/build-env-ok
 # Next's SWC binary is glibc-linked; without this it fails to load on musl.
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
@@ -73,13 +95,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     GOOGLE_SITE_VERIFICATION=$GOOGLE_SITE_VERIFICATION \
     BING_SITE_VERIFICATION=$BING_SITE_VERIFICATION
 
-# Fail loudly now rather than shipping an image that looks fine and is not.
-# A bad NEXT_PUBLIC_* does not break `next build`; it compiles the bad value
-# into the bundle and the break only shows up in a browser. This checks SHAPE,
-# not just presence — an earlier presence-only guard let the variable's own
-# name through as its value. It also refuses a service_role key in the anon
-# slot, which would publish full database access. See the script for details.
-RUN sh docker/check-build-env.sh
+# Build args were already validated in the envcheck stage, before npm ci.
 
 RUN npm run build
 
