@@ -23,6 +23,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fsl, pendingClickToCallLegs, trunkLimits } from "./esl";
 import { minutesGate } from "./usage";
+import { CONVERSATION_SECS, daysPresent, missingTable, workedMs } from "./attendance";
 
 export type AdminOpsDeps = {
   sb: SupabaseClient;
@@ -56,15 +57,7 @@ function alertTitle(id: string): string {
 /** Calls with a CRITICAL title stop the product; the rest degrade it. */
 const CRITICAL = new Set(["trunk_gateway_down", "trunk_fault", "pipeline_health", "api_health", "sarvam_credits"]);
 
-/**
- * What counts as a conversation. click_to_call_log has no "customer
- * answered" signal: a row is written once the SEAT answers, and
- * duration_seconds is the seat's leg. A call to a mistyped number on 22 Sep
- * logged 11 s while the customer leg failed outright, so duration > 0 read
- * as a 100% connect rate. 15 s is the usual call-centre threshold for "they
- * actually spoke", and the console labels it as a threshold, not a fact.
- */
-const CONVERSATION_SECS = 15;
+// CONVERSATION_SECS lives in attendance.ts so the Desk and this view agree.
 
 const IST_MS = 5.5 * 3600_000;
 const istDay = (iso: string) => new Date(Date.parse(iso) + IST_MS).toISOString().slice(0, 10);
@@ -198,6 +191,32 @@ export function mountAdminOps(app: Express, { sb, verifySuperAdmin }: AdminOpsDe
         };
       }).sort((x, y) => y.calls - x.calls);
 
+      // Shifts in the window (migration 061). Hours on shift turn "12 calls"
+      // into "12 calls in 6 hours", which is the number worth managing.
+      let attendanceReady = true;
+      if (agentIds.length) {
+        const nowMs = Date.now(), fromMs = Date.parse(since);
+        let aq = sb.from("seat_attendance").select("user_id, tenant_id, check_in_at, check_out_at")
+          .in("user_id", agentIds).lt("check_in_at", new Date(nowMs).toISOString())
+          .or(`check_out_at.is.null,check_out_at.gte."${since}"`);
+        if (tenantId) aq = aq.eq("tenant_id", tenantId);
+        const [{ data: shifts, error: aErr }, { data: targets, error: tErr }] = await Promise.all([
+          aq,
+          sb.from("seat_targets").select("user_id, tenant_id, daily_calls, daily_conversations").in("user_id", agentIds),
+        ]);
+        if (missingTable(aErr) || missingTable(tErr)) attendanceReady = false;
+        for (const seat of seats as any[]) {
+          const mine = (shifts || []).filter((x: any) => x.user_id === seat.agent_user_id && x.tenant_id === seat.tenant_id);
+          const t: any = (targets || []).find((x: any) => x.user_id === seat.agent_user_id && x.tenant_id === seat.tenant_id) || {};
+          const worked = Math.round(workedMs(mine, fromMs, nowMs + 1, nowMs) / 1000);
+          seat.shift_seconds        = worked;
+          seat.days_present         = daysPresent(mine, fromMs, nowMs + 1, nowMs);
+          seat.calls_per_hour       = worked >= 600 ? +(seat.calls / (worked / 3600)).toFixed(1) : null;
+          seat.target_calls         = Number(t.daily_calls) || 0;
+          seat.target_conversations = Number(t.daily_conversations) || 0;
+        }
+      }
+
       // Every day in the window, including empty ones, so the chart does not
       // draw a quiet Sunday as if it never happened.
       const series = Array.from({ length: days }, (_, i) => {
@@ -211,6 +230,7 @@ export function mountAdminOps(app: Express, { sb, verifySuperAdmin }: AdminOpsDe
       }), { calls: 0, conversations: 0, talk_seconds: 0, outcomes_logged: 0 });
 
       res.json({ days, seats, series, total, conversation_secs: CONVERSATION_SECS,
+                 attendance_ready: attendanceReady,
                  truncated: rows.length >= 5000 });
     } catch (e: any) {
       console.error("[admin-ops] telecallers:", e?.message || e);

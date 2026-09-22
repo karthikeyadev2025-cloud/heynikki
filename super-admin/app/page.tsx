@@ -4251,7 +4251,8 @@ function TelecallersPanel({ token }: { token: string }) {
                 <thead><tr>
                   <th>Telecaller</th><th>Tenant</th><th className="nk-num">Calls</th>
                   <th>Conversations</th><th className="nk-num">Avg call</th><th className="nk-num">Talk time</th>
-                  <th>Outcomes logged</th><th>Last call</th>
+                  <th className="nk-num">Days in</th><th className="nk-num">On shift</th><th className="nk-num">Calls / hr</th>
+                  <th>Daily target</th><th>Outcomes logged</th><th>Last call</th>
                 </tr></thead>
                 <tbody>
                   {seats.map(s => {
@@ -4267,6 +4268,14 @@ function TelecallersPanel({ token }: { token: string }) {
                         <td><Meter used={s.conversations} limit={s.calls} label={pctText(s.conversation_rate)} /></td>
                         <td className="nk-num">{fmtSecs(s.avg_call_seconds)}</td>
                         <td className="nk-num">{fmtSecs(s.talk_seconds)}</td>
+                        <td className="nk-num">{s.days_present ?? "—"}</td>
+                        <td className="nk-num">{s.shift_seconds ? fmtSecs(s.shift_seconds) : "—"}</td>
+                        <td className="nk-num" style={{ fontWeight: 800 }}>{s.calls_per_hour ?? "—"}</td>
+                        <td style={{ color: C.mid, fontSize: TYPE.xs }}>
+                          {s.target_calls || s.target_conversations
+                            ? `${s.target_calls || 0} calls · ${s.target_conversations || 0} conv.`
+                            : <span style={{ color: C.dim }}>not set</span>}
+                        </td>
                         <td>
                           <span style={{ color: logged < 0.5 ? C.red : C.grn, fontWeight: 800 }}>{s.outcomes_logged}/{s.calls}</span>
                           {Object.keys(s.outcomes || {}).length > 0 && (
@@ -4287,6 +4296,8 @@ function TelecallersPanel({ token }: { token: string }) {
             A conversation is a call of {data?.conversation_secs ?? 15}s or more. The log records the telecaller's
             leg, so this is a threshold rather than a confirmed answer; logged outcomes are the ground truth.
             {data?.truncated ? " Showing the most recent 5,000 calls." : ""}
+            {" "}Hours come from Desk check-ins; calls per hour needs at least 10 minutes on shift.
+            {data?.attendance_ready === false ? " Attendance is not set up yet: apply database migration 061." : ""}
           </div>
         </>
       )}

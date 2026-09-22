@@ -23,7 +23,7 @@ import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import {
   Headset, PhoneCall, PhoneOff, Radio, Users, Bot, GitBranch, Check,
-  Clock, Pencil, X, PhoneIncoming, PhoneOutgoing,
+  Clock, Pencil, X, PhoneIncoming, PhoneOutgoing, LogIn, LogOut, Target,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -51,7 +51,16 @@ type Desk = {
   did: string | null; routing_mode: "ai" | "hybrid" | "human"; seats: Seat[];
   ring_count: number; you: { id: string; role: string; phone: string | null; display_name: string | null } | null;
   you_are_owner: boolean; recent: Recent[]; team_calls: TeamCall[];
+  // Shifts and targets (migration 061). attendance_ready is false until the
+  // migration is applied; the cards say so instead of breaking.
+  attendance_ready?: boolean; conversation_secs?: number;
+  you_today?: DayStats | null; team_today?: (DayStats & TeamDay)[] | null;
 };
+type DayStats = {
+  checked_in: boolean; since: string | null; first_in: string | null; worked_seconds: number; earlier_seconds: number;
+  calls: number; conversations: number; target_calls: number; target_conversations: number;
+};
+type TeamDay = { member_id: string; user_id: string; name: string | null; is_you: boolean };
 type LiveCall = {
   id: string; caller_number: string; direction: string; intent: string | null;
   created_at: string; status: string;
@@ -168,6 +177,7 @@ export default function DeskPage() {
 
         <div className="desk-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 16 }}>
+            <Shift d={d} api={api} onChanged={load} tick={tick} />
             <Dialer d={d} api={api} onDone={load} prefill={prefill} />
             <LiveBoard calls={live} tick={tick} />
             <NeedsCallback d={d} onCallBack={callBack} />
@@ -175,6 +185,7 @@ export default function DeskPage() {
             <RecentCalls d={d} api={api} onSaved={load} />
           </div>
           <div style={{ display: "grid", gap: 16 }}>
+            <TeamToday d={d} api={api} onSaved={load} tick={tick} />
             <Routing d={d} api={api} onSaved={load} />
             <Seats d={d} api={api} onSaved={load} />
           </div>
@@ -721,6 +732,208 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
           </table>
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── Shift (check-in / check-out) ──────────────────────────────────────
+const hm = (secs: number) => {
+  const m = Math.floor(Math.max(0, secs) / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+};
+const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+/** Progress toward a daily target. No target set: just the count. */
+function Progress({ label, value, target }: { label: string; value: number; target: number }) {
+  const pct = target > 0 ? Math.min(1, value / target) : 0;
+  const done = target > 0 && value >= target;
+  const color = done ? C.grn : C.glow;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5, gap: 8 }}>
+        <span style={{ color: C.mid }}>{label}</span>
+        <span style={{ color: done ? C.grn : C.txt, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+          {value}{target > 0 ? <span style={{ color: C.dim, fontWeight: 500 }}> / {target}</span> : ""}
+          {done ? " ✓" : ""}
+        </span>
+      </div>
+      <div style={{ height: 6, background: C.hi, borderRadius: 3, overflow: "hidden" }}>
+        {target > 0
+          ? <div style={{ width: `${pct * 100}%`, height: "100%", background: color, borderRadius: 3, transition: "width .3s" }} />
+          : <div style={{ height: "100%", background: `repeating-linear-gradient(90deg, ${C.bord} 0 6px, transparent 6px 12px)` }} />}
+      </div>
+      {target === 0 && <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>No target set</div>}
+    </div>
+  );
+}
+
+function Shift({ d, api, onChanged, tick }: {
+  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onChanged: () => void; tick: number;
+}) {
+  const [busy, setBusy] = useState(false);
+  void tick;                                   // re-render every 4s so the timer moves
+  if (!d) return null;
+  if (d.attendance_ready === false) {
+    return (
+      <Card title="Your shift" icon={<Clock size={15} />}>
+        <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.55 }}>
+          Check-in and daily targets need a one-time database update (migration 061). Ask your administrator to apply it.
+        </div>
+      </Card>
+    );
+  }
+  const t = d.you_today;
+  const on = !!t?.checked_in;
+  // Live: the running shift ticks from its check-in; earlier shifts today
+  // come from the server, so the total is right without a reload.
+  const shiftSecs = on && t?.since ? elapsed(t.since) : 0;
+  const todaySecs = (t?.earlier_seconds || 0) + shiftSecs;
+
+  const go = async (path: string) => {
+    setBusy(true);
+    try {
+      const j = await api(path, {});
+      toast.ok(path.endsWith("check-in")
+        ? (j.already ? "You're already on shift." : "Checked in. Have a good shift.")
+        : `Checked out after ${hm(j.shift_seconds || 0)}.`);
+      onChanged();
+    } catch (e: any) { toast.err(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card title="Your shift" icon={<Clock size={15} />}
+      right={on
+        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.grn, fontSize: 12, fontWeight: 800 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.grn, animation: "deskpulse 2s infinite" }} />
+            On shift
+          </span>
+        : <span style={{ color: C.dim, fontSize: 12, fontWeight: 700 }}>Off shift</span>}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+          {on && t?.since ? (
+            <>
+              <div style={{ color: C.txt, fontSize: 26, fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>
+                {hm(shiftSecs)}
+              </div>
+              <div style={{ color: C.dim, fontSize: 12, marginTop: 3 }}>
+                since {clock(t.since)}{(t.earlier_seconds || 0) >= 60 ? ` · ${hm(todaySecs)} today in total` : ""}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ color: C.txt, fontSize: 15, fontWeight: 800 }}>
+                {t?.worked_seconds ? `${hm(t.worked_seconds)} worked today` : "Not checked in yet today"}
+              </div>
+              <div style={{ color: C.dim, fontSize: 12, marginTop: 3 }}>
+                {t?.first_in ? `First in at ${clock(t.first_in)}` : "Check in when you start, so your hours count."}
+              </div>
+            </>
+          )}
+        </div>
+        <button onClick={() => go(on ? "/api/desk/check-out" : "/api/desk/check-in")} disabled={busy}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 10,
+            border: on ? `1px solid ${C.bord}` : "none", cursor: busy ? "wait" : "pointer",
+            background: on ? C.surf : C.grn, color: on ? C.txt : "#fff",
+            fontSize: 14, fontWeight: 800, opacity: busy ? 0.6 : 1, minHeight: 44,
+          }}>
+          {on ? <LogOut size={16} /> : <LogIn size={16} />}
+          {busy ? "…" : on ? "Check out" : "Check in"}
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14, marginTop: 16,
+        paddingTop: 14, borderTop: `1px solid ${C.bord}` }}>
+        <Progress label="Calls today" value={t?.calls || 0} target={t?.target_calls || 0} />
+        <Progress label={`Conversations (${d.conversation_secs || 15}s+)`} value={t?.conversations || 0} target={t?.target_conversations || 0} />
+      </div>
+    </Card>
+  );
+}
+
+// ── Team today (owner) ────────────────────────────────────────────────
+function TeamToday({ d, api, onSaved, tick }: {
+  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onSaved: () => void; tick: number;
+}) {
+  const [edit, setEdit] = useState<string | null>(null);
+  const [calls, setCalls] = useState("");
+  const [convs, setConvs] = useState("");
+  const [saving, setSaving] = useState(false);
+  void tick;
+  if (!d?.you_are_owner || !d.team_today) return null;
+  const team = d.team_today;
+  const onShift = team.filter(m => m.checked_in).length;
+
+  const save = async (memberId: string) => {
+    setSaving(true);
+    try {
+      await api("/api/desk/targets", { member_id: memberId, daily_calls: Number(calls || 0), daily_conversations: Number(convs || 0) });
+      toast.ok("Targets saved.");
+      setEdit(null); onSaved();
+    } catch (e: any) { toast.err(e.message); }
+    setSaving(false);
+  };
+  const input: React.CSSProperties = { width: 64, background: C.bg, border: `1px solid ${C.bord}`, color: C.txt,
+    borderRadius: 7, padding: "6px 8px", fontSize: 13 };
+
+  return (
+    <Card title="Team today" icon={<Target size={15} />}
+      right={<span style={{ color: C.dim, fontSize: 12 }}>{onShift} of {team.length} on shift</span>}>
+      <div style={{ display: "grid", gap: 12 }}>
+        {team.map(m => {
+          const status = m.checked_in && m.since
+            ? { text: `On shift since ${clock(m.since)} · ${hm((m.earlier_seconds || 0) + elapsed(m.since))} today`, color: C.grn }
+            : m.worked_seconds ? { text: `Checked out · ${hm(m.worked_seconds)} today`, color: C.mid }
+            : { text: "Not in today", color: C.dim };
+          return (
+            <div key={m.member_id} style={{ paddingBottom: 12, borderBottom: `1px solid ${C.bord}88` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {m.name || "Unnamed seat"}{m.is_you ? <span style={{ color: C.dim, fontWeight: 500 }}> (you)</span> : ""}
+                  </div>
+                  <div style={{ color: status.color, fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                    {m.checked_in && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.grn }} />}
+                    {status.text}
+                  </div>
+                </div>
+                {edit !== m.member_id && (
+                  <button onClick={() => { setEdit(m.member_id); setCalls(String(m.target_calls || "")); setConvs(String(m.target_conversations || "")); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: `1px solid ${C.bord}`,
+                      color: C.mid, borderRadius: 7, padding: "5px 9px", fontSize: 12, cursor: "pointer" }}>
+                    <Pencil size={12} /> Targets
+                  </button>
+                )}
+              </div>
+              {edit === m.member_id ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <label style={{ color: C.mid, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    Calls/day <input type="number" min={0} max={1000} value={calls} onChange={e => setCalls(e.target.value)} style={input} />
+                  </label>
+                  <label style={{ color: C.mid, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    Conversations/day <input type="number" min={0} max={1000} value={convs} onChange={e => setConvs(e.target.value)} style={input} />
+                  </label>
+                  <button onClick={() => save(m.member_id)} disabled={saving}
+                    style={{ background: C.glow, color: "#fff", border: "none", borderRadius: 7, padding: "6px 12px",
+                      fontSize: 12, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <Check size={12} /> Save
+                  </button>
+                  <button onClick={() => setEdit(null)} aria-label="Cancel"
+                    style={{ background: "none", border: "none", color: C.dim, cursor: "pointer", lineHeight: 0 }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                  <Progress label="Calls" value={m.calls || 0} target={m.target_calls || 0} />
+                  <Progress label="Conversations" value={m.conversations || 0} target={m.target_conversations || 0} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </Card>
   );
 }

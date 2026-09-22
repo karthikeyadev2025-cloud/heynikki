@@ -13,6 +13,7 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { CONVERSATION_SECS, closeStale, isOpen, istDayStartMs, missingTable, workedMs } from "./attendance";
 
 type Deps = {
   sb:          SupabaseClient;
@@ -37,6 +38,52 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     return data;
   }
   const isOwner = (m: any) => !!m && ["owner", "super_admin"].includes(m.role);
+
+  /**
+   * Each person's day so far: on shift or not, hours, calls against target.
+   * `ready: false` means migration 061 is not applied yet; the Desk then
+   * explains that instead of failing.
+   */
+  async function today(tenantId: string, userIds: string[], now = Date.now()) {
+    const startMs  = istDayStartMs(now);
+    const startIso = new Date(startMs).toISOString();
+    const empty = { ready: true, by: new Map<string, any>() };
+    if (!userIds.length) return empty;
+    const [att, logs, tgt] = await Promise.all([
+      // Shifts still open (possibly from yesterday) or that ended today.
+      sb.from("seat_attendance").select("user_id, check_in_at, check_out_at, auto_closed")
+        .eq("tenant_id", tenantId).in("user_id", userIds)
+        // Quoted: an ISO timestamp holds "." and ":", both PostgREST syntax.
+        .or(`check_out_at.is.null,check_out_at.gte."${startIso}"`),
+      sb.from("click_to_call_log").select("agent_user_id, duration_seconds")
+        .eq("tenant_id", tenantId).in("agent_user_id", userIds).gte("created_at", startIso),
+      sb.from("seat_targets").select("user_id, daily_calls, daily_conversations")
+        .eq("tenant_id", tenantId).in("user_id", userIds),
+    ]);
+    if (missingTable(att.error) || missingTable(tgt.error)) return { ready: false, by: new Map<string, any>() };
+
+    for (const uid of userIds) {
+      const shifts = (att.data || []).filter((r: any) => r.user_id === uid);
+      const open   = shifts.find((r: any) => isOpen(r, now));
+      const firstIn = shifts.map((r: any) => Math.max(Date.parse(r.check_in_at), startMs)).sort((a, b) => a - b)[0];
+      const calls  = (logs.data || []).filter((r: any) => r.agent_user_id === uid);
+      const t: any = (tgt.data || []).find((r: any) => r.user_id === uid) || {};
+      empty.by.set(uid, {
+        checked_in:           !!open,
+        since:                open?.check_in_at || null,
+        first_in:             firstIn ? new Date(firstIn).toISOString() : null,
+        worked_seconds:       Math.round(workedMs(shifts, startMs, now + 1, now) / 1000),
+        // Today's time EXCLUDING the running shift, so the Desk can show a
+        // live total (this + time since check-in) without a reload.
+        earlier_seconds:      Math.round(workedMs(shifts.filter((r: any) => r !== open), startMs, now + 1, now) / 1000),
+        calls:                calls.length,
+        conversations:        calls.filter((r: any) => (Number(r.duration_seconds) || 0) >= CONVERSATION_SECS).length,
+        target_calls:         Number(t.daily_calls) || 0,
+        target_conversations: Number(t.daily_conversations) || 0,
+      });
+    }
+    return empty;
+  }
 
   // GET /api/desk — who answers, who rings, what the seat did lately.
   app.get("/api/desk", verifyJWT, async (req: any, res) => {
@@ -90,7 +137,19 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     const leadByPhone = new Map((phoneLeads || []).map((l: any) => [l.phone, l]));
     const seatByUser = new Map(seats.map(s => [s.user_id, s]));
 
+    // Your day, and for the owner everyone's. Only the owner sees the team:
+    // a telecaller is judged on their own numbers, not shown a leaderboard.
+    const owner = isOwner(me);
+    const day = await today(tenantId, owner ? seats.map(s => s.user_id) : [req.user.id]);
+
     res.json({
+      attendance_ready: day.ready,
+      conversation_secs: CONVERSATION_SECS,
+      you_today: day.by.get(req.user.id) || null,
+      team_today: owner && day.ready ? seats.map(s => ({
+        member_id: s.id, user_id: s.user_id, name: s.display_name || s.email, is_you: s.is_you,
+        ...(day.by.get(s.user_id) || {}),
+      })) : null,
       did:           did?.number || null,
       routing_mode:  did?.routing_mode || "ai",
       seats,
@@ -193,5 +252,95 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     if (error) return res.status(500).json({ error: error.message });
     if (!data?.length) return res.status(404).json({ error: "No such team member on this account" });
     res.json({ ok: true, ...patch });
+  });
+
+  // ── Shifts ─────────────────────────────────────────────────────────
+  // POST /api/desk/check-in — start your shift. Idempotent: pressing it
+  // twice, or from two tabs, returns the shift already running (the
+  // database allows one open shift per person, migration 061).
+  app.post("/api/desk/check-in", verifyJWT, apiLimiter, async (req: any, res) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+    const me = await membership(req.user.id, tenantId);
+    if (!me) return res.status(403).json({ error: "No seat" });
+
+    await closeStale(sb, tenantId, req.user.id);
+    const openNow = async () => sb.from("seat_attendance").select("id, check_in_at")
+      .eq("tenant_id", tenantId).eq("user_id", req.user.id).is("check_out_at", null).maybeSingle();
+
+    const existing = await openNow();
+    if (missingTable(existing.error)) {
+      return res.status(503).json({ error: "Attendance isn't set up yet. Apply database migration 061 first." });
+    }
+    if (existing.data) return res.json({ ok: true, already: true, since: existing.data.check_in_at });
+
+    const { data, error } = await sb.from("seat_attendance")
+      .insert({ tenant_id: tenantId, user_id: req.user.id }).select("check_in_at").single();
+    if (error) {
+      // 23505: another tab checked in between our read and this insert.
+      if (error.code === "23505") {
+        const again = await openNow();
+        return res.json({ ok: true, already: true, since: again.data?.check_in_at || null });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+    await audit("desk.check_in", { tenantId, actorId: req.user.id, req, metadata: {} });
+    res.json({ ok: true, since: data.check_in_at });
+  });
+
+  // POST /api/desk/check-out — end your shift.
+  app.post("/api/desk/check-out", verifyJWT, apiLimiter, async (req: any, res) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+
+    await closeStale(sb, tenantId, req.user.id);
+    const { data: open, error } = await sb.from("seat_attendance").select("id, check_in_at")
+      .eq("tenant_id", tenantId).eq("user_id", req.user.id).is("check_out_at", null).maybeSingle();
+    if (missingTable(error)) return res.status(503).json({ error: "Attendance isn't set up yet." });
+    if (error) return res.status(500).json({ error: error.message });
+    if (!open) return res.status(409).json({ error: "You're not checked in." });
+
+    const out = new Date().toISOString();
+    const { data: closed, error: upErr } = await sb.from("seat_attendance")
+      .update({ check_out_at: out }).eq("id", open.id).is("check_out_at", null).select("id");
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    if (!closed?.length) return res.status(409).json({ error: "That shift was already closed." });
+
+    const seconds = Math.round((Date.parse(out) - Date.parse(open.check_in_at)) / 1000);
+    await audit("desk.check_out", { tenantId, actorId: req.user.id, req, metadata: { seconds } });
+    res.json({ ok: true, shift_seconds: seconds });
+  });
+
+  // POST /api/desk/targets { member_id, daily_calls, daily_conversations }
+  // Owner only. 0 clears a target.
+  app.post("/api/desk/targets", verifyJWT, apiLimiter, async (req: any, res) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+    const me = await membership(req.user.id, tenantId);
+    if (!isOwner(me)) return res.status(403).json({ error: "Only the owner can set targets." });
+
+    const n = (v: any) => {
+      const x = Math.floor(Number(v));
+      return Number.isFinite(x) && x >= 0 && x <= 1000 ? x : null;
+    };
+    const calls = n(req.body?.daily_calls), convs = n(req.body?.daily_conversations);
+    if (calls === null || convs === null) {
+      return res.status(400).json({ error: "Targets must be whole numbers from 0 to 1000." });
+    }
+    const { data: member } = await sb.from("tenant_users").select("user_id")
+      .eq("id", String(req.body?.member_id || "")).eq("tenant_id", tenantId).maybeSingle();
+    if (!member) return res.status(404).json({ error: "No such team member on this account" });
+
+    const { error } = await sb.from("seat_targets").upsert({
+      tenant_id: tenantId, user_id: member.user_id,
+      daily_calls: calls, daily_conversations: convs,
+      updated_by: req.user.id, updated_at: new Date().toISOString(),
+    }, { onConflict: "tenant_id,user_id" });
+    if (missingTable(error)) return res.status(503).json({ error: "Targets aren't set up yet. Apply database migration 061 first." });
+    if (error) return res.status(500).json({ error: error.message });
+
+    await audit("desk.targets_set", { tenantId, actorId: req.user.id, req,
+      metadata: { user_id: member.user_id, daily_calls: calls, daily_conversations: convs } });
+    res.json({ ok: true, daily_calls: calls, daily_conversations: convs });
   });
 }
