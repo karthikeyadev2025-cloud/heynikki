@@ -1,0 +1,25 @@
+# Build context for voice-pipeline/Dockerfile, which infra/docker-compose.yml
+# builds with context ../voice-pipeline. The Dockerfile ends in `COPY . .`, so
+# anything not listed here goes into the image.
+#
+# These rules used to live in the root .dockerignore, which only applied to
+# the root-level Railway Dockerfile. Railway is gone, and compose never built
+# from the root, so the pipeline image was carrying all of this.
+
+# Env files: compose injects infra/.env at runtime. Nothing here reads a
+# local one, and a copy baked into a layer is readable by `docker history`.
+.env
+.env.*
+
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Large assets never loaded at runtime, only produced by scripts/.
+# voice_samples (12M) is pick_voice.py output; landing_demo (1.2M) is served
+# by the website, not the pipeline. cached_pcm and the TRAI disclosure wavs
+# ARE needed and stay in.
+assets/voice_samples
+assets/landing_demo
+
+*.md

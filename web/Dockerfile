@@ -2,14 +2,11 @@
 # Hey Nikki WEB — marketing site + tenant dashboard, one Next app.
 # Built for Coolify on the VPS, to replace the Vercel deployment.
 #
-# WHY THIS IS IN web/ AND NOT AT THE REPO ROOT
-# The other two images (./Dockerfile, ./Dockerfile.api) sit at the root
-# because Railway builds from the repo root by default, and their headers say
-# so. This one cannot follow that pattern: the root .dockerignore excludes
-# `web` and `super-admin` outright — deliberately, to keep the voice-pipeline
-# context from carrying the whole monorepo — so a root-level Dockerfile here
-# would build with its own source missing. Coolify sets a Base Directory per
-# app, so the reason those two live at the root does not apply.
+# WHY THIS IS IN web/
+# Every image builds from its own directory: api-server/, voice-pipeline/,
+# web/ and super-admin/ each carry a Dockerfile and a .dockerignore. (Railway
+# once forced two root-level Dockerfiles; they were removed with Railway.)
+# Coolify sets a Base Directory per app.
 #
 #   Coolify:  Base Directory = web     Dockerfile Location = ./Dockerfile
 #

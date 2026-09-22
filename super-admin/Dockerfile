@@ -2,12 +2,9 @@
 # Hey Nikki SUPER-ADMIN — the platform operator's panel.
 # Built for Coolify on the VPS, to replace the Vercel deployment.
 #
-# WHY THIS IS IN super-admin/ AND NOT AT THE REPO ROOT
-# Same reason as web/Dockerfile: the root .dockerignore excludes
-# `super-admin` outright, to keep the voice-pipeline build context small, so a
-# root-level Dockerfile here would build without its own source. Coolify sets
-# a Base Directory per app, so the Railway constraint that put ./Dockerfile
-# and ./Dockerfile.api at the root does not apply.
+# WHY THIS IS IN super-admin/
+# Same as web/Dockerfile: every image builds from its own directory, with
+# its own .dockerignore. Coolify sets a Base Directory per app.
 #
 #   Coolify:  Base Directory = super-admin   Dockerfile Location = ./Dockerfile
 #

@@ -1,9 +1,8 @@
 # Build context for web/Dockerfile.
 #
-# The repo-root .dockerignore does NOT apply here — Docker reads the
-# .dockerignore at the root of the build CONTEXT, and Coolify builds this app
-# with `web` as its base directory. (The root one excludes `web` outright, to
-# keep the voice-pipeline context small; see the note in web/Dockerfile.)
+# Docker reads the .dockerignore at the root of the build CONTEXT, and
+# Coolify builds this app with `web` as its base directory, so this is the
+# file that applies.
 #
 # Effect: 838MB context down to ~2.7MB, so the daemon is not handed 835MB of
 # node_modules it is about to discard and reinstall from the lockfile anyway.

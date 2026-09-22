@@ -32,7 +32,7 @@ apt-get install -y \
 #
 # python3.11 and Node.js are also intentionally NOT installed on the host —
 # api-server and voice-pipeline both build as Docker images (see
-# Dockerfile.api and voice-pipeline/Dockerfile), not run directly on the
+# api-server/Dockerfile and voice-pipeline/Dockerfile), not run directly on the
 # host. If you're seeing this and thinking something needs them, check
 # docker-compose.yml first — it's almost certainly already handled there.
 
