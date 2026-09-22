@@ -255,13 +255,77 @@ export const CTC_LEGS = 2;
  * act on, instead of by Jio's SBC as a NORMAL_TEMPORARY_FAILURE that looks
  * like a dead line.
  *
- * Two seats pressing Call in the same instant can both read the same count
- * and both proceed. That overshoots by at most one call, into the two
- * inbound channels, which is the same exposure there was before this check
- * existed. A lock would cost a round trip on every call to close it.
+ * `inUse` must already include legs promised to other click-to-calls that
+ * FreeSWITCH cannot see yet; admitClickToCall adds them.
  */
 export function clickToCallFits(inUse: number, ceiling = TRUNK_OUTBOUND_CEILING): boolean {
   return inUse + CTC_LEGS <= ceiling;
+}
+
+/* ── Closing the race between two seats ─────────────────────── */
+
+/**
+ * Legs admitted click-to-calls hold that `show channels` does not show yet.
+ *
+ * Counting channels and then dialling leaves a gap: two seats pressing Call
+ * together both read "6 in use", both fit, and the trunk goes to 10, into
+ * the inbound pair. So each admitted call reserves its two legs here, in
+ * the same synchronous step as the check, and every later check counts
+ * them. Click-to-call only ever runs in the api-server process, so a
+ * module counter is the whole lock: no round trip, nothing to clean up if
+ * the process restarts (the reservations die with the requests that held
+ * them).
+ *
+ * A reservation is released as its leg becomes visible to FreeSWITCH, not
+ * when the call ends, or the call would be counted twice:
+ *  - the seat's leg exists within milliseconds of the originate being sent;
+ *    released after AGENT_LEG_SEEN_MS.
+ *  - the customer's leg only exists once the seat ANSWERS, up to ~30 s
+ *    later, when the dialplan bridges it; released BRIDGE_SEEN_MS after
+ *    the originate returns.
+ *  - a call that fails (seat did not answer, originate error) releases
+ *    whatever it still holds at once.
+ * Inside those few seconds a leg can be counted twice, so a seat pressing
+ * Call right behind another may briefly hear "lines busy". That is the
+ * direction to be wrong in: a retry, never a call the trunk refuses.
+ *
+ * Campaign legs come from the outbound-dispatcher process and are not in
+ * this counter; they are visible to it once dialled, like any channel.
+ */
+const AGENT_LEG_SEEN_MS  = 1_500;
+const BRIDGE_SEEN_MS     = 3_000;
+let pendingLegs = 0;
+
+export type LegHold = { release: (n?: number) => void };
+
+/** Legs currently reserved and not yet visible. Exported for tests. */
+export function pendingClickToCallLegs(): number { return pendingLegs; }
+
+/**
+ * Count, check and reserve. The await is the ONLY suspension point: from
+ * the moment the count arrives, the check and the reservation run without
+ * yielding, so no other request can slip between them.
+ */
+export async function admitClickToCall(
+  countInUse: () => Promise<number>,
+  ceiling = TRUNK_OUTBOUND_CEILING,
+): Promise<{ counted: number; hold: LegHold | null }> {
+  const inUse   = await countInUse();
+  const counted = inUse + pendingLegs;
+  if (!clickToCallFits(counted, ceiling)) return { counted, hold: null };
+  pendingLegs += CTC_LEGS;
+  let held = CTC_LEGS;
+  return {
+    counted,
+    hold: {
+      // Clamped, so a timer firing after an early full release is harmless.
+      release(n = held) {
+        const k = Math.max(0, Math.min(n, held));
+        held -= k;
+        pendingLegs -= k;
+      },
+    },
+  };
 }
 
 export class FreeSwitchESL {
@@ -299,10 +363,12 @@ export class FreeSwitchESL {
 
     // Checked before anything rings: refusing after the seat's phone has
     // been dialled would ring them for a call that can never connect.
-    const inUse = await this.channelsInUse();
-    if (!clickToCallFits(inUse)) {
+    // admitClickToCall also reserves this call's two legs, so a seat
+    // pressing Call in the same instant counts them (see pendingLegs).
+    const { counted, hold } = await admitClickToCall(() => this.channelsInUse());
+    if (!hold) {
       throw new Error(
-        `SWITCH_CONGESTION: trunk busy, ${inUse}/${TRUNK_CHANNELS} channels in use ` +
+        `SWITCH_CONGESTION: trunk busy, ${counted}/${TRUNK_CHANNELS} channels in use or reserved ` +
         `(a click-to-call needs ${CTC_LEGS}; outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
     }
 
@@ -342,14 +408,26 @@ export class FreeSwitchESL {
       `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(agent)} ` +
       `ctc_agent_${customer10} XML heynikki`;
 
-    const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
+    // The seat's leg is visible to `show channels` almost as soon as the
+    // originate is sent; stop reserving it then.
+    const agentSeen = setTimeout(() => hold.release(1), AGENT_LEG_SEEN_MS);
+    let connected = false;
+    try {
+      const response = await eslCommand(cmd, 40000);   // ringing can take ~30s
 
-    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
-    if (match) return match[1];
+      const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
+      if (match) { connected = true; return match[1]; }
 
-    const parsed  = parseESLResponse(response);
-    const errLine = Object.entries(parsed).find(([k]) => k.toLowerCase().includes("reply"));
-    throw new Error(`Click-to-Call failed: ${errLine?.[1] || response.slice(0, 160)}`);
+      const parsed  = parseESLResponse(response);
+      const errLine = Object.entries(parsed).find(([k]) => k.toLowerCase().includes("reply"));
+      throw new Error(`Click-to-Call failed: ${errLine?.[1] || response.slice(0, 160)}`);
+    } finally {
+      clearTimeout(agentSeen);
+      // Answered: the dialplan is bridging the customer now, and that leg
+      // shows up within a moment. Failed: nothing more will appear.
+      if (connected) setTimeout(() => hold.release(), BRIDGE_SEEN_MS).unref();
+      else hold.release();
+    }
   }
 
   /**
