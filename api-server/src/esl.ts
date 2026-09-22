@@ -240,6 +240,30 @@ export function wireCallee(n: string): string {
   return wireCli(n);
 }
 
+/** Trunk channels one click-to-call takes: the seat's mobile, then the
+ *  customer. Both legs ride the Jio trunk. */
+export const CTC_LEGS = 2;
+
+/**
+ * Whether a click-to-call fits on the trunk right now.
+ *
+ * It needs BOTH its legs under the same outbound ceiling campaigns stop at,
+ * so two channels always stay free for people ringing in. With four
+ * telecallers on a 10-channel trunk that is exactly the limit: 0, 2, 4, 6
+ * all fit, the fourth call reaches 8, and a fifth call (or a campaign leg
+ * on top of four seats) is refused here with a message a telecaller can
+ * act on, instead of by Jio's SBC as a NORMAL_TEMPORARY_FAILURE that looks
+ * like a dead line.
+ *
+ * Two seats pressing Call in the same instant can both read the same count
+ * and both proceed. That overshoots by at most one call, into the two
+ * inbound channels, which is the same exposure there was before this check
+ * existed. A lock would cost a round trip on every call to close it.
+ */
+export function clickToCallFits(inUse: number, ceiling = TRUNK_OUTBOUND_CEILING): boolean {
+  return inUse + CTC_LEGS <= ceiling;
+}
+
 export class FreeSwitchESL {
 
   /**
@@ -271,6 +295,15 @@ export class FreeSwitchESL {
 
     if (!customer || !agent) {
       throw new Error("Click-to-Call needs both an agent number and a customer number");
+    }
+
+    // Checked before anything rings: refusing after the seat's phone has
+    // been dialled would ring them for a call that can never connect.
+    const inUse = await this.channelsInUse();
+    if (!clickToCallFits(inUse)) {
+      throw new Error(
+        `SWITCH_CONGESTION: trunk busy, ${inUse}/${TRUNK_CHANNELS} channels in use ` +
+        `(a click-to-call needs ${CTC_LEGS}; outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
     }
 
     // FreeSWITCH originate syntax is whitespace-sensitive:

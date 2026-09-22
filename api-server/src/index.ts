@@ -7122,6 +7122,14 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     res.json({ ok: true, ctc_log_id: ctcLog?.id, fs_uuid: fsUuid, status: "dialing" });
   } catch (err: any) {
     console.error("[Click-to-Call error]", err.message);
+    // Lines full is a normal busy-hour state, not a fault: say so in words a
+    // telecaller can act on, and 503 so it is not logged as a server error.
+    if (/^SWITCH_CONGESTION/.test(String(err.message))) {
+      return res.status(503).json({
+        error: "All phone lines are busy right now. Try again in a minute.",
+        detail: err.message,
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
