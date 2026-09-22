@@ -19,7 +19,6 @@ supabase
 *.patch
 *.md
 DEPLOY.sh
-test_keys.py
 
 # Large assets never loaded at runtime — only produced by scripts/.
 # voice_samples (12M) is pick_voice.py output; landing_demo (1.2M) is served

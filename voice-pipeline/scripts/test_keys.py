@@ -1,6 +1,6 @@
 """
 Nikki — API Key Tester
-Run: python voice-pipeline/scripts/test_keys.py
+Run: set -a; . infra/.env; set +a; python voice-pipeline/scripts/test_keys.py
 Tests all your API keys and tells you exactly what works
 """
 import asyncio
@@ -9,12 +9,13 @@ import json
 import base64
 import os
 
-SARVAM_KEY = "sk_xrjuvesm_PzpTtnRStrGBdnP7aoIWbRQI"
+# Keys come from the environment, same names as infra/.env. They used to be
+# literals here, and this repo is public: a Sarvam key sat in git from June.
+SARVAM_KEY = os.environ.get("SARVAM_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "REPLACE_ME")  # Set this after getting from AI Studio
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.5-flash-lite"  # same default as the services
-LIVEKIT_KEY = "APIKXJGadU3uAqS"
-SUPABASE_URL = "https://wnawozdmmxuziucavngw.supabase.co"
-SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduYXdvemRtbXh1eml1Y2F2bmd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0OTQ2MzEsImV4cCI6MjA5ODA3MDYzMX0.x9MqSJzRRkZqM1KadQg1m3C64xyRcUu_bkc5uXEZfns"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_ANON = os.environ.get("SUPABASE_ANON_KEY", "")
 
 def ok(msg): print(f"  ✅ {msg}")
 def fail(msg): print(f"  ❌ {msg}")
