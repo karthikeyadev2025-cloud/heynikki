@@ -58,6 +58,7 @@ import os from "os";
 import { createClient } from "@supabase/supabase-js";
 import { sendOwnerEmail } from "./owner-alerts";
 import { minutesGate } from "./usage";
+import { fsl } from "./esl";
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY!;
@@ -293,6 +294,41 @@ function checkTrunk(): Check {
       // for a trunk that has been fine all day.
       if (!Number.isFinite(at) || Date.now() - at > TRUNK_FAULT_FRESH_MS) return { state: "clear" };
       return { state: "open", detail: `cause ${st.cause || "unknown"}, since ${istStamp(st.at)} (${ago(st.at)} ago)` };
+    },
+  };
+}
+
+/**
+ * The Jio trunk itself is down, whether or not anyone has dialled.
+ *
+ * checkTrunk above only knows what the dispatcher learned from a REJECTED
+ * INVITE. A gateway that is down never sends one: FreeSWITCH refuses the
+ * call locally as GATEWAY_DOWN, so trunk_outbound_state kept saying ok:true
+ * from 21 Sep 14:52 IST, when Jio's router stopped answering, until the
+ * indirect dead_line check noticed the silence 23 hours later.
+ *
+ * This asks FreeSWITCH directly. Its Status comes from its own OPTIONS pings
+ * to the carrier, and the Jio circuit never registers, so Status is the
+ * only line that describes it (see GatewayHealth in esl.ts).
+ *
+ * confirmRuns 2: the gateway flapped DOWN for one minute on 18 Sep and
+ * recovered by itself. Fifteen minutes of persistence keeps that out of the
+ * mailbox and still pages a real outage within half an hour.
+ */
+function checkGateway(): Check {
+  return {
+    id: "trunk_gateway_down",
+    title: "Jio trunk is down: calls cannot connect",
+    firstCheck: "On the host: `ping 100.65.188.1` and `ip neigh show 100.65.188.1`. FAILED means Jio's router is not answering at all: check its power and the cable into enp2s0, then Jio Enterprise support. If it answers, run infra/verify-trunk.sh.",
+    confirmRuns: 2,
+    run: async () => {
+      const g = await fsl.gatewayHealth("jio_primary");
+      if (g.status === "up") return { state: "clear" };
+      if (g.status === "unknown") return { state: "unknown", why: `could not read jio_primary: ${g.detail}` };
+      const failed = g.failedCallsOut
+        ? `; ${g.failedCallsOut} outbound call${g.failedCallsOut === 1 ? "" : "s"} failed since FreeSWITCH started`
+        : "";
+      return { state: "open", detail: `jio_primary: ${g.detail}${failed}` };
     },
   };
 }
@@ -736,6 +772,7 @@ export async function runWatchdog(deps: WatchdogDeps = {}): Promise<WatchdogResu
 
   const checks: Check[] = [
     checkTrunk(),
+    checkGateway(),
     checkHealth("pipeline_health", "Voice pipeline", PIPELINE_URL,
       "`docker logs --tail 100 heynikki-pipeline`. FreeSWITCH bridges every call into this process — while it is down, calls connect and hear nothing."),
     checkHealth("api_health", "API server", API_URL,

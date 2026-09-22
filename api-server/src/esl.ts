@@ -25,8 +25,59 @@ export interface Channel {
 
 export interface SipTrunkStatus {
   name:    string;
-  status:  "registered" | "unregistered" | "error" | "unknown";
+  status:  GatewayHealth["status"];
   gateway: string;
+}
+
+/**
+ * Can a call get through this gateway right now, in FreeSWITCH's own words.
+ *
+ * `Status` (UP/DOWN) is the verdict of FreeSWITCH's OPTIONS pings to the
+ * carrier, and it is the one line that matters. `State` is SIP registration,
+ * and the Jio circuit is IP-authenticated: it never registers, so State is
+ * NOREG on a healthy trunk and on a dead one alike. Reading State is how the
+ * old check reported "unknown" forever, and how the trunk sat DOWN from
+ * 21 Sep 14:52 IST with nothing saying so for 23 hours.
+ */
+export interface GatewayHealth {
+  gateway:        string;
+  /** up / down: FreeSWITCH's ping verdict. not_configured: no such gateway
+   *  is loaded. unknown: we could not ask (ESL unreachable), which proves
+   *  nothing about the carrier. */
+  status:         "up" | "down" | "not_configured" | "unknown";
+  /** Registration state. NOREG is normal for the Jio trunk. */
+  state:          string;
+  /** successes/failures/threshold of recent pings, e.g. "1/0/3". */
+  pingState:      string;
+  /** Outbound calls that failed through this gateway since FreeSWITCH started. */
+  failedCallsOut: number;
+  detail:         string;
+}
+
+/**
+ * `sofia status gateway <name>` prints one "Key<padding>\tValue" per line.
+ * Not "Key: Value" — which is why parseESLResponse, built for ESL headers,
+ * saw none of it. Exported for tests.
+ */
+export function parseGatewayStatus(gateway: string, raw: string): GatewayHealth {
+  const f: Record<string, string> = {};
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^([A-Za-z-]+)\s*\t\s*(.*?)\s*$/);
+    if (m) f[m[1]] = m[2];
+  }
+  const base = {
+    gateway,
+    state:          f["State"] || "",
+    pingState:      f["PingState"] || "",
+    failedCallsOut: parseInt(f["FailedCallsOUT"] || "0", 10) || 0,
+  };
+  if (/Invalid Gateway/i.test(raw)) {
+    return { ...base, status: "not_configured", detail: `no gateway named ${gateway} is loaded` };
+  }
+  const s = (f["Status"] || "").toUpperCase();
+  if (s === "UP")   return { ...base, status: "up",   detail: "" };
+  if (s === "DOWN") return { ...base, status: "down", detail: `Status DOWN, ping ${base.pingState || "?"}` };
+  return { ...base, status: "unknown", detail: "no Status line in the gateway report" };
 }
 
 // ── ESL Response Parser ───────────────────────────────────────
@@ -528,35 +579,27 @@ export class FreeSwitchESL {
     }
   }
 
-  /**
-   * Get SIP gateway registration status for Jio and Vi trunks.
-   */
-  async getSipTrunkStatus(): Promise<SipTrunkStatus[]> {
+  /** Whether calls can get through a gateway. See GatewayHealth. */
+  async gatewayHealth(gateway: string): Promise<GatewayHealth> {
+    const name = gateway.replace(/[^A-Za-z0-9_-]/g, "");
     try {
-      const response = await eslCommand("api sofia status gateway jio_primary");
-      const jioParsed = parseESLResponse(response);
-
-      const response2 = await eslCommand("api sofia status gateway vi_failover");
-      const viParsed  = parseESLResponse(response2);
-
-      const parseStatus = (parsed: Record<string, string>): SipTrunkStatus["status"] => {
-        const state = (parsed["State"] || parsed["state"] || "").toLowerCase();
-        if (state.includes("reged") || state.includes("registered")) return "registered";
-        if (state.includes("unreg") || state.includes("unregistered")) return "unregistered";
-        if (state.includes("failed") || state.includes("error")) return "error";
-        return "unknown";
-      };
-
-      return [
-        { name: "Jio Enterprise",    status: parseStatus(jioParsed), gateway: "jio_primary"  },
-        { name: "Vi Business",       status: parseStatus(viParsed),  gateway: "vi_failover"  },
-      ];
-    } catch {
-      return [
-        { name: "Jio Enterprise", status: "error", gateway: "jio_primary" },
-        { name: "Vi Business",    status: "error", gateway: "vi_failover" },
-      ];
+      return parseGatewayStatus(name, await eslCommand(`api sofia status gateway ${name}`, 4000));
+    } catch (e: any) {
+      return { gateway: name, status: "unknown", state: "", pingState: "", failedCallsOut: 0,
+               detail: e?.message || String(e) };
     }
+  }
+
+  /** Jio and Vi, for the Super Admin FreeSWITCH panel. */
+  async getSipTrunkStatus(): Promise<SipTrunkStatus[]> {
+    const [jio, vi] = await Promise.all([
+      this.gatewayHealth("jio_primary"),
+      this.gatewayHealth("vi_failover"),
+    ]);
+    return [
+      { name: "Jio Enterprise", status: jio.status, gateway: "jio_primary" },
+      { name: "Vi Business",    status: vi.status,  gateway: "vi_failover" },
+    ];
   }
 
   /**

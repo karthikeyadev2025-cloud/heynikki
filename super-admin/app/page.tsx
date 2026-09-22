@@ -3565,7 +3565,11 @@ function FreeSwitchPanel({ token }: { token: string }) {
     await loadFS();
   };
 
-  const statusColor = (s: string) => s === "registered" ? C.grn : s === "unregistered" ? C.gold : C.red;
+  // up/down is FreeSWITCH's ping verdict. The Jio trunk is IP-authenticated
+  // and never registers, so registration state said nothing about it.
+  // not_configured is a gateway that was never set up (Vi today): amber, not
+  // red, so a real outage still stands out.
+  const statusColor = (s: string) => s === "up" ? C.grn : s === "not_configured" ? C.gold : C.red;
 
   return (
     <div>

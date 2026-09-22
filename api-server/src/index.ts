@@ -5781,10 +5781,25 @@ app.post("/api/keys/:id/revoke", verifyInternal, async (req, res) => {
 // Consolidated into one.
 const STARTED_AT = Date.now();
 
+// The Jio trunk, as last read in the background. /health reports it but
+// never asks FreeSWITCH itself, so it stays dumb and fast, and `status`
+// stays "ok" when Jio is down: the process is fine, and a non-ok here would
+// have Docker mark the API unhealthy and uptime.yml report the whole site
+// down for a carrier fault. The watchdog is what emails about the trunk.
+let trunkHealth: { status: string; checked_at: string | null } = { status: "unknown", checked_at: null };
+async function refreshTrunkHealth() {
+  const g = await fsl.gatewayHealth("jio_primary");
+  trunkHealth = { status: g.status, checked_at: new Date().toISOString() };
+}
+refreshTrunkHealth();
+setInterval(refreshTrunkHealth, 60_000).unref();
+
 app.get("/health", (_req, res) => {
   res.json({
     status:     "ok",
     service:    "nikki-api-server",
+    // up / down / not_configured / unknown, refreshed every minute.
+    trunk:      trunkHealth,
     // Push is inert until the Firebase service account is set, and an
     // operator should be able to see that rather than wonder why the app
     // is quiet.
