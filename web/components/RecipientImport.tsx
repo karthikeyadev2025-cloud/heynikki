@@ -110,7 +110,14 @@ export default function RecipientImport({
         const ws   = wb.Sheets[wb.SheetNames[0]];
         // header:1 gives an array-of-arrays, so a sheet with duplicate or
         // missing header names still parses positionally.
-        ingest(XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false }) as any[][]);
+        //
+        // raw:true, not false: raw:false returns each cell's DISPLAYED text,
+        // and Excel's General format displays a 12-digit number as
+        // "9.19812E+11". So 919812345678 typed as a number reached
+        // normalizePhone as 8 digits and a valid recipient was rejected.
+        // The raw value is the number itself, and String() of any integer
+        // this size prints every digit. Text cells are strings either way.
+        ingest(XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: true }) as any[][]);
       } else {
         // CSV: hand to the server's parser by keeping the text intact. Parsed
         // here too, only to show the preview.
