@@ -15,9 +15,6 @@ const nextConfig = {
     // this false so the next real type error actually fails the build.
     ignoreBuildErrors: false,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   images: {
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
