@@ -11,6 +11,40 @@ of that, so read the port map before changing anything.
 
 ---
 
+## Status: parked, 22 Sep 2026
+
+**Coolify is stopped. `web` and `super-admin` stay on Vercel.** Nothing
+public was ever served from here: DNS never moved off Vercel.
+
+What was done, so it can be undone:
+
+- All six containers stopped: `coolify`, `coolify-db`, `coolify-redis`,
+  `coolify-realtime`, `coolify-sentinel`, and the one test deploy of
+  `heynikki-main` (`anqqxprm6n9fyeevwblkpksi-*`, no published port).
+- Restart policy set to `no` on all of them first. Four were `always`, which
+  brings a stopped container back on the next daemon or box restart.
+- Nothing deleted: containers, the `coolify-db`/`coolify-redis` volumes and
+  `/data/coolify` are all intact. The Known exposure below is closed while
+  parked, since `coolify-realtime` is not running.
+- `coolify.heynikki.in` is removed from the tunnel by
+  `infra/cloudflare-coolify-remove.sh` (route, DNS record, then Access app).
+- The Dockerfiles in `web/` and `super-admin/` are kept on purpose. They
+  are the exit if the Vercel bill forces the move again.
+
+To bring it back:
+
+```bash
+docker update --restart=always coolify coolify-db coolify-redis coolify-realtime
+docker start coolify-db coolify-redis coolify-realtime coolify
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/api/health   # 200
+```
+
+Then run `infra/cloudflare-coolify-access.sh` if you want the dashboard on
+`coolify.heynikki.in` again. The rest of this document still applies as
+written once it is running.
+
+---
+
 ## Port map — 8000 is not available
 
 | Port | Owner | |
