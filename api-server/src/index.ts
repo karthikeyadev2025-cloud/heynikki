@@ -4910,6 +4910,7 @@ import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
 import { mountOwnerAlerts } from "./owner-alerts";
 import { mountAdminExtras } from "./admin-extras";
+import { mountAdminOps } from "./admin-ops";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 import { notifyApiCallback, publicOutboundCall, API_CALL_SOURCE } from "./api-callbacks";
 import { makeOwnerAssistant } from "./owner-tools";
@@ -4931,6 +4932,8 @@ mountSearchExport(app, { sb, verifyJWT, apiLimiter, getTenantId, audit });
 mountOwnerAlerts(app, { sb, verifyJWT, getTenantId });
 // Broadcast that actually delivers, demo tenants, platform health.
 mountAdminExtras(app, { sb, verifySuperAdmin });
+// Command center, telecaller performance, usage vs plan limits (admin-ops.ts).
+mountAdminOps(app, { sb, verifySuperAdmin });
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.

@@ -308,8 +308,14 @@ let pendingLegs = 0;
 export type LegHold = { release: (n?: number) => void };
 export type Admission = { counted: number; hold: LegHold | null };
 
-/** Legs currently reserved and not yet visible. Exported for tests. */
+/** Legs currently reserved and not yet visible. Exported for tests and for
+ *  the Super Admin capacity view. */
 export function pendingClickToCallLegs(): number { return pendingLegs; }
+
+/** The contract and the outbound ceiling, as admission uses them. */
+export function trunkLimits(): { channels: number; ceiling: number } {
+  return { channels: TRUNK_CHANNELS, ceiling: TRUNK_OUTBOUND_CEILING };
+}
 
 /**
  * Count, check and reserve `legs`. The await is the ONLY suspension point:

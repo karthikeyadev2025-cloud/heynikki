@@ -13,7 +13,8 @@ import {
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
   X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic,
-  HeartPulse, Beaker, Mail, Send, Eye, Ban, Timer } from "lucide-react";
+  HeartPulse, Beaker, Mail, Send, Eye, Ban, Timer,
+  Headphones, Siren, CircleCheck, Radio, Hourglass } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -94,8 +95,8 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
 // Order within each group runs in the order the work actually happens.
 const NAV_GROUPS: { title: string; labels: string[] }[] = [
   { title: "Overview",  labels: ["Dashboard"] },
-  { title: "Customers", labels: ["Tenants", "Demo Tenants", "KYC Review", "Billing", "CRM", "Revenue"] },
-  { title: "Telephony", labels: ["Live Calls", "Numbers", "WhatsApp", "FreeSWITCH"] },
+  { title: "Customers", labels: ["Tenants", "Demo Tenants", "KYC Review", "Billing", "Usage & Limits", "CRM", "Revenue"] },
+  { title: "Telephony", labels: ["Live Calls", "Telecallers", "Numbers", "WhatsApp", "FreeSWITCH"] },
   { title: "Quality",   labels: ["Call Quality", "Agent Versions", "Voice Lab"] },
   { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
   // Platform Health leads the group because it is the screen an operator
@@ -131,6 +132,8 @@ const TABS = [
   // screen for every tab after it. NAV_GROUPS decides the visible order.
   { label: "Demo Tenants",    icon: Beaker },
   { label: "Platform Health", icon: HeartPulse },
+  { label: "Telecallers",     icon: Headphones },
+  { label: "Usage & Limits",  icon: Hourglass },
 ];
 
 
@@ -180,6 +183,8 @@ export default function SuperAdminPage() {
     <PricingEnginePanel  key="price" token={token} />,
     <DemoTenantsPanel    key="demo"  token={token} />,
     <PlatformHealthPanel key="hlth"  token={token} />,
+    <TelecallersPanel    key="tele"  token={token} />,
+    <UsagePanel          key="use"   token={token} />,
   ];
 
 
@@ -208,6 +213,21 @@ export default function SuperAdminPage() {
                     background:rgba(15,23,42,.38)}
         }
         @media (max-width: 560px){ .nk-hide-sm{display:none} }
+        .nk-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+        .nk-2col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+        .nk-cc{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+        @media (max-width: 1100px){ .nk-kpis{grid-template-columns:repeat(2,minmax(0,1fr))} }
+        @media (max-width: 900px){ .nk-2col,.nk-cc{grid-template-columns:minmax(0,1fr)} }
+        .nk-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+        .nk-table{width:100%;border-collapse:collapse;font-size:${TYPE.sm}px}
+        .nk-table th{color:${C.dim};font-size:${TYPE.xs}px;font-weight:800;text-transform:uppercase;
+                     letter-spacing:.08em;text-align:left;padding:8px 10px;border-bottom:1px solid ${C.bord};
+                     white-space:nowrap}
+        .nk-table td{padding:10px;border-bottom:1px solid ${C.bord}66;vertical-align:middle;white-space:nowrap}
+        .nk-table tr:hover td{background:${C.hi}}
+        .nk-num{text-align:right;font-variant-numeric:tabular-nums}
+        @keyframes nk-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+        @media (prefers-reduced-motion: reduce){ .nk-pulse{animation:none!important} }
         @media (prefers-reduced-motion: reduce){ .nk-side{transition:none} }
       `}</style>
 
@@ -405,6 +425,8 @@ function PlatformDashboard({ token }: { token: string }) {
 
   return (
     <div>
+      <CommandCenter token={token} />
+
       {attention.length > 0 && (
         <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -427,14 +449,14 @@ function PlatformDashboard({ token }: { token: string }) {
         </Card>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 20 }}>
+      <div className="nk-kpis" style={{ marginBottom: 20 }}>
         <KPI value={stats?.tenants || 0}       label="Total Tenants"   color={C.gbr}  icon={Building2} />
         <KPI value={stats?.paid || 0}           label="Paid Customers"  color={C.grn}  icon={IndianRupee} />
         <KPI value={stats?.active_calls || 0}   label="Live Calls Now"  color={C.red}  icon={Phone} />
         <KPI value={stats?.calls_today || 0}    label="Calls Today"     color={C.gold} icon={BarChart3} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div className="nk-2col" style={{ marginBottom: 16 }}>
         <Card>
           <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 14 }}>
             7-Day Call Volume
@@ -3367,10 +3389,18 @@ function PlatformConfigPanel({ token }: { token: string }) {
         Toggle engines, configure URLs, and set global defaults — no redeployment needed.
       </div>
 
-      {cfg["telephony_engine"] === "exotel" && (
-        <div style={{ background: C.gold + "22", border: "1px solid " + C.gold + "44",
-          borderRadius: 8, padding: "10px 14px", fontSize: TYPE.sm, color: C.gold, marginBottom: 16 }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><AlertTriangle size={14} /> Exotel mode is active — inbound calls route through Exotel, not FreeSWITCH.</span>
+      {cfg["telephony_engine"] && cfg["telephony_engine"] !== "freeswitch" && (
+        <div style={{ background: C.red + "14", border: "1px solid " + C.red + "44",
+          borderRadius: 8, padding: "10px 14px", fontSize: TYPE.sm, color: C.red, marginBottom: 16,
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flex: 1, minWidth: 220 }}>
+            <AlertTriangle size={14} /> telephony_engine is "{cfg["telephony_engine"]}". Every click-to-call is refused until it is FreeSWITCH.
+          </span>
+          <button onClick={() => saveKey("telephony_engine", "freeswitch")}
+            style={{ background: C.red, color: "#fff", border: "none", borderRadius: 7,
+              padding: "6px 12px", fontSize: TYPE.sm, fontWeight: 700, cursor: "pointer" }}>
+            Reset to FreeSWITCH
+          </button>
         </div>
       )}
 
@@ -3427,12 +3457,12 @@ function PlatformConfigPanel({ token }: { token: string }) {
           />
         </Row>
 
-        <Row label="Telephony Engine" desc="FreeSWITCH = Jio/Vi SIP primary. Exotel = legacy fallback.">
-          <PillToggle
-            options={[{ label: "FreeSWITCH", value: "freeswitch" }, { label: "Exotel", value: "exotel" }]}
-            value={cfg["telephony_engine"] || "freeswitch"}
-            onChange={v => saveKey("telephony_engine", v)}
-          />
+        {/* Was a FreeSWITCH / Exotel toggle. The Exotel path was deleted from
+            the API, and the click-to-call route refuses every call when this
+            is anything but "freeswitch", so the toggle could only break
+            calling. It is a fact now, not a choice. */}
+        <Row label="Telephony Engine" desc="All calls run on FreeSWITCH over the Jio SIP trunk. Exotel was removed.">
+          <Pill label="FreeSWITCH" color={C.grn} />
         </Row>
 
         <Row label="Automation Engine" desc="Routes WhatsApp/automation webhooks to selected engine.">
@@ -3930,6 +3960,414 @@ function PricingEnginePanel({ token }: { token: string }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── OPS HELPERS ───────────────────────────────────────────
+// Durations and "how long ago", in the words an operator reads at a glance.
+function fmtSecs(total: number): string {
+  const s = Math.max(0, Math.round(total || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+function agoText(iso?: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const m = Math.round(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${m % 60}m ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+const pctText = (x: number) => `${Math.round((x || 0) * 100)}%`;
+
+/** A usage bar that turns amber at 80% and red at the limit. */
+function Meter({ used, limit, label }: { used: number; limit: number; label?: string }) {
+  const pct = limit > 0 ? used / limit : 0;
+  const color = pct >= 1 ? C.red : pct >= 0.8 ? C.gold : C.glow;
+  return (
+    <div style={{ minWidth: 140 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: TYPE.xs, marginBottom: 4 }}>
+        <span style={{ color: C.txt, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+          {used.toLocaleString("en-IN")} <span style={{ color: C.dim, fontWeight: 500 }}>/ {limit.toLocaleString("en-IN")}</span>
+        </span>
+        <span style={{ color, fontWeight: 800 }}>{label ?? pctText(pct)}</span>
+      </div>
+      <div role="meter" aria-valuenow={used} aria-valuemin={0} aria-valuemax={limit}
+        style={{ height: 6, background: C.hi, borderRadius: 3, overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(100, pct * 100)}%`, height: "100%", background: color,
+          borderRadius: 3, transition: "width .3s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+function useAdminJson<T = any>(token: string, path: string, refreshMs = 0) {
+  const [data, setData]   = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setData(j); setError(null);
+    } catch (e: any) {
+      setError(e?.message || "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, path]);
+  useEffect(() => {
+    setLoading(true);
+    load();
+    if (!refreshMs) return;
+    const t = setInterval(load, refreshMs);
+    return () => clearInterval(t);
+  }, [load, refreshMs]);
+  return { data, error, loading, reload: load };
+}
+
+// ── COMMAND CENTER ────────────────────────────────────────
+// The top of the dashboard answers two questions before anything else:
+// is something broken right now, and is there room on the phone line.
+// Alerts are the watchdog's own open episodes, so this says exactly what
+// the email said; capacity is the ledger every outbound call is admitted
+// through, so "room for 2" is what the next click will actually be told.
+function CommandCenter({ token }: { token: string }) {
+  const { data, error } = useAdminJson<any>(token, "/api/admin/ops/command-center", 15000);
+  const alerts: any[] | null = data?.alerts ?? null;
+  const t = data?.trunk;
+
+  return (
+    <div className="nk-cc" style={{ marginBottom: 16 }}>
+      {/* Alerts */}
+      <Card style={{
+        borderColor: alerts?.length ? (alerts.some(a => a.critical) ? C.red : C.gold) + "66" : C.bord,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Siren size={16} color={alerts?.length ? C.red : C.dim} />
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>Alerts</span>
+          </div>
+          <span style={{ color: C.dim, fontSize: TYPE.xs }}>
+            {data?.watchdog_read_at ? `watchdog ${agoText(data.watchdog_read_at)}` : ""}
+          </span>
+        </div>
+
+        {error && !data ? (
+          <div style={{ color: C.dim, fontSize: TYPE.sm }}>Couldn't reach the API: {error}</div>
+        ) : !data ? (
+          <div style={{ color: C.dim, fontSize: TYPE.sm }}>Checking…</div>
+        ) : alerts === null ? (
+          <div style={{ color: C.gold, fontSize: TYPE.sm }}>Watchdog state is unreadable, so this cannot say all clear.</div>
+        ) : alerts.length === 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0" }}>
+            <div style={{ background: C.grn + "18", borderRadius: 10, padding: 8, display: "flex" }}>
+              <CircleCheck size={20} color={C.grn} />
+            </div>
+            <div>
+              <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>All systems normal</div>
+              <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 2 }}>
+                Trunk, pipeline, API, vendors, stuck calls and dead lines are checked every 15 minutes.
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {alerts.map(a => {
+              const col = a.critical ? C.red : C.gold;
+              return (
+                <div key={a.id} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 8,
+                  background: col + "0F", borderLeft: `3px solid ${col}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+                      <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>{a.title}</span>
+                      <Pill label={a.critical ? "critical" : "warning"} color={col} />
+                      {!a.emailed && <Pill label="confirming" color={C.dim} />}
+                    </div>
+                    <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 4 }}>
+                      Since {agoText(a.since).replace(" ago", "")} · {a.detail}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {/* Line capacity */}
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Radio size={16} color={C.glow} />
+            <span style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>Jio line capacity</span>
+          </div>
+          {t && <Pill label={t.status === "up" ? "trunk up" : t.status === "down" ? "trunk down" : t.status}
+                      color={t.status === "up" ? C.grn : t.status === "down" ? C.red : C.dim} />}
+        </div>
+        {!t ? (
+          <div style={{ color: C.dim, fontSize: TYPE.sm }}>{error ? `Couldn't read: ${error}` : "Checking…"}</div>
+        ) : (
+          <>
+            <ChannelStrip trunk={t} />
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 14, flexWrap: "wrap" as const }}>
+              <span style={{ color: t.telecallers_fit > 0 ? C.txt : C.red, fontSize: TYPE.xl, fontWeight: 900, lineHeight: 1 }}>
+                {t.telecallers_fit}
+              </span>
+              <span style={{ color: C.mid, fontSize: TYPE.sm }}>
+                more telecaller call{t.telecallers_fit === 1 ? "" : "s"} fit right now
+              </span>
+            </div>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 6 }}>
+              {t.in_use} in use · {t.reserved} reserved · {t.outbound_free} outbound free ·
+              {" "}{t.inbound_reserved} always kept for callers ringing in
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/** One cell per channel Jio sold: in use, reserved, free for outbound, and
+ *  the pair outbound never touches. Read left to right like a fuel gauge. */
+function ChannelStrip({ trunk }: { trunk: any }) {
+  const cells: { kind: "use" | "res" | "free" | "inb"; }[] = [];
+  const inUse = Math.min(trunk.in_use, trunk.channels);
+  const res   = Math.min(trunk.reserved, Math.max(0, trunk.channels - inUse));
+  for (let i = 0; i < trunk.channels; i++) {
+    if (i < inUse) cells.push({ kind: "use" });
+    else if (i < inUse + res) cells.push({ kind: "res" });
+    else if (i < trunk.ceiling) cells.push({ kind: "free" });
+    else cells.push({ kind: "inb" });
+  }
+  const style = (k: string): React.CSSProperties => ({
+    use:  { background: C.glow, border: "1px solid " + C.glow },
+    res:  { background: `repeating-linear-gradient(45deg, ${C.gold}55 0 4px, ${C.gold}22 4px 8px)`, border: "1px solid " + C.gold },
+    free: { background: C.surf, border: "1px dashed " + C.glow + "88" },
+    inb:  { background: `repeating-linear-gradient(-45deg, ${C.dim}33 0 3px, transparent 3px 7px)`, border: "1px solid " + C.bord },
+  } as any)[k];
+  const legend: [string, string][] = [["use", "In use"], ["res", "Reserved"], ["free", "Free (outbound)"], ["inb", "Kept for inbound"]];
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${trunk.channels}, minmax(0,1fr))`, gap: 4 }}
+        aria-label={`${trunk.in_use} of ${trunk.channels} channels in use`}>
+        {cells.map((c, i) => (
+          <div key={i} title={legend.find(l => l[0] === c.kind)?.[1]}
+            style={{ height: 26, borderRadius: 5, ...style(c.kind) }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" as const }}>
+        {legend.map(([k, label]) => (
+          <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: C.dim, fontSize: TYPE.xs }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, ...style(k) }} />{label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── TELECALLERS ───────────────────────────────────────────
+// Human seats compared against each other. "Conversation" is a call of 15 s
+// or more: the log records the telecaller's leg and has no "customer
+// answered" signal, so this is labelled as the threshold it is.
+function TelecallersPanel({ token }: { token: string }) {
+  const [days, setDays] = useState("7");
+  const [tenant, setTenant] = useState("");
+  const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    sb.from("tenants").select("id, name").order("name").then(({ data }) => setTenants(data || []));
+  }, []);
+  const path = `/api/admin/ops/telecallers?days=${days}${tenant ? `&tenant_id=${tenant}` : ""}`;
+  const { data, error, loading } = useAdminJson<any>(token, path, 30000);
+  const seats: any[] = data?.seats || [];
+  const tot = data?.total || { calls: 0, conversations: 0, talk_seconds: 0, outcomes_logged: 0 };
+
+  const series = (data?.series || []).map((d: any) => ({
+    day: new Date(d.day + "T00:00:00").toLocaleDateString("en-IN", days === "30" ? { day: "numeric", month: "short" } : { weekday: "short" }),
+    conversations: d.conversations,
+    other: d.calls - d.conversations,
+  }));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const, marginBottom: 16 }}>
+        <PillToggle options={[{ label: "Today", value: "1" }, { label: "7 days", value: "7" }, { label: "30 days", value: "30" }]}
+          value={days} onChange={setDays} />
+        <select value={tenant} onChange={e => setTenant(e.target.value)} aria-label="Tenant"
+          style={{ background: C.surf, border: "1px solid " + C.bord, color: C.txt, borderRadius: 8,
+            padding: "8px 10px", fontSize: TYPE.sm }}>
+          <option value="">All tenants</option>
+          {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        {loading && <span style={{ color: C.dim, fontSize: TYPE.xs }}>Loading…</span>}
+      </div>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: 16 }}>
+        <span style={{ color: C.red, fontSize: TYPE.sm }}>Couldn't load telecaller activity: {error}</span></Card>}
+
+      <div className="nk-kpis" style={{ marginBottom: 16 }}>
+        <KPI value={tot.calls} label="Calls placed" color={C.gbr} icon={Phone} />
+        <KPI value={tot.calls ? pctText(tot.conversations / tot.calls) : "—"} label="Conversations (15s+)" color={C.grn} icon={Headphones} />
+        <KPI value={fmtSecs(tot.talk_seconds)} label="Talk time" color={C.gold} icon={Clock} />
+        <KPI value={tot.calls ? pctText(tot.outcomes_logged / tot.calls) : "—"} label="Outcomes logged" color={tot.calls && tot.outcomes_logged / tot.calls < 0.5 ? C.red : C.glow} icon={Check} />
+      </div>
+
+      {seats.length === 0 && !loading ? (
+        <Card style={{ textAlign: "center" as const, padding: "40px 16px" }}>
+          <Headphones size={28} color={C.dim} />
+          <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginTop: 10 }}>No telecaller calls in this period</div>
+          <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 4 }}>
+            Calls placed with click-to-call from the Desk or Leads pages appear here.
+          </div>
+        </Card>
+      ) : (
+        <>
+          <Card style={{ marginBottom: 16 }}>
+            <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>Calls per day</div>
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={series} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <XAxis dataKey="day" tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false}
+                  interval={days === "30" ? 4 : 0} />
+                <YAxis allowDecimals={false} tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ background: C.hi, border: "1px solid " + C.bord, borderRadius: 8, fontSize: TYPE.sm }} />
+                <Bar dataKey="conversations" name="Conversations" stackId="c" fill={C.glow} />
+                <Bar dataKey="other" name="Under 15s" stackId="c" fill={C.dim + "66"} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card style={{ padding: 0 }}>
+            <div className="nk-scroll">
+              <table className="nk-table">
+                <thead><tr>
+                  <th>Telecaller</th><th>Tenant</th><th className="nk-num">Calls</th>
+                  <th>Conversations</th><th className="nk-num">Avg call</th><th className="nk-num">Talk time</th>
+                  <th>Outcomes logged</th><th>Last call</th>
+                </tr></thead>
+                <tbody>
+                  {seats.map(s => {
+                    const logged = s.calls ? s.outcomes_logged / s.calls : 0;
+                    return (
+                      <tr key={s.agent_user_id + s.tenant_id}>
+                        <td>
+                          <div style={{ color: C.txt, fontWeight: 700 }}>{s.name || `Seat …${s.phone_last4 || "????"}`}</div>
+                          <div style={{ color: C.dim, fontSize: TYPE.xs }}>{s.role || "member"}{s.phone_last4 ? ` · …${s.phone_last4}` : ""}</div>
+                        </td>
+                        <td style={{ color: C.mid }}>{s.tenant || "—"}</td>
+                        <td className="nk-num" style={{ fontWeight: 800 }}>{s.calls}</td>
+                        <td><Meter used={s.conversations} limit={s.calls} label={pctText(s.conversation_rate)} /></td>
+                        <td className="nk-num">{fmtSecs(s.avg_call_seconds)}</td>
+                        <td className="nk-num">{fmtSecs(s.talk_seconds)}</td>
+                        <td>
+                          <span style={{ color: logged < 0.5 ? C.red : C.grn, fontWeight: 800 }}>{s.outcomes_logged}/{s.calls}</span>
+                          {Object.keys(s.outcomes || {}).length > 0 && (
+                            <span style={{ color: C.dim, fontSize: TYPE.xs, marginLeft: 8 }}>
+                              {Object.entries(s.outcomes).map(([k, v]) => `${k} ${v}`).join(" · ")}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ color: C.mid }}>{agoText(s.last_call_at)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 10 }}>
+            A conversation is a call of {data?.conversation_secs ?? 15}s or more. The log records the telecaller's
+            leg, so this is a threshold rather than a confirmed answer; logged outcomes are the ground truth.
+            {data?.truncated ? " Showing the most recent 5,000 calls." : ""}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── USAGE & LIMITS ────────────────────────────────────────
+// Who is about to hit a wall. Seats count people plus unaccepted invites and
+// minutes come from the same gate that blocks calls, so a tenant shown with
+// room here really can invite and dial.
+function UsagePanel({ token }: { token: string }) {
+  const { data, error, loading, reload } = useAdminJson<any>(token, "/api/admin/ops/usage", 60000);
+  const rows: any[] = data?.tenants || [];
+  const counts = rows.reduce((a, r) => ({ ...a, [r.level]: (a[r.level] || 0) + 1 }), {} as Record<string, number>);
+  const levelPill = (l: string) => l === "over" ? <Pill label="at limit" color={C.red} />
+    : l === "near" ? <Pill label="near limit" color={C.gold} /> : <Pill label="ok" color={C.grn} />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as const, marginBottom: 16 }}>
+        {(["over", "near", "ok"] as const).map(l => (
+          <Card key={l} style={{ padding: "10px 14px", flex: "1 1 150px" }}>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase" as const, letterSpacing: "0.1em" }}>
+              {l === "over" ? "At limit or blocked" : l === "near" ? "Above 80%" : "Within limits"}
+            </div>
+            <div style={{ color: l === "over" ? C.red : l === "near" ? C.gold : C.grn, fontSize: TYPE.xl, fontWeight: 900 }}>
+              {counts[l] || 0}
+            </div>
+          </Card>
+        ))}
+        <button onClick={reload} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none",
+          border: "1px solid " + C.bord, color: C.mid, borderRadius: 8, padding: "8px 12px", fontSize: TYPE.sm, cursor: "pointer" }}>
+          <RefreshCw size={13} /> Refresh
+        </button>
+      </div>
+
+      {error && <Card style={{ borderColor: C.red + "55", marginBottom: 16 }}>
+        <span style={{ color: C.red, fontSize: TYPE.sm }}>Couldn't load usage: {error}</span></Card>}
+
+      <Card style={{ padding: 0 }}>
+        <div className="nk-scroll">
+          <table className="nk-table">
+            <thead><tr>
+              <th>Tenant</th><th>Plan</th><th>Seats</th><th>Minutes this month</th>
+              <th className="nk-num">Credit min</th><th>Calling</th><th>Status</th>
+            </tr></thead>
+            <tbody>
+              {loading && rows.length === 0 && <tr><td colSpan={7} style={{ color: C.dim }}>Loading…</td></tr>}
+              {rows.map(r => (
+                <tr key={r.tenant_id}>
+                  <td>
+                    <div style={{ color: C.txt, fontWeight: 700 }}>{r.name}</div>
+                    {r.status !== "active" && <div style={{ color: C.dim, fontSize: TYPE.xs }}>{r.status}</div>}
+                  </td>
+                  <td><Pill label={r.plan_name || r.plan} color={r.plan === "trial" ? C.dim : C.gbr} /></td>
+                  <td>
+                    <Meter used={r.seats_used} limit={r.seat_limit} />
+                    {r.seats_pending > 0 && <div style={{ color: C.dim, fontSize: TYPE.xs, marginTop: 3 }}>
+                      incl. {r.seats_pending} pending invite{r.seats_pending === 1 ? "" : "s"}</div>}
+                  </td>
+                  <td>{r.minute_limit > 0
+                    ? <Meter used={r.minutes_used} limit={r.minute_limit} />
+                    : <span style={{ color: C.dim, fontSize: TYPE.xs }}>No plan allowance · runs on credits</span>}
+                  </td>
+                  <td className="nk-num">{Number(r.credits || 0).toLocaleString("en-IN")}</td>
+                  <td>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <StatusDot ok={r.can_call} />
+                      <span style={{ color: r.can_call ? C.mid : C.red, fontSize: TYPE.xs }}>
+                        {r.can_call ? "Can call" : r.blocked_reason === "plan_minutes_exhausted" ? "Minutes used up" : "No credits"}
+                      </span>
+                    </span>
+                  </td>
+                  <td>{levelPill(r.level)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
