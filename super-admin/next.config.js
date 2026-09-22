@@ -7,5 +7,4 @@ module.exports = {
   // output, so removing this line leaves it with no server.js and the build
   // fails. Vercel ignores the setting, so this is safe to keep during the move.
   output: "standalone",
-  eslint: { ignoreDuringBuilds: true },
 };
