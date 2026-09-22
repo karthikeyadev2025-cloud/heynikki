@@ -39,8 +39,13 @@ active_calls() {
   # fs_cli needs the ESL password; without -p it fails to connect and the
   # old grep returned empty, which read as "zero calls" and would have
   # deployed straight through a live call — the very bug this guards.
+  #
+  # Read from the freeswitch container, not heynikki-api. When the API is the
+  # thing crash-looping, `docker exec heynikki-api` fails, and this refused to
+  # deploy the fix for the very outage it was being run to end (22 Sep).
+  # FreeSWITCH is never restarted by this script, so it is always there.
   local pw
-  pw=$(docker exec heynikki-api printenv FREESWITCH_ESL_PASSWORD 2>/dev/null || true)
+  pw=$(docker exec heynikki-freeswitch printenv FREESWITCH_ESL_PASSWORD 2>/dev/null || true)
   if [ -z "$pw" ]; then
     echo "cannot read FREESWITCH_ESL_PASSWORD — refusing to guess call count" >&2
     return 1

@@ -5786,12 +5786,23 @@ const STARTED_AT = Date.now();
 // stays "ok" when Jio is down: the process is fine, and a non-ok here would
 // have Docker mark the API unhealthy and uptime.yml report the whole site
 // down for a carrier fault. The watchdog is what emails about the trunk.
+//
+// Started with setImmediate, not called inline: `fsl` is imported further
+// down this file, and TypeScript emits imports where they are written, so an
+// inline call runs before that import has executed. It did, and the
+// ReferenceError crash-looped the API on deploy. The catch is the other half:
+// a refresh that fails for any reason must never take the process down.
 let trunkHealth: { status: string; checked_at: string | null } = { status: "unknown", checked_at: null };
 async function refreshTrunkHealth() {
-  const g = await fsl.gatewayHealth("jio_primary");
-  trunkHealth = { status: g.status, checked_at: new Date().toISOString() };
+  try {
+    const g = await fsl.gatewayHealth("jio_primary");
+    trunkHealth = { status: g.status, checked_at: new Date().toISOString() };
+  } catch (e: any) {
+    trunkHealth = { status: "unknown", checked_at: new Date().toISOString() };
+    console.warn("[health] trunk refresh failed:", e?.message || e);
+  }
 }
-refreshTrunkHealth();
+setImmediate(refreshTrunkHealth);
 setInterval(refreshTrunkHealth, 60_000).unref();
 
 app.get("/health", (_req, res) => {
