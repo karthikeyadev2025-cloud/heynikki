@@ -59,6 +59,60 @@ function Card({ children, style, hover }: { children: React.ReactNode; style?: R
     </div>
   );
 }
+// Loading, empty and error looked different in every panel: "Loading..." in
+// four sizes, empty states from a bare line to a 48px block, and errors that
+// mostly vanished into a console. Three components, used by all of them.
+function Loading({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" style={{ padding: "4px 0" }}>
+      <span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>{label}…</span>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="nk-skel"
+          style={{ height: 14, marginBottom: 10, width: `${100 - (i % 3) * 14}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function Empty({ icon: Icon, title, hint }: {
+  icon: React.ComponentType<{ size?: number; color?: string }>; title: string; hint?: string;
+}) {
+  return (
+    <div style={{ textAlign: "center" as const, padding: "36px 16px" }}>
+      <Icon size={26} color={C.dim} />
+      <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginTop: 10 }}>{title}</div>
+      {hint && <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 4, maxWidth: 420, marginInline: "auto" }}>{hint}</div>}
+    </div>
+  );
+}
+
+function ErrorNote({ msg, onRetry }: { msg: string; onRetry?: () => void }) {
+  return (
+    <div role="alert" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const,
+      background: C.red + "12", border: "1px solid " + C.red + "44", borderRadius: 8,
+      padding: "10px 14px", color: C.red, fontSize: TYPE.sm, marginBottom: 12 }}>
+      <AlertTriangle size={14} /><span style={{ flex: 1, minWidth: 180 }}>{msg}</span>
+      {onRetry && <button onClick={onRetry} style={{ background: "none", border: "1px solid " + C.red + "66",
+        color: C.red, borderRadius: 6, padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+        Try again</button>}
+    </div>
+  );
+}
+
+/** The line under the page's own h1: what this screen is for. The three
+ *  panels that printed their own title repeated the heading above them. */
+function PanelIntro({ icon: Icon, children }: {
+  icon: React.ComponentType<{ size?: number; color?: string }>; children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, color: C.mid,
+      fontSize: TYPE.sm, marginBottom: 18, maxWidth: 760, lineHeight: 1.55 }}>
+      <Icon size={15} color={C.glow} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
 function Pill({ label, color }: { label: string; color: string }) {
   return <span style={{ background: color + "22", color, border: "1px solid " + color + "44",
     borderRadius: 4, padding: "2px 8px", fontSize: TYPE.xs, fontWeight: 800,
@@ -78,7 +132,9 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
         <div>
           <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase",
             letterSpacing: "0.1em", marginBottom: SPACE.xs + 2 }}>{label}</div>
-          <div style={{ color, fontSize: TYPE.xl, fontWeight: 900 }}>{value}</div>
+          <div style={{ color, fontSize: TYPE.xl, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
+            {typeof value === "number" ? value.toLocaleString("en-IN") : value}
+          </div>
         </div>
         <div style={{ background: color + "15", borderRadius: 8, padding: 8, display: "flex" }}>
           <IconComp size={20} color={color} />
@@ -143,6 +199,24 @@ export default function SuperAdminPage() {
   const [authed, setAuthed]     = useState(false);
   const [checking, setChecking] = useState(true);
   const [token, setToken]       = useState("");
+  // Most panels answer a failed load with an empty list, which reads exactly
+  // like "nothing to show". An operator seeing "0 tenants" during an API
+  // outage is being misled, and rewriting every panel's error handling is a
+  // bigger change than the problem needs: one poll of the API's own health
+  // says it once, for all of them.
+  const [apiDown, setApiDown]   = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const ping = async () => {
+      try {
+        const r = await fetch(`${API}/health`, { cache: "no-store" });
+        if (alive) setApiDown(!r.ok);
+      } catch { if (alive) setApiDown(true); }
+    };
+    ping();
+    const t = setInterval(ping, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   useEffect(() => {
     sb.auth.getSession().then(async ({ data }) => {
@@ -225,7 +299,19 @@ export default function SuperAdminPage() {
                      white-space:nowrap}
         .nk-table td{padding:10px;border-bottom:1px solid ${C.bord}66;vertical-align:middle;white-space:nowrap}
         .nk-table tr:hover td{background:${C.hi}}
+        .nk-table thead th{position:sticky;top:0;background:${C.surf};z-index:1}
+        .nk-table tbody tr:last-child td{border-bottom:none}
         .nk-num{text-align:right;font-variant-numeric:tabular-nums}
+        .nk-3col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+        @media (max-width: 760px){ .nk-3col{grid-template-columns:minmax(0,1fr)} }
+        @media (max-width: 560px){ .nk-kpis{grid-template-columns:minmax(0,1fr)} }
+        /* Keyboard users could not see where they were outside the sidebar. */
+        button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{
+          outline:2px solid ${C.glow};outline-offset:2px;border-radius:6px}
+        .nk-skel{background:linear-gradient(90deg,${C.hi} 25%,${C.bord}66 37%,${C.hi} 63%);
+                 background-size:400% 100%;animation:nk-shimmer 1.4s ease infinite;border-radius:6px}
+        @keyframes nk-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+        @media (prefers-reduced-motion: reduce){ .nk-skel{animation:none} }
         @keyframes nk-pulse{0%,100%{opacity:1}50%{opacity:.45}}
         @media (prefers-reduced-motion: reduce){ .nk-pulse{animation:none!important} }
         @media (prefers-reduced-motion: reduce){ .nk-side{transition:none} }
@@ -261,6 +347,15 @@ export default function SuperAdminPage() {
           </button>
         </div>
       </header>
+
+      {apiDown && (
+        <div role="alert" style={{ background: C.red + "18", borderBottom: "1px solid " + C.red + "55",
+          color: C.red, fontSize: TYPE.sm, padding: "8px 20px", display: "flex", alignItems: "center", gap: 8,
+          position: "sticky", top: 56, zIndex: 49 }}>
+          <AlertTriangle size={14} />
+          <span>Can't reach the API. Screens below may be empty or out of date — that is this banner, not your data.</span>
+        </div>
+      )}
 
       <div className="nk-shell">
         <nav className={"nk-side" + (navOpen ? " nk-side-open" : "")} aria-label="Sections">
@@ -421,7 +516,7 @@ function PlatformDashboard({ token }: { token: string }) {
     return () => clearInterval(t);
   }, [token, fetch7DayVolume]);
 
-  if (loading) return <div style={{ color: C.mid, padding: 40, textAlign: "center" }}>Loading...</div>;
+  if (loading) return <Loading rows={6} label="Loading the dashboard" />;
 
   return (
     <div>
@@ -577,87 +672,87 @@ function TenantsPanel({ token }: { token: string }) {
       </div>
 
       <Card>
-        {loading ? <div style={{ color: C.mid, textAlign: "center", padding: 40 }}>Loading...</div> : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Business","Plan","Status","Free minutes","Actions"].map(h => (
-                <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
-                  textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
-                  borderBottom: "1px solid " + C.bord }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {filtered.map(t => (
-                <tr key={t.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
-                  onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                  <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>
-                    {t.name}
-                  </td>
-                  <td style={{ padding: "10px" }}>
-                    <Pill label={t.plan} color={t.plan === "scale" ? C.gold : t.plan === "growth" ? C.gbr : C.mid} />
-                  </td>
-                  <td style={{ padding: "10px" }}>
-                    <Pill label={t.status}
-                      color={t.status === "active" ? C.grn : t.status === "trial" ? C.gold : C.red} />
-                  </td>
-                  <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
-                    {/* Was the trial_ends_at date, which nothing enforces. The
-                        number an operator actually needs when a customer rings
-                        saying "my calls stopped" is the balance that stopped them. */}
-                    {t.credit_minutes != null ? `${Math.round(Number(t.credit_minutes))} min` : "—"}
-                  </td>
-                  <td style={{ padding: "10px" }}>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, alignItems: "center" }}>
-                      <OnboardingCallButton token={token} tenantId={t.id} />
-                      {t.status !== "suspended" ? (
-                        <button onClick={() => doAction(t.id, "suspend", { reason: "Admin action" })}
-                          disabled={acting === t.id + "suspend"}
-                          style={{ background: C.red + "22", color: C.red,
-                            border: "1px solid " + C.red + "44", borderRadius: 5,
-                            padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
-                          Suspend
-                        </button>
-                      ) : (
-                        <button onClick={() => doAction(t.id, "unsuspend")}
-                          disabled={acting === t.id + "unsuspend"}
-                          style={{ background: C.grn + "22", color: C.grn,
-                            border: "1px solid " + C.grn + "44", borderRadius: 5,
-                            padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
-                          Restore
-                        </button>
-                      )}
-                      {["trial", "suspended", "cancelled"].includes(t.status) && (
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`DELETE "${t.name}" permanently? Numbers return to inventory; everything else is gone.`)) return;
-                            const r = await fetch(`${API}/api/admin/tenants/${t.id}`, {
-                              method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-                            if (!r.ok) alert((await r.json()).error || "Delete failed");
-                            else window.location.reload();
-                          }}
-                          style={{ background: "transparent", color: C.red,
-                            border: "1px solid " + C.red + "44", borderRadius: 5,
-                            padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
-                          Delete
-                        </button>
-                      )}
-                      <StaffButton token={token} tenantId={t.id} />
-                      <select onChange={e => e.target.value && doAction(t.id, "override-plan", { plan: e.target.value })}
-                        defaultValue=""
-                        style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
-                          borderRadius: 5, padding: "4px 8px", fontSize: TYPE.xs, cursor: "pointer" }}>
-                        <option value="" disabled>Override plan</option>
-                        {["starter","growth","scale"].map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {loading ? <Loading rows={6} label="Loading tenants" /> : (
+          <div className="nk-scroll">
+            <table className="nk-table">
+              <thead>
+                <tr>{["Business","Plan","Status","Free minutes","Actions"].map(h => (
+                  <th key={h}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {filtered.map(t => (
+                  <tr key={t.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>
+                      {t.name}
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <Pill label={t.plan} color={t.plan === "scale" ? C.gold : t.plan === "growth" ? C.gbr : C.mid} />
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <Pill label={t.status}
+                        color={t.status === "active" ? C.grn : t.status === "trial" ? C.gold : C.red} />
+                    </td>
+                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
+                      {/* Was the trial_ends_at date, which nothing enforces. The
+                          number an operator actually needs when a customer rings
+                          saying "my calls stopped" is the balance that stopped them. */}
+                      {t.credit_minutes != null ? `${Math.round(Number(t.credit_minutes))} min` : "—"}
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, alignItems: "center" }}>
+                        <OnboardingCallButton token={token} tenantId={t.id} />
+                        {t.status !== "suspended" ? (
+                          <button onClick={() => doAction(t.id, "suspend", { reason: "Admin action" })}
+                            disabled={acting === t.id + "suspend"}
+                            style={{ background: C.red + "22", color: C.red,
+                              border: "1px solid " + C.red + "44", borderRadius: 5,
+                              padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                            Suspend
+                          </button>
+                        ) : (
+                          <button onClick={() => doAction(t.id, "unsuspend")}
+                            disabled={acting === t.id + "unsuspend"}
+                            style={{ background: C.grn + "22", color: C.grn,
+                              border: "1px solid " + C.grn + "44", borderRadius: 5,
+                              padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                            Restore
+                          </button>
+                        )}
+                        {["trial", "suspended", "cancelled"].includes(t.status) && (
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`DELETE "${t.name}" permanently? Numbers return to inventory; everything else is gone.`)) return;
+                              const r = await fetch(`${API}/api/admin/tenants/${t.id}`, {
+                                method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+                              if (!r.ok) alert((await r.json()).error || "Delete failed");
+                              else window.location.reload();
+                            }}
+                            style={{ background: "transparent", color: C.red,
+                              border: "1px solid " + C.red + "44", borderRadius: 5,
+                              padding: "4px 10px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                            Delete
+                          </button>
+                        )}
+                        <StaffButton token={token} tenantId={t.id} />
+                        <select onChange={e => e.target.value && doAction(t.id, "override-plan", { plan: e.target.value })}
+                          defaultValue=""
+                          style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
+                            borderRadius: 5, padding: "4px 8px", fontSize: TYPE.xs, cursor: "pointer" }}>
+                          <option value="" disabled>Override plan</option>
+                          {["starter","growth","scale"].map(p => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
@@ -803,48 +898,49 @@ function CrmPanel({ token }: { token: string }) {
       )}
 
       <Card>
-        {loading ? <div style={{ color: C.mid, textAlign: "center", padding: 40 }}>Loading...</div> :
-         filtered.length === 0 ? <div style={{ color: C.dim, textAlign: "center", padding: 40 }}>No leads match</div> : (
+        {loading ? <Loading rows={5} label="Loading leads" /> :
+         filtered.length === 0 ? <Empty icon={Users} title="No leads match"
+             hint="Try a different stage or search term." /> : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>{["","Business","Name","Phone","Stage","Deal Value","Tags","Score","Last Contact"].map(h => (
-                  <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
-                    textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
-                    borderBottom: "1px solid " + C.bord, whiteSpace: "nowrap" }}>{h}</th>
-                ))}</tr>
-              </thead>
-              <tbody>
-                {filtered.map(l => (
-                  <tr key={l.id} style={{ borderBottom: "1px solid " + C.bord + "33", cursor: "pointer" }}
-                    onClick={() => setDetailLead(l)}>
-                    <td style={{ padding: "10px" }} onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleSelect(l.id)} />
-                    </td>
-                    <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.tenants?.name || "—"}</td>
-                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>{l.name || "Unknown"}</td>
-                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.phone}</td>
-                    <td style={{ padding: "10px" }}><Pill label={l.stage} color={stageColor(l.stage)} /></td>
-                    <td style={{ padding: "10px", color: C.grn, fontSize: TYPE.sm, fontWeight: 700 }}>
-                      {l.deal_value_paise ? `₹${(l.deal_value_paise / 100).toLocaleString()}` : "—"}
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {(l.tags || []).slice(0, 2).map((t: string) => (
-                          <span key={t} style={{ background: C.hi, color: C.mid, fontSize: TYPE.xs,
-                            padding: "2px 6px", borderRadius: 4 }}>{t}</span>
-                        ))}
-                        {(l.tags || []).length > 2 && <span style={{ color: C.dim, fontSize: TYPE.xs }}>+{l.tags.length - 2}</span>}
-                      </div>
-                    </td>
-                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{l.score ?? 0}</td>
-                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
-                      {l.last_contacted_at ? new Date(l.last_contacted_at).toLocaleDateString("en-IN") : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="nk-scroll">
+              <table className="nk-table">
+                <thead>
+                  <tr>{["","Business","Name","Phone","Stage","Deal Value","Tags","Score","Last Contact"].map(h => (
+                    <th key={h}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {filtered.map(l => (
+                    <tr key={l.id} style={{ borderBottom: "1px solid " + C.bord + "33", cursor: "pointer" }}
+                      onClick={() => setDetailLead(l)}>
+                      <td style={{ padding: "10px" }} onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleSelect(l.id)} />
+                      </td>
+                      <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{l.tenants?.name || "—"}</td>
+                      <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 600 }}>{l.name || "Unknown"}</td>
+                      <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.sm }}>{l.phone}</td>
+                      <td style={{ padding: "10px" }}><Pill label={l.stage} color={stageColor(l.stage)} /></td>
+                      <td style={{ padding: "10px", color: C.grn, fontSize: TYPE.sm, fontWeight: 700 }}>
+                        {l.deal_value_paise ? `₹${(l.deal_value_paise / 100).toLocaleString()}` : "—"}
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {(l.tags || []).slice(0, 2).map((t: string) => (
+                            <span key={t} style={{ background: C.hi, color: C.mid, fontSize: TYPE.xs,
+                              padding: "2px 6px", borderRadius: 4 }}>{t}</span>
+                          ))}
+                          {(l.tags || []).length > 2 && <span style={{ color: C.dim, fontSize: TYPE.xs }}>+{l.tags.length - 2}</span>}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{l.score ?? 0}</td>
+                      <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
+                        {l.last_contacted_at ? new Date(l.last_contacted_at).toLocaleDateString("en-IN") : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </Card>
@@ -1060,55 +1156,53 @@ function LiveCallsPanel({ token }: { token: string }) {
       </div>
 
       {calls.length === 0 ? (
-        <Card style={{ textAlign: "center", padding: 48 }}>
-          <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><Phone size={32} color={C.dim} /></div>
-          <div style={{ color: C.dim }}>No active calls right now</div>
-        </Card>
+        <Card><Empty icon={Phone} title="No active calls right now"
+          hint="Calls appear here the moment they connect, across every tenant." /></Card>
       ) : (
         <Card>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Tenant","Profile","Caller","Direction","Duration","Intent","Latency"].map(h => (
-                <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700,
-                  textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
-                  borderBottom: "1px solid " + C.bord }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {calls.map((c: any) => {
-                const dur = (Date.now() - new Date(c.created_at).getTime()) / 1000;
-                const latColor = dur < 700 ? C.grn : dur < 1000 ? C.gold : C.red;
-                return (
-                  <tr key={c.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
-                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
-                      {c.tenants?.name || "—"}
-                    </td>
-                    <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
-                      {c.voice_profiles?.profile_sku || "standard"}
-                    </td>
-                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm }}>
-                      {c.caller_number}
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <span style={{ color: c.direction === "inbound" ? C.grn : C.gold,
-                        fontSize: TYPE.xs, fontWeight: 600 }}>
-                        {c.direction === "inbound" ? "↙ In" : "↗ Out"}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px", color: C.gbr, fontSize: TYPE.sm, fontWeight: 700 }}>
-                      {duration(c.created_at)}
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <Pill label={c.intent || "active"} color={C.grn} />
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <span style={{ color: latColor, fontSize: TYPE.sm, fontWeight: 700 }}>●</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="nk-scroll">
+            <table className="nk-table">
+              <thead>
+                <tr>{["Tenant","Profile","Caller","Direction","Duration","Intent","Latency"].map(h => (
+                  <th key={h}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {calls.map((c: any) => {
+                  const dur = (Date.now() - new Date(c.created_at).getTime()) / 1000;
+                  const latColor = dur < 700 ? C.grn : dur < 1000 ? C.gold : C.red;
+                  return (
+                    <tr key={c.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
+                      <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>
+                        {c.tenants?.name || "—"}
+                      </td>
+                      <td style={{ padding: "10px", color: C.dim, fontSize: TYPE.xs }}>
+                        {c.voice_profiles?.profile_sku || "standard"}
+                      </td>
+                      <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm }}>
+                        {c.caller_number}
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <span style={{ color: c.direction === "inbound" ? C.grn : C.gold,
+                          fontSize: TYPE.xs, fontWeight: 600 }}>
+                          {c.direction === "inbound" ? "↙ In" : "↗ Out"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px", color: C.gbr, fontSize: TYPE.sm, fontWeight: 700 }}>
+                        {duration(c.created_at)}
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <Pill label={c.intent || "active"} color={C.grn} />
+                      </td>
+                      <td style={{ padding: "10px" }}>
+                        <span style={{ color: latColor, fontSize: TYPE.sm, fontWeight: 700 }}>●</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>
@@ -1139,7 +1233,7 @@ function RevenuePanel({ token }: { token: string }) {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+      <div className="nk-3col" style={{ marginBottom: 20 }}>
         <KPI value={`₹${mrr.toLocaleString()}`} label="Est. MRR" color={C.grn} icon={IndianRupee} />
         <KPI value={`₹${(mrr * 12).toLocaleString()}`} label="Est. ARR" color={C.gold} icon={TrendingUp} />
         <KPI value={stats?.paid || 0} label="Paying Customers" color={C.gbr} icon={CreditCard} />
@@ -2860,7 +2954,7 @@ function BroadcastPanel({ token }: { token: string }) {
               <Pill label="message or audience changed — run again" color={C.red} />}
           </div>
           {(preview.recipients || []).length === 0
-            ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>No tenant matches this filter.</div>
+            ? <Empty icon={Building2} title="No tenant matches this filter" />
             : (preview.recipients || []).map((r: any) => <Recipient key={r.tenant_id} r={r} />)}
         </Card>
       )}
@@ -3384,10 +3478,9 @@ function PlatformConfigPanel({ token }: { token: string }) {
 
   return (
     <div>
-      <div style={{ color: C.txt, fontSize: TYPE.lg, fontWeight: 900, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}><Settings size={18} color={C.glow} /> Platform Config</div>
-      <div style={{ color: C.dim, fontSize: TYPE.sm, marginBottom: 20 }}>
-        Toggle engines, configure URLs, and set global defaults — no redeployment needed.
-      </div>
+      <PanelIntro icon={Settings}>
+        Engines, URLs and global defaults, applied within a minute — no redeployment.
+      </PanelIntro>
 
       {cfg["telephony_engine"] && cfg["telephony_engine"] !== "freeswitch" && (
         <div style={{ background: C.red + "14", border: "1px solid " + C.red + "44",
@@ -3605,8 +3698,7 @@ function FreeSwitchPanel({ token }: { token: string }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>
-          <div style={{ color: C.txt, fontSize: TYPE.lg, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><SignalHigh size={18} color={C.glow} /> FreeSWITCH Control</div>
-          <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 2 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.sm }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><StatusDot ok={!!fsData?.alive} /> FreeSWITCH {fsData?.alive ? "reachable" : "unreachable"}</span> · Refreshing every 10s
           </div>
         </div>
@@ -3619,7 +3711,7 @@ function FreeSwitchPanel({ token }: { token: string }) {
       </div>
 
       {/* SIP Trunk Status */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+      <div className="nk-2col" style={{ marginBottom: 20 }}>
         {(fsData?.trunks || [{ name: "Jio Enterprise", status: "unknown", gateway: "jio_primary" },
                               { name: "Vi Business", status: "unknown", gateway: "vi_failover" }]).map((trunk: any) => (
           <Card key={trunk.gateway}>
@@ -3645,95 +3737,97 @@ function FreeSwitchPanel({ token }: { token: string }) {
           Active Channels ({(fsData?.channels || []).length})
         </div>
         {(fsData?.channels || []).length === 0 ? (
-          <div style={{ color: C.dim, fontSize: TYPE.sm, textAlign: "center", padding: "20px 0" }}>No active calls</div>
+          <Empty icon={Phone} title="No channels in use" hint="FreeSWITCH is idle: no call is on the trunk right now." />
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["UUID", "Caller", "Called", "Direction", "Duration", ""].map(h => (
-                <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700, textTransform: "uppercase",
-                  padding: "6px 10px", textAlign: "left", borderBottom: "1px solid " + C.bord }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {(fsData?.channels || []).map((ch: any) => (
-                <tr key={ch.uuid} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
-                  <td style={{ padding: "8px 10px", color: C.dim, fontSize: TYPE.xs, fontFamily: "monospace" }}>{ch.uuid?.slice(0,8)}…</td>
-                  <td style={{ padding: "8px 10px", color: C.txt, fontSize: TYPE.sm }}>{ch.caller_number}</td>
-                  <td style={{ padding: "8px 10px", color: C.mid, fontSize: TYPE.sm }}>{ch.called_number}</td>
-                  <td style={{ padding: "8px 10px" }}><Pill label={ch.direction} color={ch.direction === "inbound" ? C.grn : C.gold} /></td>
-                  <td style={{ padding: "8px 10px", color: C.gbr, fontSize: TYPE.sm, fontWeight: 700 }}>{ch.duration_sec}s</td>
-                  <td style={{ padding: "8px 10px" }}>
-                    <button onClick={() => hangupChannel(ch.uuid)} disabled={acting === ch.uuid}
-                      style={{ background: C.red + "22", color: C.red, border: "1px solid " + C.red + "44",
-                        borderRadius: 5, padding: "3px 8px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
-                      Hangup
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="nk-scroll">
+            <table className="nk-table">
+              <thead>
+                <tr>{["UUID", "Caller", "Called", "Direction", "Duration", ""].map(h => (
+                  <th key={h}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {(fsData?.channels || []).map((ch: any) => (
+                  <tr key={ch.uuid} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                    <td style={{ padding: "8px 10px", color: C.dim, fontSize: TYPE.xs, fontFamily: "monospace" }}>{ch.uuid?.slice(0,8)}…</td>
+                    <td style={{ padding: "8px 10px", color: C.txt, fontSize: TYPE.sm }}>{ch.caller_number}</td>
+                    <td style={{ padding: "8px 10px", color: C.mid, fontSize: TYPE.sm }}>{ch.called_number}</td>
+                    <td style={{ padding: "8px 10px" }}><Pill label={ch.direction} color={ch.direction === "inbound" ? C.grn : C.gold} /></td>
+                    <td style={{ padding: "8px 10px", color: C.gbr, fontSize: TYPE.sm, fontWeight: 700 }}>{ch.duration_sec}s</td>
+                    <td style={{ padding: "8px 10px" }}>
+                      <button onClick={() => hangupChannel(ch.uuid)} disabled={acting === ch.uuid}
+                        style={{ background: C.red + "22", color: C.red, border: "1px solid " + C.red + "44",
+                          borderRadius: 5, padding: "3px 8px", fontSize: TYPE.xs, fontWeight: 700, cursor: "pointer" }}>
+                        Hangup
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
       {/* DID Management */}
       <Card>
         <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>DID Inventory</div>
-        {loading ? <div style={{ color: C.dim, textAlign: "center", padding: 20 }}>Loading...</div> : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Number", "Provider", "Tenant", "Routing", "Status", "Monthly Cost", "Action"].map(h => (
-                <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700, textTransform: "uppercase",
-                  padding: "6px 10px", textAlign: "left", borderBottom: "1px solid " + C.bord }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {dids.map((did: any) => (
-                <tr key={did.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
-                  <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{did.number}</td>
-                  <td style={{ padding: "10px" }}><Pill label={did.provider} color={C.cyn} /></td>
-                  <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{did.tenants?.name || "—"}</td>
-                  {/* Was a read-only pill, which meant NOTHING anywhere could
-                      set routing_mode to 'ivr' — so the call menu a tenant
-                      configures on /setup was collected, stored, and never
-                      once consulted on a call. */}
-                  <td style={{ padding: "10px" }}>
-                    <select
-                      value={did.routing_mode || "ai"}
-                      onChange={async e => {
-                        const mode = e.target.value;
-                        const r = await fetch(`${API_URL}/api/admin/dids/${did.number}/routing`, {
-                          method: "POST",
-                          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                          body: JSON.stringify({ routing_mode: mode }),
-                        });
-                        if (!r.ok) alert((await r.json()).error || "Failed");
-                        loadFS();
-                      }}
-                      style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
-                        borderRadius: 6, padding: "4px 7px", fontSize: TYPE.xs, fontWeight: 700 }}>
-                      {["ai", "ivr", "human", "hybrid"].map(m =>
-                        <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </td>
-                  <td style={{ padding: "10px" }}>
-                    <Pill label={did.status} color={did.status === "assigned" ? C.grn : did.status === "available" ? C.gold : C.dim} />
-                  </td>
-                  <td style={{ padding: "10px", color: C.grn, fontSize: TYPE.sm, fontWeight: 700 }}>
-                    ₹{((did.monthly_cost_paise || 199900) / 100).toLocaleString()}/mo
-                  </td>
-                  <td style={{ padding: "10px" }}>
-                    <select defaultValue="" onChange={e => e.target.value && assignDid(did.id, e.target.value)}
-                      style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
-                        borderRadius: 5, padding: "4px 8px", fontSize: TYPE.xs, cursor: "pointer" }}>
-                      <option value="" disabled>Assign to…</option>
-                      {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {loading ? <Loading rows={4} label="Loading numbers" /> : (
+          <div className="nk-scroll">
+            <table className="nk-table">
+              <thead>
+                <tr>{["Number", "Provider", "Tenant", "Routing", "Status", "Monthly Cost", "Action"].map(h => (
+                  <th key={h}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {dids.map((did: any) => (
+                  <tr key={did.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}>
+                    <td style={{ padding: "10px", color: C.txt, fontSize: TYPE.sm, fontWeight: 700 }}>{did.number}</td>
+                    <td style={{ padding: "10px" }}><Pill label={did.provider} color={C.cyn} /></td>
+                    <td style={{ padding: "10px", color: C.mid, fontSize: TYPE.sm }}>{did.tenants?.name || "—"}</td>
+                    {/* Was a read-only pill, which meant NOTHING anywhere could
+                        set routing_mode to 'ivr' — so the call menu a tenant
+                        configures on /setup was collected, stored, and never
+                        once consulted on a call. */}
+                    <td style={{ padding: "10px" }}>
+                      <select
+                        value={did.routing_mode || "ai"}
+                        onChange={async e => {
+                          const mode = e.target.value;
+                          const r = await fetch(`${API_URL}/api/admin/dids/${did.number}/routing`, {
+                            method: "POST",
+                            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                            body: JSON.stringify({ routing_mode: mode }),
+                          });
+                          if (!r.ok) alert((await r.json()).error || "Failed");
+                          loadFS();
+                        }}
+                        style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
+                          borderRadius: 6, padding: "4px 7px", fontSize: TYPE.xs, fontWeight: 700 }}>
+                        {["ai", "ivr", "human", "hybrid"].map(m =>
+                          <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <Pill label={did.status} color={did.status === "assigned" ? C.grn : did.status === "available" ? C.gold : C.dim} />
+                    </td>
+                    <td style={{ padding: "10px", color: C.grn, fontSize: TYPE.sm, fontWeight: 700 }}>
+                      ₹{((did.monthly_cost_paise || 199900) / 100).toLocaleString()}/mo
+                    </td>
+                    <td style={{ padding: "10px" }}>
+                      <select defaultValue="" onChange={e => e.target.value && assignDid(did.id, e.target.value)}
+                        style={{ background: C.hi, color: C.mid, border: "1px solid " + C.bord,
+                          borderRadius: 5, padding: "4px 8px", fontSize: TYPE.xs, cursor: "pointer" }}>
+                        <option value="" disabled>Assign to…</option>
+                        {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -3882,8 +3976,7 @@ function PricingEnginePanel({ token }: { token: string }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div>
-          <div style={{ color: C.txt, fontSize: TYPE.lg, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><CreditCard size={18} color={C.glow} /> Pricing Engine</div>
-          <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 2 }}>
+          <div style={{ color: C.dim, fontSize: TYPE.sm }}>
             Edit pricing live — changes take effect immediately. No redeployment.
           </div>
         </div>
@@ -3901,37 +3994,36 @@ function PricingEnginePanel({ token }: { token: string }) {
 
       {/* Plans table */}
       <Card style={{ marginBottom: 20 }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Plan", "Monthly (₹)", "Annual (₹)", "Minutes", "Max Profiles", "Max DIDs", "Concurrent", "Recording Days"].map(h => (
-                <th key={h} style={{ color: C.dim, fontSize: TYPE.xs, fontWeight: 700, textTransform: "uppercase",
-                  padding: "8px 12px", textAlign: "left", borderBottom: "1px solid " + C.bord, whiteSpace: "nowrap" }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {plans.map(plan => (
-                <tr key={plan.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
-                  <td style={{ padding: "12px" }}>
-                    <Pill label={plan.id} color={PLAN_COLORS[plan.id] || C.mid} />
-                  </td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="price_monthly_paise" prefix="₹" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="price_annual_paise" prefix="₹" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="minutes_per_month" suffix="min" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_voice_profiles" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_phone_numbers" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="max_concurrent_calls" /></td>
-                  <td style={{ padding: "12px" }}><Input plan={plan} field="recording_days" suffix="d" /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          <div className="nk-scroll">
+            <table className="nk-table">
+              <thead>
+                <tr>{["Plan", "Monthly (₹)", "Annual (₹)", "Minutes", "Max Profiles", "Max DIDs", "Concurrent", "Recording Days"].map(h => (
+                  <th key={h}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {plans.map(plan => (
+                  <tr key={plan.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
+                    <td style={{ padding: "12px" }}>
+                      <Pill label={plan.id} color={PLAN_COLORS[plan.id] || C.mid} />
+                    </td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="price_monthly_paise" prefix="₹" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="price_annual_paise" prefix="₹" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="minutes_per_month" suffix="min" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="max_voice_profiles" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="max_phone_numbers" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="max_concurrent_calls" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="recording_days" suffix="d" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
       </Card>
 
       {/* Product pricing cards */}
       <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 12 }}>Product Unit Pricing</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+      <div className="nk-3col">
         {[
           { key: "price_ai_telecaller_paise", label: "AI Telecaller Unit", icon: Bot,   color: C.glow, defaultPaise: 599900 },
           { key: "price_human_crm_seat_paise", label: "Human CRM Seat",    icon: User,  color: C.gbr,  defaultPaise: 199900 },
@@ -4222,13 +4314,8 @@ function TelecallersPanel({ token }: { token: string }) {
       </div>
 
       {seats.length === 0 && !loading ? (
-        <Card style={{ textAlign: "center" as const, padding: "40px 16px" }}>
-          <Headphones size={28} color={C.dim} />
-          <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800, marginTop: 10 }}>No telecaller calls in this period</div>
-          <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 4 }}>
-            Calls placed with click-to-call from the Desk or Leads pages appear here.
-          </div>
-        </Card>
+        <Card><Empty icon={Headphones} title="No telecaller calls in this period"
+          hint="Calls placed with click-to-call from the Desk or Leads pages appear here." /></Card>
       ) : (
         <>
           <Card style={{ marginBottom: 16 }}>
