@@ -199,7 +199,11 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
 
   // Imported lazily: this module is also loaded by tooling that has no ESL
   // socket, and the import opens one on construction.
-  const { fsl } = await import("../esl");
+  const { fsl, useRemoteAdmission } = await import("../esl");
+  // Admit through the API, which owns the ledger that click-to-calls use,
+  // so a campaign leg and a seat's call cannot both take the last channel.
+  // Idempotent; the first dispatch sets it for the life of the process.
+  useRemoteAdmission(API_URL, INTERNAL_SEC);
   const reason = campaign ? "" : String(recipient.metadata?.source || "");
   return fsl.originateOutbound(recipient.phone, cli, campaign?.id, 35, reason, recipient.id);
 }

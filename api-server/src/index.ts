@@ -5821,6 +5821,26 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// ── Trunk admission for other processes ──────────────────
+// The outbound-dispatcher dials campaigns from its own process, and this
+// process owns the ledger of outbound legs (esl.ts, trunkAdmit). Asking here
+// before each campaign leg is what stops a campaign call and a click-to-call
+// from both reading "one channel left" and both taking it. Loopback only in
+// practice (the dispatcher uses API_URL=127.0.0.1), and behind the internal
+// secret regardless.
+//
+// The reservation is held for hold_ms and released here on a timer: that
+// covers the milliseconds between this reply and the dispatcher's leg
+// appearing in `show channels`, after which the channel count carries it.
+app.post("/internal/trunk/admit", verifyInternal, async (req, res) => {
+  const legs = Math.floor(Number(req.body?.legs));
+  if (!(legs >= 1 && legs <= 2)) return res.status(400).json({ error: "legs must be 1 or 2" });
+  const holdMs = Math.min(Math.max(Number(req.body?.hold_ms) || REMOTE_HOLD_MS, 500), 10_000);
+  const { counted, hold } = await trunkAdmit(legs);
+  if (hold) setTimeout(() => hold.release(), holdMs).unref();
+  res.json({ admitted: !!hold, counted });
+});
+
 app.get("/ready", async (_req, res) => {
   try {
     // Hit a cheap table to confirm DB reachable. Limit 1 = ~1ms.
@@ -5852,7 +5872,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // Added for Hey Nikki v4.0 — FreeSWITCH ESL + Jio/Vi SIP
 // ════════════════════════════════════════════════════════════════
 
-import { fsl, wireCallee } from "./esl";
+import { fsl, wireCallee, trunkAdmit, REMOTE_HOLD_MS } from "./esl";
 
 // ── Aggregate platform health check ──────────────────────────
 // Sprint 3 requirement: "Add FreeSWITCH, n8n, Activepieces, R2 to

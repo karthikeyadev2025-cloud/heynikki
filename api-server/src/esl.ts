@@ -259,7 +259,12 @@ export const CTC_LEGS = 2;
  * FreeSWITCH cannot see yet; admitClickToCall adds them.
  */
 export function clickToCallFits(inUse: number, ceiling = TRUNK_OUTBOUND_CEILING): boolean {
-  return inUse + CTC_LEGS <= ceiling;
+  return fitsOnTrunk(inUse, CTC_LEGS, ceiling);
+}
+
+/** The general form: `legs` more channels under the outbound ceiling. */
+export function fitsOnTrunk(inUse: number, legs: number, ceiling = TRUNK_OUTBOUND_CEILING): boolean {
+  return inUse + legs <= ceiling;
 }
 
 /* ── Closing the race between two seats ─────────────────────── */
@@ -289,32 +294,38 @@ export function clickToCallFits(inUse: number, ceiling = TRUNK_OUTBOUND_CEILING)
  * Call right behind another may briefly hear "lines busy". That is the
  * direction to be wrong in: a retry, never a call the trunk refuses.
  *
- * Campaign legs come from the outbound-dispatcher process and are not in
- * this counter; they are visible to it once dialled, like any channel.
+ * Every outbound leg on the trunk is admitted through this same counter:
+ * click-to-call, the API's test call and onboarding call, and campaign
+ * calls. Campaigns are dialled by the outbound-dispatcher, a different
+ * process, so it asks this one over loopback (useRemoteAdmission and
+ * POST /internal/trunk/admit). One process owns the count; that is what
+ * makes it a lock across both.
  */
 const AGENT_LEG_SEEN_MS  = 1_500;
 const BRIDGE_SEEN_MS     = 3_000;
 let pendingLegs = 0;
 
 export type LegHold = { release: (n?: number) => void };
+export type Admission = { counted: number; hold: LegHold | null };
 
 /** Legs currently reserved and not yet visible. Exported for tests. */
 export function pendingClickToCallLegs(): number { return pendingLegs; }
 
 /**
- * Count, check and reserve. The await is the ONLY suspension point: from
- * the moment the count arrives, the check and the reservation run without
- * yielding, so no other request can slip between them.
+ * Count, check and reserve `legs`. The await is the ONLY suspension point:
+ * from the moment the count arrives, the check and the reservation run
+ * without yielding, so no other request can slip between them.
  */
-export async function admitClickToCall(
+export async function admitLegs(
+  legs: number,
   countInUse: () => Promise<number>,
   ceiling = TRUNK_OUTBOUND_CEILING,
-): Promise<{ counted: number; hold: LegHold | null }> {
+): Promise<Admission> {
   const inUse   = await countInUse();
   const counted = inUse + pendingLegs;
-  if (!clickToCallFits(counted, ceiling)) return { counted, hold: null };
-  pendingLegs += CTC_LEGS;
-  let held = CTC_LEGS;
+  if (!fitsOnTrunk(counted, legs, ceiling)) return { counted, hold: null };
+  pendingLegs += legs;
+  let held = legs;
   return {
     counted,
     hold: {
@@ -326,6 +337,73 @@ export async function admitClickToCall(
       },
     },
   };
+}
+
+export function admitClickToCall(
+  countInUse: () => Promise<number>,
+  ceiling = TRUNK_OUTBOUND_CEILING,
+): Promise<Admission> {
+  return admitLegs(CTC_LEGS, countInUse, ceiling);
+}
+
+/* ── Who owns the count ─────────────────────────────────────── */
+
+/** How long the API holds a reservation made for another process: the gap
+ *  between the admission reply and the originate's leg appearing, which is
+ *  milliseconds, with room for a busy event loop. */
+export const REMOTE_HOLD_MS = 3_000;
+
+/** A reservation the API holds and releases on its own timer. */
+const HELD_ELSEWHERE: LegHold = { release() {} };
+
+// In the api-server this is the only admitter: it counts against this
+// module's own ledger.
+let admitter: (legs: number) => Promise<Admission> =
+  (legs) => admitLegs(legs, () => fsl.channelsInUse());
+
+/** Reserve `legs` outbound channels, wherever the count lives. */
+export function trunkAdmit(legs: number): Promise<Admission> {
+  return admitter(legs);
+}
+
+/**
+ * For a process that is not the api-server (the outbound-dispatcher): admit
+ * through the API, so campaign legs and click-to-calls share one ledger.
+ *
+ * If the API cannot be reached this counts locally, as before. That is
+ * safe rather than a gap: every click-to-call goes through the API, so while
+ * it is down there is no click-to-call to race with.
+ */
+export function useRemoteAdmission(apiUrl: string, secret: string): void {
+  const url = `${apiUrl.replace(/\/$/, "")}/internal/trunk/admit`;
+  admitter = async (legs) => {
+    try {
+      const r = await fetch(url, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "X-Internal-Secret": secret },
+        body:    JSON.stringify({ legs, hold_ms: REMOTE_HOLD_MS }),
+        signal:  AbortSignal.timeout(3_000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j: any = await r.json();
+      return { counted: Number(j.counted) || 0, hold: j.admitted ? HELD_ELSEWHERE : null };
+    } catch (e: any) {
+      console.warn("[esl] trunk admission via the API failed, counting locally:", e?.message || e);
+      return admitLegs(legs, () => fsl.channelsInUse());
+    }
+  };
+}
+
+/** Admit one outbound leg, or refuse in the words the dispatcher reads as
+ *  "full, retry in 90 s" (isTrunkBusy matches "trunk busy"). */
+async function admitOneLeg(what: string): Promise<LegHold> {
+  const { counted, hold } = await trunkAdmit(1);
+  if (!hold) {
+    throw new Error(
+      `SWITCH_CONGESTION: trunk busy, ${counted}/${TRUNK_CHANNELS} channels in use or reserved ` +
+      `(${what} needs 1; outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
+  }
+  return hold;
 }
 
 export class FreeSwitchESL {
@@ -365,7 +443,7 @@ export class FreeSwitchESL {
     // been dialled would ring them for a call that can never connect.
     // admitClickToCall also reserves this call's two legs, so a seat
     // pressing Call in the same instant counts them (see pendingLegs).
-    const { counted, hold } = await admitClickToCall(() => this.channelsInUse());
+    const { counted, hold } = await trunkAdmit(CTC_LEGS);
     if (!hold) {
       throw new Error(
         `SWITCH_CONGESTION: trunk busy, ${counted}/${TRUNK_CHANNELS} channels in use or reserved ` +
@@ -517,12 +595,12 @@ export class FreeSwitchESL {
     // call a business; outbound is a reminder that can wait five minutes,
     // and an outbound burst that fills the trunk makes the business
     // uncontactable — the one failure a receptionist product cannot have.
-    const inUse = await this.channelsInUse();
-    if (inUse >= TRUNK_OUTBOUND_CEILING) {
-      throw new Error(
-        `SWITCH_CONGESTION: trunk busy, ${inUse}/${TRUNK_CHANNELS} channels in use ` +
-        `(outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
-    }
+    //
+    // Admitted through the shared ledger (trunkAdmit), not a bare count: the
+    // dispatcher runs several of these at once and click-to-calls arrive in
+    // another process, and a count read before anyone's leg appears lets all
+    // of them through together.
+    const hold = await admitOneLeg("a campaign call");
 
     const sipCli = wireCli(cli);
 
@@ -558,14 +636,22 @@ export class FreeSwitchESL {
       `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(digits)} ` +
       `camp_${digits} XML heynikki`;
 
-    const response = await eslCommand(cmd, (timeoutSec + 10) * 1000);
-    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
-    if (match) return match[1];
+    // The leg is visible to `show channels` almost as soon as the originate
+    // is sent; the reservation only has to cover that gap.
+    const seen = setTimeout(() => hold.release(), AGENT_LEG_SEEN_MS);
+    try {
+      const response = await eslCommand(cmd, (timeoutSec + 10) * 1000);
+      const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
+      if (match) return match[1];
 
-    // NO_ANSWER / USER_BUSY / CALL_REJECTED are normal campaign outcomes, not
-    // faults — the caller sees them as a status, not an error.
-    const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
-    throw new Error(`originate failed: ${reason}`);
+      // NO_ANSWER / USER_BUSY / CALL_REJECTED are normal campaign outcomes, not
+      // faults — the caller sees them as a status, not an error.
+      const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
+      throw new Error(`originate failed: ${reason}`);
+    } finally {
+      clearTimeout(seen);
+      hold.release();
+    }
   }
 
   /**
@@ -596,6 +682,10 @@ export class FreeSwitchESL {
     if (!cli)      throw new Error("Onboarding needs a caller ID we own");
     if (tenant.length !== 36) throw new Error("Onboarding needs a tenant");
 
+    // It dialled with no capacity check at all; it is a trunk leg like any
+    // other and goes through the same ledger.
+    const hold = await admitOneLeg("an onboarding call");
+
     const vars = [
       `origination_caller_id_number=${wireCli(cli)}`,
       `origination_caller_id_name=HeyNikki`,
@@ -606,15 +696,21 @@ export class FreeSwitchESL {
       `onboard_tenant=${tenant}`,
     ].join(",");
 
-    const response = await eslCommand(
-      `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(digits)} ` +
-      `onb_${digits} XML heynikki`,
-      (timeoutSec + 10) * 1000,
-    );
-    const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
-    if (match) return match[1];
-    const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
-    throw new Error(`onboarding originate failed: ${reason}`);
+    const seen = setTimeout(() => hold.release(), AGENT_LEG_SEEN_MS);
+    try {
+      const response = await eslCommand(
+        `api originate {${vars}}sofia/gateway/jio_primary/${wireCallee(digits)} ` +
+        `onb_${digits} XML heynikki`,
+        (timeoutSec + 10) * 1000,
+      );
+      const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
+      if (match) return match[1];
+      const reason = (response.match(/-ERR\s+([A-Z_]+)/) || [])[1] || response.slice(0, 120);
+      throw new Error(`onboarding originate failed: ${reason}`);
+    } finally {
+      clearTimeout(seen);
+      hold.release();
+    }
   }
 
   /**
