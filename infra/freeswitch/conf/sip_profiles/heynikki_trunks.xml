@@ -47,10 +47,23 @@
   </gateway>
 
   <!-- ══════════════════════════════════════════════════════════
-    VI BUSINESS FAILOVER — not purchased. Deliberately absent so it
-    cannot spam registration failures that mask real Jio errors.
-    The dialplan bridges "jio_primary|vi_failover" and FreeSWITCH
-    simply skips a gateway that isn't defined.
+    VI BUSINESS FAILOVER — not purchased, and decided against (22 Sep
+    2026). Deliberately absent so it cannot spam registration failures
+    that mask real Jio errors. The dialplan bridges
+    "jio_primary|vi_failover" and FreeSWITCH simply skips a gateway that
+    isn't defined.
+
+    Why not Vi: it could not protect INBOUND. Customers ring the Jio
+    DIDs, and when the Jio circuit is down those calls never reach this
+    box. Outbound over Vi would need a Vi CLI (presenting a Jio DID on
+    Vi is CLI spoofing, which gets a trunk suspended), and it would ride
+    the Wi-Fi uplink rather than a circuit.
+
+    What covers a Jio outage instead: carrier-side forwarding, to be
+    requested from Jio (decided 22 Sep). When our SBC does not answer,
+    Jio routes calls for the DIDs to a mobile number. That happens
+    entirely at Jio; there is nothing to configure here. It answers the
+    21 Sep outage (see checkGateway in api-server/src/watchdog.ts).
     ══════════════════════════════════════════════════════════ -->
 
 </include>
