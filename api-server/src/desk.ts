@@ -90,7 +90,7 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     const tenantId = await getTenantId(req.user.id);
     if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
-    const [{ data: did }, { data: members }, { data: recent }, me] = await Promise.all([
+    const [{ data: did }, { data: members }, { data: recent }, me, numbers] = await Promise.all([
       sb.from("dids").select("number, routing_mode, missed_call_guard")
         .eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
       sb.from("tenant_users").select("id, user_id, role, phone, display_name")
@@ -99,6 +99,14 @@ export function mountDeskRoutes(app: Express, d: Deps) {
         .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid")
         .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(30),
       membership(req.user.id, tenantId),
+      // Every number, for the outgoing-caller-ID switches. Falls back to a
+      // read without use_for_outbound while 064 is not applied.
+      sb.from("dids").select("number, use_for_outbound")
+        .eq("tenant_id", tenantId).eq("status", "assigned").order("number")
+        .then(async (r: any) => r.error
+          ? ((await sb.from("dids").select("number").eq("tenant_id", tenantId)
+               .eq("status", "assigned").order("number")).data || []).map((d: any) => ({ ...d, use_for_outbound: true }))
+          : (r.data || [])),
     ]);
     // Incoming calls that reached people: answered by a seat (transferred)
     // or rang out to the guard (missed). Seven days — this is a to-do list,
@@ -151,6 +159,7 @@ export function mountDeskRoutes(app: Express, d: Deps) {
         ...(day.by.get(s.user_id) || {}),
       })) : null,
       did:           did?.number || null,
+      numbers:       (numbers as any[]).map(n => ({ number: n.number, use_for_outbound: n.use_for_outbound !== false })),
       routing_mode:  did?.routing_mode || "ai",
       seats,
       ring_count:    seats.filter(s => s.phone).length,
@@ -217,6 +226,39 @@ export function mountDeskRoutes(app: Express, d: Deps) {
       tenantId, actorId: req.user.id, req, metadata: { routing_mode: mode, numbers: did.map((x: any) => x.number) },
     });
     res.json({ ok: true, routing_mode: mode });
+  });
+
+  // POST /api/desk/numbers/:number/outbound { enabled } — owner only.
+  // Whether outgoing calls may show this number as caller ID (064). Off
+  // makes it incoming-only; it keeps answering calls either way. The last
+  // outgoing number cannot be switched off — there would be nothing left
+  // to dial as.
+  app.post("/api/desk/numbers/:number/outbound", verifyJWT, apiLimiter, async (req: any, res) => {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+    const me = await membership(req.user.id, tenantId);
+    if (!isOwner(me)) return res.status(403).json({ error: "Only the owner can change which numbers call out." });
+    const enabled = req.body?.enabled === true;
+    const number = String(req.params.number || "");
+
+    const { data: mine, error: readErr } = await sb.from("dids")
+      .select("number, use_for_outbound").eq("tenant_id", tenantId).eq("status", "assigned");
+    if (readErr) {
+      return res.status(503).json({ error: "This setting isn't available yet — the database needs migration 064." });
+    }
+    if (!(mine || []).some((d: any) => d.number === number)) {
+      return res.status(404).json({ error: "That number isn't on this account." });
+    }
+    if (!enabled && !(mine || []).some((d: any) => d.number !== number && d.use_for_outbound !== false)) {
+      return res.status(409).json({ error: "At least one number has to make outgoing calls." });
+    }
+    const { error } = await sb.from("dids").update({ use_for_outbound: enabled })
+      .eq("tenant_id", tenantId).eq("number", number);
+    if (error) return res.status(500).json({ error: error.message });
+    await audit("desk.number_outbound_changed", {
+      tenantId, actorId: req.user.id, req, metadata: { number, use_for_outbound: enabled },
+    });
+    res.json({ ok: true, number, use_for_outbound: enabled });
   });
 
   // POST /api/desk/seat { member_id?, phone, display_name } — a person edits

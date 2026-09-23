@@ -3135,19 +3135,8 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
-  // TRAI hours apply to this dial too. Every other outbound path clamps to
-  // 09:00–21:00 IST; this one did not, so the one button in the product that
-  // says "ring my phone now" was also the one that would do it at 2am.
-  const istMin = Math.floor((Date.now() + 5.5 * 3600_000) / 60000) % 1440;
-  if (istMin < 9 * 60 || istMin >= 21 * 60) {
-    return res.status(409).json({
-      error: "Test calls run between 9am and 9pm IST — the same hours we're allowed to call your customers.",
-    });
-  }
-
-  const [{ data: did }, { data: owner }, { data: tenant }] = await Promise.all([
-    sb.from("dids").select("number").eq("tenant_id", tenantId)
-      .eq("status", "assigned").limit(1).maybeSingle(),
+  // No calling-hours check: outbound calling is allowed at any hour (062).
+  const [{ data: owner }, { data: tenant }] = await Promise.all([
     sb.from("tenant_users").select("phone").eq("tenant_id", tenantId)
       // Any member with a phone, owner first. Requiring role='owner'
       // excluded the platform's own tenant, whose single member is a
@@ -3155,6 +3144,8 @@ app.post("/api/test-call", verifyJWT, async (req: any, res) => {
       .not("phone", "is", null).order("role").limit(1).maybeSingle(),
     sb.from("tenants").select("credit_minutes, plan").eq("id", tenantId).maybeSingle(),
   ]);
+  // One of the business's outgoing numbers, as its customers would see it.
+  const did = await outboundCli(sb, tenantId, owner?.phone || "");
 
   if (!did?.number) {
     return res.status(409).json({
@@ -4434,8 +4425,7 @@ app.post("/api/admin/onboarding-call/:tenantId", verifySuperAdmin, async (req: a
   // Dialled FROM a number we own. Any assigned DID works — the pipeline uses
   // it only to resolve the tenant's profile, and presenting a number the
   // customer already knows is better than an unfamiliar one.
-  const { data: did } = await sb.from("dids")
-    .select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle();
+  const did = await outboundCli(sb, tenantId, owner.phone);
   const { data: anyDid } = did ? { data: did } : await sb.from("dids")
     .select("number").eq("status", "available").limit(1).maybeSingle();
   const cli = (did || anyDid)?.number;
@@ -4909,6 +4899,7 @@ import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
 import { mountOwnerAlerts, sendOwnerEmail } from "./owner-alerts";
+import { outboundCli } from "./outbound-cli";
 import { mountAdminExtras } from "./admin-extras";
 import { mountAdminOps } from "./admin-ops";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
@@ -7101,10 +7092,9 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     const cfg = await getPlatformConfig();
     const engine = cfg["telephony_engine"] || "freeswitch";
 
-    // Get tenant's DID for masked CLI
-    const { data: did } = await sb.from("dids")
-      .select("number, voice_profile_id").eq("tenant_id", tenantId).eq("status", "assigned")
-      .limit(1).maybeSingle();
+    // The caller ID the customer sees: one of the business's outgoing
+    // numbers, the same one every time for this customer.
+    const did = await outboundCli(sb, tenantId, String(customer_number || ""));
 
     // Desk calls ride the same trunk and are billed the same minute, so
     // the same gate applies: a trial with no credits left cannot dial.

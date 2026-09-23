@@ -29,6 +29,7 @@ import { createClient } from "@supabase/supabase-js";
 import { notifyApiCallback, API_CALL_SOURCE } from "../api-callbacks";
 import { minutesGate } from "../usage";
 import { scrubDnd } from "../dnd";
+import { outboundDids, pickFor, type OutboundDid } from "../outbound-cli";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -146,18 +147,20 @@ async function campaignStillRunning(campaignId: string): Promise<boolean> {
 // no campaign row to pull voice_profile_id or a script from, so those
 // come from the recipient row itself for that case.
 /**
- * The CLI to dial out as. MUST be a DID this tenant actually owns — a spoofed
- * caller ID on an Indian trunk gets the trunk suspended, not just the call
- * rejected. Cached per tenant for the life of the process; DIDs change about
- * as often as the tenant signs a new contract.
+ * The numbers this tenant dials out as (see outbound-cli.ts). Cached for a
+ * minute, not for the life of the process: the owner can now switch a
+ * number between incoming-only and outgoing from the Desk, and the cache
+ * used to hold the first answer until the next deploy.
  */
-const cliCache = new Map<string, string | null>();
-async function tenantCli(tenantId: string): Promise<string | null> {
-  if (cliCache.has(tenantId)) return cliCache.get(tenantId)!;
-  const { data } = await sb.from("dids")
-    .select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle();
-  const cli = data?.number ?? null;
-  cliCache.set(tenantId, cli);
+const CLI_TTL_MS = 60_000;
+const cliCache = new Map<string, { at: number; dids: OutboundDid[] }>();
+async function tenantCli(tenantId: string, customer: string): Promise<string | null> {
+  let hit = cliCache.get(tenantId);
+  if (!hit || Date.now() - hit.at > CLI_TTL_MS) {
+    hit = { at: Date.now(), dids: await outboundDids(sb, tenantId) };
+    cliCache.set(tenantId, hit);
+  }
+  const cli = pickFor(hit.dids, customer)?.number ?? null;
   if (!cli) console.error(`[dispatcher] tenant ${tenantId} has no assigned DID — cannot dial out`);
   return cli;
 }
@@ -194,7 +197,7 @@ async function dispatchCall(recipient: any, campaign: any | null): Promise<strin
   const tenantId = recipient.tenant_id || campaign?.tenant_id;
   if (!tenantId) throw new Error("recipient has no tenant");
 
-  const cli = await tenantCli(tenantId);
+  const cli = await tenantCli(tenantId, recipient.phone);
   if (!cli) throw new Error("no assigned DID to dial out as");
 
   // Imported lazily: this module is also loaded by tooling that has no ESL

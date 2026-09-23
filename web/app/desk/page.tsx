@@ -49,6 +49,7 @@ type TeamCall = {
 };
 type Desk = {
   did: string | null; routing_mode: "ai" | "hybrid" | "human"; seats: Seat[];
+  numbers?: { number: string; use_for_outbound: boolean }[];
   ring_count: number; you: { id: string; role: string; phone: string | null; display_name: string | null } | null;
   you_are_owner: boolean; recent: Recent[]; team_calls: TeamCall[];
   // Shifts and targets (migration 061). attendance_ready is false until the
@@ -166,7 +167,12 @@ export default function DeskPage() {
       <div style={{ maxWidth: 1100 }}>
         <p style={{ color: C.mid, fontSize: 13.5, margin: "0 0 18px", maxWidth: 680, lineHeight: 1.6 }}>
           Your team on the same number as Nikki. Dial out from here — your phone rings first, then the
-          customer, who sees <strong style={{ color: C.txt }}>{d?.did ? prettyNum(d.did) : "your business number"}</strong>.
+          customer, who sees {(() => {
+            const out = (d?.numbers || []).filter(n => n.use_for_outbound);
+            return out.length > 1
+              ? <>one of <strong style={{ color: C.txt }}>{out.map(n => prettyNum(n.number)).join(" / ")}</strong> — always the same one for that customer</>
+              : <strong style={{ color: C.txt }}>{out[0] ? prettyNum(out[0].number) : d?.did ? prettyNum(d.did) : "your business number"}</strong>;
+          })()}.
           Choose who answers incoming calls, and give every seat a phone so it rings.
         </p>
         {err && (
@@ -187,6 +193,7 @@ export default function DeskPage() {
           <div style={{ display: "grid", gap: 16 }}>
             <TeamToday d={d} api={api} onSaved={load} tick={tick} />
             <Routing d={d} api={api} onSaved={load} />
+            <Numbers d={d} api={api} onSaved={load} />
             <Seats d={d} api={api} onSaved={load} />
           </div>
         </div>
@@ -466,6 +473,55 @@ function Routing({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── Numbers ────────────────────────────────────────────────────────────
+// Which numbers outgoing calls show as caller ID. Every number answers
+// incoming calls; switching one off here only keeps it off outgoing calls,
+// so a business can publish one number and dial out from the others.
+function Numbers({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) => Promise<any>; onSaved: () => void }) {
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState<{ bad?: boolean; text: string } | null>(null);
+  const nums = d?.numbers || [];
+  if (!d || nums.length < 2) return null;   // one number: nothing to choose
+
+  async function toggle(n: { number: string; use_for_outbound: boolean }) {
+    setBusy(n.number); setMsg(null);
+    try {
+      await api(`/api/desk/numbers/${encodeURIComponent(n.number)}/outbound`, { enabled: !n.use_for_outbound });
+      setMsg({ text: "Saved — applies to the next call." }); onSaved();
+    } catch (e: any) { setMsg({ bad: true, text: e.message }); }
+    setBusy("");
+  }
+
+  return (
+    <Card title="Your numbers" icon={<PhoneOutgoing size={15} />}>
+      <div style={{ display: "grid", gap: 8 }}>
+        {nums.map(n => (
+          <div key={n.number} style={{ display: "flex", alignItems: "center", gap: 10, background: C.hi,
+            border: `1px solid ${C.bord}`, borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{prettyNum(n.number)}</div>
+              <div style={{ fontSize: 11.5, color: C.mid, marginTop: 2 }}>
+                {n.use_for_outbound ? "Answers calls · makes outgoing calls" : "Answers calls only"}
+              </div>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.mid,
+              cursor: d.you_are_owner ? "pointer" : "default" }}>
+              <input type="checkbox" checked={n.use_for_outbound}
+                disabled={!d.you_are_owner || !!busy} onChange={() => toggle(n)} />
+              {busy === n.number ? "Saving…" : "Outgoing"}
+            </label>
+          </div>
+        ))}
+        <div style={{ fontSize: 11.5, color: msg?.bad ? C.red : msg ? C.grn : C.dim }}>
+          {msg?.text || (d.you_are_owner
+            ? "Outgoing calls share the ticked numbers, and each customer always sees the same one."
+            : "Only the owner can change this.")}
+        </div>
+      </div>
     </Card>
   );
 }
