@@ -57,6 +57,24 @@ const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 }
+// Same rule as windowProblem() in api-server/src/campaign-import.ts. The
+// create form inserts straight into the table, so this is its only check.
+// A window ending before it starts is overnight only when it starts after
+// midday and ends by the next one — 02:15–02:10 was a slip that dialled for
+// nearly 24 hours.
+function windowProblem(ws: string, we: string): string | null {
+  if (we >= ws) return null;
+  if (ws >= "12:00" && we <= "12:00") return null;
+  return `Call-until (${we}) is before call-from (${ws}). For calls through the night, start after 12:00 and end by 12:00 the next day; for all day, use the same time for both.`;
+}
+/** What a window means in words, shown under the time inputs. */
+function windowNote(ws: string, we: string): string {
+  if (!ws || !we) return "";
+  if (ws === we) return "Calls all day, around the clock.";
+  if (windowProblem(ws, we)) return "";
+  return we > ws ? `Calls ${ws}–${we} IST each day.`
+    : `Calls overnight: ${ws} IST until ${we} IST the next morning.`;
+}
 function fmtDay(d: string): string {
   const [y, m, dd] = d.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, dd)).toLocaleDateString("en-IN",
@@ -327,8 +345,11 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
           <input type="number" min={1} max={25} style={inputStyle} value={f.max_concurrent}
             onChange={e => setF(v => ({ ...v, max_concurrent: parseInt(e.target.value) || 1 }))} />)}
       </div>
+      <p style={{ fontSize: 12, color: windowProblem(f.window_start, f.window_end) ? C.red : C.mid, margin: "0 0 12px" }}>
+        {windowProblem(f.window_start, f.window_end) || windowNote(f.window_start, f.window_end)}
+      </p>
       <div style={{ display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
-        <button disabled={saving} onClick={async () => {
+        <button disabled={saving || !!windowProblem(f.window_start, f.window_end)} onClick={async () => {
           setSaving(true);
           await onSave({
             start_date: f.start_date || null, end_date: f.end_date || null,
@@ -430,6 +451,8 @@ export default function CampaignsPage() {
       setError("Name and script are both required."); return;
     }
     if (!tenantId) return;
+    const badWindow = windowProblem(form.window_start, form.window_end);
+    if (badWindow) { setError(badWindow); return; }
     if (form.start_date && form.end_date && form.end_date < form.start_date) {
       setError("Last calling day must be on or after the first."); return;
     }
@@ -446,7 +469,9 @@ export default function CampaignsPage() {
       max_concurrent: Math.min(form.max_concurrent || 3, 25),
     });
     if (e) {
-      setError(/trai_window/.test(e.message)
+      setError(/window_sane/.test(e.message)
+        ? windowProblem(form.window_start, form.window_end) || "Those calling hours aren't valid — check call-from and call-until."
+        : /trai_window/.test(e.message)
         ? "Calling hours outside 09:00–21:00 can't be saved on this account yet — contact support."
         : /start_date|end_date/.test(e.message)
         ? "Calling days can't be saved on this account yet — leave both days blank for now, or contact support."
@@ -618,6 +643,9 @@ export default function CampaignsPage() {
                   onChange={e => setForm(f => ({ ...f, max_concurrent: parseInt(e.target.value) || 1 }))} />
               </div>
             </div>
+            <p style={{ fontSize: 12, color: windowProblem(form.window_start, form.window_end) ? C.red : C.mid, margin: "0 0 8px" }}>
+              {windowProblem(form.window_start, form.window_end) || windowNote(form.window_start, form.window_end)}
+            </p>
             <p style={{ fontSize: 12, color: C.dim, marginTop: 0, marginBottom: 16 }}>
               Leave the days blank to dial from the moment you press Start until the
               list is done. Calls go out only inside your window. It can cross midnight

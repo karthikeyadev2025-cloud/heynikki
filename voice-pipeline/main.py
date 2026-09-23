@@ -4153,6 +4153,12 @@ class NikkiAgent:
             # _enrich_appointment sends it once the date is actually known.
             if not (self.slots.get("date") or self.slots.get("time")):
                 log.info("[FS] confirmation held — slot not captured yet, will send after enrichment")
+                # The booking exists whether or not the confirmation waits.
+                # Returning before the flag below left appointment_created
+                # false on a call with a booked appointment (8ae4e91d, 24 Sep),
+                # and enrichment only sets it when it finds a slot to send.
+                if appt_id:
+                    await self.db.update_call(self.call_id, {"appointment_created": True})
                 return
 
             sent = False
@@ -8823,6 +8829,36 @@ async def freeswitch_ws(
     cfg           = {}
     disclosure_sent = False
 
+    # Read the socket from the moment the call connects. The disclosure,
+    # the caller lookups and the greeting take 8-10s before the main loop
+    # below starts, and nothing read the socket in that time: FreeSWITCH
+    # pushed the caller's audio into a socket nobody was draining. On 24 Sep
+    # (call 1ad2ffa8, 32s long) the pipeline received about 6s of audio and
+    # the caller's "Hello?" was never answered; 27801d2a lost ~20s the same
+    # night. Frames wait here instead, stamped with when they arrived.
+    frame_q: "asyncio.Queue" = asyncio.Queue()
+
+    async def _pump_frames() -> None:
+        try:
+            while True:
+                m = await ws.receive()
+                frame_q.put_nowait((time.monotonic(), m))
+                if m.get("type") == "websocket.disconnect":
+                    return
+        except Exception as e:  # noqa: BLE001
+            log.info(f"[FS] {fs_uuid}: socket read ended ({e})")
+            frame_q.put_nowait((time.monotonic(), {"type": "websocket.disconnect"}))
+
+    pump_task = asyncio.create_task(_pump_frames())
+    # Audio that arrived before she started listening. It is recorded, but
+    # never treated as speech: the caller saying "Hello?" over the disclosure
+    # used to be read all at once when the loop started, "barged in" on the
+    # greeting 0.1s after it began and cut it off — so the caller heard the
+    # disclosure, then nothing.
+    listen_from = float("inf")
+    last_frame_at = time.monotonic()
+    stall_logged = False
+
     try:
         # Load platform config for automation routing
         cfg = await _read_platform_config()
@@ -8878,6 +8914,7 @@ async def freeswitch_ws(
                 "Do not greet or introduce yourself again. If the caller only says "
                 "'hello' or talks over you, they may not have heard it: say in one "
                 "short sentence who you are and why you are on the line, then listen.")
+        listen_from = time.monotonic()
         if greet:
             await _send_audio_to_freeswitch(ws, greet, fs_uuid, 1)
             speaking["until"] = time.monotonic() + _wav_duration_secs(greet)
@@ -8886,7 +8923,7 @@ async def freeswitch_ws(
         # Main audio loop
         while True:
             try:
-                message = await asyncio.wait_for(ws.receive(), timeout=120.0)
+                arrived, message = await asyncio.wait_for(frame_q.get(), timeout=120.0)
             except asyncio.TimeoutError:
                 log.warning(f"[FS] {fs_uuid}: 120s timeout — hanging up")
                 # It said "hanging up" and only left the loop: the channel
@@ -8917,6 +8954,16 @@ async def freeswitch_ws(
             # ── Binary audio frame ────────────────────────────────────────────
             if message.get("type") == "websocket.receive" and message.get("bytes"):
                 frame = bytes(message["bytes"])
+                # FreeSWITCH sends a frame every 20ms for as long as the call
+                # is up. A gap means the caller's audio stopped reaching us
+                # and she can no longer hear them — say so, once per gap.
+                if arrived - last_frame_at > 3.0 and not stall_logged:
+                    log.warning(f"[FS] {fs_uuid}: no caller audio for "
+                                f"{arrived - last_frame_at:.1f}s")
+                    stall_logged = True
+                elif arrived - last_frame_at <= 3.0:
+                    stall_logged = False
+                last_frame_at = arrived
 
                 # Derive the VAD counters from the ACTUAL frame duration
                 # rather than assuming 20ms. mod_audio_stream's
@@ -8960,6 +9007,8 @@ async def freeswitch_ws(
                     log.warning(f"[FS] {fs_uuid}: fallback recording buffer full at "
                                 f"{_RECORDING_MAX_BYTES // (1024 * 1024)}MB — "
                                 "the mixed recording is unaffected")
+                if arrived < listen_from:
+                    continue
 
                 # ── Held-fragment flush ─────────────────────────────────
                 # If nothing followed the fragment for ~1.6s, it was the whole
@@ -9316,6 +9365,7 @@ async def freeswitch_ws(
         # written — and a keyword booking still being inserted lost the race
         # with _enrich_appointment, which found no appointment_id and left
         # the row bare.
+        pump_task.cancel()
         _mine = [t for t in (turn_task, pending_runner.get("t"),
                              speaking.get("clause_task"), *classify_tasks)
                  if t is not None and not t.done()]

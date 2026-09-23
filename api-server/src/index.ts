@@ -6556,10 +6556,22 @@ app.post("/webhooks/whatsapp", async (req, res) => {
           // to answer. Terminal states only — 'sent' here would overwrite a
           // later 'delivered' depending on webhook ordering.
           if (["delivered", "read", "failed"].includes(st.status) && st.id) {
-            const { error: stErr } = await sb.from("wa_dispatch_log")
+            const { data: logged, error: stErr } = await sb.from("wa_dispatch_log")
               .update({ status: st.status })
-              .eq("provider_msg_id", st.id);
+              .eq("provider_msg_id", st.id)
+              .select("call_id");
             if (stErr) console.error("[WhatsApp] status reconcile failed:", stErr.message);
+            // n8n sends the appointment confirmation and the brochure itself,
+            // so only its wa_dispatch_log row knows the call — calls.wa_sent
+            // stayed false on calls whose WhatsApp was delivered and read,
+            // and the dashboard under-counted. Delivery is what the flag
+            // means, so it is set here, from Meta's own receipt.
+            const callIds = (logged || []).map((r: any) => r.call_id).filter(Boolean);
+            if (st.status !== "failed" && callIds.length) {
+              const { error: wsErr } = await sb.from("calls")
+                .update({ wa_sent: true }).in("id", callIds).or("wa_sent.is.null,wa_sent.eq.false");
+              if (wsErr) console.error("[WhatsApp] wa_sent from receipt failed:", wsErr.message);
+            }
           }
         }
       }

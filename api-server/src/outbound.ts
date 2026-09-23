@@ -14,7 +14,7 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { phoneForms, HHMM } from "./campaign-import";
+import { phoneForms, HHMM, windowProblem } from "./campaign-import";
 
 export function mountOutboundRoutes(
   app:     Express,
@@ -36,6 +36,8 @@ export function mountOutboundRoutes(
     if (!HHMM.test(ws) || !HHMM.test(we)) {
       return res.status(400).json({ error: "window_start and window_end must be HH:MM" });
     }
+    const badWindow = windowProblem(ws, we);
+    if (badWindow) return res.status(400).json({ error: badWindow });
 
     const { data, error } = await sb.from("outbound_campaigns").insert({
       tenant_id, name, script, voice_profile_id,

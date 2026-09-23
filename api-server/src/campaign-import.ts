@@ -134,6 +134,16 @@ async function optedOutAmong(sb: SupabaseClient, tenantId: string, phones: strin
 // end means around the clock (see withinWindow in the dispatcher).
 export const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// A window that ends before it starts is read as overnight, which turns a
+// slip of the finger into a near-24-hour window: 02:15–02:10 was saved and
+// dialled at once. Only accept it as overnight when it really is one —
+// starting in the afternoon or evening and ending by the next midday.
+export function windowProblem(ws: string, we: string): string | null {
+  if (we >= ws) return null;
+  if (ws >= "12:00" && we <= "12:00") return null;
+  return `Call-until (${we}) is before call-from (${ws}). For calls through the night, start after 12:00 and end by 12:00 the next day; for all day, use the same time for both.`;
+}
+
 // IST calendar day as YYYY-MM-DD — the same form the date columns come back in.
 function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -441,6 +451,8 @@ export function mountCampaignImport(
     if (!HHMM.test(ws) || !HHMM.test(we)) {
       return res.status(400).json({ error: "This campaign's calling hours are unreadable — set them again first" });
     }
+    const badWindow = windowProblem(ws, we);
+    if (badWindow) return res.status(400).json({ error: badWindow });
     if (!c.consent_declared) {
       return res.status(400).json({
         error: "This campaign has no consent declaration — import a list first",
@@ -492,6 +504,8 @@ export function mountCampaignImport(
       upd.max_concurrent = n;
     }
     const next = { ...c, ...upd };
+    const badWindow = windowProblem(String(next.window_start).slice(0, 5), String(next.window_end).slice(0, 5));
+    if (badWindow) return res.status(400).json({ error: badWindow });
     if (next.start_date && next.end_date && next.end_date < next.start_date) {
       return res.status(400).json({ error: "End date must be on or after the start date" });
     }

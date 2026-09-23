@@ -371,6 +371,10 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
       signal: AbortSignal.timeout(15000),
     });
     const j: any = await r.json().catch(() => ({}));
+    // Refused on purpose, not failed: no approved WhatsApp template says "we
+    // tried to reach you" (see /api/whatsapp/missed-call). Every no-answer
+    // logged this as an error. It stays unsent until that template exists.
+    if (j.skipped === "outbound_no_template") return;
     if (!r.ok || !j.ok) {
       console.error(`[dispatcher] no-answer follow-up to ${recipient.phone} not sent (${r.status})`);
       return;

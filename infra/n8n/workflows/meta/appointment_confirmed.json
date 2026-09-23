@@ -132,7 +132,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": \"{{ $node['Extract Fields'].json.call_id }}\",\n  \"message_type\": \"appointment_confirm\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"Missed call follow-up sent via n8n\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Missed Call Template'].json.id || '' }}\"\n}"
+        "jsonBody": "={\n  \"tenant_id\": \"{{ $node['Extract Fields'].json.tenant_id }}\",\n  \"call_id\": {{ JSON.stringify($node['Extract Fields'].json.call_id || null) }},\n  \"message_type\": \"appointment_confirm\",\n  \"to_number\": \"{{ $node['Extract Fields'].json.wa_number }}\",\n  \"message_body\": \"template:appointment_confirmed\",\n  \"status\": \"sent\",\n  \"provider_msg_id\": \"{{ $node['Send WhatsApp — Appointment Confirmation & 24h Reminder'].json.messages?.[0]?.id || '' }}\"\n}"
       },
       "id": "log-supabase",
       "name": "Log to Supabase wa_dispatch_log",
