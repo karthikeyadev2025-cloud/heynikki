@@ -54,7 +54,13 @@ export default function TeamCard() {
     });
     const j = await r.json();
     if (!r.ok) setMsg(j.error || "Could not send the invite");
-    else { setLink(j.link); setEmail(""); setMsg("Invite ready — send them this link."); load(); }
+    else {
+      setLink(j.link); setEmail("");
+      setMsg(j.emailed
+        ? `Invitation emailed to ${email.trim()}. You can also send them this link on WhatsApp.`
+        : "We couldn't email the invitation — send them this link instead.");
+      load();
+    }
     setBusy(false);
   };
 

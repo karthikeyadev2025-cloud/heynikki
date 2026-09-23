@@ -4908,7 +4908,7 @@ import { mountDeskRoutes } from "./desk";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
-import { mountOwnerAlerts } from "./owner-alerts";
+import { mountOwnerAlerts, sendOwnerEmail } from "./owner-alerts";
 import { mountAdminExtras } from "./admin-extras";
 import { mountAdminOps } from "./admin-ops";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
@@ -5503,7 +5503,8 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
     if (pending.role !== role) {
       await sb.from("tenant_invites").update({ role }).eq("id", pending.id);
     }
-    return res.json({ ok: true, link: inviteLink(pending.token), expires_at: pending.expires_at, reused: true });
+    const emailed = await emailInvite(email, tenantId, inviteLink(pending.token));
+    return res.json({ ok: true, link: inviteLink(pending.token), expires_at: pending.expires_at, reused: true, emailed });
   }
 
   // Seats are counted as people PLUS outstanding invites, or a business
@@ -5537,10 +5538,41 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
   const link = inviteLink(inv.token);
   await audit("team_invited", { tenantId, actorId: req.user.id, metadata: { email, role } });
 
-  // No email is sent — the link is returned instead, because a WhatsApp
-  // forward is how this actually reaches a colleague in practice.
-  res.json({ ok: true, link, expires_at: inv.expires_at });
+  // Emailed AND returned. The link alone relied on the owner forwarding it,
+  // and staff waiting for an invitation in their inbox never got one. The
+  // owner still gets the link, because a WhatsApp forward is often faster.
+  const emailed = await emailInvite(email, tenantId, link);
+  res.json({ ok: true, link, expires_at: inv.expires_at, emailed });
 });
+
+// The invitation email. Plain on purpose: one line on who invited them, one
+// button, and the link spelled out for mail clients that strip buttons.
+async function emailInvite(to: string, tenantId: string, link: string): Promise<boolean> {
+  const { data: t } = await sb.from("tenants").select("name").eq("id", tenantId).maybeSingle();
+  const biz = String(t?.name || "your team").replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;color:#0F172A">
+      <h2 style="font-size:20px;margin:0 0 12px">You're invited to join ${biz} on HeyNikki</h2>
+      <p style="font-size:15px;line-height:1.6;color:#475569;margin:0 0 20px">
+        ${biz} has added you to their team. Create your account to see their calls,
+        leads and bookings.
+      </p>
+      <p style="margin:0 0 20px">
+        <a href="${link}" style="display:inline-block;background:#12457A;color:#fff;
+           padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">
+          Join ${biz}
+        </a>
+      </p>
+      <p style="font-size:12px;color:#94A3B8;line-height:1.6;margin:0">
+        Or open this link: <a href="${link}" style="color:#12457A">${link}</a><br>
+        The link works once and expires in 14 days. If you weren't expecting this, ignore it.
+      </p>
+    </div>`;
+  const ok = await sendOwnerEmail(to, `Join ${String(t?.name || "your team")} on HeyNikki`, html);
+  if (!ok) console.error(`[team] invite email to ${to} was not sent`);
+  return ok;
+}
 
 app.post("/api/team/accept", verifyJWT, async (req: any, res) => {
   const token = String(req.body?.token || "").trim();
