@@ -40,6 +40,16 @@ const labelStyle: React.CSSProperties = {
 
 export default function LoginPage() {
   useEffect(() => { installAuthDeepLink(() => landingFor(createClient())); }, []);
+  // An invited colleague who already has an account comes here from the
+  // invite page. The dashboard redeems a stored invite after sign-in
+  // (Shell.tsx), password or Google alike — the link itself only has to
+  // survive this page.
+  useEffect(() => {
+    try {
+      const t = new URLSearchParams(window.location.search).get("invite");
+      if (t) localStorage.setItem("nikki_invite", t);
+    } catch {}
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   // Phone sign-in. Two steps in one component rather than a second page:

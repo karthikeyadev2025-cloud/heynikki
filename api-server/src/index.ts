@@ -5411,7 +5411,7 @@ app.get("/api/team", verifyJWT, async (req: any, res) => {
   const [{ data: members }, { data: invites }, { data: tenant }] = await Promise.all([
     sb.from("tenant_users").select("id, user_id, role, phone").eq("tenant_id", tenantId),
     sb.from("tenant_invites")
-      .select("id, email, role, created_at, expires_at")
+      .select("id, email, role, created_at, expires_at, token")
       .eq("tenant_id", tenantId).is("accepted_at", null)
       .order("created_at", { ascending: false }),
     sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle(),
@@ -5429,15 +5429,49 @@ app.get("/api/team", verifyJWT, async (req: any, res) => {
     withEmail.push({ ...m, email: u?.email || "—", is_you: m.user_id === req.user.id });
   }
 
+  const youAreOwner = (members || []).some((m: any) => m.user_id === req.user.id
+                     && ["owner", "super_admin"].includes(m.role));
+  // The link stays copyable. It was shown once, at invite time; after that
+  // the only way to get it again was to invite the person again — which
+  // deletes the link already sent to them. On 24 Sep two staff were invited
+  // five times between them and every earlier link they held was dead.
+  // Only the owner sees it: the token is the credential.
+  const inviteRows = (invites || []).map(({ token, ...i }: any) => ({
+    ...i, ...(youAreOwner ? { link: inviteLink(token) } : {}),
+  }));
+
   res.json({
     members: withEmail,
-    invites: invites || [],
+    invites: inviteRows,
     seats_used: (members || []).length + (invites || []).length,
     seats_total: plan?.max_seats ?? 1,
     plan: plan?.display_name || tenant?.plan || "trial",
-    you_are_owner: (members || []).some((m: any) => m.user_id === req.user.id
-                     && ["owner", "super_admin"].includes(m.role)),
+    you_are_owner: youAreOwner,
   });
+});
+
+function inviteLink(token: string): string {
+  return `${process.env.APP_URL || "https://www.heynikki.in"}/signup?invite=${token}`;
+}
+
+// What an invite link is, before anyone signs up. The signup page had no
+// way to tell, so a colleague opening one saw the new-business form —
+// "Business name", "100 minutes free" — and reasonably concluded the link
+// was wrong; a dead link only failed after they had signed up and confirmed
+// their email, silently, leaving them in an empty business of their own.
+// No session: the person has no account yet. The token is 24 random bytes,
+// so this reveals nothing to someone who does not already hold the link.
+app.get("/api/team/invite-preview", async (req, res) => {
+  const token = String(req.query.token || "").trim();
+  if (!/^[0-9a-f]{16,128}$/i.test(token)) return res.json({ status: "invalid" });
+  const { data: inv, error } = await sb.from("tenant_invites")
+    .select("tenant_id, role, email, accepted_at, expires_at").eq("token", token).maybeSingle();
+  if (error) return res.status(500).json({ error: "Could not check this invite" });
+  if (!inv) return res.json({ status: "invalid" });
+  const { data: t } = await sb.from("tenants").select("name").eq("id", inv.tenant_id).maybeSingle();
+  const status = inv.accepted_at ? "used"
+    : new Date(inv.expires_at) < new Date() ? "expired" : "valid";
+  res.json({ status, business: t?.name || "your team", role: inv.role, email: inv.email });
 });
 
 app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
@@ -5455,6 +5489,22 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
     return res.status(400).json({ error: "Enter a valid email address" });
   }
   const role = ["member", "support"].includes(String(req.body?.role)) ? req.body.role : "member";
+
+  // Re-inviting the same address hands back the link already issued while
+  // it is still good. Replacing it killed the link the person had been sent
+  // — owners re-invited because they could not find the link again, and on
+  // 24 Sep two staff held five dead links between them. An expired one is
+  // still replaced, so there is never more than one credential per seat.
+  const { data: pending } = await sb.from("tenant_invites")
+    .select("id, token, role, expires_at")
+    .eq("tenant_id", tenantId).eq("email", email).is("accepted_at", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (pending && new Date(pending.expires_at) > new Date()) {
+    if (pending.role !== role) {
+      await sb.from("tenant_invites").update({ role }).eq("id", pending.id);
+    }
+    return res.json({ ok: true, link: inviteLink(pending.token), expires_at: pending.expires_at, reused: true });
+  }
 
   // Seats are counted as people PLUS outstanding invites, or a business
   // could issue ten links against one seat and discover the cap only when
@@ -5476,8 +5526,6 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
     });
   }
 
-  // Re-inviting the same address replaces the old link rather than leaving
-  // two working credentials for one seat.
   await sb.from("tenant_invites").delete()
     .eq("tenant_id", tenantId).eq("email", email).is("accepted_at", null);
 
@@ -5486,7 +5534,7 @@ app.post("/api/team/invite", verifyJWT, async (req: any, res) => {
     .select("token, expires_at").single();
   if (error) return res.status(500).json({ error: error.message });
 
-  const link = `${process.env.APP_URL || "https://www.heynikki.in"}/signup?invite=${inv.token}`;
+  const link = inviteLink(inv.token);
   await audit("team_invited", { tenantId, actorId: req.user.id, metadata: { email, role } });
 
   // No email is sent — the link is returned instead, because a WhatsApp
@@ -5552,7 +5600,10 @@ app.post("/api/team/accept", verifyJWT, async (req: any, res) => {
   const solo = (existing || []).filter(r => r.role === "owner");
   const { error: delErr } = await sb.from("tenant_users").delete().eq("user_id", req.user.id);
   const { error: insErr } = delErr ? { error: delErr } : await sb.from("tenant_users")
-    .insert({ tenant_id: inv.tenant_id, user_id: req.user.id, role: inv.role });
+    .insert({ tenant_id: inv.tenant_id, user_id: req.user.id, role: inv.role,
+              // The mobile they gave at signup landed on the shell's row. The
+              // Desk dials a telecaller on this number, so it comes with them.
+              phone: (existing || []).find(r => r.phone)?.phone ?? null });
   if (insErr) {
     // Put them back where they were and release the invite, rather than
     // leaving a person with no business at all and a spent link.

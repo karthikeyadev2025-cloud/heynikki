@@ -46,10 +46,31 @@ export default function SignupPage() {
   // empty tenant — and the token is redeemed straight afterwards, which
   // moves them onto the team that invited them and clears the shell.
   const [inviteToken, setInviteToken] = useState<string | null>(null);
+  // What the link is, checked before they fill anything in. Without it an
+  // invited colleague saw the new-business form ("Business name", "100
+  // minutes free") and took the link for a wrong one, and a dead link only
+  // failed after signup and email confirmation, silently.
+  const [invite, setInvite] = useState<
+    { status: "loading" | "valid" | "expired" | "used" | "invalid" | "error";
+      business?: string; email?: string } | null>(null);
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("invite");
-    if (t) setInviteToken(t);
+    if (!t) return;
+    setInviteToken(t);
+    setInvite({ status: "loading" });
+    // Kept for the sign-in path too: someone who already has an account
+    // follows "Sign in" and joins from the dashboard.
+    try { localStorage.setItem("nikki_invite", t); } catch {}
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/team/invite-preview?token=${encodeURIComponent(t)}`)
+      .then(r => r.json())
+      .then(j => {
+        setInvite({ status: j.status || "error", business: j.business, email: j.email });
+        if (j.status === "valid" && j.email) setEmail(j.email);
+        if (j.status !== "valid") { try { localStorage.removeItem("nikki_invite"); } catch {} }
+      })
+      .catch(() => setInvite({ status: "error" }));
   }, []);
+  const joining = invite?.status === "valid";
 
   const [businessName, setBusinessName] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
@@ -76,7 +97,10 @@ export default function SignupPage() {
         // the owner's tenant_users row. Without it there is no address for a
         // single onboarding message — the first thing a customer would hear
         // from HeyNikki is a message their own caller triggered.
-        data: { business_name: businessName, owner_phone: ownerPhone },
+        // A colleague joining a team gives no business name: the shell
+        // tenant the signup trigger creates is removed when they join.
+        data: joining ? { owner_phone: ownerPhone }
+                      : { business_name: businessName, owner_phone: ownerPhone },
         // The invite rides through the verification link, because there is
         // no session to redeem it with until the address is confirmed.
         // Stored locally too, in case they verify in a different tab.
@@ -89,6 +113,64 @@ export default function SignupPage() {
     setDone(true);
     setLoading(false);
   };
+
+  if (done && joining) {
+    return (
+      <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, display: "flex",
+        alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{
+          background: J.vault, border: `1px solid ${J.border}`,
+          borderRadius: 16, padding: 40, maxWidth: 420, textAlign: "center",
+        }}>
+          <div style={{ marginBottom: 16, display: "flex", justifyContent: "center" }}><Mail size={44} /></div>
+          <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, color: J.chandra }}>
+            Check your email
+          </h2>
+          <p style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+            We sent a confirmation link to<br />
+            <span style={{ color: J.mercury, fontWeight: 700 }}>{email}</span>.<br />
+            Open it, and you&apos;ll join <strong style={{ color: J.chandra }}>{invite?.business}</strong>{" "}
+            automatically.
+          </p>
+          <p style={{ color: J.textDim, fontSize: 12, margin: 0 }}>
+            Can&apos;t see it? Check your spam folder — it arrives within a minute.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // A link that cannot be used says so now, not after signup.
+  if (invite && invite.status !== "valid" && invite.status !== "loading") {
+    const why = invite.status === "used" ? "This invite link has already been used."
+      : invite.status === "expired" ? "This invite link has expired."
+      : invite.status === "error" ? "We couldn't check this invite link. Check your connection and reload the page."
+      : "This invite link isn't valid — it may have been replaced by a newer one.";
+    return (
+      <div style={{ minHeight: "100vh", background: J.bg, display: "flex",
+        alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{
+          background: J.vault, border: `1px solid ${J.border}`,
+          borderRadius: 16, padding: 36, maxWidth: 420, textAlign: "center",
+        }}>
+          <div style={{ marginBottom: 16, display: "inline-block" }}>
+            <NikkiLogo size={64} variant="icon" />
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 10px", color: J.chandra }}>{why}</h2>
+          <p style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
+            {invite.status === "error"
+              ? "If it keeps happening, ask the person who invited you to send the link again."
+              : "Ask the person who invited you to copy your link again from their Team page and send it to you."}
+          </p>
+          {invite.status === "used" && (
+            <Link href="/login" style={{ color: J.mercury, fontWeight: 700, textDecoration: "none", fontSize: 14 }}>
+              Already joined? Sign in →
+            </Link>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (done) {
     return (
@@ -168,9 +250,11 @@ export default function SignupPage() {
           <h1 style={{
             fontSize: 22, fontWeight: 800, color: J.chandra,
             margin: "0 0 6px", letterSpacing: -0.5,
-          }}>Start free — 100 minutes</h1>
+          }}>{invite?.status === "loading" ? "Checking your invite…"
+               : joining ? `Join ${invite?.business} on HeyNikki` : "Start free — 100 minutes"}</h1>
           <div style={{ color: J.textMid, fontSize: 14 }}>
-            100 minutes free · No credit card required
+            {joining ? "You've been invited to their team. Create your account to join."
+                     : invite?.status === "loading" ? "\u00a0" : "100 minutes free · No credit card required"}
           </div>
         </div>
 
@@ -188,6 +272,7 @@ export default function SignupPage() {
               }}>{error}</div>
             )}
 
+            {!joining && (<>
             <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
               BUSINESS NAME
             </label>
@@ -200,14 +285,16 @@ export default function SignupPage() {
                 color: J.chandra, marginBottom: 14, outline: "none",
               }}
             />
+            </>)}
 
             <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
-              YOUR WHATSAPP NUMBER
+              {joining ? <>YOUR MOBILE NUMBER <span style={{ color: J.textDim, fontWeight: 400, letterSpacing: 0 }}>(optional)</span></>
+                       : "YOUR WHATSAPP NUMBER"}
             </label>
             <input
               type="tel" value={ownerPhone}
               onChange={e => setOwnerPhone(e.target.value.replace(/[^\d+ ]/g, ""))}
-              required inputMode="numeric" placeholder="98765 43210"
+              required={!joining} inputMode="numeric" placeholder="98765 43210"
               // The first organic signup typed eleven digits; last-10
               // truncation kept the wrong ten and their onboarding went to
               // a number starting with 4. Validate the shape HERE, where
@@ -221,7 +308,8 @@ export default function SignupPage() {
               }}
             />
             <div style={{ color: J.textDim, fontSize: 11.5, marginBottom: 14, lineHeight: 1.5 }}>
-              Where we send your setup updates. Not shown to your callers.
+              {joining ? "The number the Desk rings you on for calls. You can add it later."
+                       : "Where we send your setup updates. Not shown to your callers."}
             </div>
 
             <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
@@ -250,13 +338,13 @@ export default function SignupPage() {
               }}
             />
 
-            <button type="submit" disabled={loading} style={{
+            <button type="submit" disabled={loading || invite?.status === "loading"} style={{
               width: "100%", padding: "13px", fontSize: 15, fontWeight: 700,
               background: loading ? J.surface : J.grad,
               color: loading ? J.textMid : J.bg, border: "none", borderRadius: 10,
               cursor: loading ? "wait" : "pointer", marginBottom: 10,
             }}>
-              {loading ? "Creating account..." : "Start free →"}
+              {loading ? "Creating account..." : joining ? "Create account & join →" : "Start free →"}
             </button>
 
             {/* These were plain text. An agreement the user cannot read before
@@ -273,7 +361,7 @@ export default function SignupPage() {
 
         <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: J.textMid }}>
           Already have an account?{" "}
-          <Link href="/login" style={{ color: J.mercury, fontWeight: 700, textDecoration: "none" }}>
+          <Link href={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} style={{ color: J.mercury, fontWeight: 700, textDecoration: "none" }}>
             Sign in →
           </Link>
         </div>

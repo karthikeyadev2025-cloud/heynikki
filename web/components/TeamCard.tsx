@@ -125,6 +125,17 @@ export default function TeamCard() {
           <span style={{ color: C.mid }}>{i.email}</span>
           <span style={{ color: C.gold, fontSize: 12 }}>invited · not joined yet</span>
           <span style={{ flex: 1 }} />
+          {/* Copy the link already sent, rather than inviting again —
+              which replaces it and kills the one they have. */}
+          {i.link && (
+            <button type="button"
+              onClick={() => { navigator.clipboard?.writeText(i.link); setLink(i.link);
+                               setMsg(`${i.email}'s link copied — send it on WhatsApp.`); }}
+              style={{ background: "none", border: "none", color: C.grn, fontSize: 12,
+                       fontWeight: 700, cursor: "pointer" }}>
+              copy link
+            </button>
+          )}
           {d.you_are_owner && (
             <button type="button" onClick={() => act(`/api/team/invite/${i.id}/revoke`, "cancel the invite")}
               style={{ background: "none", border: "none", color: C.dim, fontSize: 12, cursor: "pointer" }}>

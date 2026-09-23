@@ -75,7 +75,13 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
       if (!session) return;
 
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/team/accept`, {
+      // A refused invite (used, expired, replaced, no free seat) used to be
+
+      // swallowed here, and the person stayed in the empty business signup
+
+      // gave them with no idea why. Say why.
+
+      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/team/accept`, {
 
         method: "POST",
 
@@ -83,7 +89,27 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
         body: JSON.stringify({ token }),
 
-      }).catch(() => {});
+      }).catch(() => null);
+
+      const j: any = r ? await r.json().catch(() => ({})) : {};
+
+      if (!r) {
+
+        // Network failure: keep the token so the next load tries again.
+
+        window.alert("Couldn't join the team just now — check your connection. We'll try again when you reload.");
+
+        return;
+
+      }
+
+      // "Already on this team" is a second tab or a reload, not a problem.
+
+      if (!r.ok && !/already on this team/i.test(String(j.error || ""))) {
+
+        window.alert(`Couldn't join the team: ${j.error || "the invite was refused."}`);
+
+      }
 
       try { localStorage.removeItem("nikki_invite"); } catch {}
 
