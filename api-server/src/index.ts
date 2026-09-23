@@ -5075,7 +5075,7 @@ app.get("/api/v1/calls",
 // records how it went. See api-callbacks.ts for what the caller hears back.
 const OUTBOUND_PURPOSES = ["reminder", "follow_up", "custom"] as const;
 const OUTBOUND_LANGS    = ["te", "en", "hi"] as const;
-const CALLING_HOURS     = "09:00–20:30 IST";
+const CALLING_HOURS     = "any time";
 
 // Every way the same Indian number is stored somewhere in this schema.
 // outbound_opt_outs is written as ten digits by the pipeline ("remove me" on
@@ -5200,8 +5200,8 @@ app.post("/api/v1/calls/outbound",
       ...publicOutboundCall(row),
       calling_hours: CALLING_HOURS,
       note: notBefore
-        ? `Will be dialled after ${notBefore}, inside ${CALLING_HOURS}.`
-        : `Will be dialled within a minute, inside ${CALLING_HOURS}; a request outside those hours waits for 09:00.`,
+        ? `Will be dialled after ${notBefore}.`
+        : "Will be dialled within a minute.",
     });
   }
 );

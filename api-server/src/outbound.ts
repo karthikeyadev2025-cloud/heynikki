@@ -3,7 +3,8 @@
  *
  * TRAI compliance gates implemented here:
  *   1. DND scrubbing before dispatch (status: scrubbing -> blocked_dnd or queued)
- *   2. Calling-hours enforcement (refuse to dispatch outside window_start/end IST)
+ *   2. Calling-hours enforcement (refuse to dispatch outside window_start/end IST;
+ *      the window may cross midnight, and start == end means all day)
  *   3. Opt-out check on every dispatch (cross-references outbound_opt_outs)
  *   4. Concurrency cap (max_concurrent per campaign, hard ceiling 25)
  *
@@ -13,7 +14,7 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { phoneForms, CALLING_WINDOW } from "./campaign-import";
+import { phoneForms, HHMM } from "./campaign-import";
 
 export function mountOutboundRoutes(
   app:     Express,
@@ -29,18 +30,11 @@ export function mountOutboundRoutes(
     if (!tenant_id || !name || !script) {
       return res.status(400).json({ error: "tenant_id, name, script required" });
     }
-    // Any string was stored as the calling window, so "07:00"–"23:00" (or
-    // "banana") went straight to the dialler. Validate the shape and hold it
-    // inside TRAI's 09:00–21:00.
-    const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+    // Any string was stored as the calling window, so "banana" went straight
+    // to the dialler. Validate the shape; any hour is allowed.
     const ws = window_start || "10:00", we = window_end || "19:00";
     if (!HHMM.test(ws) || !HHMM.test(we)) {
       return res.status(400).json({ error: "window_start and window_end must be HH:MM" });
-    }
-    if (ws < CALLING_WINDOW.start || we > CALLING_WINDOW.end || we <= ws) {
-      return res.status(400).json({
-        error: `Calling window must fall between ${CALLING_WINDOW.start} and ${CALLING_WINDOW.end} IST, start before end`,
-      });
     }
 
     const { data, error } = await sb.from("outbound_campaigns").insert({

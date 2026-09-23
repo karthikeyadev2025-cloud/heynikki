@@ -218,12 +218,11 @@ export default function DevelopersPage() {
   "result": null,
   "attempts": 0,
   "requested_at": "2026-09-08T05:12:04.114Z",
-  "calling_hours": "09:00–20:30 IST"
+  "calling_hours": "any time"
 }`}</Code>
         <P>
-          <strong>Calling hours.</strong> Calls are placed between 09:00 and 20:30 IST,
-          which is what TRAI permits for commercial calls. A request made at midnight is
-          accepted and dialled at nine. A number that has opted out of your calls is
+          <strong>Calling hours.</strong> Calls are placed at any hour, within a minute
+          of the request unless you ask for a later time. A number that has opted out of your calls is
           refused outright with <code style={{ fontFamily: mono }}>409 opted_out</code>,
           and the same request sent twice within ten minutes is refused as a duplicate
           rather than ringing the person twice.

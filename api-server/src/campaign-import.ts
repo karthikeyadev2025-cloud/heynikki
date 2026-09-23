@@ -130,11 +130,9 @@ async function optedOutAmong(sb: SupabaseClient, tenantId: string, phones: strin
   return out;
 }
 
-// TRAI permits promotional and service calls between 09:00 and 21:00. The
-// schedule accepted any HH:MM, so a campaign could be told to ring people at
-// 23:30 or 06:00 and the dialler would do as told.
-export const CALLING_WINDOW = { start: "09:00", end: "21:00" };
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Any hour of the day is allowed; a window may cross midnight, and start ==
+// end means around the clock (see withinWindow in the dispatcher).
+export const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // IST calendar day as YYYY-MM-DD — the same form the date columns come back in.
 function istToday(): string {
@@ -436,14 +434,12 @@ export function mountCampaignImport(
     const gate = await planAllows(c.tenant_id, "outbound_campaigns");
     if (!gate.ok) return res.status(402).json({ error: gate.msg });
     if (c.status === "running") return res.status(400).json({ error: "Already running" });
-    // The dashboard creates campaigns straight into the table, so a window
-    // outside TRAI hours can already be sitting on the row. Refuse to start
-    // one rather than dial into the night. (time columns read back HH:MM:SS.)
+    // The dashboard creates campaigns straight into the table, so an
+    // unreadable window can be sitting on the row; the dispatcher would treat
+    // it as closed forever. (time columns read back HH:MM:SS.)
     const ws = String(c.window_start || "").slice(0, 5), we = String(c.window_end || "").slice(0, 5);
-    if (!HHMM.test(ws) || !HHMM.test(we) || ws < CALLING_WINDOW.start || we > CALLING_WINDOW.end) {
-      return res.status(400).json({
-        error: `This campaign calls outside ${CALLING_WINDOW.start}–${CALLING_WINDOW.end} IST — change its calling hours first`,
-      });
+    if (!HHMM.test(ws) || !HHMM.test(we)) {
+      return res.status(400).json({ error: "This campaign's calling hours are unreadable — set them again first" });
     }
     if (!c.consent_declared) {
       return res.status(400).json({
@@ -488,11 +484,6 @@ export function mountCampaignImport(
     for (const k of ["window_start", "window_end"]) {
       if (!(k in b)) continue;
       if (typeof b[k] !== "string" || !HHMM.test(b[k])) return res.status(400).json({ error: `${k} must be HH:MM` });
-      if (b[k] < CALLING_WINDOW.start || b[k] > CALLING_WINDOW.end) {
-        return res.status(400).json({
-          error: `Calls may only be placed between ${CALLING_WINDOW.start} and ${CALLING_WINDOW.end} IST (TRAI)`,
-        });
-      }
       upd[k] = b[k];
     }
     if ("max_concurrent" in b) {
@@ -501,7 +492,6 @@ export function mountCampaignImport(
       upd.max_concurrent = n;
     }
     const next = { ...c, ...upd };
-    if (next.window_end <= next.window_start) return res.status(400).json({ error: "Call-until must be after call-from" });
     if (next.start_date && next.end_date && next.end_date < next.start_date) {
       return res.status(400).json({ error: "End date must be on or after the start date" });
     }

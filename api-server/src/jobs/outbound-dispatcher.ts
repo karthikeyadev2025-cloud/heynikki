@@ -383,12 +383,9 @@ async function sendNoAnswerFollowUp(recipient: any, campaign: any | null): Promi
 }
 
 // ─── Hours check (recipient timezone assumed IST for now) ───
-// TRAI's calling hours are 09:00–21:00 and they are a legal limit, not a
-// campaign setting. A stored window is only ever NARROWED to them: a
-// campaign saved with 08:00–22:00 (or edited straight in the table) used to
-// dial at 08:00 because the stored value was trusted as-is.
-const TRAI_START_MIN = 9 * 60;
-const TRAI_END_MIN   = 21 * 60;
+// The campaign's own window is the only limit; there is no platform-wide
+// calling band. A window may cross midnight (22:00–06:00), and one whose
+// start equals its end (00:00–00:00) is open around the clock.
 
 function hhmmToMinutes(t: unknown): number | null {
   const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
@@ -404,7 +401,10 @@ function withinWindow(start: string, end: string): boolean {
   // An unreadable window used to throw on .split and take the whole tick
   // down with it; it is now simply "closed".
   if (s === null || e === null) return false;
-  return istMinutes >= Math.max(s, TRAI_START_MIN) && istMinutes < Math.min(e, TRAI_END_MIN);
+  if (s === e) return true;
+  return s < e
+    ? istMinutes >= s && istMinutes < e
+    : istMinutes >= s || istMinutes < e;
 }
 
 // IST calendar day as YYYY-MM-DD, comparable to the date columns as strings.
@@ -725,26 +725,16 @@ async function tick(): Promise<void> {
 // tick() above (which is scoped per-campaign) never sees them.
 // Capped at 20 dispatches per tick (every 30s) so a burst of form
 // submissions can't overwhelm the trunk or a single tenant's concurrency.
-// Instant callbacks have no campaign window, so they used to dial whenever
-// the row appeared — a booking chase queued by the 15-minute scheduler at
-// 00:15 IST rang someone at 00:15 IST. Hold them to daytime hours; a row
-// that arrives at night keeps until the window opens.
-const INSTANT_WINDOW_START = "09:00";
-const INSTANT_WINDOW_END   = "20:30";
-
+// Instant callbacks have no campaign window and dial as soon as the row
+// appears, at any hour.
 async function tickInstant(): Promise<void> {
   _gateCache = new Map();
-  if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
   const { data: pending } = await sb.from("outbound_recipients")
     .select("*").eq("is_instant", true).eq("status", "pending")
     .or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`)
     .limit(20);
 
   for (const r of (pending || [])) {
-    // Per row, not per batch: twenty sequential callbacks at up to ~50 s each
-    // is a quarter of an hour, and a batch that started at 20:29 was still
-    // ringing people at 20:45.
-    if (!withinWindow(INSTANT_WINDOW_START, INSTANT_WINDOW_END)) return;
     if (!await tenantHasMinutes(r.tenant_id)) continue;
 
     // Claim before anything else. An API DELETE (pending → failed) or an

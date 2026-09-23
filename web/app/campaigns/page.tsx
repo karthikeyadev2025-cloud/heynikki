@@ -318,10 +318,10 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
           <input type="date" style={inputStyle} value={f.end_date} min={f.start_date || istToday()}
             onChange={e => setF(v => ({ ...v, end_date: e.target.value }))} />)}
         {field("Call from",
-          <input type="time" min="09:00" max="21:00" style={inputStyle} value={f.window_start}
+          <input type="time" style={inputStyle} value={f.window_start}
             onChange={e => setF(v => ({ ...v, window_start: e.target.value }))} />)}
         {field("Call until",
-          <input type="time" min="09:00" max="21:00" style={inputStyle} value={f.window_end}
+          <input type="time" style={inputStyle} value={f.window_end}
             onChange={e => setF(v => ({ ...v, window_end: e.target.value }))} />)}
         {field("Simultaneous calls",
           <input type="number" min={1} max={25} style={inputStyle} value={f.max_concurrent}
@@ -430,13 +430,6 @@ export default function CampaignsPage() {
       setError("Name and script are both required."); return;
     }
     if (!tenantId) return;
-    if (form.window_end <= form.window_start) { setError("Call-until must be after call-from."); return; }
-    // The table enforces this (053, outbound_campaigns_trai_window); without
-    // the check here the insert comes back as a bare 400.
-    if (form.window_start < "09:00" || form.window_end > "21:00") {
-      setError("TRAI allows these calls only between 09:00 and 21:00 IST — keep both times inside that window.");
-      return;
-    }
     if (form.start_date && form.end_date && form.end_date < form.start_date) {
       setError("Last calling day must be on or after the first."); return;
     }
@@ -454,7 +447,7 @@ export default function CampaignsPage() {
     });
     if (e) {
       setError(/trai_window/.test(e.message)
-        ? "TRAI allows these calls only between 09:00 and 21:00 IST — keep both times inside that window."
+        ? "Calling hours outside 09:00–21:00 can't be saved on this account yet — contact support."
         : /start_date|end_date/.test(e.message)
         ? "Calling days can't be saved on this account yet — leave both days blank for now, or contact support."
         : e.message);
@@ -607,14 +600,14 @@ export default function CampaignsPage() {
                 <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
                   Call from
                 </label>
-                <input type="time" min="09:00" max="21:00" style={inputStyle} value={form.window_start}
+                <input type="time" style={inputStyle} value={form.window_start}
                   onChange={e => setForm(f => ({ ...f, window_start: e.target.value }))} />
               </div>
               <div style={{ flex:"1 1 130px" }}>
                 <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
                   Call until
                 </label>
-                <input type="time" min="09:00" max="21:00" style={inputStyle} value={form.window_end}
+                <input type="time" style={inputStyle} value={form.window_end}
                   onChange={e => setForm(f => ({ ...f, window_end: e.target.value }))} />
               </div>
               <div style={{ flex:"1 1 130px" }}>
@@ -627,8 +620,8 @@ export default function CampaignsPage() {
             </div>
             <p style={{ fontSize: 12, color: C.dim, marginTop: 0, marginBottom: 16 }}>
               Leave the days blank to dial from the moment you press Start until the
-              list is done. TRAI rules restrict telemarketing hours: 10:00–19:00 is the
-              safe default, and calls outside your window are refused automatically.
+              list is done. Calls go out only inside your window. It can cross midnight
+              (22:00–06:00), and the same time for both (00:00–00:00) means all day.
             </p>
             <button onClick={createCampaign} style={{
               background: C.grn, color: "#fff", border: "none", borderRadius: 8,
