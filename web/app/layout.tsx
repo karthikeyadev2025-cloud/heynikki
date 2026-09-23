@@ -31,6 +31,10 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500"],
   variable: "--font-mono",
   display: "swap",
+  // Only some pages set mono or Telugu text. Preloaded on every page, the
+  // file went unused and Chrome warned "preloaded but not used within a few
+  // seconds". Pages that need it fetch it on first use (display: swap).
+  preload: false,
 });
 
 // Real Telugu glyphs. The site previously had none — Telugu copy fell
@@ -42,6 +46,7 @@ const notoTelugu = Noto_Sans_Telugu({
   weight: ["400", "500", "600", "700"],
   variable: "--font-telugu",
   display: "swap",
+  preload: false,   // see jetbrainsMono above
 });
 
 export const metadata: Metadata = {
