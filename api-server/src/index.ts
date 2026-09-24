@@ -794,6 +794,9 @@ function webTtsPut(key: string, b64: string): void {
 type WaSender = { phoneId: string; tenant: boolean };
 const _waSenderCache = new Map<string, { v: WaSender; exp: number }>();
 
+/** The platform's own tenant (HeyNikki). Owns the shared WhatsApp number. */
+const PLATFORM_TENANT_ID = "fe11adc0-0b4a-4e2a-9232-008caa650dff";
+
 async function resolveWaSender(tenantId?: string): Promise<WaSender> {
   const platform = { phoneId: process.env.META_WA_PHONE_NUMBER_ID || "", tenant: false };
   if (!tenantId) return platform;
@@ -2822,6 +2825,87 @@ app.post("/webhooks/whatsapp/verify-otp", verifyInternal, async (req, res) => {
     console.error(`[wa-auto] tenant ${did.tenant_id}: verify failed — ${e?.message}`);
     res.status(200).json({ ok: false, error: e?.message || "verify failed" });
   }
+});
+
+// ── Super Admin WhatsApp inbox ────────────────────────────────
+// Every business's incoming messages in one place, plus the platform's own
+// (support, prospects). The shared platform number cannot also run in the
+// WhatsApp app once it is on the Cloud API, so this is where it is read.
+
+// Conversations: the latest message per (business, number), newest first.
+app.get("/api/admin/whatsapp/inbox", verifySuperAdmin, async (req: any, res) => {
+  const { data: rows, error } = await sb.from("wa_inbound")
+    .select("id, tenant_id, lead_id, from_number, body, msg_type, received_at, read_at")
+    .order("received_at", { ascending: false }).limit(1500);
+  if (error) return res.status(500).json({ error: error.message });
+  const convos = new Map<string, any>();
+  for (const r of rows || []) {
+    const k = `${r.tenant_id}|${r.from_number}`;
+    const c = convos.get(k);
+    if (!c) convos.set(k, { tenant_id: r.tenant_id, number: r.from_number, lead_id: r.lead_id,
+      last: r.body, last_type: r.msg_type, last_at: r.received_at, unread: r.read_at ? 0 : 1, count: 1 });
+    else { c.count += 1; if (!r.read_at) c.unread += 1; if (!c.lead_id && r.lead_id) c.lead_id = r.lead_id; }
+  }
+  const list = Array.from(convos.values()).slice(0, 200);
+  const tenantIds = Array.from(new Set(list.map(c => c.tenant_id)));
+  const leadIds = Array.from(new Set(list.map(c => c.lead_id).filter(Boolean)));
+  const [{ data: tenants }, { data: leads }] = await Promise.all([
+    tenantIds.length ? sb.from("tenants").select("id, name").in("id", tenantIds) : Promise.resolve({ data: [] as any[] }),
+    leadIds.length ? sb.from("leads").select("id, name").in("id", leadIds) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const tName = new Map((tenants || []).map((t: any) => [t.id, t.name]));
+  const lName = new Map((leads || []).map((l: any) => [l.id, l.name]));
+  res.json({
+    platform_tenant_id: PLATFORM_TENANT_ID,
+    conversations: list.map(c => ({ ...c,
+      tenant_name: c.tenant_id === PLATFORM_TENANT_ID ? "HeyNikki (platform)" : (tName.get(c.tenant_id) || "—"),
+      name: c.lead_id ? lName.get(c.lead_id) || null : null })),
+  });
+});
+
+// One conversation: what they sent and what was sent to them, in order.
+app.get("/api/admin/whatsapp/thread", verifySuperAdmin, async (req: any, res) => {
+  const tenantId = String(req.query.tenant_id || "");
+  const number = last10(String(req.query.number || ""));
+  if (!/^[0-9a-f-]{36}$/i.test(tenantId) || number.length !== 10) return res.status(400).json({ error: "tenant_id and number required" });
+  const forms = [number, `91${number}`, `+91${number}`];
+  const [{ data: inb }, { data: out }] = await Promise.all([
+    sb.from("wa_inbound").select("id, body, msg_type, received_at, read_at")
+      .eq("tenant_id", tenantId).eq("from_number", number).order("received_at", { ascending: true }).limit(300),
+    sb.from("wa_dispatch_log").select("id, message_type, message_body, status, sent_at")
+      .eq("tenant_id", tenantId).in("to_number", forms).order("sent_at", { ascending: true }).limit(300),
+  ]);
+  const msgs = [
+    ...(inb || []).map((m: any) => ({ id: m.id, dir: "in", body: m.body, type: m.msg_type, at: m.received_at })),
+    ...(out || []).map((m: any) => ({ id: m.id, dir: "out", body: m.message_body, type: m.message_type, status: m.status, at: m.sent_at })),
+  ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const lastIn = (inb || []).length ? (inb as any[])[(inb as any[]).length - 1].received_at : null;
+  // Opening a conversation marks it read.
+  await sb.from("wa_inbound").update({ read_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).eq("from_number", number).is("read_at", null);
+  res.json({ messages: msgs,
+    window_open: !!lastIn && Date.now() - new Date(lastIn).getTime() < 24 * 3600 * 1000,
+    window_closes_at: lastIn ? new Date(new Date(lastIn).getTime() + 24 * 3600 * 1000).toISOString() : null });
+});
+
+// Reply, as the business the conversation belongs to (their own number if
+// they have one, else the platform's). Free text only inside Meta's 24-hour
+// window, like the dashboard's own reply.
+app.post("/api/admin/whatsapp/reply", verifySuperAdmin, async (req: any, res) => {
+  const tenantId = String(req.body?.tenant_id || "");
+  const to = last10(String(req.body?.number || ""));
+  const text = String(req.body?.text || "").trim().slice(0, 4000);
+  if (!/^[0-9a-f-]{36}$/i.test(tenantId) || to.length !== 10) return res.status(400).json({ error: "tenant_id and number required" });
+  if (!text) return res.status(400).json({ error: "Type a message first" });
+  const { data: recent } = await sb.from("wa_inbound").select("received_at")
+    .eq("tenant_id", tenantId).eq("from_number", to).order("received_at", { ascending: false }).limit(1).maybeSingle();
+  if (!recent || Date.now() - new Date(recent.received_at).getTime() >= 24 * 3600 * 1000) {
+    return res.status(409).json({ error: "WhatsApp only allows a free reply within 24 hours of their last message." });
+  }
+  const ok = await sendWhatsApp(to, text, tenantId, undefined, "manual_reply");
+  if (!ok) return res.status(502).json({ error: "WhatsApp did not accept the message" });
+  await audit("admin.whatsapp_reply", { tenantId, actorId: req.user?.id, req, metadata: { to } });
+  res.json({ ok: true });
 });
 
 // Start (or resume) the whole thing for one tenant, by hand, from the panel.
@@ -6657,12 +6741,14 @@ app.post("/webhooks/whatsapp", async (req, res) => {
               .like("caller_number", `%${from}`)).order("created_at", { ascending: false })
               .limit(1).maybeSingle(),
           ]);
-          const tenantId = senderTenant || lead?.tenant_id || call?.tenant_id;
-          if (!tenantId) {
-            // Nobody we have ever spoken to. Storing it against a guessed
-            // tenant would put a stranger's message in someone's inbox.
-            console.warn(`[WhatsApp] reply from unknown number ${from} — not stored`);
-            continue;
+          // Nobody a business has spoken to: still a message to US — the
+          // platform number is advertised for support (Scale, contact page).
+          // It was dropped with a log line; it is kept under the platform's
+          // own tenant, where the Super Admin inbox shows it. Never a guessed
+          // client: a stranger's message must not land in someone's inbox.
+          const tenantId = senderTenant || lead?.tenant_id || call?.tenant_id || PLATFORM_TENANT_ID;
+          if (tenantId === PLATFORM_TENANT_ID && !lead && !call) {
+            console.log(`[WhatsApp] message from ${from} filed to the platform inbox`);
           }
 
           const { error: inErr } = await sb.from("wa_inbound").insert({

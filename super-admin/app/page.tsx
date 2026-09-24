@@ -2525,6 +2525,138 @@ function btn(color: string) {
   } as const;
 }
 
+/**
+ * Every business's incoming WhatsApp, and the platform's own.
+ *
+ * The shared platform number (+91 94407 69495) is on the Cloud API, which
+ * means it cannot also run in the WhatsApp app on a phone — so this is where
+ * its messages are read and answered. Messages from someone no business has
+ * spoken to are kept under the platform tenant (they used to be dropped).
+ * Replies go out as the conversation's business, free text inside Meta's
+ * 24-hour window only.
+ */
+function WhatsAppInbox({ token }: { token: string }) {
+  const H = { Authorization: `Bearer ${token}` };
+  const [convos, setConvos] = useState<any[] | null>(null);
+  const [err, setErr] = useState("");
+  const [sel, setSel] = useState<any | null>(null);
+  const [thread, setThread] = useState<any | null>(null);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [filter, setFilter] = useState<"all" | "unread" | "platform">("all");
+
+  const load = useCallback(() => {
+    fetch(`${API}/api/admin/whatsapp/inbox`, { headers: H })
+      .then(r => r.json()).then(j => { if (j.error) setErr(j.error); else { setConvos(j.conversations || []); setErr(""); } })
+      .catch(e => setErr(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
+
+  const open = useCallback((c: any) => {
+    setSel(c); setThread(null); setText("");
+    fetch(`${API}/api/admin/whatsapp/thread?tenant_id=${c.tenant_id}&number=${c.number}`, { headers: H })
+      .then(r => r.json()).then(j => { setThread(j); load(); }).catch(() => setThread({ messages: [], error: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, load]);
+
+  async function send() {
+    if (!sel || !text.trim()) return;
+    setSending(true);
+    try {
+      const r = await fetch(`${API}/api/admin/whatsapp/reply`, { method: "POST",
+        headers: { ...H, "Content-Type": "application/json" },
+        body: JSON.stringify({ tenant_id: sel.tenant_id, number: sel.number, text }) });
+      const j = await r.json();
+      if (!r.ok) alert(j.error || "Send failed"); else { setText(""); open(sel); }
+    } finally { setSending(false); }
+  }
+
+  const shown = (convos || []).filter(c =>
+    filter === "unread" ? c.unread > 0 : filter === "platform" ? c.tenant_name === "HeyNikki (platform)" : true);
+  const time = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.sm, flexWrap: "wrap" as const }}>
+        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>WhatsApp inbox</div>
+        <div style={{ color: C.dim, fontSize: TYPE.xs }}>every business&apos;s incoming messages · the platform&apos;s own (support) · refreshes every 20 s</div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          {(["all", "unread", "platform"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)} style={{ padding: "3px 10px", borderRadius: 999, fontSize: TYPE.xs, fontWeight: 700,
+              cursor: "pointer", background: filter === f ? C.glow + "22" : "transparent", color: filter === f ? C.gbr : C.mid,
+              border: `1px solid ${filter === f ? C.glow : C.bord}` }}>{f === "platform" ? "HeyNikki support" : f}</button>
+          ))}
+        </div>
+      </div>
+      {err ? <ErrorNote msg={err} onRetry={load} /> : !convos ? <Loading rows={3} label="Loading messages" /> : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(0, 2fr)", gap: SPACE.md, minHeight: 360 }}>
+          <div style={{ borderRight: `1px solid ${C.bord}`, paddingRight: SPACE.sm, maxHeight: 520, overflowY: "auto" as const }}>
+            {shown.length === 0 ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>No messages.</div> : shown.map(c => {
+              const on = sel && sel.tenant_id === c.tenant_id && sel.number === c.number;
+              return (
+                <button key={`${c.tenant_id}|${c.number}`} onClick={() => open(c)} style={{ display: "block", width: "100%", textAlign: "left" as const,
+                  background: on ? C.hi : "transparent", border: "none", borderBottom: `1px solid ${C.bord}33`, padding: "8px 6px",
+                  cursor: "pointer", color: C.txt, fontFamily: "inherit" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontWeight: 800, fontSize: TYPE.sm }}>{c.name || c.number}</span>
+                    {c.unread > 0 && <span style={{ background: C.grn, color: "#04120a", borderRadius: 999, padding: "0 7px", fontSize: TYPE.xs, fontWeight: 800 }}>{c.unread}</span>}
+                    <span style={{ marginLeft: "auto", color: C.dim, fontSize: TYPE.xs }}>{time(c.last_at)}</span>
+                  </div>
+                  <div style={{ color: C.gbr, fontSize: TYPE.xs }}>{c.tenant_name}{c.name ? ` · ${c.number}` : ""}</div>
+                  <div style={{ color: C.mid, fontSize: TYPE.xs, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.last}</div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" as const, minWidth: 0 }}>
+            {!sel ? <div style={{ color: C.dim, fontSize: TYPE.sm, margin: "auto" }}>Pick a conversation.</div> : (
+              <>
+                <div style={{ fontSize: TYPE.sm, color: C.txt, fontWeight: 800, marginBottom: 6 }}>
+                  {sel.name || sel.number} <span style={{ color: C.dim, fontWeight: 400 }}>· {sel.number} · {sel.tenant_name}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto" as const, maxHeight: 400, display: "flex", flexDirection: "column" as const, gap: 6, padding: "4px 2px" }}>
+                  {!thread ? <Loading rows={2} label="Loading conversation" /> : (thread.messages || []).map((m: any) => (
+                    <div key={`${m.dir}-${m.id}`} style={{ alignSelf: m.dir === "in" ? "flex-start" : "flex-end", maxWidth: "80%",
+                      background: m.dir === "in" ? C.hi : C.glow + "22", border: `1px solid ${C.bord}`, borderRadius: 10, padding: "6px 10px" }}>
+                      <div style={{ fontSize: TYPE.sm, color: C.txt, whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const }}>{m.body}</div>
+                      <div style={{ fontSize: TYPE.xs, color: C.dim, marginTop: 2 }}>
+                        {time(m.at)}{m.dir === "out" ? ` · ${m.type}${m.status ? ` · ${m.status}` : ""}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {thread && (
+                  <div style={{ marginTop: SPACE.sm }}>
+                    {thread.window_open ? (
+                      <div style={{ display: "flex", gap: SPACE.sm }}>
+                        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") send(); }}
+                          placeholder={`Reply as ${sel.tenant_name}…`} style={{ flex: 1, padding: "8px 10px", borderRadius: 8,
+                          border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: TYPE.sm }} />
+                        <button onClick={send} disabled={sending || !text.trim()} style={{ padding: "8px 16px", borderRadius: 8, border: "none",
+                          background: C.grn, color: "#04120a", fontWeight: 800, cursor: "pointer", opacity: sending ? 0.6 : 1 }}>
+                          {sending ? "…" : "Send"}
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: TYPE.xs, color: C.gold }}>
+                        Their last message was over 24 hours ago, so WhatsApp only allows an approved template now — free replies reopen when they write again.
+                      </div>
+                    )}
+                    {thread.window_open && thread.window_closes_at && (
+                      <div style={{ fontSize: TYPE.xs, color: C.dim, marginTop: 4 }}>Free replies until {time(thread.window_closes_at)}.</div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function WhatsAppNumbersPanel({ token }: { token: string }) {
   const [rows, setRows]         = useState<any[]>([]);
   const [fallback, setFallback] = useState<string | null>(null);
@@ -2566,6 +2698,8 @@ function WhatsAppNumbersPanel({ token }: { token: string }) {
 
   return (
     <div>
+      <WhatsAppInbox token={token} />
+      <div style={{ height: SPACE.md }} />
       <ProvisionWhatsApp token={token} onDone={load} />
       <div style={{ height: SPACE.sm }} />
       {err && <div style={{ color: C.red, fontSize: TYPE.sm, marginBottom: SPACE.sm }}>{err}</div>}
