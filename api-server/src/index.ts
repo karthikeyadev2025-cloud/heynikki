@@ -4959,7 +4959,7 @@ mountOutboundRoutes(app, sb, verifyInternal, audit);
 mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
 mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWhatsApp, pushToUsers,
-  pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET });
+  pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET, applyDisposition });
 // Search across calls and transcripts, CSV exports, lead follow-ups.
 mountSearchExport(app, { sb, verifyJWT, apiLimiter, getTenantId, audit });
 // The dashboard's "something is wrong" banner.
@@ -7418,87 +7418,95 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 });
 
 // ── Call Disposition ──────────────────────────────────────────
+// One call's outcome, from a person on the Desk or from the call summary
+// when the telecaller moved on without choosing one (auto, 069). Both go
+// through the same steps — the lead's stage, the follow-up, the brochure —
+// so an auto-saved "interested" sends the details a person's would.
+const OUTCOME_STAGE: Record<string, string> = {
+  booked: "won", interested: "qualified", callback: "contacted", not_interested: "lost", no_answer: "new",
+};
+async function applyDisposition(o: {
+  tenantId: string; ctcLogId: string; disposition: string; notes?: string | null;
+  followUpAt?: string | null; actorId: string | null; auto?: boolean;
+}): Promise<{ ok: boolean; notFound?: boolean }> {
+  const { tenantId, ctcLogId, disposition, notes } = o;
+  // Tenant-scoped: by id alone a member could pass another business's
+  // ctc_log_id and have that business's lead read back and WhatsApp'd.
+  const { data: log } = await sb.from("click_to_call_log")
+    .select("lead_id, agent_user_id").eq("id", ctcLogId).eq("tenant_id", tenantId).maybeSingle();
+  if (!log) return { ok: false, notFound: true };
+
+  const upd: Record<string, any> = { disposition, notes, updated_at: new Date().toISOString() };
+  // The marker column arrives with 069; a person's save clears it.
+  const { error: markErr } = await sb.from("click_to_call_log")
+    .update({ ...upd, disposition_auto: !!o.auto }).eq("id", ctcLogId).eq("tenant_id", tenantId);
+  if (markErr) await sb.from("click_to_call_log").update(upd).eq("id", ctcLogId).eq("tenant_id", tenantId);
+
+  const newStage = OUTCOME_STAGE[disposition];
+  if (log.lead_id && newStage) {
+    // The call happened, so the lead was contacted and any callback that
+    // was due is kept. "Call back" with a time books the next one (the
+    // Desk's queue and reminders read these, 056/066); without a time it
+    // leaves the follow-up as it was.
+    const now = new Date().toISOString();
+    const patch: Record<string, any> = {
+      stage: newStage, notes: notes || undefined, updated_at: now, last_contacted_at: now,
+    };
+    const fu = o.followUpAt ? new Date(o.followUpAt) : null;
+    if (disposition === "callback" && fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now()) {
+      Object.assign(patch, { follow_up_at: fu.toISOString(), follow_up_done_at: null,
+        follow_up_notified_at: null, follow_up_note: notes ? String(notes).slice(0, 500) : null });
+    } else if (disposition !== "callback") {
+      const { data: cur } = await sb.from("leads").select("follow_up_at, follow_up_done_at")
+        .eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
+      if (cur?.follow_up_at && !cur.follow_up_done_at) patch.follow_up_done_at = now;
+    }
+    // An auto outcome never overwrites a stage a person moved further on.
+    if (o.auto) {
+      const { data: cur } = await sb.from("leads").select("stage").eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
+      if (cur?.stage === "won" || (cur?.stage === "qualified" && newStage !== "won")) delete patch.stage;
+    }
+    await sb.from("leads").update(patch).eq("id", log.lead_id).eq("tenant_id", tenantId);
+    // A lead nobody owned belongs to whoever just worked it.
+    const owner = o.actorId || log.agent_user_id;
+    if (owner) {
+      await sb.from("leads").update({ assigned_to: owner })
+        .eq("id", log.lead_id).eq("tenant_id", tenantId).is("assigned_to", null);
+    }
+  }
+
+  if ((disposition === "interested" || disposition === "booked") && log.lead_id) {
+    const { data: lead } = await sb.from("leads")
+      .select("phone, name").eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
+    if (lead?.phone) {
+      // Sent here rather than through the interested-lead n8n workflow: the
+      // brochure a caller was promised on the phone has to actually go.
+      // Resolved by tenant — leads has no voice_profile_id column.
+      const { data: vp } = await sb.from("voice_profiles")
+        .select("id, business_name").eq("tenant_id", tenantId)
+        .eq("status", "active").limit(1).maybeSingle();
+      const bn = vp?.business_name || "our team";
+      const msg = `నమస్కారం${lead.name ? " " + lead.name : ""}! ${bn} గురించి ` +
+        `మీ ఆసక్తికి ధన్యవాదాలు. మీరు అడిగిన details ఇక్కడ ఉన్నాయి. ` +
+        `ఏవైనా సందేహాలుంటే ఇక్కడే reply చేయండి. 🙏`;
+      await sendWhatsApp(lead.phone, msg, tenantId, vp?.id,
+        "brochure", undefined, undefined, bn);
+    }
+  }
+  return { ok: true };
+}
+
 app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) => {
   try {
-    const user     = req.user;
-    const tenantId = await getTenantId(user.id);
+    const tenantId = await getTenantId(req.user.id);
     if (!tenantId) return res.status(403).json({ error: "No tenant" });
-
     const { ctc_log_id, disposition, notes } = req.body;
     if (!ctc_log_id || !disposition) {
       return res.status(400).json({ error: "ctc_log_id and disposition required" });
     }
-
-    // Update click_to_call_log
-    await sb.from("click_to_call_log").update({ disposition, notes, updated_at: new Date().toISOString() })
-      .eq("id", ctc_log_id).eq("tenant_id", tenantId);
-
-    // Map disposition → lead stage
-    const STAGE_MAP: Record<string, string> = {
-      booked:         "won",
-      interested:     "qualified",
-      callback:       "contacted",
-      not_interested: "lost",
-      no_answer:      "new",
-    };
-    const newStage = STAGE_MAP[disposition];
-
-    // Get lead_id from log. Tenant-scoped like the update above: by id alone
-    // a member could pass another business's ctc_log_id and have that
-    // business's lead read back and WhatsApp'd below under their own name.
-    const { data: log } = await sb.from("click_to_call_log")
-      .select("lead_id").eq("id", ctc_log_id).eq("tenant_id", tenantId).maybeSingle();
-    if (!log) return res.status(404).json({ error: "Call not found" });
-
-    if (log?.lead_id && newStage) {
-      // The call happened, so the lead was contacted and any callback that
-      // was due is kept. "Call back" with a time books the next one (the
-      // Desk's queue and reminders read these, 056/066); without a time it
-      // leaves the follow-up as it was.
-      const now = new Date().toISOString();
-      const patch: Record<string, any> = {
-        stage: newStage, notes: notes || undefined, updated_at: now, last_contacted_at: now,
-      };
-      const fu = req.body?.follow_up_at ? new Date(req.body.follow_up_at) : null;
-      if (disposition === "callback" && fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now()) {
-        Object.assign(patch, { follow_up_at: fu.toISOString(), follow_up_done_at: null,
-          follow_up_notified_at: null, follow_up_note: notes ? String(notes).slice(0, 500) : null });
-      } else if (disposition !== "callback") {
-        const { data: cur } = await sb.from("leads").select("follow_up_at, follow_up_done_at")
-          .eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
-        if (cur?.follow_up_at && !cur.follow_up_done_at) patch.follow_up_done_at = now;
-      }
-      await sb.from("leads").update(patch).eq("id", log.lead_id).eq("tenant_id", tenantId);
-      // A lead nobody owned belongs to whoever just worked it.
-      await sb.from("leads").update({ assigned_to: user.id })
-        .eq("id", log.lead_id).eq("tenant_id", tenantId).is("assigned_to", null);
-    }
-
-    // Fire automation webhook for interested leads
-    if ((disposition === "interested" || disposition === "booked") && log.lead_id) {
-      const { data: lead } = await sb.from("leads")
-        .select("phone, name").eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
-      if (lead?.phone) {
-        // Sent here rather than through the interested-lead n8n workflow, for
-        // the same reason as missed-call: that workflow's send node posts to
-        // $env.WATI_API_URL, which is empty. The brochure a caller was
-        // promised on the phone has never actually been sent.
-        // Resolved by tenant, not by lead.voice_profile_id — leads has no such
-        // column. Checked against the live table rather than assumed, because
-        // a select on a column that does not exist returns 400 and this whole
-        // block would have gone quiet again.
-        const { data: vp } = await sb.from("voice_profiles")
-          .select("id, business_name").eq("tenant_id", tenantId)
-          .eq("status", "active").limit(1).maybeSingle();
-        const bn = vp?.business_name || "our team";
-        const msg = `నమస్కారం${lead.name ? " " + lead.name : ""}! ${bn} గురించి ` +
-          `మీ ఆసక్తికి ధన్యవాదాలు. మీరు అడిగిన details ఇక్కడ ఉన్నాయి. ` +
-          `ఏవైనా సందేహాలుంటే ఇక్కడే reply చేయండి. 🙏`;
-        await sendWhatsApp(lead.phone, msg, tenantId, vp?.id,
-          "brochure", undefined, undefined, bn);
-      }
-    }
-
+    const r = await applyDisposition({ tenantId, ctcLogId: ctc_log_id, disposition, notes,
+      followUpAt: req.body?.follow_up_at || null, actorId: req.user.id });
+    if (r.notFound) return res.status(404).json({ error: "Call not found" });
     res.json({ ok: true });
   } catch (err: any) {
     console.error("[Disposition error]", err.message);

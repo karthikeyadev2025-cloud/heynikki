@@ -37,6 +37,8 @@ type Deps = {
   pushToUsers: (userIds: string[], msg: { title: string; body: string; data?: Record<string, any> }) => Promise<any>;
   pipelineUrl: string;
   internalSecret: string;
+  applyDisposition: (o: { tenantId: string; ctcLogId: string; disposition: string; notes?: string | null;
+    followUpAt?: string | null; actorId: string | null; auto?: boolean }) => Promise<{ ok: boolean; notFound?: boolean }>;
 };
 
 const OPEN_STAGES = ["new", "contacted", "qualified"];
@@ -191,36 +193,36 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
   // The Desk asks as soon as the call ends; the recording lands a few
   // seconds after hangup, so "not ready" is an ordinary answer and the Desk
   // asks again. The result is a suggestion: the telecaller picks the outcome.
-  app.post("/api/desk/calls/:id/summary", verifyJWT, apiLimiter, async (req: any, res) => {
-    const who = await me(req, res); if (!who) return;
+  type Summary = { status: number; body: any };
+  async function summarize(tenantId: string, logId: string): Promise<Summary> {
     const { data: log, error: logErr } = await sb.from("click_to_call_log")
       .select("id, call_id, lead_id, callee_number, ai_summary, ai_disposition, ai_follow_up_at")
-      .eq("id", req.params.id).eq("tenant_id", who.tenantId).maybeSingle();
-    if (logErr) return res.status(503).json({ error: "Call summaries need migration 066." });
-    if (!log) return res.status(404).json({ error: "Call not found" });
+      .eq("id", logId).eq("tenant_id", tenantId).maybeSingle();
+    if (logErr) return { status: 503, body: { error: "Call summaries need migration 066." } };
+    if (!log) return { status: 404, body: { error: "Call not found" } };
     if (log.ai_summary) {
-      return res.json({ summary: log.ai_summary, disposition: log.ai_disposition, follow_up_at: log.ai_follow_up_at, cached: true });
+      return { status: 200, body: { summary: log.ai_summary, disposition: log.ai_disposition, follow_up_at: log.ai_follow_up_at, cached: true } };
     }
     const { data: call } = log.call_id
       ? await sb.from("calls").select("id, r2_object_key, duration_seconds").eq("id", log.call_id).maybeSingle()
       : { data: null as any };
-    if (!call?.r2_object_key) return res.status(409).json({ error: "not_ready" });
+    if (!call?.r2_object_key) return { status: 409, body: { error: "not_ready" } };
     if ((call.duration_seconds || 0) < CONVERSATION_SECS) {
-      return res.json({ summary: "", disposition: "no_answer", follow_up_at: null, short: true });
+      return { status: 200, body: { summary: "", disposition: "no_answer", follow_up_at: null, short: true } };
     }
 
     let audio: Buffer;
     try {
       const url = new URL(`${d.pipelineUrl}/api/v1/recording/fetch`);
       url.searchParams.set("key", call.r2_object_key);
-      url.searchParams.set("tenant_id", who.tenantId);
+      url.searchParams.set("tenant_id", tenantId);
       url.searchParams.set("call_id", call.id);
       const r = await fetch(url, { headers: { "X-Internal-Secret": d.internalSecret }, signal: AbortSignal.timeout(30_000) });
-      if (!r.ok) return res.status(409).json({ error: "not_ready" });
+      if (!r.ok) return { status: 409, body: { error: "not_ready" } };
       audio = Buffer.from(await r.arrayBuffer());
-    } catch { return res.status(409).json({ error: "not_ready" }); }
+    } catch { return { status: 409, body: { error: "not_ready" } }; }
     if (audio.length > MAX_AUDIO_BYTES) {
-      return res.json({ summary: "", disposition: null, follow_up_at: null, too_long: true });
+      return { status: 200, body: { summary: "", disposition: null, follow_up_at: null, too_long: true } };
     }
 
     const nowIst = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
@@ -232,12 +234,13 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
           '{"summary": "<two short sentences in English: what the customer wants and what was agreed>",\n' +
           ' "disposition": "booked" | "interested" | "callback" | "not_interested" | "no_answer",\n' +
           ' "follow_up_at": "<ISO 8601 with +05:30 if a callback time was agreed, else null>"}\n' +
-          `The time now is ${nowIst} IST. "no_answer" means nobody really spoke. Never invent a callback time.` },
+          `The time now is ${nowIst} IST. "no_answer" means nobody really spoke. ` +
+          `A customer who asks for details to be sent is "interested". Never invent a callback time.` },
         { inline_data: { mime_type: "audio/wav", data: audio.toString("base64") } },
       ] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
     }, { timeoutMs: 45_000, attempts: 2 });
-    if (!g.ok) return res.status(502).json({ error: `Couldn't summarise this call (${g.detail})` });
+    if (!g.ok) return { status: 502, body: { error: `Couldn't summarise this call (${g.detail})` } };
 
     const summary = String(g.data?.summary || "").slice(0, 600);
     const disposition = OUTCOMES.includes(g.data?.disposition) ? g.data.disposition : null;
@@ -245,8 +248,18 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
     const follow_up_at = fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now() ? fu.toISOString() : null;
     await sb.from("click_to_call_log").update({
       ai_summary: summary, ai_disposition: disposition, ai_follow_up_at: follow_up_at, ai_at: new Date().toISOString(),
-    }).eq("id", log.id).eq("tenant_id", who.tenantId);
-    res.json({ summary, disposition, follow_up_at });
+    }).eq("id", log.id).eq("tenant_id", tenantId);
+    return { status: 200, body: { summary, disposition, follow_up_at } };
+  }
+
+  // ── Summary from the recording ─────────────────────────────────────
+  // The Desk asks as soon as the call ends; the recording lands a few
+  // seconds after hangup, so "not ready" is an ordinary answer and the Desk
+  // asks again. The result is a suggestion: the telecaller picks the outcome.
+  app.post("/api/desk/calls/:id/summary", verifyJWT, apiLimiter, async (req: any, res) => {
+    const who = await me(req, res); if (!who) return;
+    const r = await summarize(who.tenantId, req.params.id);
+    res.status(r.status).json(r.body);
   });
 
   // ── One-tap WhatsApp ───────────────────────────────────────────────
@@ -334,6 +347,206 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
     if (!data?.length) return res.status(404).json({ error: "Call not found" });
     res.json({ ok: true });
   });
+
+  // ── Outcomes nobody chose ──────────────────────────────────────────
+  // A telecaller who goes straight to the next call leaves the last one
+  // blank; on 24 Sep one seat saved none of 30, and two customers who asked
+  // for details were never sent them. Once the telecaller has clearly moved
+  // on — a newer call from the same seat, or ten minutes — the summary's
+  // suggested outcome is saved for them (marked auto, 069), through the same
+  // path a person's save takes. A customer who never came on the line is
+  // "no answer" without asking the model.
+  let autoRunning = false;
+  async function autoOutcomes() {
+    if (autoRunning) return;       // a slow summary must not let two sweeps overlap
+    autoRunning = true;
+    try { await autoOutcomesOnce(); } finally { autoRunning = false; }
+  }
+  async function autoOutcomesOnce() {
+    const now = Date.now();
+    const { data: rows, error } = await sb.from("click_to_call_log")
+      .select("id, tenant_id, agent_user_id, created_at, duration_seconds, call_id, customer_fail_cause, ai_summary, ai_disposition, ai_follow_up_at")
+      .is("disposition", null)
+      .lt("created_at", new Date(now - 2 * 60_000).toISOString())
+      .gt("created_at", new Date(now - 24 * 3600_000).toISOString())
+      .order("created_at", { ascending: true }).limit(15);
+    if (error || !rows?.length) return;
+    for (const r of rows) {
+      // Still live: the hangup hook has not closed its calls row yet.
+      if (r.call_id) {
+        const { data: c } = await sb.from("calls").select("status").eq("id", r.call_id).maybeSingle();
+        if (c?.status === "active") continue;
+      }
+      const { count: newer } = await sb.from("click_to_call_log").select("id", { count: "exact", head: true })
+        .eq("tenant_id", r.tenant_id).eq("agent_user_id", r.agent_user_id).gt("created_at", r.created_at);
+      const movedOn = (newer || 0) > 0 || now - new Date(r.created_at).getTime() > 10 * 60_000;
+      if (!movedOn) continue;
+
+      let disposition: string | null = null, notes: string | null = null, followUpAt: string | null = null;
+      if (r.customer_fail_cause || (r.duration_seconds || 0) < CONVERSATION_SECS) {
+        disposition = "no_answer";
+      } else {
+        let s = r.ai_disposition ? { disposition: r.ai_disposition, summary: r.ai_summary, follow_up_at: r.ai_follow_up_at } : null;
+        if (!s) {
+          const out = await summarize(r.tenant_id, r.id);
+          if (out.status === 409) continue;                 // recording not in yet — next sweep
+          s = out.status === 200 ? out.body : null;
+        }
+        disposition = s?.disposition || null;
+        notes = s?.summary || null;
+        followUpAt = s?.follow_up_at || null;
+      }
+      if (!disposition) continue;
+      // Re-read: the telecaller may have saved it while we were summarising.
+      const { data: still } = await sb.from("click_to_call_log").select("disposition").eq("id", r.id).maybeSingle();
+      if (still?.disposition) continue;
+      await d.applyDisposition({ tenantId: r.tenant_id, ctcLogId: r.id, disposition, notes,
+        followUpAt, actorId: r.agent_user_id, auto: true }).catch(e => console.error("[desk] auto outcome:", e?.message));
+      console.log(`[desk] auto outcome ${r.id} → ${disposition}`);
+    }
+  }
+  setInterval(() => { autoOutcomes().catch(e => console.error("[desk] auto outcomes:", e?.message || e)); }, 60_000);
+
+  // ── What the calls taught us ───────────────────────────────────────
+  // Once a day per business, the Desk's call summaries and outcomes are
+  // read together: what customers objected to and asked, what converted, a
+  // line per telecaller, and suggested answers for Nikki. The owner sees it
+  // on the Desk; a suggestion reaches live calls only when they approve it
+  // (it becomes a knowledge_base fact, like everything else she is taught).
+  const istDay = (t = Date.now()) => new Date(t + 5.5 * 3600_000).toISOString().slice(0, 10);
+
+  async function buildInsights(tenantId: string, day: string): Promise<{ ok: boolean; detail?: string; row?: any }> {
+    const start = new Date(`${day}T00:00:00+05:30`).toISOString();
+    const end   = new Date(new Date(start).getTime() + 86400_000).toISOString();
+    const [{ data: calls }, { data: members }, { data: vp }] = await Promise.all([
+      sb.from("click_to_call_log").select("agent_user_id, duration_seconds, disposition, ai_summary, notes, customer_fail_cause")
+        .eq("tenant_id", tenantId).gte("created_at", start).lt("created_at", end).limit(400),
+      sb.from("tenant_users").select("user_id, display_name, phone").eq("tenant_id", tenantId),
+      sb.from("voice_profiles").select("business_name").eq("tenant_id", tenantId).eq("status", "active").limit(1).maybeSingle(),
+    ]);
+    const all = calls || [];
+    const talked = all.filter((c: any) => c.ai_summary && (c.duration_seconds || 0) >= CONVERSATION_SECS);
+    if (talked.length < 3) return { ok: false, detail: `Only ${talked.length} conversation(s) on ${day} — not enough to learn from.` };
+    const name = new Map((members || []).map((m: any) => [m.user_id, m.display_name || (m.phone ? `…${String(m.phone).slice(-4)}` : "Seat")]));
+    const lines = talked.slice(0, 120).map((c: any, i: number) =>
+      `${i + 1}. [${name.get(c.agent_user_id) || "Seat"}] outcome=${c.disposition || "unsaved"} ${c.duration_seconds}s: ${c.ai_summary}`);
+    const perSeat: Record<string, any> = {};
+    for (const c of all) {
+      const k = name.get(c.agent_user_id) || "Seat";
+      const s = perSeat[k] || (perSeat[k] = { calls: 0, conversations: 0, interested: 0, booked: 0, unreachable: 0 });
+      s.calls += 1;
+      if ((c.duration_seconds || 0) >= CONVERSATION_SECS) s.conversations += 1;
+      if (c.disposition === "interested") s.interested += 1;
+      if (c.disposition === "booked") s.booked += 1;
+      if (c.customer_fail_cause) s.unreachable += 1;
+    }
+
+    const g = await geminiGenerate({
+      contents: [{ parts: [{ text:
+        `You coach the telecalling team of "${vp?.business_name || "a business"}" in India. Below are summaries of ` +
+        `today's sales calls with their outcomes. Reply with JSON only:\n` +
+        `{"headline": "<one sentence: how the day went>",\n` +
+        ` "objections": ["<what customers pushed back with, most common first, max 5>"],\n` +
+        ` "questions": ["<what customers asked, max 5>"],\n` +
+        ` "what_worked": ["<what happened on the calls that went well, max 3>"],\n` +
+        ` "tips": ["<concrete advice for tomorrow's calls, max 4, each one sentence>"],\n` +
+        ` "suggested_answers": [{"question": "<a question customers asked>", "answer": "<a short, true answer the AI receptionist could give, in simple English; only facts stated in the calls, never invent prices>"}]}\n` +
+        `Max 4 suggested answers. Base everything only on these calls.\n\n${lines.join("\n")}` }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+    }, { timeoutMs: 45_000, attempts: 2 });
+    if (!g.ok) return { ok: false, detail: `The summary model failed (${g.detail}).` };
+
+    const digest = {
+      headline: String(g.data?.headline || "").slice(0, 300),
+      objections: (g.data?.objections || []).slice(0, 5).map(String),
+      questions: (g.data?.questions || []).slice(0, 5).map(String),
+      what_worked: (g.data?.what_worked || []).slice(0, 3).map(String),
+      tips: (g.data?.tips || []).slice(0, 4).map(String),
+      per_seat: perSeat,
+    };
+    const suggestions = (g.data?.suggested_answers || []).slice(0, 4)
+      .filter((x: any) => x?.question && x?.answer)
+      .map((x: any, i: number) => ({ id: `${day}-${i}`, question: String(x.question).slice(0, 200),
+        answer: String(x.answer).slice(0, 400), status: "pending" }));
+    const { data: row, error } = await sb.from("desk_insights")
+      .upsert({ tenant_id: tenantId, day, calls: all.length, digest, suggestions }, { onConflict: "tenant_id,day" })
+      .select().maybeSingle();
+    if (error) return { ok: false, detail: /desk_insights/.test(error.message) ? "Needs migration 069." : error.message };
+    return { ok: true, row };
+  }
+
+  // Latest insights (owner only).
+  app.get("/api/desk/insights", verifyJWT, async (req: any, res) => {
+    const who = await me(req, res); if (!who) return;
+    if (!who.owner) return res.status(403).json({ error: "Owner only" });
+    const { data, error } = await sb.from("desk_insights").select("*")
+      .eq("tenant_id", who.tenantId).order("day", { ascending: false }).limit(1).maybeSingle();
+    if (error) return res.json({ insight: null, ready: false });
+    res.json({ insight: data || null, ready: true, today: istDay() });
+  });
+
+  // Build today's now, rather than waiting for the evening run (owner).
+  app.post("/api/desk/insights/run", verifyJWT, apiLimiter, async (req: any, res) => {
+    const who = await me(req, res); if (!who) return;
+    if (!who.owner) return res.status(403).json({ error: "Owner only" });
+    const r = await buildInsights(who.tenantId, istDay());
+    if (!r.ok) return res.status(409).json({ error: r.detail });
+    res.json({ insight: r.row });
+  });
+
+  // Approve (→ Nikki learns it) or dismiss one suggested answer (owner).
+  app.post("/api/desk/insights/:id/suggestion", verifyJWT, apiLimiter, async (req: any, res) => {
+    const who = await me(req, res); if (!who) return;
+    if (!who.owner) return res.status(403).json({ error: "Owner only" });
+    const sid = String(req.body?.suggestion_id || "");
+    const action = req.body?.action === "approve" ? "approved" : "dismissed";
+    const { data: row } = await sb.from("desk_insights").select("id, suggestions")
+      .eq("id", req.params.id).eq("tenant_id", who.tenantId).maybeSingle();
+    if (!row) return res.status(404).json({ error: "Not found" });
+    const list = (row.suggestions || []) as any[];
+    const item = list.find(x => x.id === sid);
+    if (!item) return res.status(404).json({ error: "Suggestion not found" });
+    // The owner may correct the wording before approving.
+    const answer = String(req.body?.answer || item.answer).trim().slice(0, 400);
+    if (action === "approved") {
+      const { data: vp } = await sb.from("voice_profiles").select("id")
+        .eq("tenant_id", who.tenantId).eq("status", "active").limit(1).maybeSingle();
+      if (!vp) return res.status(409).json({ error: "No active voice profile to teach." });
+      const { error } = await sb.from("knowledge_base").insert({
+        tenant_id: who.tenantId, voice_profile_id: vp.id, source_type: "faq", source_name: `desk_insights ${String(item.id).slice(0, 10)}`,
+        content: `If asked "${item.question}": ${answer}`,
+      });
+      if (error) return res.status(500).json({ error: error.message });
+    }
+    const next = list.map(x => x.id === sid ? { ...x, answer, status: action } : x);
+    await sb.from("desk_insights").update({ suggestions: next }).eq("id", row.id).eq("tenant_id", who.tenantId);
+    await audit("desk.insight_" + action, { tenantId: who.tenantId, actorId: who.userId, metadata: { suggestion: item.question } });
+    res.json({ ok: true, suggestions: next });
+  });
+
+  // Every half hour from 21:00 IST: businesses with Desk calls today and no
+  // insights yet get them, and the owner a push.
+  async function eveningInsights() {
+    const ist = new Date(Date.now() + 5.5 * 3600_000);
+    if (ist.getUTCHours() < 21) return;
+    const day = istDay();
+    const start = new Date(`${day}T00:00:00+05:30`).toISOString();
+    const { data: recent } = await sb.from("click_to_call_log").select("tenant_id").gte("created_at", start).limit(2000);
+    const tenants = Array.from(new Set((recent || []).map((r: any) => r.tenant_id)));
+    for (const t of tenants) {
+      const { data: have, error } = await sb.from("desk_insights").select("id").eq("tenant_id", t).eq("day", day).maybeSingle();
+      if (error || have) continue;
+      const r = await buildInsights(t, day);
+      if (!r.ok) continue;
+      const { data: owners } = await sb.from("tenant_users").select("user_id").eq("tenant_id", t).in("role", ["owner", "super_admin"]);
+      await d.pushToUsers((owners || []).map((o: any) => o.user_id), {
+        title: "Today's calls, read for you",
+        body: r.row?.digest?.headline || "What customers asked, what worked, and answers Nikki could learn.",
+        data: { type: "desk_insights" },
+      }).catch(() => 0);
+    }
+  }
+  setInterval(() => { eveningInsights().catch(e => console.error("[desk] insights:", e?.message || e)); }, 30 * 60_000);
 
   // ── Callback reminders ─────────────────────────────────────────────
   // Every minute: callbacks due within ten minutes that nobody has been

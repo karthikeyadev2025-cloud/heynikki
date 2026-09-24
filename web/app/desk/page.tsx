@@ -237,6 +237,7 @@ export default function DeskPage() {
             <RecentCalls d={d} api={api} onSaved={load} />
           </div>
           <div style={{ display: "grid", gap: 16 }}>
+            {d?.you_are_owner && <Insights api={api} />}
             <Stats d={d} api={api} reloadKey={queueKey} />
             <TeamToday d={d} api={api} onSaved={load} tick={tick} />
             <Routing d={d} api={api} onSaved={load} />
@@ -398,6 +399,96 @@ function CustomerCard({ api, phone }: { api: (p: string, b?: any) => Promise<any
         <div>Orders: {c.orders.map((o: any) => `${o.reference} (${o.status})`).join(", ")}</div>
       )}
     </div>
+  );
+}
+
+// ── What the calls taught us (owner) ───────────────────────────────────
+// The day's Desk calls read together: objections, questions, what worked,
+// tips, a line per telecaller — and answers Nikki could learn, which reach
+// live calls only when the owner approves them.
+function Insights({ api }: { api: (p: string, b?: any) => Promise<any> }) {
+  const [st, setSt] = useState<{ insight: any; ready: boolean; today?: string } | null>(null);
+  const [busy, setBusy] = useState("");
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const load = useCallback(() => { api("/api/desk/insights").then(setSt).catch(() => setSt({ insight: null, ready: false })); }, [api]);
+  useEffect(() => { load(); }, [load]);
+  if (!st || !st.ready) return null;
+  const ins = st.insight;
+  async function run() {
+    setBusy("run");
+    try { const j = await api("/api/desk/insights/run", {}); setSt(v => ({ ...(v as any), insight: j.insight })); }
+    catch (e: any) { toast.err(e.message); }
+    setBusy("");
+  }
+  async function act(sid: string, action: "approve" | "dismiss", answer: string) {
+    setBusy(sid);
+    try {
+      const j = await api(`/api/desk/insights/${ins.id}/suggestion`, { suggestion_id: sid, action, answer });
+      setSt(v => ({ ...(v as any), insight: { ...ins, suggestions: j.suggestions } }));
+      if (action === "approve") toast.ok("Nikki will use this answer from the next call.");
+    } catch (e: any) { toast.err(e.message); }
+    setBusy("");
+  }
+  const list = (title: string, items: string[]) => items?.length ? (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{title}</div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: C.mid, lineHeight: 1.55 }}>
+        {items.map((x, i) => <li key={i}>{x}</li>)}
+      </ul>
+    </div>
+  ) : null;
+  const dg = ins?.digest || {};
+  return (
+    <Card title="What the calls taught us" icon={<Sparkles size={15} />}
+      right={<button onClick={run} disabled={busy === "run"} style={{ background: "none", border: "none", color: C.glow, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+        {busy === "run" ? "Reading today's calls…" : ins?.day === st.today ? "refresh" : "build today's now"}
+      </button>}>
+      {!ins ? (
+        <div style={{ fontSize: 13, color: C.dim }}>Every evening at 9 pm, today&apos;s Desk calls are read together here. Press “build today&apos;s now” to see it early.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 12, color: C.dim }}>{new Date(ins.day).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · {ins.calls} calls</div>
+          {dg.headline && <div style={{ fontSize: 13.5, color: C.txt, fontWeight: 700, lineHeight: 1.5 }}>{dg.headline}</div>}
+          {list("Customers pushed back with", dg.objections)}
+          {list("Customers asked", dg.questions)}
+          {list("What worked", dg.what_worked)}
+          {list("For tomorrow", dg.tips)}
+          {dg.per_seat && (
+            <div style={{ fontSize: 12, color: C.mid }}>
+              {Object.entries(dg.per_seat).map(([n, v]: any) => (
+                <div key={n}><strong style={{ color: C.txt }}>{n}</strong>: {v.calls} calls, {v.conversations} conversations, {v.interested} interested, {v.booked} booked{v.unreachable ? `, ${v.unreachable} unreachable` : ""}</div>
+              ))}
+            </div>
+          )}
+          {(ins.suggestions || []).length > 0 && (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Answers Nikki could learn</div>
+              {(ins.suggestions as any[]).map(x => (
+                <div key={x.id} style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 8, padding: "8px 10px", fontSize: 12.5 }}>
+                  <div style={{ color: C.txt, fontWeight: 700, marginBottom: 4 }}>“{x.question}”</div>
+                  {x.status === "pending" ? (
+                    <>
+                      <textarea style={{ ...inputStyle, minHeight: 50, fontSize: 12.5, resize: "vertical" }}
+                        value={edits[x.id] ?? x.answer} onChange={e => setEdits(v => ({ ...v, [x.id]: e.target.value }))} />
+                      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                        <button style={btnStyle(C.grn, busy !== x.id)} disabled={busy === x.id} onClick={() => act(x.id, "approve", edits[x.id] ?? x.answer)}>Teach Nikki</button>
+                        <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}` }} disabled={busy === x.id} onClick={() => act(x.id, "dismiss", x.answer)}>
+                          <span style={{ color: C.mid }}>Dismiss</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: x.status === "approved" ? C.grn : C.dim }}>
+                      {x.answer} <span style={{ fontWeight: 700 }}>· {x.status === "approved" ? "Nikki uses this" : "dismissed"}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
