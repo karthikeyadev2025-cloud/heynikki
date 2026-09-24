@@ -117,6 +117,18 @@ export function mountDeskRoutes(app: Express, d: Deps) {
       .gte("created_at", new Date(Date.now() - 7 * 86400e3).toISOString())
       .order("created_at", { ascending: false }).limit(20);
 
+    // Each seat's own calling number (065). Read on its own so the Desk still
+    // loads before the migration; a missing column reads as "shared".
+    const { data: seatDids } = await sb.from("tenant_users")
+      .select("user_id, outbound_did").eq("tenant_id", tenantId)
+      .then((r: any) => r.error ? { data: [] } : r);
+    const outNumbers = new Set(((numbers as any[]) || []).filter(n => n.use_for_outbound !== false).map(n => n.number));
+    // Only a number that can still make outgoing calls counts; one released
+    // or switched to incoming-only shows as shared, which is what dials.
+    const seatDid = new Map(((seatDids as any[]) || [])
+      .filter((r: any) => r.outbound_did && outNumbers.has(r.outbound_did))
+      .map((r: any) => [r.user_id, r.outbound_did]));
+
     // Emails live in auth, not tenant_users; a seat with neither a name nor
     // an email is a UUID, which nobody can ring.
     const seats = [];
@@ -128,6 +140,7 @@ export function mountDeskRoutes(app: Express, d: Deps) {
         id: m.id, user_id: m.user_id, role: m.role, phone: m.phone || null,
         display_name: m.display_name || null, email: u?.email || null,
         is_you: m.user_id === req.user.id,
+        outbound_did: seatDid.get(m.user_id) || null,
       });
     }
 
@@ -163,7 +176,8 @@ export function mountDeskRoutes(app: Express, d: Deps) {
       routing_mode:  did?.routing_mode || "ai",
       seats,
       ring_count:    seats.filter(s => s.phone).length,
-      you:           me ? { id: me.id, role: me.role, phone: me.phone || null, display_name: me.display_name || null } : null,
+      you:           me ? { id: me.id, role: me.role, phone: me.phone || null, display_name: me.display_name || null,
+                              outbound_did: seatDid.get(req.user.id) || null } : null,
       you_are_owner: isOwner(me),
       team_calls: (teamRows || []).map((c: any) => {
         const n = last10(c.caller_number);
@@ -284,6 +298,21 @@ export function mountDeskRoutes(app: Express, d: Deps) {
     }
     if (req.body?.display_name !== undefined) {
       patch.display_name = String(req.body.display_name).trim().slice(0, 60) || null;
+    }
+    // The seat's own calling number (065). The owner hands numbers out; a
+    // telecaller cannot take one. Empty = the shared numbers.
+    if (req.body?.outbound_did !== undefined) {
+      if (!isOwner(me)) return res.status(403).json({ error: "Only the owner can give someone a calling number." });
+      const want = last10(req.body.outbound_did || "");
+      if (want) {
+        const { data: ok } = await sb.from("dids").select("number, use_for_outbound")
+          .eq("tenant_id", tenantId).eq("status", "assigned").eq("number", want).maybeSingle();
+        if (!ok) return res.status(404).json({ error: "That number isn't on this account." });
+        if (ok.use_for_outbound === false) {
+          return res.status(409).json({ error: "That number is set to incoming calls only. Tick Outgoing on it under Your numbers first." });
+        }
+      }
+      patch.outbound_did = want || null;
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
 

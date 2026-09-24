@@ -4899,7 +4899,7 @@ import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
 import { mountOwnerAlerts, sendOwnerEmail } from "./owner-alerts";
-import { outboundCli } from "./outbound-cli";
+import { outboundCli, outboundDids, pickFor } from "./outbound-cli";
 import { mountAdminExtras } from "./admin-extras";
 import { mountAdminOps } from "./admin-ops";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
@@ -5950,6 +5950,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // ════════════════════════════════════════════════════════════════
 
 import { fsl, wireCallee, trunkAdmit, REMOTE_HOLD_MS } from "./esl";
+import { isOpen as shiftOpen } from "./attendance";
 
 // ── Aggregate platform health check ──────────────────────────
 // Sprint 3 requirement: "Add FreeSWITCH, n8n, Activepieces, R2 to
@@ -6284,10 +6285,34 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
         console.warn(`[routing] tenant ${did.tenant_id} is on '${did.routing_mode}' but no seat has a phone number — nobody will ring`);
       }
       // Simultaneous ring across every agent with a phone on file.
+      const leg = (p: unknown) => `sofia/gateway/jio_primary/${wireCallee(String(p))}`;
       ringGroup = (agents || [])
-        .map((a: any) => `sofia/gateway/jio_primary/${wireCallee(String(a.phone))}`)
+        .map((a: any) => leg(a.phone))
         .filter((s: string) => s.length > 32)
         .join(",");
+
+      // A number the owner gave to one telecaller (065) is theirs: a customer
+      // ringing it back is usually ringing them. While they are on shift,
+      // their phone rings alone for 15 s, then the whole team as before. Off
+      // shift, or before 065/061 are applied, nothing changes.
+      const { data: holder } = await sb.from("tenant_users")
+        .select("user_id, phone").eq("tenant_id", did.tenant_id)
+        .eq("outbound_did", didDigits).not("phone", "is", null).limit(1).maybeSingle()
+        .then((r: any) => r.error ? { data: null } : r);
+      if (holder?.phone && leg(holder.phone).length > 32) {
+        const { data: shift, error: shiftErr } = await sb.from("seat_attendance")
+          .select("user_id, check_in_at, check_out_at").eq("tenant_id", did.tenant_id)
+          .eq("user_id", holder.user_id).is("check_out_at", null)
+          .order("check_in_at", { ascending: false }).limit(1).maybeSingle();
+        // No attendance table yet reads as on shift: shifts are optional.
+        const onShift = shiftErr ? true : !!(shift && shiftOpen(shift as any));
+        if (onShift) {
+          const mine = leg(holder.phone);
+          const rest = ringGroup.split(",").filter(x => x && x !== mine);
+          ringGroup = `[leg_timeout=15]${mine}` + (rest.length ? `|${rest.join(",")}` : "");
+          console.log(`[routing] ${didDigits} belongs to seat ${holder.user_id} — ringing them first`);
+        }
+      }
     }
 
     // The Setup page has written missed_call_guard_enabled/_seconds to the
@@ -7092,9 +7117,15 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     const cfg = await getPlatformConfig();
     const engine = cfg["telephony_engine"] || "freeswitch";
 
-    // The caller ID the customer sees: one of the business's outgoing
-    // numbers, the same one every time for this customer.
-    const did = await outboundCli(sb, tenantId, String(customer_number || ""));
+    // The caller ID the customer sees. The seat's own number when the owner
+    // gave them one (065) and it can still call out; otherwise one of the
+    // business's outgoing numbers, the same one every time for this customer.
+    const outs = await outboundDids(sb, tenantId);
+    const { data: seatRow } = await sb.from("tenant_users").select("outbound_did")
+      .eq("tenant_id", tenantId).eq("user_id", user.id).maybeSingle()
+      .then((r: any) => r.error ? { data: null } : r);
+    const did = (seatRow?.outbound_did && outs.find(o => o.number === seatRow.outbound_did))
+      || pickFor(outs, String(customer_number || ""));
 
     // Desk calls ride the same trunk and are billed the same minute, so
     // the same gate applies: a trial with no credits left cannot dial.

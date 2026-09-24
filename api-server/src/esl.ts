@@ -192,8 +192,11 @@ function safeUuid(v: unknown): string {
 // A ring group is a comma-separated list of dial strings such as
 // sofia/gateway/jio_primary/+919848012345. No spaces, braces, quotes or
 // line breaks can appear in one.
+// [ ] = are for per-leg variables: a telecaller's own number rings them
+// first with "[leg_timeout=15]<leg>|<team>". Still no spaces, quotes or
+// braces, which are what could break out of the uuid_setvar argument.
 function safeDialList(v: unknown): string {
-  return String(v ?? "").replace(/[^A-Za-z0-9_/+.,:@|-]/g, "");
+  return String(v ?? "").replace(/[^A-Za-z0-9_/+.,:@|=\[\]-]/g, "");
 }
 function safeSeconds(v: unknown, fallback: number): number {
   const n = Math.floor(Number(v));

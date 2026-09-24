@@ -37,6 +37,7 @@ const C = {
 type Seat = {
   id: string; user_id: string; role: string; phone: string | null;
   display_name: string | null; email: string | null; is_you: boolean;
+  outbound_did?: string | null;   // their own calling number (065); null = shared
 };
 type Recent = {
   id: string; number: string; lead_id: string | null; lead_name: string | null;
@@ -50,7 +51,7 @@ type TeamCall = {
 type Desk = {
   did: string | null; routing_mode: "ai" | "hybrid" | "human"; seats: Seat[];
   numbers?: { number: string; use_for_outbound: boolean }[];
-  ring_count: number; you: { id: string; role: string; phone: string | null; display_name: string | null } | null;
+  ring_count: number; you: { id: string; role: string; phone: string | null; display_name: string | null; outbound_did?: string | null } | null;
   you_are_owner: boolean; recent: Recent[]; team_calls: TeamCall[];
   // Shifts and targets (migration 061). attendance_ready is false until the
   // migration is applied; the cards say so instead of breaking.
@@ -168,6 +169,9 @@ export default function DeskPage() {
         <p style={{ color: C.mid, fontSize: 13.5, margin: "0 0 18px", maxWidth: 680, lineHeight: 1.6 }}>
           Your team on the same number as Nikki. Dial out from here — your phone rings first, then the
           customer, who sees {(() => {
+            if (d?.you?.outbound_did) {
+              return <><strong style={{ color: C.txt }}>{prettyNum(d.you.outbound_did)}</strong> — your calling number. Customers who ring it back reach you first while you&apos;re checked in</>;
+            }
             const out = (d?.numbers || []).filter(n => n.use_for_outbound);
             return out.length > 1
               ? <>one of <strong style={{ color: C.txt }}>{out.map(n => prettyNum(n.number)).join(" / ")}</strong> — always the same one for that customer</>
@@ -534,10 +538,17 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function start(s: Seat) { setEdit(s.id); setPhone(s.phone || ""); setName(s.display_name || ""); setMsg(""); }
+  const [callNum, setCallNum] = useState("");
+  const outNums = (d?.numbers || []).filter(n => n.use_for_outbound);
+  // Giving people their own number only means something with two or more.
+  const canAssign = !!d?.you_are_owner && outNums.length > 1;
+
+  function start(s: Seat) { setEdit(s.id); setPhone(s.phone || ""); setName(s.display_name || ""); setCallNum(s.outbound_did || ""); setMsg(""); }
   async function save(s: Seat) {
     setBusy(true); setMsg("");
-    try { await api("/api/desk/seat", { member_id: s.id, phone, display_name: name }); setEdit(null); onSaved(); }
+    const body: any = { member_id: s.id, phone, display_name: name };
+    if (canAssign && callNum !== (s.outbound_did || "")) body.outbound_did = callNum || null;
+    try { await api("/api/desk/seat", body); setEdit(null); onSaved(); }
     catch (e: any) { setMsg(e.message); }
     setBusy(false);
   }
@@ -556,6 +567,18 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
                   <div style={{ display: "grid", gap: 8 }}>
                     <input style={inputStyle} placeholder="Name (shown on the Leads page)" value={name} onChange={e => setName(e.target.value)} />
                     <input style={inputStyle} inputMode="numeric" placeholder="10-digit mobile — leave blank to stop ringing" value={phone} onChange={e => setPhone(digits10(e.target.value))} />
+                    {canAssign && (
+                      <label style={{ display: "grid", gap: 4, fontSize: 11.5, color: C.mid }}>
+                        Calls out as
+                        <select style={inputStyle} value={callNum} onChange={e => setCallNum(e.target.value)}>
+                          <option value="">Shared numbers (default)</option>
+                          {outNums.map(n => <option key={n.number} value={n.number}>{prettyNum(n.number)}</option>)}
+                        </select>
+                        <span style={{ color: C.dim }}>
+                          Their Desk calls show this number, and calls to it ring them first while they&apos;re checked in.
+                        </span>
+                      </label>
+                    )}
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <button style={btnStyle(C.glow, !busy)} disabled={busy} onClick={() => save(s)}>{busy ? "Saving…" : "Save"}</button>
                       <button style={btnStyle(C.hi)} onClick={() => setEdit(null)}><span style={{ color: C.mid }}>Cancel</span></button>
@@ -574,6 +597,10 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
                         {s.phone
                           ? <span style={{ color: C.grn, fontWeight: 600 }}>rings {prettyNum(s.phone)}</span>
                           : <span style={{ color: C.gold, fontWeight: 600 }}>no phone — won't ring</span>}
+                        {s.outbound_did && <>
+                          <span>·</span>
+                          <span style={{ color: C.glow, fontWeight: 600 }}>calls out as {prettyNum(s.outbound_did)}</span>
+                        </>}
                       </div>
                     </div>
                     {canEdit && (
