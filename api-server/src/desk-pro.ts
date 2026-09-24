@@ -422,12 +422,36 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
       sb.from("click_to_call_log").select("agent_user_id, duration_seconds, disposition, ai_summary, notes, customer_fail_cause")
         .eq("tenant_id", tenantId).gte("created_at", start).lt("created_at", end).limit(400),
       sb.from("tenant_users").select("user_id, display_name, phone").eq("tenant_id", tenantId),
-      sb.from("voice_profiles").select("business_name").eq("tenant_id", tenantId).eq("status", "active").limit(1).maybeSingle(),
+      sb.from("voice_profiles").select("id, business_name, services, catalogue")
+        .eq("tenant_id", tenantId).eq("status", "active").limit(1).maybeSingle(),
     ]);
+    // What the business actually sells, as Nikki knows it. Suggested answers
+    // are held to this: the 24 Sep report proposed "CRM, ERP … pricing by
+    // email" — ERP was one telecaller's pitch, not something Nikki sells,
+    // and Nikki cannot send email at all.
+    const { data: facts } = vp?.id
+      ? await sb.from("knowledge_base").select("content").eq("voice_profile_id", vp.id)
+          .order("created_at", { ascending: false }).limit(60)
+      : { data: [] as any[] };
+    const catalogue = [
+      ...((vp?.services || []) as any[]).map(x => `service: ${x}`),
+      ...((vp?.catalogue || []) as any[]).filter((x: any) => x?.available !== false)
+        .map((x: any) => `product: ${x.name}${x.price ? ` — ₹${x.price}${x.unit && x.unit !== "single" ? "/" + x.unit : ""}` : ""}`),
+      ...((facts || []) as any[]).map(f => `fact: ${String(f.content).slice(0, 200)}`),
+    ].slice(0, 90);
     const all = calls || [];
     const talked = all.filter((c: any) => c.ai_summary && (c.duration_seconds || 0) >= CONVERSATION_SECS);
     if (talked.length < 3) return { ok: false, detail: `Only ${talked.length} conversation(s) on ${day} — not enough to learn from.` };
-    const name = new Map((members || []).map((m: any) => [m.user_id, m.display_name || (m.phone ? `…${String(m.phone).slice(-4)}` : "Seat")]));
+    // A seat without a display name is shown by its email (the part before
+    // @), which people recognise; "…0340" was the phone's last four digits.
+    const name = new Map<string, string>();
+    for (const m of (members || []) as any[]) {
+      let n = m.display_name as string | null;
+      if (!n) {
+        try { n = ((await sb.auth.admin.getUserById(m.user_id)).data?.user?.email || "").split("@")[0] || null; } catch { n = null; }
+      }
+      name.set(m.user_id, n || (m.phone ? `…${String(m.phone).slice(-4)}` : "Seat"));
+    }
     const lines = talked.slice(0, 120).map((c: any, i: number) =>
       `${i + 1}. [${name.get(c.agent_user_id) || "Seat"}] outcome=${c.disposition || "unsaved"} ${c.duration_seconds}s: ${c.ai_summary}`);
     const perSeat: Record<string, any> = {};
@@ -450,8 +474,13 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
         ` "questions": ["<what customers asked, max 5>"],\n` +
         ` "what_worked": ["<what happened on the calls that went well, max 3>"],\n` +
         ` "tips": ["<concrete advice for tomorrow's calls, max 4, each one sentence>"],\n` +
-        ` "suggested_answers": [{"question": "<a question customers asked>", "answer": "<a short, true answer the AI receptionist could give, in simple English; only facts stated in the calls, never invent prices>"}]}\n` +
-        `Max 4 suggested answers. Base everything only on these calls.\n\n${lines.join("\n")}` }] }],
+        ` "suggested_answers": [{"question": "<a question customers asked>", "answer": "<a short answer the AI receptionist could give, in simple English>"}]}\n` +
+        `Max 4 suggested answers. Base the digest only on these calls.\n` +
+        `Suggested answers must use ONLY the products, services, prices and facts in BUSINESS FACTS below — ` +
+        `never a product a telecaller mentioned that is not listed there, never an invented price. ` +
+        `The receptionist can send details on WhatsApp and nothing else: never offer email, SMS, a visit or a brochure by post. ` +
+        `If a question cannot be answered from BUSINESS FACTS, leave it out.\n\n` +
+        `BUSINESS FACTS:\n${catalogue.join("\n") || "(none on file)"}\n\nCALLS:\n${lines.join("\n")}` }] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
     }, { timeoutMs: 45_000, attempts: 2 });
     if (!g.ok) return { ok: false, detail: `The summary model failed (${g.detail}).` };
@@ -466,6 +495,8 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
     };
     const suggestions = (g.data?.suggested_answers || []).slice(0, 4)
       .filter((x: any) => x?.question && x?.answer)
+      // Belt and braces for the one channel she cannot use.
+      .filter((x: any) => !/\be-?mail\b|ఈమెయిల్|ఇమెయిల్/i.test(String(x.answer)))
       .map((x: any, i: number) => ({ id: `${day}-${i}`, question: String(x.question).slice(0, 200),
         answer: String(x.answer).slice(0, 400), status: "pending" }));
     const { data: row, error } = await sb.from("desk_insights")
