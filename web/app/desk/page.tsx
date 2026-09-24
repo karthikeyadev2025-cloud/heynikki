@@ -24,6 +24,8 @@ import { NIKKI } from "../../lib/brand";
 import {
   Headset, PhoneCall, PhoneOff, Radio, Users, Bot, GitBranch, Check,
   Clock, Pencil, X, PhoneIncoming, PhoneOutgoing, LogIn, LogOut, Target,
+  ListChecks, SkipForward, MessageCircle, Play, Pause, Star, Bell, Sparkles, CalendarClock,
+  ChartColumn, TriangleAlert,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -43,7 +45,18 @@ type Recent = {
   id: string; number: string; lead_id: string | null; lead_name: string | null;
   lead_stage: string | null; by: string | null; disposition: string | null;
   notes: string | null; duration_seconds: number; created_at: string; live: boolean;
+  call_id?: string | null; has_recording?: boolean; ai_summary?: string | null;
+  qa_score?: number | null; qa_note?: string | null;
 };
+/** A lead as the queue and the customer card see it. */
+type QLead = {
+  id: string; name: string | null; phone: string; stage: string; score: number | null;
+  interest: string | null; notes: string | null; call_count: number | null;
+  last_contacted_at: string | null; assigned_to: string | null;
+  follow_up_at: string | null; follow_up_note: string | null; follow_up_done_at: string | null;
+};
+/** What the queue hands the dialer: a number, which lead it is, and whether to ring now. */
+type Prefill = { n: string; k: number; leadId?: string | null; auto?: boolean };
 type TeamCall = {
   id: string; number: string; status: "transferred" | "missed"; duration_seconds: number;
   created_at: string; wa_sent: boolean; has_recording: boolean; lead_id: string | null; lead_name: string | null;
@@ -81,6 +94,17 @@ const OUTCOME_LABEL: Record<string, string> = Object.fromEntries(OUTCOMES.map(o 
 
 const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 const fmtTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+/** A Date/ISO as a datetime-local value, in the browser's time. */
+const toLocalInput = (iso: string) => {
+  const t = new Date(iso); if (isNaN(t.getTime())) return "";
+  return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+/** Tomorrow 11:00, or in two hours if that is still today and before 7 pm. */
+const defaultCallback = () => {
+  const n = new Date(); const inTwo = new Date(n.getTime() + 2 * 3600e3);
+  if (inTwo.getDate() === n.getDate() && inTwo.getHours() < 19) return inTwo.toISOString();
+  const t = new Date(n); t.setDate(t.getDate() + 1); t.setHours(11, 0, 0, 0); return t.toISOString();
+};
 const elapsed = (iso: string) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
 const digits10 = (v: string) => v.replace(/\D/g, "").slice(-10);
 const prettyNum = (n: string) => n.length === 10 ? `${n.slice(0, 5)} ${n.slice(5)}` : n;
@@ -121,8 +145,13 @@ export default function DeskPage() {
   const [live, setLive] = useState<LiveCall[]>([]);
   const [tick, setTick] = useState(0);
   // A number handed to the dialer from the lists below ("call back").
-  const [prefill, setPrefill] = useState<{ n: string; k: number }>({ n: "", k: 0 });
+  const [prefill, setPrefill] = useState<Prefill>({ n: "", k: 0 });
   const callBack = (n: string) => { setPrefill(p => ({ n, k: p.k + 1 })); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  // From the queue: straight to ringing, with the lead attached.
+  const callLead = (l: QLead) => { setPrefill(p => ({ n: digits10(l.phone), k: p.k + 1, leadId: l.id, auto: true })); };
+  // Bumped after every saved outcome so the queue fetches the next lead.
+  const [queueKey, setQueueKey] = useState(0);
+  const afterCall = () => { load(); setQueueKey(k => k + 1); };
 
   const token = useCallback(async () => {
     const { data: { session } } = await createClient().auth.getSession();
@@ -188,13 +217,15 @@ export default function DeskPage() {
         <div className="desk-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 16 }}>
             <Shift d={d} api={api} onChanged={load} tick={tick} />
-            <Dialer d={d} api={api} onDone={load} prefill={prefill} />
+            <NextCall api={api} onCall={callLead} reloadKey={queueKey} />
+            <Dialer d={d} api={api} onDone={afterCall} prefill={prefill} />
             <LiveBoard calls={live} tick={tick} />
             <NeedsCallback d={d} onCallBack={callBack} />
             <TeamCalls d={d} onCallBack={callBack} />
             <RecentCalls d={d} api={api} onSaved={load} />
           </div>
           <div style={{ display: "grid", gap: 16 }}>
+            <Stats d={d} api={api} reloadKey={queueKey} />
             <TeamToday d={d} api={api} onSaved={load} tick={tick} />
             <Routing d={d} api={api} onSaved={load} />
             <Numbers d={d} api={api} onSaved={load} />
@@ -214,6 +245,211 @@ export default function DeskPage() {
   );
 }
 
+// ── Next call (the queue) ──────────────────────────────────────────────
+// Callbacks that are due, then the next lead to ring: the telecaller's own
+// leads first, then the shared pool, hottest first. "Call" rings straight
+// away; "Skip" moves on for this session only. A callback coming due also
+// raises a browser notification while the Desk is open.
+function NextCall({ api, onCall, reloadKey }: {
+  api: (p: string, b?: any) => Promise<any>; onCall: (l: QLead) => void; reloadKey: number;
+}) {
+  const [q, setQ] = useState<{ due: QLead[]; next: QLead | null; mine_open: number; pool_open: number } | null>(null);
+  const [err, setErr] = useState("");
+  const [skip, setSkip] = useState<string[]>([]);
+  const seen = useRef<Set<string>>(new Set());
+  const [notif, setNotif] = useState<string>(() =>
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported");
+
+  const load = useCallback(async () => {
+    try {
+      const j = await api(`/api/desk/queue${skip.length ? `?skip=${skip.join(",")}` : ""}`);
+      setQ(j); setErr("");
+      // Notify once per callback as it comes due.
+      for (const l of j.due as QLead[]) {
+        if (seen.current.has(l.id)) continue;
+        seen.current.add(l.id);
+        if (notif === "granted" && l.follow_up_at && new Date(l.follow_up_at).getTime() <= Date.now() + 10 * 60e3) {
+          try { new Notification(`Call back ${l.name || prettyNum(digits10(l.phone))}`, { body: l.follow_up_note || `Due ${fmtTime(l.follow_up_at)}` }); } catch {}
+        }
+      }
+    } catch (e: any) { setErr(e.message); }
+  }, [api, skip, notif]);
+
+  useEffect(() => { load(); }, [load, reloadKey]);
+  useEffect(() => { const t = setInterval(load, 30_000); return () => clearInterval(t); }, [load]);
+
+  const overdue = (l: QLead) => !!l.follow_up_at && new Date(l.follow_up_at).getTime() < Date.now();
+  const n = q?.next;
+
+  return (
+    <Card title="Next call" icon={<ListChecks size={15} />}
+      right={notif === "default"
+        ? <button onClick={async () => setNotif(await Notification.requestPermission())}
+            style={{ background: "none", border: "none", color: C.glow, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", gap: 4, alignItems: "center" }}>
+            <Bell size={12} /> remind me here
+          </button>
+        : q ? <span style={{ fontSize: 12, color: C.dim }}>{q.mine_open} yours · {q.pool_open} unassigned</span> : null}>
+      {err ? <div style={{ fontSize: 13, color: C.red }}>{err}</div> : !q ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {q.due.length > 0 && (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.gold, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Callbacks due · {q.due.length}
+              </div>
+              {q.due.map(l => (
+                <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, background: C.hi, borderRadius: 8, padding: "8px 10px",
+                  border: `1px solid ${overdue(l) ? C.red + "66" : C.gold + "55"}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: C.txt }}>{l.name || prettyNum(digits10(l.phone))}</div>
+                    <div style={{ fontSize: 11.5, color: overdue(l) ? C.red : C.mid }}>
+                      {overdue(l) ? "overdue · " : ""}{l.follow_up_at ? fmtTime(l.follow_up_at) : ""}{l.follow_up_note ? ` · ${l.follow_up_note}` : ""}
+                    </div>
+                  </div>
+                  <button style={btnStyle(C.grn)} onClick={() => onCall(l)}><PhoneCall size={13} /> Call</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {n ? (
+            <div style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 10, padding: "11px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <strong style={{ color: C.txt, fontSize: 15 }}>{n.name || "Unnamed lead"}</strong>
+                <span style={{ fontSize: 12.5, color: C.mid, fontVariantNumeric: "tabular-nums" }}>{prettyNum(digits10(n.phone))}</span>
+                <span style={{ background: C.bg, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: C.glow }}>{n.stage}</span>
+                {n.score != null && <span style={{ fontSize: 11.5, color: n.score >= 60 ? C.grn : C.dim, fontWeight: 700 }}>score {n.score}</span>}
+                {!n.assigned_to && <span style={{ fontSize: 11, color: C.dim }}>· unassigned</span>}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.mid, marginTop: 5, lineHeight: 1.5 }}>
+                {n.interest ? <>Wants: {n.interest}. </> : null}
+                {n.last_contacted_at ? <>Last contacted {fmtTime(n.last_contacted_at)}. </> : <>Not called yet. </>}
+                {n.notes ? <span style={{ color: C.dim }}>“{n.notes.slice(0, 140)}{n.notes.length > 140 ? "…" : ""}”</span> : null}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button style={btnStyle(C.grn)} onClick={() => onCall(n)}><PhoneCall size={14} /> Call now</button>
+                <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}` }} onClick={() => setSkip(s => [...s, n.id])}>
+                  <SkipForward size={14} color={C.mid} /><span style={{ color: C.mid }}>Skip</span>
+                </button>
+                <a href={`/leads?lead=${n.id}`} style={{ marginLeft: "auto", alignSelf: "center", color: C.glow, fontSize: 12 }}>open lead →</a>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: C.dim }}>
+              {q.due.length ? "No other leads waiting." : "Nothing waiting — every open lead was contacted in the last day. New leads and callbacks appear here."}
+              {skip.length > 0 && <> <button onClick={() => setSkip([])} style={{ background: "none", border: "none", color: C.glow, cursor: "pointer", fontSize: 13 }}>Show skipped ({skip.length})</button></>}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── Customer card ──────────────────────────────────────────────────────
+// Everything the Desk knows about the number in the dialer: the lead, the
+// promised callback, what was said on earlier calls, bookings and orders.
+function CustomerCard({ api, phone }: { api: (p: string, b?: any) => Promise<any>; phone: string }) {
+  const [c, setC] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false; setC(null);
+    api(`/api/desk/customer?phone=${phone}`).then(j => { if (!cancelled) setC(j); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [api, phone]);
+  if (!c) return null;
+  const inbound = (c.calls || []).filter((x: any) => x.direction === "inbound").length;
+  const desk = (c.desk || []).filter((x: any) => x.disposition || x.notes || x.ai_summary).slice(0, 3);
+  const nothing = !c.lead && !c.calls?.length && !desk.length && !c.appointments?.length && !c.orders?.length;
+  if (nothing && !c.opted_out) return null;
+  return (
+    <div style={{ marginTop: 10, background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 8, padding: "10px 12px", fontSize: 12.5, color: C.mid, display: "grid", gap: 6 }}>
+      {c.opted_out && (
+        <div style={{ color: C.red, fontWeight: 700, display: "flex", gap: 6, alignItems: "center" }}>
+          <TriangleAlert size={14} /> This number asked not to be called.
+        </div>
+      )}
+      <div>
+        {c.calls?.length ? <>{c.calls.length} call{c.calls.length === 1 ? "" : "s"} on record ({inbound} incoming). </> : null}
+        {c.lead?.follow_up_at && !c.lead?.follow_up_done_at && (
+          <span style={{ color: C.gold, fontWeight: 700 }}>Callback promised for {fmtTime(c.lead.follow_up_at)}{c.lead.follow_up_note ? ` — ${c.lead.follow_up_note}` : ""}. </span>
+        )}
+      </div>
+      {desk.map((x: any) => (
+        <div key={x.id} style={{ borderLeft: `2px solid ${OUTCOME_COLOR[x.disposition] || C.bord}`, paddingLeft: 8 }}>
+          <span style={{ color: C.dim }}>{fmtTime(x.created_at)}</span>
+          {x.disposition && <> · <strong style={{ color: OUTCOME_COLOR[x.disposition] || C.txt }}>{OUTCOME_LABEL[x.disposition] || x.disposition}</strong></>}
+          {(x.ai_summary || x.notes) && <div style={{ color: C.mid }}>{x.notes || x.ai_summary}</div>}
+        </div>
+      ))}
+      {c.appointments?.length > 0 && (
+        <div>Bookings: {c.appointments.map((a: any) => `${a.service || "appointment"} ${a.slot_date || ""} ${a.slot_time || ""} (${a.status})`.replace(/\s+/g, " ")).join("; ")}</div>
+      )}
+      {c.orders?.length > 0 && (
+        <div>Orders: {c.orders.map((o: any) => `${o.reference} (${o.status})`).join(", ")}</div>
+      )}
+    </div>
+  );
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────
+// The telecaller's own numbers; the owner also sees the team, ranked by
+// bookings, then conversations.
+function Stats({ d, api, reloadKey }: { d: Desk | null; api: (p: string, b?: any) => Promise<any>; reloadKey: number }) {
+  const [days, setDays] = useState(1);
+  const [s, setS] = useState<any>(null);
+  useEffect(() => { api(`/api/desk/stats?days=${days}`).then(setS).catch(() => setS(null)); }, [api, days, reloadKey]);
+  const y = s?.you;
+  const rate = (a: number, b: number) => b ? `${Math.round((a / b) * 100)}%` : "—";
+  const tile = (label: string, value: string, sub?: string) => (
+    <div style={{ background: C.hi, borderRadius: 8, padding: "9px 10px" }}>
+      <div style={{ fontSize: 11, color: C.dim, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: C.txt, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: C.dim }}>{sub}</div>}
+    </div>
+  );
+  return (
+    <Card title="Your numbers" icon={<ChartColumn size={15} />}
+      right={<div style={{ display: "flex", gap: 4 }}>
+        {[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([v, l]) => (
+          <button key={v} onClick={() => setDays(v as number)} style={{ background: days === v ? C.glow + "22" : "none",
+            border: `1px solid ${days === v ? C.glow : C.bord}`, color: days === v ? C.glow : C.mid, borderRadius: 999,
+            padding: "2px 9px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
+        ))}
+      </div>}>
+      {!y ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+            {tile("Calls", String(y.calls))}
+            {tile("Conversations", String(y.connected), `${rate(y.connected, y.calls)} connect`)}
+            {tile("Talk time", hm(y.talk_seconds))}
+            {tile("Booked", String(y.booked), `${rate(y.booked, y.connected)} of conversations`)}
+            {tile("Interested", String(y.interested))}
+            {tile("Callbacks set", String(y.callbacks))}
+          </div>
+          {d?.you_are_owner && s?.team?.length > 1 && (
+            <div style={{ marginTop: 12, overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead><tr style={{ color: C.dim, fontSize: 10.5, textTransform: "uppercase" }}>
+                  {["Team", "Calls", "Conv.", "Talk", "Booked"].map(h => <th key={h} style={{ textAlign: h === "Team" ? "left" : "right", padding: "5px 6px", borderBottom: `1px solid ${C.bord}` }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {s.team.map((t: any, i: number) => (
+                    <tr key={t.user_id} style={{ borderBottom: `1px solid ${C.bord}` }}>
+                      <td style={{ padding: "6px", color: C.txt, fontWeight: 700 }}>{i === 0 && t.booked > 0 ? "🏆 " : ""}{t.name}{t.is_you ? " (you)" : ""}</td>
+                      <td style={{ padding: "6px", textAlign: "right", color: C.mid }}>{t.calls}</td>
+                      <td style={{ padding: "6px", textAlign: "right", color: C.mid }}>{t.connected}</td>
+                      <td style={{ padding: "6px", textAlign: "right", color: C.mid }}>{hm(t.talk_seconds)}</td>
+                      <td style={{ padding: "6px", textAlign: "right", color: C.grn, fontWeight: 700 }}>{t.booked}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ── Dialer ────────────────────────────────────────────────────────────
 type DialState =
   | { phase: "idle" }
@@ -223,10 +459,21 @@ type DialState =
   | { phase: "failed"; reason: string };
 
 function Dialer({ d, api, onDone, prefill }: {
-  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: () => void; prefill: { n: string; k: number };
+  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: () => void; prefill: Prefill;
 }) {
   const [num, setNum] = useState("");
-  useEffect(() => { if (prefill.n) setNum(prefill.n); }, [prefill]);
+  // A queue "Call" rings straight away, once the number is in the box.
+  const [autoLead, setAutoLead] = useState<{ id: string | null; k: number } | null>(null);
+  useEffect(() => {
+    if (!prefill.n) return;
+    setNum(prefill.n);
+    if (prefill.auto) setAutoLead({ id: prefill.leadId || null, k: prefill.k });
+  }, [prefill]);
+  // After the call: the model's summary, and a callback time if needed.
+  const [ai, setAi] = useState<{ state: "idle" | "waiting" | "done" | "none"; summary?: string; disposition?: string | null; follow_up_at?: string | null }>({ state: "idle" });
+  const [cbAt, setCbAt] = useState<string>("");
+  const [cbOpen, setCbOpen] = useState(false);
+  const [waBusy, setWaBusy] = useState(false);
   const [lead, setLead] = useState<LeadLite | null | undefined>(undefined);
   const [st, setSt] = useState<DialState>({ phase: "idle" });
   const [notes, setNotes] = useState("");
@@ -250,12 +497,48 @@ function Dialer({ d, api, onDone, prefill }: {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
-  async function dial() {
+  useEffect(() => {
+    if (!autoLead || !ok || !havePhone || st.phase !== "idle") return;
+    const id = autoLead.id;
+    setAutoLead(null);
+    dial(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLead, ok, havePhone, st.phase]);
+
+  // When the call ends, ask for the summary. The recording lands a few
+  // seconds after hangup, so "not ready" means ask again, for about 40 s.
+  useEffect(() => {
+    if (st.phase !== "ended") return;
+    let cancelled = false;
+    setAi({ state: "waiting" });
+    (async () => {
+      for (let i = 0; i < 8 && !cancelled; i++) {
+        try {
+          const j = await api(`/api/desk/calls/${st.ctcId}/summary`, {});
+          if (cancelled) return;
+          if (j.summary || j.disposition) {
+            setAi({ state: "done", summary: j.summary, disposition: j.disposition, follow_up_at: j.follow_up_at });
+            if (j.summary) setNotes(n => n || j.summary);
+            if (j.follow_up_at) setCbAt(toLocalInput(j.follow_up_at));
+          } else setAi({ state: "none" });
+          return;
+        } catch (e: any) {
+          if (!/not_ready/.test(String(e.message))) { if (!cancelled) setAi({ state: "none" }); return; }
+        }
+        await new Promise(r => setTimeout(r, 5000));
+      }
+      if (!cancelled) setAi({ state: "none" });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st.phase === "ended" ? (st as any).ctcId : null]);
+
+  async function dial(leadId?: string | null) {
     if (!ok || !havePhone) return;
-    setSt({ phase: "ringing_you" });
+    setSt({ phase: "ringing_you" }); setAi({ state: "idle" }); setCbOpen(false); setCbAt("");
     try {
       // The request returns once YOUR phone is answered — up to ~30 s.
-      const j = await api("/api/calls/click-to-call", { customer_number: num, lead_id: lead?.id || null });
+      const j = await api("/api/calls/click-to-call", { customer_number: num, lead_id: leadId || lead?.id || null });
       const started = Date.now();
       setSt({ phase: "connected", ctcId: j.ctc_log_id, startedAt: started });
       pollRef.current = setInterval(async () => {
@@ -281,12 +564,28 @@ function Dialer({ d, api, onDone, prefill }: {
 
   async function outcome(key: string) {
     if (st.phase !== "ended") return;
+    // "Call back" asks when, first.
+    if (key === "callback" && !cbOpen) {
+      setCbOpen(true);
+      if (!cbAt) setCbAt(toLocalInput(defaultCallback()));
+      return;
+    }
     setSaving(key);
     try {
-      await api("/api/calls/disposition", { ctc_log_id: st.ctcId, disposition: key, notes });
-      setSt({ phase: "idle" }); setNotes(""); setNum(""); onDone();
+      const body: any = { ctc_log_id: st.ctcId, disposition: key, notes };
+      if (key === "callback" && cbAt) body.follow_up_at = new Date(cbAt).toISOString();
+      await api("/api/calls/disposition", body);
+      if (key === "callback" && cbAt) toast.ok(`Callback set for ${fmtTime(new Date(cbAt).toISOString())}`);
+      setSt({ phase: "idle" }); setNotes(""); setNum(""); setCbOpen(false); setCbAt(""); setAi({ state: "idle" }); onDone();
     } catch (e: any) { toast.err(e.message); }
     setSaving("");
+  }
+
+  async function sendBrochure() {
+    setWaBusy(true);
+    try { await api("/api/desk/whatsapp", lead?.id ? { lead_id: lead.id } : { phone: num }); toast.ok("Brochure sent on WhatsApp."); }
+    catch (e: any) { toast.err(e.message); }
+    setWaBusy(false);
   }
 
   async function savePhone() {
@@ -330,7 +629,7 @@ function Dialer({ d, api, onDone, prefill }: {
             <PhoneOff size={15} /> {st.phase === "ringing_you" ? "Ringing you…" : "On call"}
           </button>
         ) : (
-          <button style={btnStyle(C.grn, ok && havePhone)} disabled={!ok || !havePhone} onClick={dial}>
+          <button style={btnStyle(C.grn, ok && havePhone)} disabled={!ok || !havePhone} onClick={() => dial()}>
             <PhoneCall size={15} /> Call
           </button>
         )}
@@ -352,6 +651,7 @@ function Dialer({ d, api, onDone, prefill }: {
           )}
         </div>
       )}
+      {ok && st.phase !== "ended" && <CustomerCard api={api} phone={num} />}
 
       {/* call state */}
       {st.phase === "ringing_you" && (
@@ -371,19 +671,49 @@ function Dialer({ d, api, onDone, prefill }: {
           <div style={{ fontSize: 13, color: C.txt, fontWeight: 700, marginBottom: 8 }}>
             Call ended · {fmtDur(st.seconds)}. How did it go?
           </div>
+          {ai.state !== "idle" && (
+            <div style={{ background: C.glow + "10", border: `1px solid ${C.glow}44`, borderRadius: 8, padding: "9px 11px", marginBottom: 10, fontSize: 12.5, color: C.mid, lineHeight: 1.55 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: C.txt, marginBottom: 3 }}>
+                <Sparkles size={13} color={C.glow} /> Call summary
+              </div>
+              {ai.state === "waiting" ? "Listening to the recording…"
+                : ai.state === "none" ? "No summary for this call — add your own notes below."
+                : <>{ai.summary || "Nobody really spoke on this call."}
+                    {ai.disposition && <> Suggested outcome: <strong style={{ color: OUTCOME_COLOR[ai.disposition] || C.txt }}>{OUTCOME_LABEL[ai.disposition]}</strong>.</>}</>}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
             {OUTCOMES.map(o => (
               <button key={o.key} title={o.hint} disabled={!!saving}
-                style={{ ...btnStyle(o.color), opacity: saving && saving !== o.key ? 0.5 : 1 }}
+                style={{ ...btnStyle(o.color), opacity: saving && saving !== o.key ? 0.5 : 1,
+                  boxShadow: ai.disposition === o.key ? `0 0 0 2px ${C.bg}, 0 0 0 4px ${o.color}` : undefined }}
                 onClick={() => outcome(o.key)}>
                 {saving === o.key ? "Saving…" : o.label}
               </button>
             ))}
           </div>
+          {cbOpen && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: C.gold + "12",
+              border: `1px solid ${C.gold}55`, borderRadius: 8, padding: "9px 11px", marginBottom: 8 }}>
+              <CalendarClock size={15} color={C.gold} />
+              <span style={{ fontSize: 12.5, color: C.txt, fontWeight: 700 }}>Call back at</span>
+              <input type="datetime-local" style={{ ...inputStyle, width: "auto", padding: "6px 9px" }}
+                value={cbAt} onChange={e => setCbAt(e.target.value)} />
+              <button style={btnStyle(C.gold, !!cbAt && !saving)} disabled={!cbAt || !!saving} onClick={() => outcome("callback")}>
+                {saving === "callback" ? "Saving…" : "Save callback"}
+              </button>
+              <span style={{ fontSize: 11.5, color: C.dim }}>You&apos;ll get a reminder 10 minutes before, and it tops your queue.</span>
+            </div>
+          )}
           <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} placeholder="Notes (optional) — what they asked, what you promised"
             value={notes} onChange={e => setNotes(e.target.value)} />
-          <div style={{ fontSize: 11.5, color: C.dim, marginTop: 6 }}>
-            The outcome moves the lead's stage on the Leads page; Booked and Interested also send the brochure on WhatsApp if one is set.
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+            <div style={{ fontSize: 11.5, color: C.dim }}>
+              The outcome moves the lead's stage on the Leads page; Booked and Interested also send the brochure on WhatsApp.
+            </div>
+            <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}` }} disabled={waBusy} onClick={sendBrochure}>
+              <MessageCircle size={14} color={C.grn} /><span style={{ color: C.txt }}>{waBusy ? "Sending…" : "Send brochure now"}</span>
+            </button>
           </div>
         </div>
       )}
@@ -773,6 +1103,12 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
                     <td style={{ padding: "9px 8px" }}>
                       <div style={{ color: C.txt, fontWeight: 700 }}>{r.lead_name || prettyNum(r.number)}</div>
                       {r.lead_name && <div style={{ color: C.dim, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)}</div>}
+                      {r.ai_summary && (
+                        <div title={r.ai_summary} style={{ color: C.mid, fontSize: 11.5, marginTop: 2, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <Sparkles size={10} color={C.glow} /> {r.ai_summary}
+                        </div>
+                      )}
+                      {r.qa_note && <div style={{ color: C.gold, fontSize: 11.5, marginTop: 2 }}>Review: {r.qa_note}</div>}
                     </td>
                     <td style={{ padding: "9px 8px", color: C.mid }}>{r.by || "—"}</td>
                     <td style={{ padding: "9px 8px" }}>
@@ -790,8 +1126,12 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
                     </td>
                     <td style={{ padding: "9px 8px", color: C.mid, fontVariantNumeric: "tabular-nums" }}>{r.duration_seconds ? fmtDur(r.duration_seconds) : "—"}</td>
                     <td style={{ padding: "9px 8px", color: C.dim, whiteSpace: "nowrap" }}>{fmtTime(r.created_at)}</td>
-                    <td style={{ padding: "9px 8px" }}>
-                      {r.lead_id && <a href={`/leads?lead=${r.lead_id}`} style={{ color: C.glow, fontSize: 12 }}>lead →</a>}
+                    <td style={{ padding: "9px 8px", whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {r.has_recording && r.call_id && <Player callId={r.call_id} />}
+                        <Review r={r} owner={!!d?.you_are_owner} api={api} onSaved={onSaved} />
+                        {r.lead_id && <a href={`/leads?lead=${r.lead_id}`} style={{ color: C.glow, fontSize: 12 }}>lead →</a>}
+                      </div>
                     </td>
                   </tr>
                   {open === r.id && (
@@ -816,6 +1156,68 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
         </div>
       )}
     </Card>
+  );
+}
+
+// Plays a desk call's recording. Fetched with the session (the endpoint
+// streams the decrypted file), once, on first play.
+function Player({ callId }: { callId: string }) {
+  const [url, setUrl] = useState("");
+  const [playing, setPlaying] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const el = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  async function toggle() {
+    if (playing) { el.current?.pause(); return; }
+    let u = url;
+    if (!u) {
+      setBusy(true);
+      try {
+        const { data: { session } } = await createClient().auth.getSession();
+        const r = await fetch(`${API}/api/calls/${callId}/recording`, { headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Recording not available");
+        u = URL.createObjectURL(await r.blob()); setUrl(u);
+      } catch (e: any) { toast.err(e.message); setBusy(false); return; }
+      setBusy(false);
+    }
+    if (!el.current) {
+      el.current = new Audio(u);
+      el.current.onplay = () => setPlaying(true);
+      el.current.onpause = () => setPlaying(false);
+      el.current.onended = () => setPlaying(false);
+    }
+    el.current.play().catch(() => {});
+  }
+  return (
+    <button onClick={toggle} title={playing ? "Pause" : "Play recording"} disabled={busy}
+      style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 999, width: 26, height: 26, display: "inline-flex",
+        alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.glow }}>
+      {busy ? "…" : playing ? <Pause size={12} /> : <Play size={12} />}
+    </button>
+  );
+}
+
+// The owner's 1-5 review of a desk call; the telecaller sees it. A note is
+// asked for when the score is low, because "2" alone teaches nobody anything.
+function Review({ r, owner, api, onSaved }: { r: Recent; owner: boolean; api: (p: string, b?: any) => Promise<any>; onSaved: () => void }) {
+  const [hover, setHover] = useState(0);
+  if (!owner && !r.qa_score) return null;
+  const score = r.qa_score || 0;
+  async function set(n: number) {
+    const note = n <= 3 ? window.prompt("What should they do differently? (optional)", r.qa_note || "") : r.qa_note;
+    if (note === null) return;
+    try { await api(`/api/desk/calls/${r.id}/review`, { score: n, note: note || "" }); onSaved(); }
+    catch (e: any) { toast.err(e.message); }
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 1 }} onMouseLeave={() => setHover(0)} title={owner ? "Review this call" : `Reviewed ${score}/5`}>
+      {[1, 2, 3, 4, 5].map(n => (
+        <Star key={n} size={13}
+          color={(hover || score) >= n ? C.gold : C.bord} fill={(hover || score) >= n ? C.gold : "none"}
+          style={{ cursor: owner ? "pointer" : "default" }}
+          onMouseEnter={() => owner && setHover(n)} onClick={() => owner && set(n)} />
+      ))}
+    </span>
   );
 }
 

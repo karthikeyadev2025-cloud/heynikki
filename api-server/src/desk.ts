@@ -95,9 +95,15 @@ export function mountDeskRoutes(app: Express, d: Deps) {
         .eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
       sb.from("tenant_users").select("id, user_id, role, phone, display_name")
         .eq("tenant_id", tenantId).order("created_at", { ascending: true }),
+      // With the summary and review columns (066) when they exist.
       sb.from("click_to_call_log")
-        .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid")
-        .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(30),
+        .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid, call_id, ai_summary, qa_score, qa_note")
+        .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(30)
+        .then((r: any) => r.error
+          ? sb.from("click_to_call_log")
+              .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid, call_id")
+              .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(30)
+          : r),
       membership(req.user.id, tenantId),
       // Every number, for the outgoing-caller-ID switches. Falls back to a
       // read without use_for_outbound while 064 is not applied.
@@ -155,6 +161,12 @@ export function mountDeskRoutes(app: Express, d: Deps) {
       teamPhones.length ? sb.from("leads").select("id, name, phone").eq("tenant_id", tenantId).in("phone", teamPhones) : Promise.resolve({ data: [] as any[] }),
     ]);
     const leadById    = new Map((leads || []).map((l: any) => [l.id, l]));
+    // Which desk calls have a recording to play.
+    const callIds = (recent || []).map((r: any) => r.call_id).filter(Boolean);
+    const { data: recCalls } = callIds.length
+      ? await sb.from("calls").select("id, r2_object_key").eq("tenant_id", tenantId).in("id", callIds)
+      : { data: [] as any[] };
+    const recorded = new Set((recCalls || []).filter((c: any) => c.r2_object_key).map((c: any) => c.id));
     const leadByPhone = new Map((phoneLeads || []).map((l: any) => [l.phone, l]));
     const seatByUser = new Map(seats.map(s => [s.user_id, s]));
 
@@ -198,6 +210,8 @@ export function mountDeskRoutes(app: Express, d: Deps) {
           by: s?.display_name || s?.email || null,
           disposition: r.disposition, notes: r.notes,
           duration_seconds: r.duration_seconds || 0, created_at: r.created_at,
+          call_id: r.call_id || null, has_recording: !!(r.call_id && recorded.has(r.call_id)),
+          ai_summary: r.ai_summary || null, qa_score: r.qa_score ?? null, qa_note: r.qa_note || null,
           live: !r.disposition && !r.duration_seconds
                 && Date.now() - new Date(r.created_at).getTime() < 2 * 3600e3,
         };

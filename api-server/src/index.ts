@@ -80,7 +80,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Push to the Flutter app. Silently inert until the Firebase service account
 // is configured, so nothing here can break a call path.
-const { pushToTenant, pushConfigured } = makePush(sb);
+const { pushToTenant, pushToUsers, pushConfigured } = makePush(sb);
 
 // ── AUDIT LOG HELPER ──────────────────────────────────────
 // DPDP Act Section 8(7) requires data fiduciaries to maintain records
@@ -2552,7 +2552,17 @@ async function waAddNumber(tenantId: string, displayName: string, ownNumber?: st
           : [];
         assigned = users.some((u: any) => u.id === me && (u.tasks || []).includes("MANAGE"));
       } catch { /* fall through to the generic hint */ }
-      hint = assigned
+      // Meta answers #200 when the account is full, too: an unverified
+      // business may hold two numbers, and on 24 Sep a stale "Sai Clinic"
+      // entry from a cancelled test account filled the second slot. That
+      // read as "Meta is rejecting this virtual number", which sent people
+      // off to use their own mobile for nothing.
+      let onAccount = 0;
+      try { onAccount = ((await metaGraph(`${WABA_ID()}/phone_numbers?fields=id`))?.data || []).length; } catch {}
+      hint = assigned && onAccount >= 2
+        ? ` — the WhatsApp Business account already holds ${onAccount} numbers, and an unverified business may hold 2. `
+          + `Delete an unused number in WhatsApp Manager › Phone numbers, or complete Meta business verification, then try again.`
+        : assigned
         ? (usingDid
             ? ` — WhatsApp will not accept ${chosen} as a sender: Meta is rejecting this virtual number itself, not our access. Tick “Use my own mobile number” below and enter a mobile that is not already on WhatsApp.`
             : ` — WhatsApp will not accept ${chosen} as a sender. Check it is a working Indian mobile that is not already registered on WhatsApp.`)
@@ -2587,7 +2597,19 @@ async function waRequestCode(tenantId: string, method: string) {
       language: "en_US",
     });
   } catch (e: any) { throw new WaStepError(502, e.message); }
-  return { number: row.phone_number, own: !(did?.number && last10(row.phone_number) === last10(did.number)) };
+  return { number: row.phone_number, own: !(await isTenantDid(tenantId, row.phone_number)) };
+}
+
+// Any of the business's own HeyNikki numbers — Nikki answers all of them,
+// so Meta's verification call to any one can be completed automatically.
+// Comparing against the one waDid() prefers read 8633502034 as "their own
+// mobile" on a business with three numbers, and nothing registered.
+async function isTenantDid(tenantId: string, phone: string | null | undefined): Promise<boolean> {
+  const want = last10(String(phone || ""));
+  if (!want) return false;
+  const { data } = await sb.from("dids").select("number")
+    .eq("tenant_id", tenantId).eq("status", "assigned");
+  return (data || []).some((d: any) => last10(String(d.number)) === want);
 }
 
 async function waVerifyCode(tenantId: string, code: string) {
@@ -2690,7 +2712,7 @@ async function startWhatsAppRegistration(
   // can complete. sai clinic has sat that way since 2 September; sweeping it
   // would have rung their mobile every fifteen minutes. Their own number
   // stays a deliberate, human step in the panel.
-  if (row?.phone_number && last10(row.phone_number) !== last10(did.number)) {
+  if (row?.phone_number && !(await isTenantDid(tenantId, row.phone_number))) {
     return {
       started: false, status: row.status || "none",
       detail: `This business registered its own number (${row.phone_number}), not the HeyNikki number. ` +
@@ -4908,6 +4930,7 @@ import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
 import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
+import { mountDeskProRoutes } from "./desk-pro";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
@@ -4930,6 +4953,8 @@ mountCampaignImport(app, sb, verifyJWT, getTenantId, audit, planAllows);
 mountOutboundRoutes(app, sb, verifyInternal, audit);
 mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
+mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWhatsApp, pushToUsers,
+  pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET });
 // Search across calls and transcripts, CSV exports, lead follow-ups.
 mountSearchExport(app, { sb, verifyJWT, apiLimiter, getTenantId, audit });
 // The dashboard's "something is wrong" banner.
@@ -7320,11 +7345,27 @@ app.post("/api/calls/disposition", verifyJWT, apiLimiter, async (req: any, res) 
     if (!log) return res.status(404).json({ error: "Call not found" });
 
     if (log?.lead_id && newStage) {
-      await sb.from("leads").update({
-        stage:      newStage,
-        notes:      notes || undefined,
-        updated_at: new Date().toISOString(),
-      }).eq("id", log.lead_id).eq("tenant_id", tenantId);
+      // The call happened, so the lead was contacted and any callback that
+      // was due is kept. "Call back" with a time books the next one (the
+      // Desk's queue and reminders read these, 056/066); without a time it
+      // leaves the follow-up as it was.
+      const now = new Date().toISOString();
+      const patch: Record<string, any> = {
+        stage: newStage, notes: notes || undefined, updated_at: now, last_contacted_at: now,
+      };
+      const fu = req.body?.follow_up_at ? new Date(req.body.follow_up_at) : null;
+      if (disposition === "callback" && fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now()) {
+        Object.assign(patch, { follow_up_at: fu.toISOString(), follow_up_done_at: null,
+          follow_up_notified_at: null, follow_up_note: notes ? String(notes).slice(0, 500) : null });
+      } else if (disposition !== "callback") {
+        const { data: cur } = await sb.from("leads").select("follow_up_at, follow_up_done_at")
+          .eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
+        if (cur?.follow_up_at && !cur.follow_up_done_at) patch.follow_up_done_at = now;
+      }
+      await sb.from("leads").update(patch).eq("id", log.lead_id).eq("tenant_id", tenantId);
+      // A lead nobody owned belongs to whoever just worked it.
+      await sb.from("leads").update({ assigned_to: user.id })
+        .eq("id", log.lead_id).eq("tenant_id", tenantId).is("assigned_to", null);
     }
 
     // Fire automation webhook for interested leads
