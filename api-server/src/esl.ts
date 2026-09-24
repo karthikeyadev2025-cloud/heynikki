@@ -762,6 +762,13 @@ export class FreeSwitchESL {
    * own (the originate variables cannot carry the quoted curl the dialplan
    * uses), and to tell the dashboard when a dialled call has ended.
    */
+  /** One channel variable, or "" when the channel or the variable is gone. */
+  async getVar(uuid: string, name: string): Promise<string> {
+    if (!/^[a-f0-9-]{36}$/i.test(uuid) || !/^[a-z_]+$/i.test(name)) return "";
+    const r = (await eslCommand(`api uuid_getvar ${uuid} ${name}`)).trim();
+    return !r || /^-ERR|_undef_/i.test(r) ? "" : r;
+  }
+
   async channelExists(uuid: string): Promise<boolean> {
     if (!/^[a-f0-9-]{36}$/i.test(uuid)) return false;
     const r = await eslCommand(`api uuid_exists ${uuid}`);

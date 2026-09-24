@@ -2597,6 +2597,11 @@ async function waRequestCode(tenantId: string, method: string) {
       language: "en_US",
     });
   } catch (e: any) { throw new WaStepError(502, e.message); }
+  // The pipeline only listens for a code on this number for 20 minutes
+  // after this stamp (_awaiting_wa_code) — the manual path set none, so a
+  // code Meta read out after a button press would have gone unheard.
+  await sb.from("tenant_whatsapp").update({ code_requested_at: new Date().toISOString() })
+    .eq("tenant_id", tenantId).then((r: any) => r.error && console.error("[wa-sender] code_requested_at:", r.error.message));
   return { number: row.phone_number, own: !(await isTenantDid(tenantId, row.phone_number)) };
 }
 
@@ -6777,7 +6782,9 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
     if (!Number.isFinite(secs) || secs <= 0) {
       if (callRow?.created_at) {
         secs = Math.max(0, Math.round((Date.now() - new Date(callRow.created_at).getTime()) / 1000));
-        console.warn(`[FS Hangup] billsec missing for ${fs_uuid}; derived ${secs}s from created_at`);
+        // What actually arrived, so the next call shows whether the hook's
+        // \${billsec} is expanding to nothing or not expanding at all.
+        console.warn(`[FS Hangup] billsec missing for ${fs_uuid} (got ${JSON.stringify(duration)}, cause ${JSON.stringify(hangup_cause)}); derived ${secs}s from created_at`);
       } else {
         secs = 0;
       }
@@ -6874,8 +6881,20 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         // Scoped to the call's tenant throughout: the log row and its
         // lead_id are matched on a channel UUID and a stored id, and neither
         // lookup should be able to reach another business's lead.
+        // Talk time, not ring time: from the customer answering (067) when
+        // the Desk saw it. A call the customer never picked up is 0.
+        let talk = secs;
+        const { data: ans, error: ansErr } = await sb.from("click_to_call_log")
+          .select("customer_answered_at").eq("freeswitch_uuid", fs_uuid)
+          .eq("tenant_id", callRow.tenant_id).maybeSingle();
+        // Without it (the API restarted mid-call, or 067 is not applied)
+        // this stays the full length; watchDeskCall corrects a call the
+        // customer never answered once the channel is gone.
+        if (!ansErr && ans?.customer_answered_at) {
+          talk = Math.max(0, Math.min(secs, Math.round((Date.now() - new Date(ans.customer_answered_at).getTime()) / 1000)));
+        }
         const { data: ctc } = await sb.from("click_to_call_log")
-          .update({ duration_seconds: secs, call_id: callRow.id, updated_at: new Date().toISOString() })
+          .update({ duration_seconds: talk, call_id: callRow.id, updated_at: new Date().toISOString() })
           .eq("freeswitch_uuid", fs_uuid).eq("tenant_id", callRow.tenant_id)
           .select("id, lead_id").maybeSingle();
         if (ctc?.lead_id) {
@@ -7107,6 +7126,41 @@ app.post("/webhooks/freeswitch/missed-call", verifyInternal, async (req, res) =>
 // ── Click-to-Call ─────────────────────────────────────────────
 
 // Where a dialled call stands: still up, or ended and how long it ran.
+// Follows one Desk call from the API itself, so its talk time does not
+// depend on the telecaller keeping the Desk open. Records when the customer
+// answered (the seat's leg bridged — 067); a call the customer never picked
+// up is set to 0 once the channel is gone and the hangup hook has written
+// its full length. In-process: an API restart mid-call just leaves the
+// hangup hook's full-length figure, which is what every call had before.
+function watchDeskCall(logId: string, tenantId: string, uuid: string) {
+  (async () => {
+    let bridged = false, seen = 0;
+    const started = Date.now();
+    while (Date.now() - started < 3 * 3600_000) {
+      await new Promise(r => setTimeout(r, 2000));
+      let alive = false;
+      try { alive = await fsl.channelExists(uuid); } catch { alive = true; continue; }
+      if (!alive) break;
+      seen += 1;
+      if (!bridged) {
+        try {
+          if (await fsl.getVar(uuid, "last_bridge_to")) {
+            bridged = true;
+            await sb.from("click_to_call_log").update({ customer_answered_at: new Date().toISOString() })
+              .eq("id", logId).eq("tenant_id", tenantId).is("customer_answered_at", null);
+          }
+        } catch { /* keep watching */ }
+      }
+    }
+    if (!bridged && seen >= 2) {
+      // Let the hangup hook write first, then correct it.
+      await new Promise(r => setTimeout(r, 8000));
+      await sb.from("click_to_call_log").update({ duration_seconds: 0 })
+        .eq("id", logId).eq("tenant_id", tenantId).is("customer_answered_at", null);
+    }
+  })().catch(e => console.error(`[ctc] watcher for ${logId}:`, e?.message || e));
+}
+
 app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
@@ -7117,6 +7171,19 @@ app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
   let alive = false;
   if (!row.duration_seconds && row.freeswitch_uuid) {
     try { alive = await fsl.channelExists(row.freeswitch_uuid); } catch { alive = false; }
+  }
+  // The seat's leg is bridged the moment the customer picks up. The Desk
+  // polls this every 3 s during a call, so that moment is known to within a
+  // poll, and the hangup hook measures talk time from it (067) instead of
+  // counting the customer's ringing as conversation.
+  if (alive && row.freeswitch_uuid) {
+    try {
+      const bridged = await fsl.getVar(row.freeswitch_uuid, "last_bridge_to");
+      if (bridged) {
+        await sb.from("click_to_call_log").update({ customer_answered_at: new Date().toISOString() })
+          .eq("id", row.id).eq("tenant_id", tenantId).is("customer_answered_at", null);
+      }
+    } catch { /* 067 not applied, or the channel just ended — harmless */ }
   }
   res.json({
     id: row.id, alive, ended: !alive,
@@ -7290,6 +7357,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     // Duration, lead call_count and the recording arrive from the dialplan
     // hangup hook (click_to_call_agent_leg) — see /webhooks/freeswitch/hangup.
+    if (ctcLog?.id && fsUuid) watchDeskCall(ctcLog.id, tenantId, fsUuid);
 
     await audit("click_to_call", {
       tenantId, actorId: user.id,

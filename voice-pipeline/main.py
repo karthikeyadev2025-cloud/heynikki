@@ -2216,6 +2216,47 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
+    async def get_recent_outbound(self, caller_number: str, tenant_id: str) -> dict:
+        """Whether the business rang this number lately, and what came of it.
+
+        The Desk and campaigns dial from the same numbers Nikki answers, so a
+        customer who missed that call rings it back and asks "why did you
+        call me?". On 24 Sep she answered "no, you called us" — to someone
+        the team had just called. Returns {} when there is nothing recent or
+        on any failure.
+        """
+        digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+        if not digits or not tenant_id:
+            return {}
+        since = (datetime.utcnow() - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                calls, desk = await asyncio.gather(
+                    client.get(f"{self.url}/rest/v1/calls", headers=self.headers, params={
+                        "tenant_id": f"eq.{tenant_id}", "caller_number": f"like.*{digits}",
+                        "direction": "eq.outbound", "created_at": f"gte.{since}",
+                        "select": "created_at,intent,duration_seconds",
+                        "order": "created_at.desc", "limit": "1"}),
+                    client.get(f"{self.url}/rest/v1/click_to_call_log", headers=self.headers, params={
+                        "tenant_id": f"eq.{tenant_id}", "callee_number": f"like.*{digits}",
+                        "created_at": f"gte.{since}",
+                        "select": "created_at,disposition,notes",
+                        "order": "created_at.desc", "limit": "1"}),
+                )
+            c = (calls.json() or [None])[0] if calls.status_code == 200 else None
+            dsk = (desk.json() or [None])[0] if desk.status_code == 200 else None
+            if not c and not dsk:
+                return {}
+            at = (c or dsk or {}).get("created_at")
+            by_person = bool(dsk) or (c or {}).get("intent") == "transfer"
+            return {"last_outbound_at": at, "by_person": by_person,
+                    "answered": ((c or {}).get("duration_seconds") or 0) >= 10,
+                    "note": ((dsk or {}).get("notes") or "")[:200],
+                    "outcome": (dsk or {}).get("disposition")}
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"recent outbound lookup failed: {e}")
+            return {}
+
     async def get_caller_history(self, caller_number: str, voice_profile_id: str) -> dict:
         """What we already know about this caller, for a human opening.
 
@@ -2235,8 +2276,12 @@ class SupabaseClient:
                 r = await client.get(
                     f"{self.url}/rest/v1/calls",
                     headers=self.headers,
+                    # Inbound only. Our own calls to them — the Desk and
+                    # campaigns now dial from these numbers — are not them
+                    # ringing us, and get_recent_outbound says those.
                     params={"caller_number": f"like.*{digits}",
                             "voice_profile_id": f"eq.{voice_profile_id}",
+                            "direction": "eq.inbound",
                             "select": "id,created_at,intent,status",
                             "order": "created_at.desc", "limit": "5"},
                 )
@@ -2861,6 +2906,7 @@ class NikkiAgent:
         # "సిస్టమ్ లో సేవ్ అవ్వలేదు" to explain it.
         self._bg_tasks   : set = set()
         self.caller_history: dict = {}
+        self.recent_outbound: dict = {}   # get_recent_outbound: did we ring them lately
         self.fs_uuid     : str = ""      # set by the FreeSWITCH handler
         self.ring_group  : str = ""      # who to ring on a human request
         self.guard_seconds: int = 20
@@ -3105,6 +3151,42 @@ class NikkiAgent:
         known = {k: v for k, v in self.slots.items() if v and k != "name_declined"}
         lines = []
         h = self.caller_history or {}
+        # Every turn, because a rule stated once at the top loses to the
+        # last few turns of history. From the 24 Sep call where "MyStore OS"
+        # came through STT as "Mysore voice", "moisture wise" and "Maestro
+        # voice", and she answered the HeyNikki price three times running
+        # until the caller asked "what am I asking and what are you saying?"
+        lines.append(
+            "\n\n[LISTENING]"
+            "\nThe caller's words reach you through speech-to-text, and product and brand"
+            " names are often misheard. If what they said sounds like one of the business's"
+            " products, treat it as that product; if it could be two, name both and ask which."
+            " Never give the same answer twice in a row: if they ask again or say you didn't"
+            " answer, you answered the wrong thing — say sorry briefly and answer differently,"
+            " or ask one short question to find out what they mean."
+        )
+        # We rang them recently (the Desk or a campaign). They are very likely
+        # calling back about it — never tell them they called us first.
+        ro = getattr(self, "recent_outbound", None) or {}
+        if ro.get("last_outbound_at") and not getattr(self, "is_outbound", False):
+            try:
+                when = datetime.fromisoformat(str(ro["last_outbound_at"]).replace("Z", "+00:00")) + timedelta(hours=5, minutes=30)
+                when_s = when.strftime("%d %b, %I:%M %p")
+            except Exception:  # noqa: BLE001
+                when_s = "recently"
+            who = "someone from our team" if ro.get("by_person") else "we (Nikki)"
+            extra = ""
+            if ro.get("note"):
+                extra += f" What they noted on that call: \"{ro['note']}\"."
+            if not ro.get("answered"):
+                extra += " That call was probably missed."
+            lines.append(
+                f"\n\n[WE CALLED THIS NUMBER — {when_s} IST, {who}]"
+                f"\nThis caller may be ringing back about it.{extra} If they ask why they were"
+                " called or say they got a call from this number, say yes, we called them, say"
+                " briefly why if you know, and ask how you can help. NEVER say they called us"
+                " first or that nobody called them."
+            )
         if self.slots.get("name_declined") and not self.slots.get("name"):
             lines.append(
                 "\n\n[THE CALLER DECLINED TO GIVE THEIR NAME]"
@@ -8880,10 +8962,14 @@ async def freeswitch_ws(
             await _refresh_pricing()
             # Two lookups, one round trip's worth of waiting: how many times
             # they have rung, and what they last asked this business for.
-            agent.caller_history, agent.caller_memory = await asyncio.gather(
+            agent.caller_history, agent.caller_memory, agent.recent_outbound = await asyncio.gather(
                 db.get_caller_history(caller_number, (profile or {}).get("id", "")),
                 db.get_caller_memory(caller_number, (profile or {}).get("tenant_id", "")),
+                db.get_recent_outbound(caller_number, (profile or {}).get("tenant_id", ""))
+                if not getattr(agent, "is_outbound", False) else asyncio.sleep(0, result={}),
             )
+            if agent.recent_outbound:
+                log.info(f"[FS] {fs_uuid}: we called this number at {agent.recent_outbound.get('last_outbound_at')}")
             if agent.caller_history.get("previous_calls"):
                 log.info(f"[FS] {fs_uuid}: returning caller — "
                          f"{agent.caller_history['previous_calls']} previous call(s)")
@@ -9514,10 +9600,36 @@ async def freeswitch_ws(
 _OTP_CUE_RE = re.compile(r"whatsapp|వాట్సాప్|code|కోడ్|verif|వెరిఫ", re.I)
 
 
+async def _awaiting_wa_code(agent, did_number: str) -> bool:
+    """Is Meta about to phone this number with a WhatsApp code?
+
+    Only then is a six-digit run on a call worth anything. The detector ran
+    on every call, so an ordinary customer who said "WhatsApp" was scanned
+    for a code and logged — and one who read out six digits (a PIN, an
+    order number) would have had them sent to Meta as a verification code
+    for a registration that was waiting, which counts against Meta's limit.
+    The API stamps code_requested_at when it asks Meta to call (058).
+    """
+    digits = "".join(c for c in (did_number or "") if c.isdigit())[-10:]
+    if len(digits) != 10:
+        return False
+    since = (datetime.utcnow() - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(f"{agent.db.url}/rest/v1/tenant_whatsapp", headers=agent.db.headers, params={
+                "phone_number": f"like.*{digits}", "status": "neq.active",
+                "code_requested_at": f"gte.{since}", "select": "tenant_id", "limit": "1"})
+        return r.status_code == 200 and bool(r.json())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _surface_wa_otp(agent, fs_uuid: str, caller_number: str, did_number: str) -> None:
     try:
         said = " ".join(t["content"] for t in (agent.transcript or []) if t["role"] == "user")
         if not _OTP_CUE_RE.search(said):
+            return
+        if not await _awaiting_wa_code(agent, did_number):
             return
         for m in _DIGIT_RUN_RE.finditer(said):
             digits = _run_to_digits(m.group(0))
@@ -9543,7 +9655,7 @@ async def _surface_wa_otp(agent, fs_uuid: str, caller_number: str, did_number: s
                 except Exception as e:  # noqa: BLE001
                     log.error(f"[wa-otp] {fs_uuid}: could not hand the code to the API: {e}")
                 return
-        log.warning(f"[wa-otp] {fs_uuid}: verification cue heard but no six-digit run: {said[:200]!r}")
+        log.warning(f"[wa-otp] {fs_uuid}: code expected on {did_number} but no six-digit run heard: {said[:200]!r}")
     except Exception as e:  # noqa: BLE001
         log.warning(f"[wa-otp] {fs_uuid}: {e}")
 

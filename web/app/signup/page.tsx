@@ -90,7 +90,7 @@ export default function SignupPage() {
       return;
     }
     const sb = createClient();
-    const { error: err } = await sb.auth.signUp({
+    const { data: su, error: err } = await sb.auth.signUp({
       email, password,
       options: {
         // Carried into handle_new_user, which normalises it and writes it to
@@ -109,6 +109,18 @@ export default function SignupPage() {
       },
     });
     if (err) { setError(humanSignupError(err.message)); setLoading(false); return; }
+    // An address that already has an account comes back as a success with
+    // no identities, and Supabase sends nothing — deliberately, so sign-up
+    // cannot be used to discover who is registered. The page then said
+    // "check your email" for a mail that was never coming: an invited
+    // telecaller whose address was already on a Google account waited for
+    // it. Say so, and send them to sign in with the invite kept.
+    if (su?.user && Array.isArray(su.user.identities) && su.user.identities.length === 0) {
+      if (inviteToken) { try { localStorage.setItem("nikki_invite", inviteToken); } catch {} }
+      setError("ALREADY_REGISTERED");
+      setLoading(false);
+      return;
+    }
     if (inviteToken) { try { localStorage.setItem("nikki_invite", inviteToken); } catch {} }
     setDone(true);
     setLoading(false);
@@ -269,7 +281,17 @@ export default function SignupPage() {
                 padding: "10px 12px", borderRadius: 8,
                 fontSize: 13, marginBottom: 16,
                 border: `1px solid ${J.red}44`,
-              }}>{error}</div>
+              }}>{error === "ALREADY_REGISTERED" ? (
+                <>
+                  This email already has a HeyNikki account, so no new confirmation email was sent.{" "}
+                  <Link href={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} style={{ color: J.red, fontWeight: 700 }}>
+                    Sign in instead
+                  </Link>
+                  {" "}— use <strong>Continue with Google</strong> if you signed up with Google, or{" "}
+                  <Link href="/forgot-password" style={{ color: J.red, fontWeight: 700 }}>reset your password</Link>.
+                  {inviteToken ? " You'll join the team as soon as you're in." : ""}
+                </>
+              ) : error}</div>
             )}
 
             {!joining && (<>
