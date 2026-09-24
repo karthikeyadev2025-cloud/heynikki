@@ -94,6 +94,27 @@ fi
 echo "── building ──"
 docker compose build api-server voice-pipeline
 
+# ── Keep what the old containers printed ─────────────────────────────
+# Recreating a container deletes its log (see the note further down), and
+# api-server and voice-pipeline are recreated on every deploy because every
+# deploy builds them. Their whole history went with each one: on 24 Sep an
+# afternoon call could only be investigated from its database transcript.
+# Saved here first, compressed, one file per container per deploy, kept 30
+# days. `infra/applogs.sh` searches these and the live logs together.
+archive_logs() {
+  local dir="$(pwd)/logs/archive" stamp c
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  mkdir -p "$dir"
+  for c in heynikki-api heynikki-pipeline heynikki-scheduler heynikki-outbound; do
+    docker inspect "$c" >/dev/null 2>&1 || continue
+    docker logs --timestamps "$c" 2>&1 | gzip -9 > "$dir/$c-$stamp.log.gz" \
+      && echo "  saved $c log ($(du -h "$dir/$c-$stamp.log.gz" | cut -f1))"
+  done
+  find "$dir" -name '*.log.gz' -mtime +30 -delete 2>/dev/null || true
+}
+echo "── saving logs ──"
+archive_logs
+
 echo "── restarting (FreeSWITCH untouched) ──"
 # --no-deps is load-bearing, not tidiness. freeswitch has `env_file: .env`,
 # so ANY edit to infra/.env changes its config hash, and `up -d` recreates a
