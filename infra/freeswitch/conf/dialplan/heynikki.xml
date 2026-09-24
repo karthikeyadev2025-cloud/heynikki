@@ -201,7 +201,7 @@
              expansion degrades to 0 rather than breaking the payload. -->
         <action application="set" data="process_cdr=true"/>
         <action application="set" data="session_in_hangup_hook=true"/>
-        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;missed&quot;:&quot;\${nikki_missed}&quot;}' &amp;"/>
+        <action application="set" data="api_reporting_hook=system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;missed&quot;:&quot;\${nikki_missed}&quot;}' &amp;"/>
 
         <!-- mod_audio_stream registers uuid_audio_stream as an API, NOT an
              application — there is no `audio_stream` app, so the old
@@ -293,12 +293,12 @@
         <action application="set" data="nikki_missed=1"/>
         <action application="answer"/>
         <action application="playback" data="${nikki_fallback_audio}"/>
-        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
+        <action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
         <action application="hangup"/>
         <anti-action application="set" data="nikki_missed=1"/>
         <anti-action application="answer"/>
         <anti-action application="speak" data="flite|kal|Thank you for calling. All our representatives are busy. We will call you back shortly."/>
-        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
+        <anti-action application="system" data="curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/missed-call -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;caller_number&quot;:&quot;${caller_ani}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;fs_uuid&quot;:&quot;${uuid}&quot;}' &amp;"/>
         <anti-action application="hangup"/>
       </condition>
     </extension>
@@ -319,7 +319,7 @@
         <action application="record_session" data="/tmp/recordings/call_${uuid}.wav"/>
         <action application="set" data="process_cdr=true"/>
         <action application="set" data="session_in_hangup_hook=true"/>
-        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
+        <action application="set" data="api_reporting_hook=system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${did_number}&quot;,&quot;caller_number&quot;:&quot;${caller_ani}&quot;}' &amp;"/>
         <!-- The customer sees the tenant's DID, never the seat's mobile.
              Set here rather than inside ctc_customer_bridge because a
              {var=...} prefix in a channel variable would need escaping
@@ -335,7 +335,7 @@
              (068) and the seat hears a short busy tone before hangup. -->
         <action application="set" data="continue_on_fail=true"/>
         <action application="bridge" data="${ctc_customer_bridge}"/>
-        <action application="system" data="curl -s -m 5 -X POST http://127.0.0.1:4000/webhooks/freeswitch/ctc-failed -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;cause&quot;:&quot;${originate_disposition}&quot;}'"/>
+        <action application="system" data="curl -s -m 5 -X POST http://127.0.0.1:4000/webhooks/freeswitch/ctc-failed -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;cause&quot;:&quot;${originate_disposition}&quot;}'"/>
         <action application="playback" data="tone_stream://%(500,500,480,620);loops=3"/>
         <action application="hangup" data="NORMAL_CLEARING"/>
       </condition>
@@ -386,7 +386,7 @@
              or reached completed (both 5 Sep 00:15 IST calls sat that way). -->
         <action application="set" data="process_cdr=true"/>
         <action application="set" data="session_in_hangup_hook=true"/>
-        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${outbound_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
+        <action application="set" data="api_reporting_hook=system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${outbound_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
         <!-- <action application="playback" data="/etc/freeswitch/sounds/trai_disclosure.wav"/> -->
         <!-- Same API-not-application fix as inbound_sip_ai above. -->
         <!-- Streams to the SAME handler inbound calls use, not a separate
@@ -434,7 +434,7 @@
         <action application="answer"/>
         <action application="set" data="process_cdr=true"/>
         <action application="set" data="session_in_hangup_hook=true"/>
-        <action application="set" data="api_reporting_hook=expand uuid:${uuid} system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${onboard_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
+        <action application="set" data="api_reporting_hook=system curl -s -X POST http://127.0.0.1:4000/webhooks/freeswitch/hangup -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;duration&quot;:&quot;\${billsec}&quot;,&quot;hangup_cause&quot;:&quot;\${hangup_cause}&quot;,&quot;did_number&quot;:&quot;${onboard_did}&quot;,&quot;caller_number&quot;:&quot;$1&quot;}' &amp;"/>
         <action application="set" data="stream_result=${uuid_audio_stream(${uuid} start ws://127.0.0.1:8000/ws/freeswitch/${onboard_did}/$1/${uuid}?direction=outbound&amp;onboarding=${onboard_tenant} mono 8000)}"/>
         <action application="park"/>
       </condition>
