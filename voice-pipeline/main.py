@@ -2923,6 +2923,7 @@ class NikkiAgent:
         # 5 Sep 01:29 call ended as plain "enquiry" and the clinic never saw
         # a callback to make.
         self.callback_promised: bool = False
+        self.call_later: bool = False     # caller asked to be rung later (_file_call_later)
         # An order was asked for at some point in this call (sticky, same
         # reason as callback_promised) and, once filed, the row it became.
         self.order_seen: bool = False
@@ -3532,6 +3533,8 @@ class NikkiAgent:
                     response = honest
                     log.info("reply promised a connect that cannot happen — replaced")
 
+            if _CALLER_LATER_RE.search(user_text or ""):
+                self.call_later = True
             response, wants_end = _split_end_sentinel(response)
             # A tool call asking to hang up is the same request in a
             # different costume, and gets the same scrutiny: ending a call
@@ -3551,7 +3554,8 @@ class NikkiAgent:
                 # times to "ఉంటా", "పెట్టేయ్" and "cut the call please" and
                 # stayed on the line until the customer gave up.
                 self._end_votes = getattr(self, "_end_votes", 0) + 1
-                caller_done = bool(_CALLER_FAREWELL_RE.search(user_text or ""))
+                caller_done = bool(_CALLER_FAREWELL_RE.search(user_text or "")
+                                   or _CALLER_LATER_RE.search(user_text or ""))
                 if self.appointment_id:
                     self.end_call_requested = True
                     log.info("end-call sentinel accepted — appointment %s is booked",
@@ -3584,6 +3588,12 @@ class NikkiAgent:
                 elif caller_bye and bot_bye:
                     self.end_call_requested = True
                     log.info("ending call — both sides said goodbye")
+                elif caller_bye and not (response or "").rstrip().endswith("?"):
+                    # They said bye and she answered with "సరేనండి, మంచిది" —
+                    # a close in all but the word. On 24 Sep that took four
+                    # of the caller's byes and "I said BYE" to end.
+                    self.end_call_requested = True
+                    log.info("ending call — caller said goodbye and the reply closes")
                 elif self._bot_byes >= 3:
                     self.end_call_requested = True
                     log.info("ending call — Nikki has said goodbye %d turns running", self._bot_byes)
@@ -4607,14 +4617,17 @@ def _is_hold_sentinel(text: str) -> bool:
 # inconsistent about the separator and about wrapping markers in brackets,
 # and every variant we fail to match gets pronounced at the caller in
 # English right after their appointment is booked.
+# Also written out in Telugu script: on 24 Sep the model ended a reply with
+# "అండ్_కాల్", nothing matched, the caller heard it and the line stayed up.
+# The underscore is what marks it as the token rather than words.
 _END_CALL_RE = re.compile(
-    r"[\s\[\]<>(){}*_.,!?-]*END[\s_-]?CALL[\s\[\]<>(){}*_.,!?-]*$", re.I)
+    r"[\s\[\]<>(){}*_.,!?-]*(?:END[\s_-]?CALL|[ఎఅ]ండ్[_-]?కాల్)[\s\[\]<>(){}*_.,!?-]*$", re.I)
 # The same token anywhere else in the reply. The trailing form above was the
 # only one handled, so "మంచిది అండి END_CALL మళ్ళీ కలుద్దాం" went to TTS whole
 # and _clean_for_speech turned the underscore into a space: the caller heard
 # "END CALL" in English. Upper-case only mid-text, so an English-speaking
 # tenant's own words ("…before you end call waiting") are never eaten.
-_END_CALL_ANY_RE = re.compile(r"[\[<({*]*\bEND[\s_-]?CALL\b[\]>)}*]*")
+_END_CALL_ANY_RE = re.compile(r"[\[<({*]*(?:\bEND[\s_-]?CALL\b|[ఎఅ]ండ్_కాల్)[\]>)}*]*")
 
 
 # ── Register enforcement ──────────────────────────────────────────────────
@@ -4946,6 +4959,14 @@ def _fix_known_numbers(text: str, known: list[str]) -> tuple[str, list[str]]:
 
 # The caller closing the call in their own words. A hang-up request or a
 # farewell from THEM is the one signal that outranks the booking gate.
+# "Call me later" is the end of this call too — and a promise someone has to
+# keep. "కాసేపు ఆగి చేయండి" on 24 Sep was neither honoured as a close nor
+# filed anywhere, and nobody rang them back.
+_CALLER_LATER_RE = re.compile(
+    r"ఆగి (?:కాల్ )?చేయ|తర్వాత (?:కాల్ )?చేయ|తరువాత (?:కాల్ )?చేయ|మళ్ళీ (?:కాల్ )?చేయండి|"
+    r"రేపు (?:కాల్ )?చేయండి|బిజీ|busy|call (?:me )?later|call back later|later call|"
+    r"మీటింగ్‌?లో|డ్రైవింగ్|driving|in a meeting", re.I)
+
 _CALLER_FAREWELL_RE = re.compile(
     r"పెట్టేయ|పెట్టెయ|పెట్టు|పెట్టండి|కట్ చెయ|కట్ చేయ|ఉంటా|ఉంటాను|వెళ్తా|వెళ్తాను|"
     r"వద్దు|అవసరం లేదు|థాంక్స్|థాంక్యూ|బై|\bbye\b|cut the call|hang up|"
@@ -9585,6 +9606,7 @@ async def freeswitch_ws(
         # the business whose DID carried the call.
         if not onboarding:
             await _score_and_log_lead(agent, fs_uuid, caller_number, did_number, duration)
+            await _file_call_later(agent, fs_uuid, caller_number)
             await _enrich_appointment(agent, fs_uuid)
             await _extract_order(agent, fs_uuid, caller_number, cfg)
         await _report_reminder_result(agent, fs_uuid, duration)
@@ -9598,6 +9620,40 @@ async def freeswitch_ws(
 # "six two four ..." in te-IN mode. Pull it out and shout it, so the operator
 # reads one log line / one intent instead of hunting through the transcript.
 _OTP_CUE_RE = re.compile(r"whatsapp|వాట్సాప్|code|కోడ్|verif|వెరిఫ", re.I)
+
+
+async def _file_call_later(agent, fs_uuid: str, caller_number: str) -> None:
+    """A caller who asked to be rung later gets a callback on their lead.
+
+    Nikki said "I'll call a little later" on 24 Sep and nothing anywhere
+    would have: the call was filed as an enquiry and the promise died with
+    it. Now it lands where the team works — the lead's follow-up (056),
+    which tops the telecaller's Next-call queue and pushes a reminder ten
+    minutes before. Two hours out, moved to 10:00 IST if that falls at night.
+    A follow-up someone already set is left alone.
+    """
+    if not getattr(agent, "call_later", False):
+        return
+    digits = "".join(c for c in (caller_number or "") if c.isdigit())[-10:]
+    tenant = (agent.profile or {}).get("tenant_id")
+    if len(digits) != 10 or not tenant:
+        return
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    due = ist + timedelta(hours=2)
+    if due.hour >= 20 or due.hour < 9:
+        due = (due if due.hour < 9 else due + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+    due_utc = (due - timedelta(hours=5, minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            r = await c.patch(f"{agent.db.url}/rest/v1/leads", headers={**agent.db.headers, "Prefer": "return=representation"},
+                params={"tenant_id": f"eq.{tenant}", "phone": f"eq.{digits}",
+                        "or": "(follow_up_at.is.null,follow_up_done_at.not.is.null)"},
+                json={"follow_up_at": due_utc, "follow_up_done_at": None, "follow_up_notified_at": None,
+                      "follow_up_note": "Asked to be called later on an AI call"})
+        n = len(r.json()) if r.status_code in (200, 201) else 0
+        log.info(f"[FS] {fs_uuid}: caller asked to be called later — callback filed for {due.strftime('%d %b %H:%M')} IST ({n} lead)")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: could not file the call-later callback: {e}")
 
 
 async def _awaiting_wa_code(agent, did_number: str) -> bool:
