@@ -156,8 +156,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         "@type": "Organization",
         "@id": "https://heynikki.in/#org",
         name: "HeyNikki",
-        legalName: "Nikki Technologies",
-        alternateName: ["Hey Nikki", "HeyNikki by Nikki Technologies"],
+        // The legal entity. Nikki Technologies is its unit and the brand's
+        // maker; the GSTIN is the entity's (taxID).
+        legalName: "Adexos Global Technologies",
+        alternateName: ["Hey Nikki", "HeyNikki by Nikki Technologies", "Nikki Technologies"],
+        taxID: "37AVEPV3515A2ZR",
         url: "https://www.heynikki.in",
         logo: "https://heynikki.in/icon-512.png",
         email: "support@heynikki.in",
@@ -174,10 +177,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         }],
         areaServed: { "@type": "Country", name: "India" },
         foundingLocation: { "@type": "Place", name: "Hyderabad, Telangana, India" },
+        // Registered office.
         address: {
           "@type": "PostalAddress",
-          addressLocality: "Hyderabad",
-          addressRegion: "Telangana",
+          addressLocality: "Bangalore",
+          addressRegion: "Karnataka",
           addressCountry: "IN",
         },
       },

@@ -30,32 +30,19 @@ export default function Contact() {
         <li><strong>Security disclosure:</strong> <a href="mailto:security@heynikki.in">security@heynikki.in</a></li>
       </ul>
 
-      {/* ─────────────────────────────────────────────────────────────
-          OWNER: this block is incomplete and it is the one thing on the
-          public site that a Razorpay merchant review will stop on.
-
-          Razorpay's onboarding policy requires the merchant's full
-          registered business address, and a GSTIN where the business is
-          registered for GST, to appear on the website — the pricing page
-          says "prices are exclusive of GST", which asserts that we charge
-          it. The previous copy said the address is "shared with
-          prospective enterprise customers under NDA", which is not a
-          position a payment gateway accepts and reads, to a careful buyer,
-          as a company hiding where it is.
-
-          Replace the placeholders below with the real values from the
-          incorporation certificate. Nothing here was invented, so nothing
-          here is wrong — it is simply not finished.
-          ───────────────────────────────────────────────────────────── */}
+      {/* Registered office and GSTIN, as Razorpay's merchant review expects
+          them on the site. Supplied by the owner on 24 Sep 2026. */}
       <h2>Registered office</h2>
       <p>
         <strong>Nikki Technologies</strong><br />
-        Hyderabad, Telangana, India
+        A unit of <strong>Adexos Global Technologies</strong><br />
+        Bangalore, Karnataka, India<br />
+        GSTIN: 37AVEPV3515A2ZR
       </p>
       <p>
-        For our full registered address, GSTIN or any other business-registration
-        detail, email <a href="mailto:legal@heynikki.in">legal@heynikki.in</a> and we
-        will send it the same business day.
+        For any other business-registration detail, email{" "}
+        <a href="mailto:legal@heynikki.in">legal@heynikki.in</a> and we will send it the
+        same business day.
       </p>
 
       <h2>Cancellations, refunds and billing</h2>

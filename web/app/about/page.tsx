@@ -18,8 +18,8 @@ export default function Page() {
     >
       <h2>Who we are</h2>
       <p>
-        <strong>HeyNikki</strong> is a product of <strong>Nikki Technologies</strong>, based
-        in Hyderabad, Telangana, India. We build one thing: a receptionist that answers a
+        <strong>HeyNikki</strong> is a product of <strong>Nikki Technologies</strong>, a unit
+        of <strong>Adexos Global Technologies</strong>, based in Hyderabad, Telangana, India. We build one thing: a receptionist that answers a
         small business&apos;s phone in the Telugu people actually speak, books the
         appointment, and tells the owner what happened.
       </p>
@@ -67,7 +67,8 @@ export default function Page() {
       <h2>Contact</h2>
       <p>
         <strong>Nikki Technologies</strong><br />
-        Hyderabad, Telangana, India<br />
+        A unit of Adexos Global Technologies<br />
+        Registered office: Bangalore, Karnataka, India · GSTIN 37AVEPV3515A2ZR<br />
         support@heynikki.in · 086335 02031<br />
         <a href="/contact">Contact page</a>
       </p>
