@@ -231,7 +231,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Can she call people, or only answer?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Both. She rings customers back with appointment reminders, order-ready messages, or a follow-up on an enquiry — inside the hours TRAI allows, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
+              text: "Both. She rings customers back with appointment reminders, order-ready messages, or a follow-up on an enquiry — at the calling hours you set, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
             },
           },
           {

@@ -24,6 +24,7 @@ import {
   Clock, ArrowRight, Plus, Minus, IndianRupee,
   ShoppingBag, CalendarCheck, PhoneOutgoing, BookUser,
   Terminal, Smartphone, LayoutDashboard, Volume2,
+  ListChecks, CalendarClock, Sparkles, PhoneCall, ChartColumn,
 } from "lucide-react";
 
 const C = {
@@ -471,7 +472,7 @@ export default function Home() {
           <div style={{ display: "grid", gap: 12 }}>
             {[
               { icon: Languages,   t: "AI brain", d: "Answers, qualifies, books, confirms. Never on a break, never annoyed at 11 PM." },
-              { icon: Users,       t: "Human brain", d: "Your telecaller, on the same call — with click-to-call from the dashboard, and the transcript and recording there when the call ends." },
+              { icon: Users,       t: "Human brain", d: "Your telecaller, on the same call — and a Desk of their own: who to ring next, callbacks that remind them, and the call written up when it ends." },
               { icon: ShieldCheck, t: "One number, one identity", d: "No re-dial, no second number — the caller stays on the same call. Your brand stays intact either way." },
             ].map(({ icon: Icon, t, d }) => (
               <div key={t} style={{
@@ -487,6 +488,52 @@ export default function Home() {
               </div>
             ))}
           </div>
+        </div>
+      </Section>
+
+      {/* ══ THE DESK — your telecallers ══════════════════════
+          Built and running: queue (/api/desk/queue), callbacks with
+          reminders (leads.follow_up_*), customer card, call summaries from
+          the recording (066), a calling number per telecaller (065) with
+          callbacks ringing them first, unreachable-number reasons (068),
+          outcomes saved when they skip one, and the daily read of the
+          calls (069). Keep every line here true to that. ══════════════ */}
+      <Section id="desk" bg={C.paper}>
+        <Eyebrow>Your telecallers</Eyebrow>
+        <h2 style={{
+          fontFamily: D, fontSize: "clamp(30px, 4vw, 46px)", lineHeight: 1.1,
+          letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 12px", color: C.ink,
+        }}>
+          A Desk for the people who call.
+        </h2>
+        <p style={{ fontSize: 16.5, color: C.textMid, maxWidth: 620, lineHeight: 1.65, margin: "0 0 46px" }}>
+          Nikki answers; your team dials. Every person on your plan gets the Desk — on
+          the same numbers, in the same dashboard, with nothing to remember between calls.
+        </p>
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(268px, 1fr))",
+          gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden",
+        }}>
+          {[
+            { icon: ListChecks, t: "Knows who to ring next",
+              d: "Callbacks that are due come first, then the hottest lead nobody has rung today. One tap dials — their phone rings, then the customer." },
+            { icon: CalendarClock, t: "Callbacks that remind",
+              d: "\u201cCall me Tuesday at four\u201d becomes a time, not a sticky note. It tops their list when it\u2019s due and their phone buzzes ten minutes before." },
+            { icon: BookUser, t: "The customer on screen",
+              d: "Earlier calls, what was said, the promised callback, bookings and orders \u2014 before the customer says hello." },
+            { icon: Sparkles, t: "The call, written up",
+              d: "When they hang up, the recording becomes a two-line summary and a suggested outcome. They confirm it; if they forget, the Desk saves it for them." },
+            { icon: PhoneCall, t: "Their own calling number",
+              d: "Give each telecaller one of your numbers. Customers see the same number every time, and ringing it back reaches that person first." },
+            { icon: ChartColumn, t: "What the day taught you",
+              d: "Calls, conversations and bookings per person \u2014 and every evening, the objections and questions that came up, with answers Nikki can learn once you approve them." },
+          ].map(({ icon: Icon, t, d }) => (
+            <div key={t} style={{ background: C.card, padding: "26px 24px" }}>
+              <Icon size={20} color={C.teal} strokeWidth={1.7} />
+              <div style={{ fontWeight: 650, fontSize: 16, margin: "12px 0 6px", color: C.ink }}>{t}</div>
+              <div style={{ fontSize: 14.5, lineHeight: 1.6, color: C.textMid }}>{d}</div>
+            </div>
+          ))}
         </div>
       </Section>
 
@@ -701,19 +748,20 @@ export default function Home() {
             {
               name: "Starter", price: "1,999", note: "per month",
               points: ["200 minutes included", "1 number · 1 person", "2 calls at once",
-                       "Appointments, leads · recordings kept 3 months"],
+                       "Telecaller Desk · call summaries · quality scoring",
+                       "Appointments, orders, leads · recordings kept 3 months"],
             },
             {
               name: "Growth", price: "4,999", note: "per month",
               highlight: true, badge: "Most businesses start here",
               points: ["600 minutes included", "3 numbers · 3 people on the account", "5 calls at once",
-                       "Outbound campaigns and WhatsApp follow-up",
-                       "Call quality scoring on every call"],
+                       "Outbound campaigns",
+                       "Recordings kept 1 year"],
             },
             {
               name: "Scale", price: "9,999", note: "per month",
               points: ["1,500 minutes included", "10 numbers · 10 people on the account", "10 calls at once",
-                       "API access", "Support on WhatsApp"],
+                       "API access", "Priority support on WhatsApp"],
             },
           ].map((p) => (
             <div key={p.name} style={{
@@ -884,7 +932,7 @@ export default function Home() {
             },
             {
               q: "Can she call people, or only answer?",
-              a: "Both. She rings customers back with appointment reminders, \u201cyour order is ready\u201d, or a follow-up on an enquiry \u2014 inside the hours TRAI allows, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
+              a: "Both. She rings customers back with appointment reminders, \u201cyour order is ready\u201d, or a follow-up on an enquiry \u2014 at the calling hours you set, and only to people who asked to hear from you. She reports back whether the message actually landed, which is not the same as whether the phone was answered.",
             },
             {
               q: "Can my own software talk to it?",

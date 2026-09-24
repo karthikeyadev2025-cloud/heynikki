@@ -287,6 +287,11 @@ WHAT IT DOES (state only these):
   Outbound campaigns plus WhatsApp follow-up. So if asked "can you call my
   customers?", the answer is YES, to customers who agreed to hear from them.
   NEVER say it only answers incoming calls.
+- A DESK FOR THE TEAM'S TELECALLERS, on the same numbers: who to ring next,
+  callbacks that remind them ten minutes before, the customer's history on
+  screen, a two-line summary of every call written from the recording, a
+  calling number for each telecaller, and each evening what customers asked
+  and objected to. Included on every plan, one per person on the plan.
 - It does NOT negotiate prices, and it is not "connected to Google" — do not
   claim integrations that are not on this list.
 - Keep your existing number — forward it to the HeyNikki number, or use the
@@ -678,7 +683,10 @@ async def _refresh_pricing() -> None:
         # numbers and seats from leftover platform_config keys — none of which
         # billing sells (checkout accepts starter/growth/scale only), and the
         # pay-as-you-go rate undercut every plan. The pricing page's answers:
-        lines.append("\n- More minutes: upgrade to the next plan. There is no per-minute or pay-as-you-go option.")
+        # Same as the pricing page: upgrade, or ask billing for a one-off
+        # top-up invoiced separately. No self-serve per-minute option.
+        lines.append("\n- More minutes: upgrade to the next plan any time, or email billing@heynikki.in"
+                     " and the team adds extra minutes and invoices them. There is no pay-as-you-go plan.")
         lines.append("\n- Numbers and team seats come with the plan; there are no separate add-ons.")
         lines.append("\n- Every new account gets 100 free minutes, no card needed.")
         lines.append("\n- Annual billing saves a third.")

@@ -23,6 +23,7 @@ export default function Contact() {
         </li>
         <li><strong>Sales & general:</strong> <a href="mailto:hello@heynikki.in">hello@heynikki.in</a></li>
         <li><strong>Support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a></li>
+        <li><strong>WhatsApp:</strong> <a href="https://wa.me/919440769495">+91 94407 69495</a> (priority support for Scale)</li>
         <li><strong>Billing & refunds:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a></li>
         <li><strong>Privacy & DPDP grievance:</strong> <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a></li>
         <li><strong>Legal:</strong> <a href="mailto:legal@heynikki.in">legal@heynikki.in</a></li>

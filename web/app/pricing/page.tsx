@@ -33,6 +33,9 @@ const TIERS = [
       "Appointments written straight to your dashboard",
       "WhatsApp confirmation on every booking",
       "Call recordings and transcripts, kept 3 months",
+      "Missed-call follow-up on WhatsApp",
+      "Call quality scoring on every call",
+      "Telecaller Desk: click-to-call, next-call queue, callbacks with reminders, call summaries",
     ],
   },
   {
@@ -40,8 +43,8 @@ const TIERS = [
     line: "600 minutes · 3 numbers · 3 people · 5 calls at once",
     points: [
       "Everything in Starter",
-      "Outbound campaigns and missed-call follow-up",
-      "Call quality scoring on every call",
+      "Outbound campaigns",
+      "A calling number for each telecaller",
       "Recordings kept 1 year",
     ],
   },
@@ -52,14 +55,14 @@ const TIERS = [
       "Everything in Growth",
       "API access",
       "Recordings kept 2 years",
-      "Support on WhatsApp",
+      "Priority support on WhatsApp: +91 94407 69495",
     ],
   },
 ];
 
 export default function Pricing() {
   return (
-    <LegalLayout title="Pricing" lastUpdated="4 September 2026">
+    <LegalLayout title="Pricing" lastUpdated="24 September 2026">
       <p>
         Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
         AI receptionist, the dashboard, call recordings and transcripts. Prices are

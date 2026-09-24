@@ -21,32 +21,35 @@ const C = {
 // circuit is 10 channels TOTAL across the whole platform, so a plan
 // advertising more than that is a promise no amount of software can keep.
 // Raise these only after buying channels, not before.
-// FALLBACK ONLY. The live catalogue comes from /api/platform/pricing, which
-// reads platform_config — one place a super admin edits. These literals exist
-// so the page still renders if the API is unreachable; they are NOT the
-// source of truth and must never be edited to change a price.
+// Prices and caps here are a FALLBACK: the live catalogue comes from
+// /api/platform/pricing (the plans table), and these literals only render if
+// the API is unreachable — never edit them to change a price.
+// The `features` bullets are NOT a fallback: they are shown for every tier
+// even when the API answers, so they must say what the pricing page says.
+// "Custom integrations" sat on Scale here while /pricing quotes them
+// separately, and "Advanced analytics" was never a plan feature.
 const PLANS_FALLBACK = [
   /* "Pay as you go" was removed: the checkout endpoint rejects the id with
      400 "Invalid plan" because no such row exists in `plans`, so the
      left-most, most prominent card on this page was a dead end for every
      customer who pressed it. Offer it again when it exists end to end. */
   {
-    id: "starter", name: "Starter", price: 1999, annual: 1599,
+    id: "starter", name: "Starter", price: 1999, annual: 1333,
     minutes: 200, profiles: 1, seats: 1, numbers: 1, concurrent: 2,
     color: C.mid,
-    features: ["Telugu + Tanglish AI","Inbound reception","Recordings 90 days","WhatsApp automation","Appointment booking"],
+    features: ["Telugu, Hindi or English","Inbound reception on your number","Appointments & WhatsApp confirmations","Telecaller Desk & call summaries","Recordings 90 days"],
   },
   {
-    id: "growth", name: "Growth", price: 4999, annual: 3999,
+    id: "growth", name: "Growth", price: 4999, annual: 3333,
     minutes: 600, profiles: 3, seats: 3, numbers: 3, concurrent: 5,
     color: C.gbr, popular: true,
-    features: ["Everything in Starter","3 voice profiles","Outbound campaigns","Advanced analytics","Recordings 1 year"],
+    features: ["Everything in Starter","Team members (3 seats)","Outbound campaigns","3 voice profiles","Recordings 1 year"],
   },
   {
-    id: "scale", name: "Scale", price: 9999, annual: 7999,
+    id: "scale", name: "Scale", price: 9999, annual: 6666,
     minutes: 1500, profiles: 10, seats: 10, numbers: 10, concurrent: 10,
     color: C.gold,
-    features: ["Everything in Growth","10 voice profiles","API access + webhooks","Team members (10 seats)","Custom integrations"],
+    features: ["Everything in Growth","Team members (10 seats)","API access + webhooks","10 voice profiles","Priority support on WhatsApp"],
   },
 ];
 
