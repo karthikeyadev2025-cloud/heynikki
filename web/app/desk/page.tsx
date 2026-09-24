@@ -94,6 +94,18 @@ const OUTCOME_LABEL: Record<string, string> = Object.fromEntries(OUTCOMES.map(o 
 
 const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 const fmtTime = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+/** The carrier's reason a Desk call never reached the customer, in words. */
+const failText = (cause: string): string => {
+  const c = cause.toUpperCase();
+  if (/UNALLOCATED_NUMBER|INVALID_NUMBER_FORMAT|NO_ROUTE_DESTINATION/.test(c)) return "this number doesn't exist. Check it before calling again.";
+  if (/USER_BUSY/.test(c)) return "busy on another call. Try again in a few minutes.";
+  if (/NO_ANSWER|NO_USER_RESPONSE|ALLOTTED_TIMEOUT/.test(c)) return "it rang but nobody answered.";
+  if (/CALL_REJECTED/.test(c)) return "they rejected the call.";
+  if (/ORIGINATOR_CANCEL/.test(c)) return "you hung up before they answered.";
+  if (/NORMAL_TEMPORARY_FAILURE|INTERWORKING|SWITCH_CONGESTION|NETWORK_OUT_OF_ORDER|RECOVERY_ON_TIMER_EXPIRE/.test(c))
+    return "the phone network couldn't connect. Try again in a minute.";
+  return "switched off, out of coverage, or not reachable right now. Redialling straight away won't help.";
+};
 /** A Date/ISO as a datetime-local value, in the browser's time. */
 const toLocalInput = (iso: string) => {
   const t = new Date(iso); if (isNaN(t.getTime())) return "";
@@ -455,7 +467,7 @@ type DialState =
   | { phase: "idle" }
   | { phase: "ringing_you" }
   | { phase: "connected"; ctcId: string; startedAt: number }
-  | { phase: "ended"; ctcId: string; seconds: number }
+  | { phase: "ended"; ctcId: string; seconds: number; fail?: string | null }
   | { phase: "failed"; reason: string };
 
 function Dialer({ d, api, onDone, prefill }: {
@@ -498,7 +510,11 @@ function Dialer({ d, api, onDone, prefill }: {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   useEffect(() => {
-    if (!autoLead || !ok || !havePhone || st.phase !== "idle") return;
+    // Not only from idle: after a call the dialer waits on an outcome, and
+    // "Call now" from the queue used to fill the number and then do nothing
+    // until one was picked — telecallers read it as the second call not going.
+    if (!autoLead || !ok || !havePhone || !["idle", "ended", "failed"].includes(st.phase)) return;
+    if (st.phase === "ended") toast("Last call's outcome isn't saved — set it under “Calls from the desk”.");
     const id = autoLead.id;
     setAutoLead(null);
     dial(id);
@@ -509,6 +525,7 @@ function Dialer({ d, api, onDone, prefill }: {
   // seconds after hangup, so "not ready" means ask again, for about 40 s.
   useEffect(() => {
     if (st.phase !== "ended") return;
+    if (st.fail) { setAi({ state: "idle" }); return; }   // nobody to summarise
     let cancelled = false;
     setAi({ state: "waiting" });
     (async () => {
@@ -546,14 +563,23 @@ function Dialer({ d, api, onDone, prefill }: {
           const s = await api(`/api/calls/click-to-call/${j.ctc_log_id}`);
           if (s.ended) {
             if (pollRef.current) clearInterval(pollRef.current);
-            setSt({ phase: "ended", ctcId: j.ctc_log_id, seconds: s.duration_seconds || Math.round((Date.now() - started) / 1000) });
+            // The customer-leg cause (068) is posted a moment before hangup;
+            // one more read catches it if this poll raced it.
+            let fail = s.customer_fail_cause || null;
+            if (!fail) { try { fail = (await api(`/api/calls/click-to-call/${j.ctc_log_id}`)).customer_fail_cause || null; } catch {} }
+            setSt({ phase: "ended", ctcId: j.ctc_log_id, fail,
+                    seconds: fail ? 0 : (s.duration_seconds || Math.round((Date.now() - started) / 1000)) });
             onDone();
           }
         } catch { /* keep polling */ }
       }, 3000);
     } catch (e: any) {
-      const m = String(e.message || "");
-      const reason = /NO_ANSWER|ORIGINATOR_CANCEL|timeout/i.test(m)
+      const m = String(e.message || "").replace(/^Click-to-Call failed:\s*/i, "");
+      const reason = /INTERWORKING|NORMAL_TEMPORARY_FAILURE|RECOVERY_ON_TIMER_EXPIRE|NETWORK_OUT_OF_ORDER|SWITCH_CONGESTION/i.test(m)
+        ? "The phone network couldn't connect to your phone just now. Wait a few seconds and press Call again."
+        : /CALL_REJECTED/i.test(m) ? "Your phone rejected the call."
+        : /trunk busy/i.test(m) ? "All lines are busy right now — try again in a minute."
+        : /NO_ANSWER|ORIGINATOR_CANCEL|timeout/i.test(m)
         ? `Your phone (${prettyNum(d?.you?.phone || "")}) didn't pick up. Try again when you're ready.`
         : /USER_BUSY/i.test(m) ? "Your phone is busy on another call."
         : /no_outbound_cli|assigned DID/i.test(m) ? "No business number is assigned to this account yet."
@@ -668,9 +694,15 @@ function Dialer({ d, api, onDone, prefill }: {
       )}
       {st.phase === "ended" && (
         <div style={{ marginTop: 14, borderTop: `1px solid ${C.bord}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 13, color: C.txt, fontWeight: 700, marginBottom: 8 }}>
-            Call ended · {fmtDur(st.seconds)}. How did it go?
-          </div>
+          {st.fail ? (
+            <div style={{ fontSize: 13, color: C.red, fontWeight: 700, marginBottom: 8, display: "flex", gap: 6, alignItems: "center" }}>
+              <TriangleAlert size={14} /> Didn&apos;t reach {prettyNum(num)} — {failText(st.fail)}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: C.txt, fontWeight: 700, marginBottom: 8 }}>
+              Call ended · {fmtDur(st.seconds)}. How did it go?
+            </div>
+          )}
           {ai.state !== "idle" && (
             <div style={{ background: C.glow + "10", border: `1px solid ${C.glow}44`, borderRadius: 8, padding: "9px 11px", marginBottom: 10, fontSize: 12.5, color: C.mid, lineHeight: 1.55 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: C.txt, marginBottom: 3 }}>
@@ -686,7 +718,7 @@ function Dialer({ d, api, onDone, prefill }: {
             {OUTCOMES.map(o => (
               <button key={o.key} title={o.hint} disabled={!!saving}
                 style={{ ...btnStyle(o.color), opacity: saving && saving !== o.key ? 0.5 : 1,
-                  boxShadow: ai.disposition === o.key ? `0 0 0 2px ${C.bg}, 0 0 0 4px ${o.color}` : undefined }}
+                  boxShadow: (st.fail ? o.key === "no_answer" : ai.disposition === o.key) ? `0 0 0 2px ${C.bg}, 0 0 0 4px ${o.color}` : undefined }}
                 onClick={() => outcome(o.key)}>
                 {saving === o.key ? "Saving…" : o.label}
               </button>

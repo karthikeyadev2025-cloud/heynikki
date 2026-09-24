@@ -505,9 +505,13 @@ export class FreeSwitchESL {
       const match = response.match(/\+OK\s+([a-f0-9-]{36})/i);
       if (match) { connected = true; return match[1]; }
 
+      // An api/response carries the answer in its BODY ("-ERR INTERWORKING"),
+      // not a Reply-Text header — so this used to throw the headers
+      // themselves, and the telecaller read "Content-Type: api/response".
+      const bodyErr = response.match(/-ERR\s+([A-Z_]+)/)?.[0];
       const parsed  = parseESLResponse(response);
       const errLine = Object.entries(parsed).find(([k]) => k.toLowerCase().includes("reply"));
-      throw new Error(`Click-to-Call failed: ${errLine?.[1] || response.slice(0, 160)}`);
+      throw new Error(`Click-to-Call failed: ${bodyErr || errLine?.[1] || "no answer from the phone network"}`);
     } finally {
       clearTimeout(agentSeen);
       // Answered: the dialplan is bridging the customer now, and that leg

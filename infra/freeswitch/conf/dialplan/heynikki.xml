@@ -326,7 +326,18 @@
              through the originate's own {} block. -->
         <action application="set" data="effective_caller_id_number=${outbound_cli}"/>
         <action application="set" data="effective_caller_id_name=HeyNikki"/>
+        <!-- A failed customer leg used to end the call in silence: the
+             carrier's "switched off / does not exist" recording is early
+             media, which the seat never hears (ignore_early_media), so
+             telecallers redialled dead numbers. continue_on_fail keeps the
+             seat's leg here when the bridge fails; a bridge that connected
+             still ends at hangup_after_bridge. The cause goes to the API
+             (068) and the seat hears a short busy tone before hangup. -->
+        <action application="set" data="continue_on_fail=true"/>
         <action application="bridge" data="${ctc_customer_bridge}"/>
+        <action application="system" data="curl -s -m 5 -X POST http://127.0.0.1:4000/webhooks/freeswitch/ctc-failed -H 'Content-Type: application/json' -H 'X-Internal-Secret: ${INTERNAL_SECRET}' -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;cause&quot;:&quot;${originate_disposition}&quot;}'"/>
+        <action application="playback" data="tone_stream://%(500,500,480,620);loops=3"/>
+        <action application="hangup" data="NORMAL_CLEARING"/>
       </condition>
     </extension>
 

@@ -6723,6 +6723,22 @@ app.post("/webhooks/whatsapp", async (req, res) => {
   }
 });
 
+// ── Desk call: the customer's leg never connected ─────────────
+// Posted by the click_to_call_agent_leg extension when its bridge fails,
+// with FreeSWITCH's originate_disposition. The Desk turns it into words
+// ("this number doesn't exist") instead of a call that just ends (068).
+app.post("/webhooks/freeswitch/ctc-failed", verifyInternal, async (req: any, res) => {
+  const fsUuid = String(req.body?.fs_uuid || "");
+  const cause  = String(req.body?.cause || "").replace(/[^A-Z_]/g, "").slice(0, 40) || "UNKNOWN";
+  if (!/^[0-9a-f-]{36}$/i.test(fsUuid)) return res.status(400).json({ error: "fs_uuid required" });
+  const { error } = await sb.from("click_to_call_log")
+    .update({ customer_fail_cause: cause, duration_seconds: 0, updated_at: new Date().toISOString() })
+    .eq("freeswitch_uuid", fsUuid);
+  if (error) console.error("[ctc] fail cause:", error.message);
+  console.log(`[ctc] ${fsUuid}: customer leg failed — ${cause}`);
+  res.json({ ok: true });
+});
+
 // ── FreeSWITCH hangup webhook ─────────────────────────────────
 app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
   try {
@@ -6893,6 +6909,12 @@ app.post("/webhooks/freeswitch/hangup", verifyInternal, async (req, res) => {
         if (!ansErr && ans?.customer_answered_at) {
           talk = Math.max(0, Math.min(secs, Math.round((Date.now() - new Date(ans.customer_answered_at).getTime()) / 1000)));
         }
+        // The customer never came on the line (068): no talk at all.
+        const { data: failed } = await sb.from("click_to_call_log")
+          .select("customer_fail_cause").eq("freeswitch_uuid", fs_uuid)
+          .eq("tenant_id", callRow.tenant_id).maybeSingle()
+          .then((r: any) => r.error ? { data: null } : r);
+        if (failed?.customer_fail_cause) talk = 0;
         const { data: ctc } = await sb.from("click_to_call_log")
           .update({ duration_seconds: talk, call_id: callRow.id, updated_at: new Date().toISOString() })
           .eq("freeswitch_uuid", fs_uuid).eq("tenant_id", callRow.tenant_id)
@@ -7164,9 +7186,14 @@ function watchDeskCall(logId: string, tenantId: string, uuid: string) {
 app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
   const tenantId = await getTenantId(req.user.id);
   if (!tenantId) return res.status(403).json({ error: "No tenant" });
-  const { data: row } = await sb.from("click_to_call_log")
-    .select("id, freeswitch_uuid, duration_seconds, disposition, created_at")
+  const { data: row0, error: rowErr } = await sb.from("click_to_call_log")
+    .select("id, freeswitch_uuid, duration_seconds, disposition, created_at, customer_fail_cause")
     .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle();
+  // Before 068 the column is missing; read the row without it.
+  const row: any = rowErr
+    ? (await sb.from("click_to_call_log").select("id, freeswitch_uuid, duration_seconds, disposition, created_at")
+        .eq("id", req.params.id).eq("tenant_id", tenantId).maybeSingle()).data
+    : row0;
   if (!row) return res.status(404).json({ error: "Not found" });
   let alive = false;
   if (!row.duration_seconds && row.freeswitch_uuid) {
@@ -7189,6 +7216,7 @@ app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
     id: row.id, alive, ended: !alive,
     duration_seconds: row.duration_seconds || (alive ? Math.round((Date.now() - new Date(row.created_at).getTime()) / 1000) : 0),
     disposition: row.disposition,
+    customer_fail_cause: row.customer_fail_cause || null,
   });
 });
 
@@ -7287,7 +7315,17 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
           error: "That's your own number — the call would just ring you back. Pick a different lead.",
         });
       }
-      fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
+      try {
+        fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
+      } catch (e: any) {
+        // The carrier refusing the seat's own leg with a transient cause
+        // (INTERWORKING on 24 Sep) usually clears on the next attempt; one
+        // retry saves the telecaller pressing Call again and wondering.
+        if (!/INTERWORKING|NORMAL_TEMPORARY_FAILURE|RECOVERY_ON_TIMER_EXPIRE|NETWORK_OUT_OF_ORDER/.test(String(e?.message))) throw e;
+        console.warn(`[ctc] seat leg ${e.message} — retrying once`);
+        await new Promise(r => setTimeout(r, 1500));
+        fsUuid = await fsl.clickToCall(agentNumber, customer_number, maskedCli);
+      }
     } else {
       // The Exotel branch is gone. It was the only other engine, and the
       // platform has run on FreeSWITCH since the migration — an unreachable
