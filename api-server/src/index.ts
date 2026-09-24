@@ -2503,8 +2503,7 @@ async function waAddNumber(tenantId: string, displayName: string, ownNumber?: st
     throw new WaStepError(400, "Enter a 10-digit Indian mobile number, e.g. 9876543210");
   }
   const [{ data: did }, { data: choice }] = await Promise.all([
-    sb.from("dids").select("id, number").eq("tenant_id", tenantId)
-      .eq("status", "assigned").limit(1).maybeSingle(),
+    waDid(tenantId),
     sb.from("tenant_whatsapp").select("phone_number, did_id, display_name, status, phone_number_id")
       .eq("tenant_id", tenantId).maybeSingle(),
   ]);
@@ -2579,7 +2578,7 @@ async function waAddNumber(tenantId: string, displayName: string, ownNumber?: st
 async function waRequestCode(tenantId: string, method: string) {
   const [{ data: row }, { data: did }] = await Promise.all([
     sb.from("tenant_whatsapp").select("phone_number_id, phone_number, did_id").eq("tenant_id", tenantId).maybeSingle(),
-    sb.from("dids").select("number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
+    waDid(tenantId),
   ]);
   if (!row?.phone_number_id) throw new WaStepError(409, "Add the number to the WABA first");
   try {
@@ -2649,12 +2648,29 @@ async function waRecentOtp(tenantId: string): Promise<{ code: string; heard_at: 
  * ten minutes is not asked for again (Meta rate-limits, and each request
  * rings the number).
  */
+// The number a business's WhatsApp lives on. There used to be one per
+// business; with several, limit(1) picked whichever the database returned
+// first. An incoming-only number (064) comes first — the published number,
+// so customers WhatsApp and call the same one — then the lowest, so the
+// answer never changes between the add, the code request and the check.
+async function waDid(tenantId: string): Promise<{ data: { id: string; number: string } | null }> {
+  const r = await sb.from("dids").select("id, number, use_for_outbound")
+    .eq("tenant_id", tenantId).eq("status", "assigned")
+    .order("use_for_outbound", { ascending: true }).order("number", { ascending: true })
+    .limit(1).maybeSingle();
+  if (!r.error) return { data: r.data ? { id: r.data.id, number: r.data.number } : null };
+  const f = await sb.from("dids").select("id, number")
+    .eq("tenant_id", tenantId).eq("status", "assigned")
+    .order("number", { ascending: true }).limit(1).maybeSingle();
+  return { data: f.data };
+}
+
 async function startWhatsAppRegistration(
   tenantId: string, opts: { displayName?: string; reason: string } = { reason: "auto" },
 ): Promise<{ started: boolean; status: string; detail: string }> {
   const [{ data: row }, { data: did }, { data: tenant }] = await Promise.all([
     sb.from("tenant_whatsapp").select("*").eq("tenant_id", tenantId).maybeSingle(),
-    sb.from("dids").select("id, number").eq("tenant_id", tenantId).eq("status", "assigned").limit(1).maybeSingle(),
+    waDid(tenantId),
     sb.from("tenants").select("name").eq("id", tenantId).maybeSingle(),
   ]);
 
@@ -2838,8 +2854,7 @@ app.get("/api/whatsapp/sender", verifyJWT, async (req: any, res) => {
     sb.from("tenant_whatsapp")
       .select("phone_number, display_name, status, verified_at, phone_number_id, review_note, did_id")
       .eq("tenant_id", tenantId).maybeSingle(),
-    sb.from("dids").select("number").eq("tenant_id", tenantId)
-      .eq("status", "assigned").limit(1).maybeSingle(),
+    waDid(tenantId),
     sb.from("kyc_documents").select("id").eq("tenant_id", tenantId)
       .eq("status", "approved").limit(1).maybeSingle(),
     waRecentOtp(tenantId),
@@ -2938,8 +2953,7 @@ app.get("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
   const [{ data: row }, { data: did }, { data: kyc }] = await Promise.all([
     sb.from("tenant_whatsapp").select("phone_number, display_name, status, verified_at")
       .eq("tenant_id", tenantId).maybeSingle(),
-    sb.from("dids").select("number").eq("tenant_id", tenantId)
-      .eq("status", "assigned").limit(1).maybeSingle(),
+    waDid(tenantId),
     sb.from("kyc_documents").select("id").eq("tenant_id", tenantId)
       .eq("status", "approved").limit(1).maybeSingle(),
   ]);
@@ -2980,8 +2994,7 @@ app.post("/api/whatsapp/number-choice", verifyJWT, async (req: any, res) => {
   let phone: string | null = null;
   let didId: string | null = null;
   if (mode === "did") {
-    const { data: did } = await sb.from("dids").select("id, number").eq("tenant_id", tenantId)
-      .eq("status", "assigned").limit(1).maybeSingle();
+    const { data: did } = await waDid(tenantId);
     if (!did?.number) return res.status(409).json({ error: "Your HeyNikki number isn't assigned yet." });
     phone = did.number; didId = did.id;
   } else if (mode === "own") {

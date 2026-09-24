@@ -74,7 +74,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/v21.0/{{ $env.META_WA_PHONE_NUMBER_ID }}/messages",
+        "url": "=https://graph.facebook.com/v21.0/{{ $node['Lookup Sender'].json.phone_number_id || $env.META_WA_PHONE_NUMBER_ID }}/messages",
         "authentication": "none",
         "options": {},
         "headerParameters": {
@@ -99,7 +99,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        680,
+        900,
         300
       ]
     },
@@ -139,7 +139,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        900,
+        1120,
         300
       ]
     },
@@ -153,10 +153,41 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [
-        1120,
+        1340,
         300
       ],
       "webhookId": "670a8c32-334b-57d3-829e-48a3ea5634ed"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/tenant_whatsapp?select=phone_number_id&status=eq.active&tenant_id=eq.{{ $node['Extract Fields'].json.tenant_id }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Lookup Sender",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        680,
+        300
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "notes": "The business's own WhatsApp sender (tenant_whatsapp, status active). None = the platform number."
     }
   ],
   "connections": {
@@ -175,7 +206,7 @@
       "main": [
         [
           {
-            "node": "Send WhatsApp — Appointment Confirmation & 24h Reminder",
+            "node": "Lookup Sender",
             "type": "main",
             "index": 0
           }
@@ -198,6 +229,17 @@
         [
           {
             "node": "Log to Supabase wa_dispatch_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Sender": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp — Appointment Confirmation & 24h Reminder",
             "type": "main",
             "index": 0
           }
