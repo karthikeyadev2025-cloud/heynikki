@@ -8,13 +8,14 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer } from "recharts";
 import { NIKKI } from "../lib/brand";
 import VoiceAssistant from "../components/VoiceAssistant";
+import NikkiLogo from "../components/NikkiLogo";
 import {
   LayoutDashboard, Building2, Phone, IndianRupee, Plug, Megaphone,
   Settings, SignalHigh, CreditCard, Lock, BarChart3, TrendingUp,
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
   X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic,
   HeartPulse, Beaker, Mail, Send, Eye, Ban, Timer,
-  Headphones, Siren, CircleCheck, Radio, Hourglass } from "lucide-react";
+  Headphones, Siren, CircleCheck, Radio, Hourglass, Search, LogOut, ChevronRight, CornerDownLeft } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -24,11 +25,23 @@ const sb = createClient(
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 // ── DESIGN ───────────────────────────────────────────────
+// The control room. Brand navy marks what is selected and what acts;
+// terracotta is kept for what is live or wrong; status colours are toned
+// down so a screen full of them still reads calmly. Every panel draws from
+// these, so changing a value here re-colours all 24 screens.
 const C = {
-  bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
-  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
-  grn: NIKKI.emerald, red: NIKKI.red, cyn: NIKKI.cyan, org: NIKKI.terracotta,
-  txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
+  bg: "#F2F4F7", surf: "#FFFFFF", hi: "#F6F8FA", bord: "#E2E7EE",
+  glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: "#C9820A",
+  grn: "#0F9D6E", red: "#D9432F", cyn: "#0E8FB0", org: NIKKI.terracotta,
+  txt: "#0B1524", mid: "#4B5A6B", dim: "#8593A3",
+};
+// The sidebar: deep ink, so the working area is the brightest thing on screen.
+const RAIL = { bg: "#0A1929", hi: "#13283F", line: "#1C3148", txt: "#C3CFDC", dim: "#7F92A8", lamp: "#3FA7F5" };
+// Type roles (fonts loaded in layout.tsx): interface, titles/figures, data.
+const F = {
+  ui:   "var(--f-ui), system-ui, -apple-system, 'Segoe UI', sans-serif",
+  cond: "var(--f-cond), var(--f-ui), system-ui, sans-serif",
+  mono: "var(--f-mono), ui-monospace, 'SF Mono', Menlo, monospace",
 };
 
 // Shared type + spacing scale — every inline fontSize/padding in this
@@ -44,14 +57,14 @@ function Card({ children, style, hover }: { children: React.ReactNode; style?: R
       onMouseEnter={() => hover && setHovered(true)}
       onMouseLeave={() => hover && setHovered(false)}
       style={{
-        background: hovered ? C.hi : C.surf,
-        border: "1px solid " + C.bord,
-        borderRadius: 12,
-        padding: SPACE.md,
+        background: C.surf,
+        border: "1px solid " + (hovered ? "#CBD4DF" : C.bord),
+        borderRadius: 10,
+        padding: 18,
         boxShadow: hovered
-          ? "0 4px 16px rgba(18,69,122,0.12), 0 1px 3px rgba(18,69,122,0.08)"
-          : "0 1px 2px rgba(15,23,42,0.04)",
-        transition: "background 0.15s ease, box-shadow 0.15s ease",
+          ? "0 2px 10px rgba(11,21,36,0.07)"
+          : "0 1px 2px rgba(11,21,36,0.04)",
+        transition: "border-color 0.15s ease, box-shadow 0.15s ease",
         ...style,
       }}
     >
@@ -106,17 +119,18 @@ function PanelIntro({ icon: Icon, children }: {
 }) {
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 8, color: C.mid,
-      fontSize: TYPE.sm, marginBottom: 18, maxWidth: 760, lineHeight: 1.55 }}>
-      <Icon size={15} color={C.glow} />
+      fontSize: 13.5, marginBottom: 20, maxWidth: 760, lineHeight: 1.6 }}>
+      <Icon size={15} color={C.dim} />
       <span>{children}</span>
     </div>
   );
 }
 
 function Pill({ label, color }: { label: string; color: string }) {
-  return <span style={{ background: color + "22", color, border: "1px solid " + color + "44",
-    borderRadius: 4, padding: "2px 8px", fontSize: TYPE.xs, fontWeight: 800,
-    textTransform: "uppercase" as const, letterSpacing: "0.07em" }}>{label}</span>;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: color + "14", color,
+    borderRadius: 999, padding: "2px 9px 2px 7px", fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" as const,
+    lineHeight: 1.5 }}>
+    <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, flex: "none" }} />{label}</span>;
 }
 function StatusDot({ ok }: { ok: boolean }) {
   return <span style={{
@@ -127,18 +141,17 @@ function StatusDot({ ok }: { ok: boolean }) {
 }
 function KPI({ value, label, color, icon: IconComp }: { value: any; label: string; color: string; icon: React.ComponentType<{ size?: number; color?: string }> }) {
   return (
-    <Card hover>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase",
-            letterSpacing: "0.1em", marginBottom: SPACE.xs + 2 }}>{label}</div>
-          <div style={{ color, fontSize: TYPE.xl, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>
-            {typeof value === "number" ? value.toLocaleString("en-IN") : value}
-          </div>
-        </div>
-        <div style={{ background: color + "15", borderRadius: 8, padding: 8, display: "flex" }}>
-          <IconComp size={20} color={color} />
-        </div>
+    // The figure is ink, not the status colour: a wall of coloured numbers
+    // reads as alarm. Colour is the thin edge on the left, and the icon.
+    <Card hover style={{ position: "relative", overflow: "hidden", padding: "16px 18px 14px" }}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: color }} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <span style={{ color: C.mid, fontSize: 12.5, fontWeight: 600 }}>{label}</span>
+        <IconComp size={15} color={color} />
+      </div>
+      <div style={{ color: C.txt, fontFamily: F.cond, fontSize: 34, fontWeight: 600, lineHeight: 1.1,
+        marginTop: 8, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>
+        {typeof value === "number" ? value.toLocaleString("en-IN") : value}
       </div>
     </Card>
   );
@@ -205,6 +218,18 @@ export default function SuperAdminPage() {
   // bigger change than the problem needs: one poll of the API's own health
   // says it once, for all of them.
   const [apiDown, setApiDown]   = useState(false);
+  // Ctrl/Cmd+K, or "/" outside a text field, opens "Jump to…".
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName || "")
+        || (e.target as HTMLElement)?.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen(o => !o); }
+      else if (e.key === "/" && !typing) { e.preventDefault(); setPaletteOpen(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     let alive = true;
     const ping = async () => {
@@ -229,8 +254,12 @@ export default function SuperAdminPage() {
     });
   }, []);
 
-  if (checking) return <div style={{ background: C.bg, minHeight: "100vh",
-    display: "flex", alignItems: "center", justifyContent: "center", color: C.mid }}>Loading...</div>;
+  if (checking) return (
+    <div style={{ background: RAIL.bg, minHeight: "100vh", display: "flex", alignItems: "center",
+      justifyContent: "center", gap: 12, color: RAIL.txt, fontFamily: F.ui, fontSize: 14 }}>
+      <NikkiLogo size={28} variant="icon" dark /> Opening the control room…
+    </div>
+  );
 
   if (!authed) return <AdminLogin onSuccess={(t) => { setToken(t); setAuthed(true); }} />;
 
@@ -262,148 +291,332 @@ export default function SuperAdminPage() {
   ];
 
 
+  const groupOf = (label: string) => NAV_GROUPS.find(g => g.labels.includes(label))?.title || "";
+  const go = (i: number) => { setTab(i); setNavOpen(false); window.scrollTo({ top: 0 }); };
+
   return (
-    <div style={{ background: C.bg, minHeight: "100vh",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: C.txt }}>
-      <style>{`
-        *{box-sizing:border-box;margin:0;padding:0} a{color:inherit}
-        .nk-shell{display:grid;grid-template-columns:232px minmax(0,1fr);
-                  max-width:1400px;margin:0 auto;align-items:start}
-        .nk-side{position:sticky;top:56px;max-height:calc(100vh - 56px);
-                 overflow-y:auto;padding:18px 10px 40px;
-                 border-right:1px solid ${C.bord}}
-        .nk-side button:hover{background:${C.hi}}
-        .nk-side button:focus-visible{outline:2px solid ${C.glow};outline-offset:-2px}
-        .nk-burger{display:none}
-        .nk-scrim{display:none}
-        @media (max-width: 900px){
-          .nk-shell{grid-template-columns:minmax(0,1fr)}
-          .nk-burger{display:inline-flex}
-          .nk-side{position:fixed;top:56px;left:0;bottom:0;width:250px;z-index:60;
-                   background:${C.surf};transform:translateX(-100%);
-                   transition:transform .18s ease}
-          .nk-side-open{transform:translateX(0)}
-          .nk-scrim{display:block;position:fixed;inset:56px 0 0;z-index:55;
-                    background:rgba(15,23,42,.38)}
-        }
-        @media (max-width: 560px){ .nk-hide-sm{display:none} }
-        .nk-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-        .nk-2col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-        .nk-cc{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
-        @media (max-width: 1100px){ .nk-kpis{grid-template-columns:repeat(2,minmax(0,1fr))} }
-        @media (max-width: 900px){ .nk-2col,.nk-cc{grid-template-columns:minmax(0,1fr)} }
-        .nk-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-        .nk-table{width:100%;border-collapse:collapse;font-size:${TYPE.sm}px}
-        .nk-table th{color:${C.dim};font-size:${TYPE.xs}px;font-weight:800;text-transform:uppercase;
-                     letter-spacing:.08em;text-align:left;padding:8px 10px;border-bottom:1px solid ${C.bord};
-                     white-space:nowrap}
-        .nk-table td{padding:10px;border-bottom:1px solid ${C.bord}66;vertical-align:middle;white-space:nowrap}
-        .nk-table tr:hover td{background:${C.hi}}
-        .nk-table thead th{position:sticky;top:0;background:${C.surf};z-index:1}
-        .nk-table tbody tr:last-child td{border-bottom:none}
-        .nk-num{text-align:right;font-variant-numeric:tabular-nums}
-        .nk-3col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-        @media (max-width: 760px){ .nk-3col{grid-template-columns:minmax(0,1fr)} }
-        @media (max-width: 560px){ .nk-kpis{grid-template-columns:minmax(0,1fr)} }
-        /* Keyboard users could not see where they were outside the sidebar. */
-        button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible{
-          outline:2px solid ${C.glow};outline-offset:2px;border-radius:6px}
-        .nk-skel{background:linear-gradient(90deg,${C.hi} 25%,${C.bord}66 37%,${C.hi} 63%);
-                 background-size:400% 100%;animation:nk-shimmer 1.4s ease infinite;border-radius:6px}
-        @keyframes nk-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
-        @media (prefers-reduced-motion: reduce){ .nk-skel{animation:none} }
-        @keyframes nk-pulse{0%,100%{opacity:1}50%{opacity:.45}}
-        @media (prefers-reduced-motion: reduce){ .nk-pulse{animation:none!important} }
-        @media (prefers-reduced-motion: reduce){ .nk-side{transition:none} }
-      `}</style>
+    <div className="cr-app">
+      <style>{CR_CSS}</style>
 
-      {/* Header */}
-      <header style={{ background: C.surf, borderBottom: "1px solid " + C.bord,
-        padding: "0 20px", position: "sticky", top: 0, zIndex: 50,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        height: 56 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button className="nk-burger" onClick={() => setNavOpen(o => !o)}
-            aria-label="Menu" aria-expanded={navOpen}
-            style={{ background: "none", border: "1px solid " + C.bord, color: C.mid,
-              borderRadius: 7, padding: "5px 8px", cursor: "pointer", lineHeight: 0 }}>
-            <Menu size={16} />
+      <Rail token={token} tab={tab} onGo={go} open={navOpen} />
+      {navOpen && <div className="cr-scrim" onClick={() => setNavOpen(false)} />}
+
+      <div className="cr-main">
+        <header className="cr-top">
+          <button className="cr-burger" onClick={() => setNavOpen(o => !o)} aria-label="Menu" aria-expanded={navOpen}>
+            <Menu size={17} />
           </button>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.red,
-            boxShadow: "0 0 8px " + C.red, flex: "none" }} />
-          <span style={{ fontSize: TYPE.base, fontWeight: 900, whiteSpace: "nowrap" }}>
-            Nikki — Super Admin
-          </span>
-          <span className="nk-hide-sm"><Pill label="RESTRICTED ACCESS" color={C.red} /></span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="nk-hide-sm" style={{ color: C.dim, fontSize: TYPE.xs }}>
-            {TABS[tab].label}
-          </span>
-          <button onClick={() => sb.auth.signOut().then(() => window.location.reload())}
-            style={{ background: "none", border: "1px solid " + C.bord, color: C.dim,
-              borderRadius: 7, padding: "6px 12px", fontSize: TYPE.sm, cursor: "pointer" }}>
-            Sign Out
+          <nav className="cr-crumbs" aria-label="Breadcrumb">
+            <span>{groupOf(TABS[tab].label)}</span>
+            <ChevronRight size={13} />
+            <span className="cr-crumb-here">{TABS[tab].label}</span>
+          </nav>
+          <div style={{ flex: 1 }} />
+          <button className="cr-jump" onClick={() => setPaletteOpen(true)} aria-label="Jump to a screen">
+            <Search size={14} /><span className="cr-hide-sm">Jump to…</span><kbd className="cr-hide-sm">Ctrl K</kbd>
           </button>
-        </div>
-      </header>
+          <LineStatus token={token} apiDown={apiDown}
+            onOpen={() => go(TABS.findIndex(t => t.label === "Platform Health"))} />
+        </header>
 
-      {apiDown && (
-        <div role="alert" style={{ background: C.red + "18", borderBottom: "1px solid " + C.red + "55",
-          color: C.red, fontSize: TYPE.sm, padding: "8px 20px", display: "flex", alignItems: "center", gap: 8,
-          position: "sticky", top: 56, zIndex: 49 }}>
-          <AlertTriangle size={14} />
-          <span>Can't reach the API. Screens below may be empty or out of date — that is this banner, not your data.</span>
-        </div>
-      )}
+        {apiDown && (
+          <div role="alert" className="cr-banner">
+            <AlertTriangle size={14} />
+            <span>Can&apos;t reach the API. Screens below may be empty or out of date — that is this banner, not your data.</span>
+          </div>
+        )}
 
-      <div className="nk-shell">
-        <nav className={"nk-side" + (navOpen ? " nk-side-open" : "")} aria-label="Sections">
-          {NAV_GROUPS.map(g => (
-            <div key={g.title} style={{ marginBottom: 18 }}>
-              <div style={{ color: C.dim, fontSize: 10, fontWeight: 800,
-                letterSpacing: "0.12em", textTransform: "uppercase" as const,
-                padding: "0 10px 6px" }}>{g.title}</div>
-              {g.labels.map(label => {
-                const i = TABS.findIndex(t => t.label === label);
-                if (i < 0) return null;           // a renamed tab loses its icon, not the console
-                const Icon = TABS[i].icon;
-                const on = tab === i;
-                return (
-                  <button key={label} onClick={() => { setTab(i); setNavOpen(false); }}
-                    aria-current={on ? "page" : undefined}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 9, width: "100%",
-                      padding: "7px 10px", marginBottom: 1, borderRadius: 8,
-                      border: "none", cursor: "pointer", textAlign: "left" as const,
-                      background: on ? C.glow + "1A" : "transparent",
-                      color: on ? C.gbr : C.mid,
-                      fontSize: TYPE.sm, fontWeight: on ? 700 : 500,
-                      borderLeft: "2px solid " + (on ? C.glow : "transparent"),
-                    }}>
-                    <Icon size={14} style={{ flex: "none", opacity: on ? 1 : 0.75 }} />
-                    <span style={{ whiteSpace: "nowrap" as const }}>{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-
-        {navOpen && <div className="nk-scrim" onClick={() => setNavOpen(false)} />}
-
-        <main style={{ minWidth: 0, padding: "22px 20px 60px" }}>
-          <h1 style={{ fontSize: 19, fontWeight: 900, marginBottom: 16, color: C.txt }}>
-            {TABS[tab].label}
-          </h1>
+        <main className="cr-page">
+          <div className="cr-eyebrow">{groupOf(TABS[tab].label)}</div>
+          <h1 className="cr-h1">{TABS[tab].label}</h1>
           {panels[tab]}
         </main>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onGo={go} />
 
       {/* Inside the auth gate, on purpose. Mounted in layout.tsx it rendered
           on the login screen — an unauthenticated page — where it had no
           session to ask with and nothing to ask about. */}
       <VoiceAssistant />
+    </div>
+  );
+}
+
+// ── CONTROL ROOM SHELL ────────────────────────────────────
+// One stylesheet for the frame, tables and form controls. Panels keep their
+// inline styles; what they share (fonts, tables, focus, the grid helpers)
+// lives here so all 24 screens change together.
+const CR_CSS = `
+  *{box-sizing:border-box;margin:0;padding:0} a{color:inherit}
+  html,body{background:${C.bg}}
+  body{font-family:${F.ui};color:${C.txt};-webkit-font-smoothing:antialiased;font-size:14px}
+  button,input,select,textarea{font-family:inherit}
+  input,select,textarea{color:${C.txt}}
+  .cr-mono,code,kbd{font-family:${F.mono}}
+  .cr-app{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh}
+
+  /* Sidebar */
+  .cr-rail{position:sticky;top:0;height:100vh;background:${RAIL.bg};color:${RAIL.txt};
+           display:flex;flex-direction:column;border-right:1px solid ${RAIL.line}}
+  .cr-brand{display:flex;align-items:center;gap:10px;padding:18px 18px 16px;border-bottom:1px solid ${RAIL.line}}
+  .cr-brand-t{font-family:${F.cond};font-weight:600;font-size:17px;color:#fff;letter-spacing:.01em;line-height:1.1}
+  .cr-brand-s{font-size:11px;color:${RAIL.dim};letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .cr-nav{flex:1;overflow-y:auto;padding:14px 10px 20px;scrollbar-width:thin;scrollbar-color:${RAIL.line} transparent}
+  .cr-group{font-size:10.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:${RAIL.dim};
+            padding:18px 10px 6px}
+  .cr-nav > div:first-child .cr-group{padding-top:2px}
+  .cr-item{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;margin:1px 0;border:0;border-radius:7px;
+           background:transparent;color:${RAIL.txt};font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;
+           position:relative}
+  .cr-item svg{opacity:.7;flex:none}
+  .cr-item:hover{background:${RAIL.hi};color:#fff}
+  .cr-item[aria-current=page]{background:${RAIL.hi};color:#fff;font-weight:600}
+  .cr-item[aria-current=page]::before{content:"";position:absolute;left:-10px;top:7px;bottom:7px;width:3px;
+           border-radius:0 3px 3px 0;background:${RAIL.lamp}}
+  .cr-item[aria-current=page] svg{opacity:1;color:${RAIL.lamp}}
+  .cr-badge{margin-left:auto;min-width:20px;height:18px;padding:0 6px;border-radius:9px;font-size:11px;font-weight:600;
+            display:inline-flex;align-items:center;justify-content:center;font-family:${F.mono}}
+  .cr-foot{border-top:1px solid ${RAIL.line};padding:12px 14px;display:flex;align-items:center;gap:10px;font-size:12px}
+  .cr-env{display:inline-flex;align-items:center;gap:6px;color:${RAIL.txt}}
+  .cr-env i{width:7px;height:7px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 3px #22C55E22}
+  .cr-signout{margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid ${RAIL.line};
+              color:${RAIL.txt};border-radius:7px;padding:5px 9px;font-size:12px;cursor:pointer}
+  .cr-signout:hover{background:${RAIL.hi};color:#fff}
+  .cr-item:focus-visible,.cr-signout:focus-visible{outline:2px solid ${RAIL.lamp};outline-offset:-2px}
+
+  /* Top bar */
+  .cr-main{min-width:0;display:flex;flex-direction:column}
+  .cr-top{position:sticky;top:0;z-index:40;height:56px;display:flex;align-items:center;gap:12px;padding:0 24px;
+          background:rgba(242,244,247,.86);backdrop-filter:saturate(1.4) blur(8px);border-bottom:1px solid ${C.bord}}
+  .cr-burger{display:none;background:${C.surf};border:1px solid ${C.bord};color:${C.mid};border-radius:7px;padding:6px 8px;
+             cursor:pointer;line-height:0}
+  .cr-crumbs{display:flex;align-items:center;gap:6px;color:${C.dim};font-size:13px;white-space:nowrap;min-width:0}
+  .cr-crumb-here{color:${C.txt};font-weight:600}
+  .cr-jump{display:inline-flex;align-items:center;gap:8px;background:${C.surf};border:1px solid ${C.bord};color:${C.mid};
+           border-radius:8px;padding:6px 8px 6px 10px;font-size:13px;cursor:pointer;min-width:0}
+  .cr-jump:hover{border-color:#CBD4DF;color:${C.txt}}
+  .cr-jump kbd{font-size:10.5px;color:${C.dim};border:1px solid ${C.bord};border-bottom-width:2px;border-radius:4px;padding:0 5px;
+               background:${C.hi}}
+  .cr-banner{display:flex;align-items:center;gap:8px;background:${C.red}12;border-bottom:1px solid ${C.red}44;color:${C.red};
+             font-size:13px;padding:8px 24px;position:sticky;top:56px;z-index:39}
+
+  /* The line lamps: one per trunk channel. */
+  .cr-lines{display:inline-flex;align-items:center;gap:10px;background:${C.surf};border:1px solid ${C.bord};border-radius:8px;
+            padding:6px 10px;cursor:pointer;color:${C.mid};font-size:12.5px}
+  .cr-lines:hover{border-color:#CBD4DF}
+  .cr-lamps{display:inline-flex;gap:3px}
+  .cr-lamp{width:7px;height:16px;border-radius:2px;background:#E7ECF2;border:1px solid #D5DDE7}
+  .cr-lamp.use{background:${RAIL.lamp};border-color:#2A8EDA;box-shadow:0 0 6px ${RAIL.lamp}88}
+  .cr-lamp.res{background:${C.gold}AA;border-color:${C.gold}}
+  .cr-lamp.inb{background:repeating-linear-gradient(-45deg,#D5DDE7 0 2px,transparent 2px 4px);border-color:#D5DDE7}
+  .cr-lamp.hot.use{background:${C.org};border-color:#C9412D;box-shadow:0 0 6px ${C.org}88}
+  .cr-lines b{font-family:${F.mono};font-weight:500;color:${C.txt};font-size:12.5px}
+  .cr-api{width:8px;height:8px;border-radius:50%;flex:none}
+
+  /* Page */
+  .cr-page{padding:26px 28px 72px;max-width:1440px;width:100%}
+  .cr-eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:${C.dim};margin-bottom:4px}
+  .cr-h1{font-family:${F.cond};font-size:30px;font-weight:600;letter-spacing:-.01em;color:${C.txt};line-height:1.15;margin-bottom:18px}
+
+  /* Command palette */
+  .cr-pal-back{position:fixed;inset:0;z-index:90;background:rgba(10,25,41,.42);display:flex;align-items:flex-start;
+               justify-content:center;padding:12vh 16px 16px}
+  .cr-pal{width:560px;max-width:100%;background:${C.surf};border:1px solid ${C.bord};border-radius:12px;
+          box-shadow:0 24px 60px rgba(10,25,41,.28);overflow:hidden}
+  .cr-pal input{width:100%;border:0;border-bottom:1px solid ${C.bord};padding:15px 16px 15px 44px;font-size:15px;outline:none;
+                background:transparent}
+  .cr-pal input:focus-visible{outline:none}
+  .cr-pal-list{max-height:52vh;overflow-y:auto;padding:6px}
+  .cr-pal-g{font-size:10.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:${C.dim};padding:10px 10px 4px}
+  .cr-pal-i{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;border-radius:7px;
+            padding:8px 10px;font-size:14px;color:${C.txt};cursor:pointer;text-align:left}
+  .cr-pal-i svg{color:${C.dim}}
+  .cr-pal-i.on{background:${C.glow}10;color:${C.glow}}
+  .cr-pal-i.on svg{color:${C.glow}}
+
+  /* Shared by panels */
+  .nk-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+  .nk-2col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .nk-cc{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+  .nk-3col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .nk-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .nk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px}
+  .nk-table th{color:${C.mid};font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;text-align:left;
+               padding:9px 12px;background:${C.hi};border-bottom:1px solid ${C.bord};white-space:nowrap}
+  .nk-table td{padding:11px 12px;border-bottom:1px solid ${C.bord}AA;vertical-align:middle;white-space:nowrap}
+  .nk-table tr:hover td{background:#F9FAFC}
+  .nk-table thead th{position:sticky;top:0;z-index:1}
+  .nk-table tbody tr:last-child td{border-bottom:none}
+  .nk-num{text-align:right;font-variant-numeric:tabular-nums}
+  button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible,textarea:focus-visible{
+    outline:2px solid ${C.glow};outline-offset:2px;border-radius:6px}
+  .nk-skel{background:linear-gradient(90deg,${C.hi} 25%,${C.bord}88 37%,${C.hi} 63%);background-size:400% 100%;
+           animation:nk-shimmer 1.4s ease infinite;border-radius:6px}
+  @keyframes nk-shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+  @keyframes nk-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .cr-hide-sm{}
+  @media (max-width:1100px){ .nk-kpis{grid-template-columns:repeat(2,minmax(0,1fr))} }
+  @media (max-width:900px){
+    .cr-app{grid-template-columns:minmax(0,1fr)}
+    .cr-rail{position:fixed;left:0;top:0;bottom:0;width:264px;z-index:80;transform:translateX(-100%);transition:transform .18s ease}
+    .cr-rail.open{transform:none}
+    .cr-scrim{position:fixed;inset:0;z-index:70;background:rgba(10,25,41,.45)}
+    .cr-burger{display:inline-flex}
+    .cr-top{padding:0 14px}
+    .cr-page{padding:20px 16px 64px}
+    .nk-2col,.nk-cc{grid-template-columns:minmax(0,1fr)}
+  }
+  @media (max-width:760px){ .nk-3col{grid-template-columns:minmax(0,1fr)} }
+  @media (max-width:600px){ .cr-hide-sm{display:none} .cr-crumbs span:first-child,.cr-crumbs svg{display:none}
+    .nk-kpis{grid-template-columns:minmax(0,1fr)} .cr-h1{font-size:25px} }
+  @media (prefers-reduced-motion: reduce){ .nk-skel{animation:none} .nk-pulse{animation:none!important}
+    .cr-rail{transition:none} }
+`;
+
+/** Sidebar: grouped screens, live counts where there is something waiting. */
+function Rail({ token, tab, onGo, open }: { token: string; tab: number; onGo: (i: number) => void; open: boolean }) {
+  // Two numbers worth a glance from any screen: unread WhatsApp and calls
+  // live right now. Polled quietly; a failure just hides the badge.
+  const [counts, setCounts] = useState<{ wa: number; live: number }>({ wa: 0, live: 0 });
+  useEffect(() => {
+    let alive = true;
+    const H = { Authorization: `Bearer ${token}` };
+    const load = async () => {
+      const [wa, cc] = await Promise.all([
+        fetch(`${API}/api/admin/whatsapp/inbox`, { headers: H }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API}/api/admin/ops/command-center`, { headers: H }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      if (!alive) return;
+      setCounts({
+        wa: (wa?.conversations || []).reduce((n: number, c: any) => n + (c.unread || 0), 0),
+        live: Number(cc?.trunk?.in_use || 0),
+      });
+    };
+    load(); const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [token]);
+  const badge = (label: string) =>
+    label === "WhatsApp" && counts.wa > 0 ? <span className="cr-badge" style={{ background: "#22C55E", color: "#04210F" }}>{counts.wa}</span>
+    : label === "Live Calls" && counts.live > 0 ? <span className="cr-badge" style={{ background: C.org, color: "#fff" }}>{counts.live}</span>
+    : null;
+
+  return (
+    <aside className={"cr-rail" + (open ? " open" : "")} aria-label="Sections">
+      <div className="cr-brand">
+        <NikkiLogo size={30} variant="icon" dark />
+        <div>
+          <div className="cr-brand-t">HeyNikki</div>
+          <div className="cr-brand-s">Control room</div>
+        </div>
+      </div>
+      <nav className="cr-nav">
+        {NAV_GROUPS.map(g => (
+          <div key={g.title}>
+            <div className="cr-group">{g.title}</div>
+            {g.labels.map(label => {
+              const i = TABS.findIndex(t => t.label === label);
+              if (i < 0) return null;           // a renamed tab loses its icon, not the console
+              const Icon = TABS[i].icon;
+              return (
+                <button key={label} className="cr-item" onClick={() => onGo(i)}
+                  aria-current={tab === i ? "page" : undefined}>
+                  <Icon size={15} /><span>{label}</span>{badge(label)}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="cr-foot">
+        <span className="cr-env" title="admin.heynikki.in"><i />Production</span>
+        <button className="cr-signout" onClick={() => sb.auth.signOut().then(() => window.location.reload())}>
+          <LogOut size={13} />Sign out
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * The line lamps: one per trunk channel, on every screen. Lit for a call in
+ * progress, amber for a line held for a call being set up, hatched for the
+ * lines kept back for inbound. Terracotta once outbound has reached its
+ * ceiling. Opens Platform Health.
+ */
+function LineStatus({ token, apiDown, onOpen }: { token: string; apiDown: boolean; onOpen: () => void }) {
+  const { data } = useAdminJson<any>(token, "/api/admin/ops/command-center", 15000);
+  const t = data?.trunk;
+  const alerts = (data?.alerts || []).length;
+  if (!t) {
+    return (
+      <button className="cr-lines" onClick={onOpen} title={apiDown ? "API unreachable" : "Loading line status"}>
+        <span className="cr-api" style={{ background: apiDown ? C.red : C.dim }} />
+        <span className="cr-hide-sm">{apiDown ? "API down" : "Lines…"}</span>
+      </button>
+    );
+  }
+  const channels = Math.max(1, Math.min(Number(t.channels) || 10, 30));
+  const inUse = Math.min(Number(t.in_use) || 0, channels);
+  const res = Math.min(Number(t.reserved) || 0, channels - inUse);
+  const ceiling = Math.min(Number(t.ceiling) || channels, channels);
+  const hot = inUse + res >= ceiling;
+  const lamps = Array.from({ length: channels }, (_, i) =>
+    i < inUse ? "use" : i < inUse + res ? "res" : i >= ceiling ? "inb" : "free");
+  return (
+    <button className="cr-lines" onClick={onOpen}
+      title={`${inUse} of ${channels} lines in use${res ? `, ${res} being set up` : ""}; ${channels - ceiling} kept for inbound${alerts ? ` · ${alerts} alert(s)` : ""}`}
+      aria-label={`${inUse} of ${channels} phone lines in use`}>
+      <span className="cr-lamps" aria-hidden>
+        {lamps.map((k, i) => <span key={i} className={`cr-lamp ${k}${hot ? " hot" : ""}`} />)}
+      </span>
+      <span className="cr-hide-sm"><b>{inUse}</b>/{channels} lines</span>
+      <span className="cr-api" title={apiDown ? "API unreachable" : alerts ? `${alerts} alert(s)` : "API healthy"}
+        style={{ background: apiDown ? C.red : alerts ? C.gold : "#22C55E" }} />
+    </button>
+  );
+}
+
+/** Ctrl/Cmd+K or "/": jump to any of the screens by name. */
+function CommandPalette({ open, onClose, onGo }: { open: boolean; onClose: () => void; onGo: (i: number) => void }) {
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
+  const items = NAV_GROUPS.flatMap(g => g.labels.map(label => ({ group: g.title, label, i: TABS.findIndex(t => t.label === label) })))
+    .filter(x => x.i >= 0 && (x.label + " " + x.group).toLowerCase().includes(q.trim().toLowerCase()));
+  if (!open) return null;
+  const pick = (k: number) => { const it = items[k]; if (it) { onGo(it.i); onClose(); } };
+  return (
+    <div className="cr-pal-back" onMouseDown={onClose}>
+      <div className="cr-pal" role="dialog" aria-modal aria-label="Jump to a screen" onMouseDown={e => e.stopPropagation()}>
+        <div style={{ position: "relative" }}>
+          <Search size={16} color={C.dim} style={{ position: "absolute", left: 16, top: 17 }} />
+          <input autoFocus value={q} placeholder="Jump to a screen…" aria-label="Screen name"
+            onChange={e => { setQ(e.target.value); setSel(0); }}
+            onKeyDown={e => {
+              if (e.key === "ArrowDown") { e.preventDefault(); setSel(s => Math.min(s + 1, items.length - 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setSel(s => Math.max(s - 1, 0)); }
+              else if (e.key === "Enter") { e.preventDefault(); pick(sel); }
+              else if (e.key === "Escape") onClose();
+            }} />
+        </div>
+        <div className="cr-pal-list">
+          {items.length === 0 && <div style={{ padding: 14, color: C.dim, fontSize: 13.5 }}>No screen called “{q}”.</div>}
+          {items.map((it, k) => {
+            const Icon = TABS[it.i].icon;
+            const newGroup = k === 0 || items[k - 1].group !== it.group;
+            return (
+              <div key={it.label}>
+                {newGroup && <div className="cr-pal-g">{it.group}</div>}
+                <button className={"cr-pal-i" + (k === sel ? " on" : "")} onMouseEnter={() => setSel(k)} onClick={() => pick(k)}>
+                  <Icon size={15} /><span>{it.label}</span>
+                  {k === sel && <CornerDownLeft size={13} style={{ marginLeft: "auto" }} />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -432,39 +645,44 @@ function AdminLogin({ onSuccess }: { onSuccess: (token: string) => void }) {
     onSuccess(data.session!.access_token);
   };
 
+  const field: React.CSSProperties = {
+    width: "100%", padding: "11px 12px", fontSize: 15, borderRadius: 8,
+    border: "1px solid " + C.bord, background: C.surf, color: C.txt, fontFamily: F.ui,
+  };
+  const lbl: React.CSSProperties = { display: "block", fontSize: 12.5, fontWeight: 600, color: C.mid, marginBottom: 6 };
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", display: "flex",
-      alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: C.surf, border: "1px solid " + C.red + "44",
-        borderRadius: 12, padding: 32, width: 360 }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}><Lock size={32} color={C.glow} /></div>
-          <div style={{ color: C.txt, fontSize: TYPE.lg, fontWeight: 900 }}>Super Admin</div>
-          <div style={{ color: C.dim, fontSize: TYPE.sm, marginTop: 4 }}>Restricted — authorized personnel only</div>
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16, fontFamily: F.ui,
+      background: `radial-gradient(1200px 600px at 20% -10%, #16324F 0%, ${RAIL.bg} 55%)` }}>
+      <div style={{ width: 380, maxWidth: "100%" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22, color: "#fff" }}>
+          <NikkiLogo size={36} variant="icon" dark />
+          <div>
+            <div style={{ fontFamily: F.cond, fontSize: 22, fontWeight: 600, lineHeight: 1.1 }}>HeyNikki</div>
+            <div style={{ fontSize: 11.5, letterSpacing: ".1em", textTransform: "uppercase", color: RAIL.dim }}>Control room</div>
+          </div>
         </div>
-        {error && <div style={{ background: C.red + "22", color: C.red,
-          border: "1px solid " + C.red + "44", borderRadius: 8,
-          padding: "10px 12px", fontSize: TYPE.sm, marginBottom: 16 }}>{error}</div>}
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: 14 }}>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="admin@heynikki.in" required
-              style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-                borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: TYPE.base }} />
+        <div style={{ background: C.surf, borderRadius: 12, padding: 26, boxShadow: "0 24px 60px rgba(0,0,0,.35)" }}>
+          <div style={{ fontFamily: F.cond, fontSize: 22, fontWeight: 600, color: C.txt }}>Sign in</div>
+          <div style={{ color: C.mid, fontSize: 13.5, marginTop: 4, marginBottom: 20 }}>
+            Super admin accounts only. Everything done here is recorded in the audit log.
           </div>
-          <div style={{ marginBottom: 20 }}>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••" required
-              style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-                borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: TYPE.base }} />
-          </div>
-          <button type="submit" disabled={loading} style={{
-            width: "100%", background: C.red, color: "#fff", border: "none",
-            borderRadius: 8, padding: "12px", fontSize: TYPE.base, fontWeight: 700,
-            opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Verifying..." : "Access Super Admin"}
-          </button>
-        </form>
+          {error && <div role="alert" style={{ background: C.red + "12", color: C.red, borderRadius: 8,
+            padding: "10px 12px", fontSize: 13.5, marginBottom: 16 }}>{error}</div>}
+          <form onSubmit={handleLogin}>
+            <label style={lbl} htmlFor="cr-email">Email</label>
+            <input id="cr-email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+              autoComplete="username" required style={{ ...field, marginBottom: 14 }} />
+            <label style={lbl} htmlFor="cr-pass">Password</label>
+            <input id="cr-pass" type="password" value={password} onChange={e => setPassword(e.target.value)}
+              autoComplete="current-password" required style={{ ...field, marginBottom: 20 }} />
+            <button type="submit" disabled={loading} style={{
+              width: "100%", background: C.glow, color: "#fff", border: "none", borderRadius: 8,
+              padding: "12px", fontSize: 15, fontWeight: 600, cursor: loading ? "wait" : "pointer",
+              opacity: loading ? 0.75 : 1 }}>
+              {loading ? "Checking…" : "Sign in"}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
