@@ -24,9 +24,9 @@ const C = {
 
 function Card({ children, title, style }: { children: React.ReactNode; title?: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{ background: C.surf, border: "1px solid " + C.bord,
-      borderRadius: 10, padding: 16, ...style }}>
-      {title && <div style={{ color: C.txt, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>{title}</div>}
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 18,
+      boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style }}>
+      {title && <div style={{ color: C.txt, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>{title}</div>}
       {children}
     </div>
   );
@@ -34,9 +34,10 @@ function Card({ children, title, style }: { children: React.ReactNode; title?: R
 
 function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <span style={{ background: color + "22", color, border: "1px solid " + color + "44",
-      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, textTransform: "capitalize" as const,
-      whiteSpace: "nowrap" }}>
+    <span style={{ background: color + "14", color, borderRadius: 999, padding: "3px 9px",
+      fontSize: 11.5, fontWeight: 600, textTransform: "capitalize" as const, whiteSpace: "nowrap",
+      display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
       {label}
     </span>
   );
@@ -45,7 +46,8 @@ function Pill({ label, color }: { label: string; color: string }) {
 function SectionTitle({ icon, children, right }: { icon: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-      <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700,
+        letterSpacing: "-0.01em", display: "inline-flex", alignItems: "center", gap: 8 }}>
         {icon} {children}
       </div>
       {right}
@@ -386,8 +388,8 @@ export default function WhatsAppPage() {
       {toast && (
         <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999,
           background: C.surf, border: "1px solid " + C.bord, borderRadius: 10,
-          padding: "12px 20px", color: C.txt, fontSize: 13, fontWeight: 700,
-          boxShadow: "0 8px 32px #0008" }}>
+          padding: "12px 20px", color: C.txt, fontSize: 13, fontWeight: 600,
+          boxShadow: "0 12px 32px rgba(15,23,42,0.14)" }}>
           {toast}
         </div>
       )}
@@ -397,8 +399,10 @@ export default function WhatsAppPage() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)", zIndex: 999,
           display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ background: C.surf, border: "1px solid " + C.bord,
-            borderRadius: 12, padding: 28, width: 420, boxShadow: "0 20px 60px #0008" }}>
-            <div style={{ color: C.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
+            borderRadius: 14, padding: 28, width: 440, maxWidth: "calc(100vw - 32px)",
+            boxShadow: "0 24px 64px rgba(15,23,42,0.24)" }}>
+            <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 19, fontWeight: 700,
+              letterSpacing: "-0.01em", marginBottom: 4 }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Send size={15} /> Send this message</span>
             </div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 16 }}>
@@ -408,47 +412,47 @@ export default function WhatsAppPage() {
             {/* What will actually be sent. Updates as the boxes below are
                 filled; anything still blank shows its example instead of a
                 number in curly braces. */}
-            <div style={{ background: C.hi, borderRadius: 8, padding: 12, marginBottom: 16,
-              border: "1px solid " + C.bord + "88" }}>
-              <div style={{ color: C.dim, fontSize: 10, marginBottom: 6 }}>WHAT THEY WILL SEE</div>
+            <div style={{ background: "#F1F4F8", borderRadius: 10, padding: 14, marginBottom: 18,
+              borderLeft: "3px solid " + C.grn }}>
+              <div style={{ color: C.mid, fontSize: 12, fontWeight: 600, marginBottom: 6 }}>What they will see</div>
               <div style={{ color: C.txt, fontSize: 12.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
                 {fillTemplate(modal.template.body_text, modal.template.variables || [], business, vars)}
               </div>
             </div>
 
             <div style={{ marginBottom: 14 }}>
-              <label style={{ color: C.mid, fontSize: 11, fontWeight: 600, display: "block", marginBottom: 6 }}>
+              <label style={{ color: C.mid, fontSize: 12.5, fontWeight: 600, display: "block", marginBottom: 6 }}>
                 To Number (WhatsApp)
               </label>
               <input value={toNumber} onChange={e => setToNumber(e.target.value)}
                 placeholder="+917XXXXXXXXX or 97XXXXXXXX"
-                style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-                  borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 13 }} />
+                style={{ background: C.surf, border: "1px solid #D8DFE8", color: C.txt,
+                  borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 14 }} />
             </div>
 
             {(modal.template.variables || []).map((label: string, i: number) => (
               <div key={i} style={{ marginBottom: 12 }}>
-                <label style={{ color: C.mid, fontSize: 11, fontWeight: 600, display: "block", marginBottom: 6 }}>
+                <label style={{ color: C.mid, fontSize: 12.5, fontWeight: 600, display: "block", marginBottom: 6 }}>
                   {label}
                 </label>
                 <input value={vars[String(i + 1)] || ""}
                   onChange={e => setVars(p => ({ ...p, [String(i + 1)]: e.target.value }))}
                   placeholder={exampleFor(label, business)}
-                  style={{ background: C.hi, border: "1px solid " + C.bord, color: C.txt,
-                    borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 13 }} />
+                  style={{ background: C.surf, border: "1px solid #D8DFE8", color: C.txt,
+                    borderRadius: 8, padding: "10px 12px", width: "100%", fontSize: 14 }} />
               </div>
             ))}
 
             <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
               <button onClick={sendMessage} disabled={!toNumber.trim() || sending === modal.template.id}
                 style={{ flex: 1, background: C.grn, color: "#fff", border: "none", borderRadius: 8,
-                  padding: "12px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer",
                   opacity: !toNumber.trim() ? 0.6 : 1 }}>
-                {sending === modal.template.id ? "Sending..." : "Send Message"}
+                {sending === modal.template.id ? "Sending…" : "Send message"}
               </button>
               <button onClick={() => setModal(null)}
                 style={{ padding: "12px 16px", background: "none", color: C.mid, border: "1px solid " + C.bord,
-                  borderRadius: 8, fontSize: 13, cursor: "pointer" }}>
+                  borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                 Cancel
               </button>
             </div>
@@ -460,6 +464,12 @@ export default function WhatsAppPage() {
         <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading WhatsApp...</div>
       ) : (
         <>
+    <div style={{ marginBottom: 20 }}>
+      <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>WhatsApp</h1>
+      <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
+        Replies from customers, ready-made messages to send, and what Nikki has sent for you.
+      </p>
+    </div>
     {/* Which number the messages below actually go out from, and the
         buttons to make it the business's own. */}
     <WhatsAppSender />
@@ -470,14 +480,14 @@ export default function WhatsAppPage() {
     <div style={{ marginBottom: 24 }}>
       <SectionTitle icon={<Inbox size={14} />}
         right={unread > 0 && (
-          <span style={{ background: C.grn, color: "#fff", borderRadius: 20,
-            padding: "2px 9px", fontSize: 11, fontWeight: 800 }}>{unread} new</span>
+          <span style={{ background: C.grn, color: "#fff", borderRadius: 999,
+            padding: "2px 9px", fontSize: 12, fontWeight: 600 }}>{unread} new</span>
         )}>
         Replies
       </SectionTitle>
-      <Card>
+      <Card style={{ padding: "4px 18px" }}>
       {inbox.length === 0 ? (
-        <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+        <div style={{ color: C.mid, fontSize: 14, textAlign: "center", padding: "28px 16px", lineHeight: 1.6 }}>
           No replies yet. When someone answers one of your WhatsApp messages, it appears here
           and you can reply for 24 hours.
         </div>
@@ -486,27 +496,27 @@ export default function WhatsAppPage() {
         const shown = open ? t.msgs : t.msgs.slice(-3);
         const hidden = t.msgs.length - shown.length;
         return (
-          <div key={t.number} style={{ padding: "12px 0",
+          <div key={t.number} style={{ padding: "16px 0",
             borderBottom: ti === threads.length - 1 ? "none" : `1px solid ${C.bord}` }}>
             {/* who */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-              <span style={{ width: 30, height: 30, borderRadius: "50%", background: C.hi, color: C.glow,
+              <span style={{ width: 30, height: 30, borderRadius: "50%", background: C.grn + "14", color: C.grn,
                 display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <UserRound size={15} />
               </span>
               <div style={{ minWidth: 0 }}>
-                <a href={`/leads?phone=${t.number}`} style={{ color: C.txt, fontWeight: 800, fontSize: 13.5 }}>
+                <a href={`/leads?phone=${t.number}`} style={{ color: C.txt, fontWeight: 700, fontSize: 14, fontFamily: "var(--font-mono), monospace", textDecoration: "none" }}>
                   {t.number}
                 </a>
                 <div style={{ color: C.dim, fontSize: 11.5 }}>
                   {t.msgs.length} message{t.msgs.length === 1 ? "" : "s"} · last {timeAgo(t.last)}
                 </div>
               </div>
-              <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 20,
-                background: t.canReply ? C.grn + "1a" : C.hi, color: t.canReply ? C.grn : C.dim }}>
+              <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                background: t.canReply ? C.grn + "14" : "#F1F4F8", color: t.canReply ? C.grn : C.mid }}>
                 {t.canReply ? `Open · ${Math.max(1, Math.round(24 - t.hours))}h left` : "Window closed"}
               </span>
-              {t.unread > 0 && <span style={{ color: C.grn, fontSize: 11, fontWeight: 800 }}>{t.unread} NEW</span>}
+              {t.unread > 0 && <span style={{ background: C.grn, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 11.5, fontWeight: 600 }}>{t.unread} new</span>}
             </div>
 
             {/* the conversation */}
@@ -523,8 +533,8 @@ export default function WhatsAppPage() {
                   <div style={{
                     padding: "8px 12px", borderRadius: 12, fontSize: 13.5, lineHeight: 1.5,
                     borderBottomLeftRadius: m.dir === "in" ? 4 : 12, borderBottomRightRadius: m.dir === "in" ? 12 : 4,
-                    background: m.dir === "in" ? C.hi : C.glow + "14",
-                    color: C.txt, border: `1px solid ${m.dir === "in" ? C.bord : C.glow + "33"}`,
+                    background: m.dir === "in" ? "#F1F4F8" : "#DCF8C6",
+                    color: C.txt, border: `1px solid ${m.dir === "in" ? "#E4E9F0" : "#C5E8AE"}`,
                     whiteSpace: "pre-wrap", wordBreak: "break-word",
                   }}>{m.body}</div>
                   <div style={{ color: C.dim, fontSize: 10.5, marginTop: 2, textAlign: m.dir === "in" ? "left" : "right" }}>
@@ -555,12 +565,12 @@ export default function WhatsAppPage() {
                   value={replyDraft[t.number] || ""}
                   onChange={e => setReplyDraft(d => ({ ...d, [t.number]: e.target.value }))}
                   placeholder={`Reply to ${t.number}…`}
-                  style={{ flex: 1, minWidth: 0, padding: "8px 11px", borderRadius: 8, fontSize: 13,
-                    background: C.surf, color: C.txt, border: `1px solid ${C.bord}` }} />
+                  style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: 8, fontSize: 14,
+                    background: C.surf, color: C.txt, border: "1px solid #D8DFE8" }} />
                 <button type="submit"
                   disabled={!(replyDraft[t.number] || "").trim()}
-                  style={{ padding: "8px 14px", borderRadius: 8, border: "none", fontSize: 12.5,
-                    fontWeight: 800, background: C.grn, color: "#fff", cursor: "pointer",
+                  style={{ padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13.5,
+                    fontWeight: 600, background: C.grn, color: "#fff", cursor: "pointer",
                     opacity: (replyDraft[t.number] || "").trim() ? 1 : 0.5 }}>
                   Send
                 </button>
@@ -570,7 +580,7 @@ export default function WhatsAppPage() {
                 <span>Their last message is over 24 hours old — only a template reaches them now.</span>
                 <button type="button"
                   onClick={() => { setToNumber(t.number); document.getElementById("wa-templates")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-                  style={{ background: "none", border: "none", color: C.glow, fontWeight: 800, fontSize: 12, padding: 0, cursor: "pointer" }}>
+                  style={{ background: "none", border: "none", color: C.glow, fontWeight: 600, fontSize: 12.5, padding: 0, cursor: "pointer" }}>
                   Pick a template →
                 </button>
               </div>
@@ -582,7 +592,7 @@ export default function WhatsAppPage() {
       </Card>
     </div>
           {/* KPI Row */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
             {[
               { label: "Messages (last 50)", value: total,     color: C.gbr  },
               { label: "Delivered",         value: delivered, color: C.grn  },
@@ -590,18 +600,20 @@ export default function WhatsAppPage() {
               { label: "Failed",            value: failed,    color: C.red  },
               { label: "Open chats (24h)",  value: openChats, color: C.gold },
             ].map(s => (
-              <Card key={s.label}>
-                <div style={{ color: C.mid, fontSize: 10, textTransform: "uppercase",
-                  letterSpacing: "0.1em", marginBottom: 6 }}>{s.label}</div>
-                <div style={{ color: s.color, fontSize: 26, fontWeight: 900 }}>{s.value}</div>
+              // Figure in ink, colour only on the edge — as on the dashboard.
+              <Card key={s.label} style={{ position: "relative", overflow: "hidden", padding: "14px 16px 12px" }}>
+                <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: s.color }} />
+                <div style={{ color: C.mid, fontSize: 13, fontWeight: 600 }}>{s.label}</div>
+                <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 28, fontWeight: 700,
+                  lineHeight: 1.1, marginTop: 6, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{s.value}</div>
               </Card>
             ))}
           </div>
 
           {/* 24h Window Info */}
           <div style={{ background: C.grn + "11", border: "1px solid " + C.grn + "33",
-            borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.grn, marginBottom: 20 }}>
-            <MessageCircle size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 4 }} /><strong>24-Hour Service Window</strong> — You can only send free-form messages to customers who messaged you first in the last 24 hours.
+            borderRadius: 10, padding: "12px 14px", fontSize: 13, lineHeight: 1.55, color: C.txt, marginBottom: 24 }}>
+            <MessageCircle size={14} color={C.grn} style={{ display: "inline", verticalAlign: "-2px", marginRight: 6 }} /><strong>The 24-hour window</strong> — you can only send free-form messages to customers who messaged you first in the last 24 hours.
             Outside this window, only pre-approved utility templates can be sent.
           </div>
 
@@ -610,7 +622,7 @@ export default function WhatsAppPage() {
           <SectionTitle icon={<ClipboardList size={14} />}>Ready-made messages</SectionTitle>
           {templates.length === 0 && (
             <Card style={{ marginBottom: 24 }}>
-              <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+              <div style={{ color: C.mid, fontSize: 14, textAlign: "center", padding: "20px 16px", lineHeight: 1.6 }}>
                 No ready-made messages yet. WhatsApp has to approve each one before it can
                 be sent — they appear here once it has. Contact support if you need one added.
               </div>
@@ -618,9 +630,9 @@ export default function WhatsAppPage() {
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12, marginBottom: 24 }}>
             {templates.map(t => (
-              <Card key={t.id}>
+              <Card key={t.id} style={{ display: "flex", flexDirection: "column" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
-                  <div style={{ color: C.txt, fontSize: 12.5, fontWeight: 700 }}>{templateTitle(t.name)}</div>
+                  <div style={{ color: C.txt, fontSize: 14, fontWeight: 700 }}>{templateTitle(t.name)}</div>
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                     <Pill label={t.category} color={t.category === "utility" ? C.grn : t.category === "marketing" ? C.org : C.gbr} />
                     <Pill label={languageName(t.language)} color={C.cyn} />
@@ -629,19 +641,19 @@ export default function WhatsAppPage() {
                 {/* The message as the customer receives it — the blanks filled
                     in with this shop's name and an example date and time, not
                     "{{1}}". */}
-                <div style={{ color: C.mid, fontSize: 11.5, lineHeight: 1.65, marginBottom: 10,
-                  whiteSpace: "pre-wrap",
+                <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.6, marginBottom: 10,
+                  background: "#F1F4F8", borderRadius: 10, padding: "10px 12px", whiteSpace: "pre-wrap",
                   display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
                   {fillTemplate(t.body_text, t.variables || [], business)}
                 </div>
-                <div style={{ color: C.dim, fontSize: 10, marginBottom: 12 }}>
+                <div style={{ color: C.dim, fontSize: 12, marginBottom: 14, marginTop: "auto" }}>
                   Example — the real name, date and time are filled in when you send it.
                 </div>
                 <button onClick={() => { setModal({ template: t }); setVars({}); }}
-                  style={{ width: "100%", background: C.glow + "22", color: C.gbr,
-                    border: "1px solid " + C.glow + "44", borderRadius: 6, padding: "8px",
-                    fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Send size={12} /> Send this template</span>
+                  style={{ width: "100%", background: C.surf, color: C.txt,
+                    border: "1px solid #D8DFE8", borderRadius: 8, padding: "9px",
+                    fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Send size={14} color={C.grn} /> Send this message</span>
                 </button>
               </Card>
             ))}
@@ -649,13 +661,13 @@ export default function WhatsAppPage() {
 
           {/* Dispatch History */}
           <SectionTitle icon={<ScrollText size={14} />}>Sent messages</SectionTitle>
-          <Card>
+          <Card style={{ padding: 0, overflow: "hidden" }}>
             {dispatchErr ? (
-              <div style={{ color: C.red, fontSize: 13, textAlign: "center", padding: 16 }}>
+              <div style={{ color: C.red, fontSize: 14, textAlign: "center", padding: "28px 16px" }}>
                 Couldn&apos;t load your message history: {dispatchErr}
               </div>
             ) : dispatch.length === 0 ? (
-              <div style={{ color: C.dim, fontSize: 13, textAlign: "center", padding: 16, lineHeight: 1.6 }}>
+              <div style={{ color: C.mid, fontSize: 14, textAlign: "center", padding: "28px 16px", lineHeight: 1.6 }}>
                 Nothing sent yet. Confirmations, reminders and follow-ups Nikki sends — and any
                 template you send from here — will be listed with their delivery status.
               </div>
@@ -663,10 +675,10 @@ export default function WhatsAppPage() {
               <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr>{["Time", "To", "Type", "Message", "Status", ""].map(h => (
-                    <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
-                      textTransform: "uppercase", padding: "8px 10px", textAlign: "left",
-                      borderBottom: "1px solid " + C.bord }}>{h}</th>
+                  <tr style={{ background: "#F8FAFC" }}>{["Time", "To", "Type", "Message", "Status", ""].map(h => (
+                    <th key={h} style={{ color: C.mid, fontSize: 11.5, fontWeight: 600,
+                      padding: "10px 14px", textAlign: "left", whiteSpace: "nowrap",
+                      borderBottom: "1px solid #E4E9F0" }}>{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
@@ -675,33 +687,33 @@ export default function WhatsAppPage() {
                     const tpl = resendTarget(d);
                     const tplName = templateOf(d);
                     return (
-                      <tr key={d.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
-                        onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
+                      <tr key={d.id} style={{ borderBottom: "1px solid #EEF2F6" }}
+                        onMouseEnter={e => (e.currentTarget.style.background = "#F8FAFC")}
                         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                        <td style={{ padding: "10px", color: C.dim, fontSize: 11, whiteSpace: "nowrap" }}>
+                        <td style={{ padding: "11px 14px", color: C.mid, fontSize: 13, whiteSpace: "nowrap" }}>
                           {d.sent_at ? new Date(d.sent_at).toLocaleString("en-IN", {
                             day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
                             timeZone: "Asia/Kolkata" }) : "—"}
                         </td>
-                        <td style={{ padding: "10px", color: C.txt, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                        <td style={{ padding: "11px 14px", color: C.txt, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", fontFamily: "var(--font-mono), monospace" }}>
                           {d.to_number}
                         </td>
-                        <td style={{ padding: "10px", color: C.mid, fontSize: 11, whiteSpace: "nowrap" }}>
+                        <td style={{ padding: "11px 14px", color: C.mid, fontSize: 13, whiteSpace: "nowrap" }}>
                           {typeLabel(d.message_type)}
                         </td>
-                        <td style={{ padding: "10px", color: C.mid, fontSize: 11, maxWidth: 320,
+                        <td style={{ padding: "11px 14px", color: C.txt, fontSize: 13, maxWidth: 340,
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                           title={tplName ? templateTitle(tplName) : (d.message_body || "")}>
                           {tplName ? templateTitle(tplName) : (d.message_body || "—")}
                         </td>
-                        <td style={{ padding: "10px" }}>
+                        <td style={{ padding: "11px 14px" }}>
                           <Pill label={st.label} color={st.color} />
                         </td>
-                        <td style={{ padding: "10px", textAlign: "right" }}>
+                        <td style={{ padding: "11px 14px", textAlign: "right" }}>
                           {tpl && (
                             <button onClick={() => { setToNumber(d.to_number); setVars({}); setModal({ template: tpl }); }}
-                              style={{ background: "none", color: C.gbr, border: "1px solid " + C.bord,
-                                borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                              style={{ background: C.surf, color: C.txt, border: "1px solid #D8DFE8",
+                                borderRadius: 7, padding: "4px 10px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                               Resend
                             </button>
                           )}

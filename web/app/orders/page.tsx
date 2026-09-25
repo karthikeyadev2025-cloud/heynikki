@@ -215,22 +215,37 @@ export default function OrdersPage() {
   const ordersToday = orders.filter(o => isToday(o.created_at)).length;
 
   const chipStyle = (on: boolean): React.CSSProperties => ({
-    background: on ? C.glow : C.hi,
-    color: on ? "#fff" : C.mid,
-    border: `1px solid ${on ? C.glow : C.bord}`,
-    borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 600,
+    background: on ? C.glow + "14" : C.surf,
+    color: on ? C.glow : C.mid,
+    border: `1px solid ${on ? C.glow + "55" : "#E4E9F0"}`,
+    borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 600,
     cursor: "pointer", whiteSpace: "nowrap",
   });
 
   return (
     <Shell title="Orders">
-      <h1 style={{ fontSize: 24, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>Orders</h1>
-      <p style={{ color: C.mid, fontSize: 13.5, marginTop: 0, marginBottom: 16, lineHeight: 1.6 }}>
-        Orders Nikki took on the phone.{" "}
-        <strong style={{ color: C.txt }}>{ordersToday}</strong> today
-        {" · "}<strong style={{ color: C.grn }}>{money(revenueToday)}</strong> today
-        {activeCount > 0 && <>{" · "}<strong style={{ color: C.gold }}>{activeCount} still open</strong></>}
+      <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Orders</h1>
+      <p style={{ color: C.mid, fontSize: 14, margin: "0 0 20px" }}>
+        Orders Nikki took on the phone. Move each one along as you make it.
       </p>
+
+      {/* Figures in ink, colour only on the edge — as on the dashboard. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "Orders today",  value: String(ordersToday),  color: C.glow },
+          { label: "Takings today", value: money(revenueToday),  color: C.grn },
+          { label: "Still open",    value: String(activeCount),  color: activeCount > 0 ? C.gold : C.dim },
+        ].map(k => (
+          <div key={k.label} style={{ position: "relative", overflow: "hidden", background: C.surf,
+            border: "1px solid #E4E9F0", borderRadius: 12, padding: "14px 16px 12px",
+            boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: k.color }} />
+            <div style={{ color: C.mid, fontSize: 13, fontWeight: 600 }}>{k.label}</div>
+            <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 28, fontWeight: 700,
+              lineHeight: 1.1, marginTop: 6, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
 
       <div className="nk-scroll" style={{ display: "flex", gap: 7, marginBottom: 16, paddingBottom: 2 }}>
         {FILTERS.map(f => (
@@ -243,12 +258,12 @@ export default function OrdersPage() {
       {loading ? (
         <div style={{ color: C.mid, padding: 32, textAlign: "center" }}>Loading orders…</div>
       ) : orders.length === 0 ? (
-        <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-          padding: "36px 20px", textAlign: "center" }}>
+        <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+          padding: "40px 20px", textAlign: "center", boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
           <div style={{ marginBottom: 10, display: "flex", justifyContent: "center", color: C.dim }}>
             <ShoppingBag size={28} />
           </div>
-          <h3 style={{ color: C.txt, margin: "0 0 8px", fontSize: 17 }}>No orders yet</h3>
+          <h3 style={{ color: C.txt, margin: "0 0 8px", fontSize: 18, fontWeight: 700, fontFamily: "var(--font-display), sans-serif" }}>No orders yet</h3>
           <p style={{ color: C.mid, fontSize: 13.5, margin: "0 auto", maxWidth: 460, lineHeight: 1.6 }}>
             Nikki can take orders on the phone: she reads out your price list, totals
             the order, repeats it back to the customer and sends a WhatsApp
@@ -260,8 +275,8 @@ export default function OrdersPage() {
           </a>
         </div>
       ) : shown.length === 0 ? (
-        <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-          padding: 32, textAlign: "center", color: C.mid, fontSize: 13.5 }}>
+        <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+          padding: 32, textAlign: "center", color: C.mid, fontSize: 14 }}>
           No {FILTERS.find(f => f.id === filter)?.label.toLowerCase()} orders.
           <button onClick={() => setFilter("all")} style={{
             background: "none", border: "none", color: C.glow, fontSize: 13, cursor: "pointer",
@@ -269,7 +284,7 @@ export default function OrdersPage() {
           }}>Show all orders →</button>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {shown.map(o => {
             const col   = STATUS_COLORS[o.status] || C.mid;
             const items = itemsOf(o);
@@ -278,51 +293,53 @@ export default function OrdersPage() {
             const busy  = busyId === o.id;
             return (
               <div key={o.id} style={{
-                background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-                padding: 14, opacity: DONE.includes(o.status) ? 0.75 : 1,
+                background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+                padding: "16px 18px", boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                opacity: DONE.includes(o.status) ? 0.75 : 1,
               }}>
                 {/* Head: reference, status, when */}
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{
-                    background: C.cyn + "1A", color: C.cyn, border: `1px solid ${C.cyn}55`,
-                    fontSize: 12, fontWeight: 800, padding: "2px 8px", borderRadius: 6,
-                    fontFamily: "monospace", letterSpacing: 0.5,
+                    background: "#F1F4F8", color: C.mid,
+                    fontSize: 12, fontWeight: 600, padding: "3px 8px", borderRadius: 6,
+                    fontFamily: "var(--font-mono), monospace",
                   }}>{o.reference}</span>
                   <span style={{
-                    background: col + "22", color: col, border: `1px solid ${col}44`,
-                    fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
-                    textTransform: "uppercase", letterSpacing: 0.5,
-                  }}>{STATUS_LABELS[o.status] || o.status}</span>
+                    background: col + "14", color: col,
+                    fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                  }}><span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />
+                    {STATUS_LABELS[o.status] || o.status}</span>
                   {o.wa_confirmed && (
                     <span title="Confirmation sent to the customer on WhatsApp" style={{
-                      background: C.grn + "1A", color: C.grn, border: `1px solid ${C.grn}44`,
-                      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                      background: C.grn + "14", color: C.grn,
+                      fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
                       display: "inline-flex", alignItems: "center", gap: 4,
-                    }}><MessageCircle size={10} /> WhatsApp sent</span>
+                    }}><MessageCircle size={12} /> WhatsApp sent</span>
                   )}
-                  <span style={{ color: C.dim, fontSize: 11.5, marginLeft: "auto" }}>
+                  <span style={{ color: C.dim, fontSize: 12.5, marginLeft: "auto" }}>
                     {fmtTime(o.created_at)}
                   </span>
                 </div>
 
                 {/* Customer */}
-                <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                  <span style={{ color: C.txt, fontSize: 15, fontWeight: 700 }}>
+                <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                  <span style={{ color: C.txt, fontSize: 16, fontWeight: 700 }}>
                     {o.customer_name || "Unknown customer"}
                   </span>
                   <a href={`tel:${o.customer_phone}`} style={{
-                    color: C.glow, fontSize: 12.5, fontFamily: "monospace",
+                    color: C.glow, fontSize: 13, fontFamily: "var(--font-mono), monospace", textDecoration: "none",
                     display: "inline-flex", alignItems: "center", gap: 4,
                   }}><Phone size={11} /> {o.customer_phone}</a>
                   {o.call_id && (
-                    <a href={`/calls?call=${o.call_id}`} style={{ color: C.gbr, fontSize: 12 }}>
+                    <a href={`/calls?call=${o.call_id}`} style={{ color: C.glow, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
                       Listen to the call →
                     </a>
                   )}
                 </div>
 
                 {/* Items */}
-                <div style={{ marginTop: 10, background: C.hi, borderRadius: 9, padding: "8px 10px" }}>
+                <div style={{ marginTop: 12, background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 10, padding: "8px 12px" }}>
                   {items.length === 0 ? (
                     <div style={{ color: C.dim, fontSize: 12.5 }}>
                       No items were captured — check the call before you make anything.
@@ -333,17 +350,17 @@ export default function OrdersPage() {
                     return (
                       <div key={i} style={{
                         display: "flex", gap: 8, alignItems: "baseline",
-                        padding: "3px 0", fontSize: 13,
-                        borderTop: i === 0 ? "none" : `1px solid ${C.bord}66`,
+                        padding: "5px 0", fontSize: 14,
+                        borderTop: i === 0 ? "none" : "1px solid #EEF2F6",
                       }}>
-                        <span style={{ color: C.mid, fontWeight: 700, minWidth: 26 }}>{qty}×</span>
+                        <span style={{ color: C.mid, fontWeight: 600, minWidth: 28, fontVariantNumeric: "tabular-nums" }}>{qty}×</span>
                         <span style={{ color: C.txt, flex: 1, minWidth: 0 }}>
                           {it.name || "Item"}
                           {it.notes && (
                             <span style={{ color: C.dim, fontStyle: "italic" }}> — {it.notes}</span>
                           )}
                         </span>
-                        <span style={{ color: unit == null ? C.gold : C.mid, fontSize: 12.5, whiteSpace: "nowrap" }}>
+                        <span style={{ color: unit == null ? C.gold : C.mid, fontSize: 13, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                           {unit == null ? "price not said" : money(unit * qty, o.currency)}
                         </span>
                       </div>
@@ -351,20 +368,21 @@ export default function OrdersPage() {
                   })}
                   <div style={{
                     display: "flex", justifyContent: "space-between", alignItems: "baseline",
-                    marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.bord}`,
+                    marginTop: 4, paddingTop: 8, borderTop: "1px solid #E4E9F0",
                   }}>
-                    <span style={{ color: C.mid, fontSize: 12, fontWeight: 700 }}>
+                    <span style={{ color: C.mid, fontSize: 13, fontWeight: 600 }}>
                       Total{estimated && total != null ? " (about)" : ""}
                     </span>
-                    <span style={{ color: total == null ? C.gold : C.txt, fontSize: 16, fontWeight: 800 }}>
+                    <span style={{ color: total == null ? C.gold : C.txt, fontFamily: "var(--font-display), sans-serif",
+                      fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums" }}>
                       {total == null ? "Not priced" : money(total, o.currency)}
                     </span>
                   </div>
                 </div>
 
                 {/* How and when they want it */}
-                <div style={{ marginTop: 8, display: "flex", gap: 12, flexWrap: "wrap",
-                  fontSize: 12.5, color: C.mid }}>
+                <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap",
+                  fontSize: 13, color: C.mid }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                     <MapPin size={12} />
                     <strong style={{ color: o.fulfilment === "unknown" ? C.gold : C.txt }}>
@@ -378,29 +396,29 @@ export default function OrdersPage() {
                   )}
                 </div>
                 {o.fulfilment === "delivery" && (
-                  <div style={{ marginTop: 4, fontSize: 12.5, color: o.address ? C.txt : C.gold, lineHeight: 1.5 }}>
+                  <div style={{ marginTop: 4, fontSize: 13, color: o.address ? C.txt : C.gold, lineHeight: 1.5 }}>
                     {o.address || "No address on the order — call the customer before you send it out."}
                   </div>
                 )}
                 {o.notes && (
-                  <div style={{ marginTop: 6, fontSize: 12.5, color: C.dim, fontStyle: "italic", lineHeight: 1.5 }}>
+                  <div style={{ marginTop: 6, fontSize: 13, color: C.mid, fontStyle: "italic", lineHeight: 1.5 }}>
                     {o.notes}
                   </div>
                 )}
 
                 {/* The working part: move it along, or drop it */}
                 {!DONE.includes(o.status) && (
-                  <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #EEF2F6", display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {step && (
                       <button disabled={busy} onClick={() => setStatus(o, step.status)} style={{
                         flex: "1 1 150px", background: C.glow, color: "#fff", border: "none",
-                        borderRadius: 8, padding: "10px 16px", fontSize: 13, fontWeight: 700,
+                        borderRadius: 8, padding: "10px 16px", fontSize: 14, fontWeight: 600,
                         cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
                       }}>{step.label}</button>
                     )}
                     <button disabled={busy} onClick={() => setStatus(o, "cancelled")} style={{
-                      background: "transparent", color: C.red, border: `1px solid ${C.red}55`,
-                      borderRadius: 8, padding: "10px 16px", fontSize: 13, fontWeight: 600,
+                      background: C.surf, color: C.red, border: "1px solid #D8DFE8",
+                      borderRadius: 8, padding: "10px 16px", fontSize: 14, fontWeight: 600,
                       cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1,
                     }}>Cancel</button>
                   </div>
@@ -410,8 +428,8 @@ export default function OrdersPage() {
                 {o.status === "cancelled" && (
                   <div style={{ marginTop: 12 }}>
                     <button disabled={busy} onClick={() => setStatus(o, "new")} style={{
-                      background: "transparent", color: C.mid, border: `1px solid ${C.bord}`,
-                      borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 600,
+                      background: C.surf, color: C.txt, border: "1px solid #D8DFE8",
+                      borderRadius: 8, padding: "8px 14px", fontSize: 13.5, fontWeight: 600,
                       cursor: busy ? "wait" : "pointer",
                     }}>Reopen</button>
                   </div>

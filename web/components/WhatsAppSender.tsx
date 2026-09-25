@@ -130,9 +130,9 @@ export default function WhatsAppSender() {
   if (!s) {
     if (!loadErr) return null;
     return (
-      <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-        padding: 18, marginBottom: 26 }}>
-        <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800 }}>Your WhatsApp number</div>
+      <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+        padding: 18, marginBottom: 26, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Your WhatsApp number</div>
         <div style={{ marginTop: 8, color: C.red, fontSize: 12.5, display: "flex", gap: 6, alignItems: "flex-start" }}>
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
           <span>{loadErr}</span>
@@ -149,19 +149,19 @@ export default function WhatsAppSender() {
   const ownOk   = /^[6-9]\d{9}$/.test(ownNum);
   const canAdd  = step === 1 && name.trim().length >= 3 && (!ownMode || ownOk);
   const target  = ownMode ? (s.chosen || ownNum) : s.heynikki_number;
-  const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
-    background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
+  const input = { padding: "9px 12px", borderRadius: 8, fontSize: 14,
+    background: C.surf, color: C.txt, border: "1px solid #D8DFE8" } as const;
   const btn = (on: boolean, color: string = C.grn) => ({
-    padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 800,
+    padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13.5, fontWeight: 600,
     background: on ? color : C.hi, color: on ? "#fff" : C.dim,
     cursor: on ? "pointer" : "default", opacity: busy ? 0.7 : 1 } as const);
 
   return (
-    <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-      padding: 18, marginBottom: 26 }}>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+      padding: 20, marginBottom: 26, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800 }}>Your WhatsApp number</div>
+          <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Your WhatsApp number</div>
           <div style={{ color: C.mid, fontSize: 12.5, marginTop: 3, lineHeight: 1.55 }}>
             Customers are getting messages from{" "}
             <strong style={{ color: live ? C.grn : C.gold }}>{s.sending_as}</strong>
@@ -294,8 +294,9 @@ export default function WhatsAppSender() {
 
 function Tag({ label, color }: { label: string; color: string }) {
   return (
-    <span style={{ background: color + "22", color, border: `1px solid ${color}44`,
-      borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>{label}</span>
+    <span style={{ background: color + "14", color, borderRadius: 999, padding: "3px 9px",
+      fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />{label}</span>
   );
 }
 
@@ -306,12 +307,12 @@ function Step({ n, done, active, icon, title, children }: {
   return (
     <div style={{ display: "flex", gap: 12, opacity: done || active ? 1 : 0.55 }}>
       <div style={{ width: 26, height: 26, borderRadius: 13, flexShrink: 0, display: "flex",
-        alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900,
-        background: color + "22", color, border: `1px solid ${color}55` }}>
+        alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700,
+        background: color + "14", color, border: `1px solid ${color}55` }}>
         {done ? <Check size={14} /> : n}
       </div>
       <div style={{ flex: 1 }}>
-        <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 800, marginBottom: 6,
+        <div style={{ color: C.txt, fontSize: 14, fontWeight: 700, marginBottom: 6,
           display: "flex", alignItems: "center", gap: 7 }}>{icon} {title}</div>
         {children}
       </div>
