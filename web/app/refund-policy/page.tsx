@@ -2,6 +2,16 @@ import LegalLayout from "../../components/LegalLayout";
 
 export const metadata = { title: "Refund Policy — Hey Nikki" };
 
+// The four answers most people come here for, each restated from the
+// numbered clause it points to. If a clause changes, change its card too —
+// this box must never promise more than the policy below it.
+const GLANCE: { fig: string; label: string; href: string }[] = [
+  { fig: "100 min", label: "Free on every new account — nothing charged, so nothing to refund", href: "#free-minutes-for-new-accounts" },
+  { fig: "7 days",  label: "Full refund of your first monthly charge, once per customer", href: "#monthly-subscriptions" },
+  { fig: "14 days", label: "Full refund of an annual plan from the day you buy it", href: "#annual-subscriptions" },
+  { fig: "1 day",   label: "To action a cancellation — you keep service until the cycle ends", href: "#cancellation" },
+];
+
 export default function Refund() {
   return (
     <LegalLayout title="Refund & Cancellation Policy" lastUpdated="29 June 2026">
@@ -9,6 +19,19 @@ export default function Refund() {
         This Refund Policy describes when and how Hey Nikki issues refunds
         for subscription fees and related charges.
       </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+        gap: 12, margin: "24px 0 8px" }}>
+        {GLANCE.map(g => (
+          <a key={g.fig} href={g.href} style={{ display: "block", textDecoration: "none", background: "#fff",
+            border: "1px solid #E4E9F0", borderRadius: 12, padding: "16px 16px 14px",
+            boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+            <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 26, fontWeight: 700,
+              color: "#0F172A", letterSpacing: "-0.02em", lineHeight: 1.1 }}>{g.fig}</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#475569", marginTop: 6 }}>{g.label}</div>
+          </a>
+        ))}
+      </div>
 
       <h2>1. Free minutes for new accounts</h2>
       <p>
@@ -91,11 +114,21 @@ export default function Refund() {
       </p>
 
       <h2>6. How refunds are processed</h2>
-      <ul>
-        <li>Refunds are issued to the original payment method (UPI, card, netbanking) via Razorpay.</li>
-        <li><strong>Timeline:</strong> 5–7 business days for UPI and netbanking; 7–14 business days for credit/debit cards (set by issuing bank).</li>
-        <li>You'll receive a confirmation email when the refund is initiated.</li>
-      </ul>
+      <p>
+        Refunds are issued to the original payment method (UPI, card, netbanking) via
+        Razorpay, and you&apos;ll receive a confirmation email when the refund is initiated.
+      </p>
+      <div style={{ border: "1px solid #E4E9F0", borderRadius: 12, overflow: "hidden", margin: "0 0 16px" }}>
+        {[
+          ["UPI and netbanking", "5–7 business days"],
+          ["Credit and debit cards", "7–14 business days (set by the issuing bank)"],
+        ].map(([how, when], i) => (
+          <div key={how} style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+            padding: "12px 16px", borderTop: i ? "1px solid #EEF2F6" : "none", background: i ? "#fff" : "#F8FAFC" }}>
+            <strong>{how}</strong><span>{when}</span>
+          </div>
+        ))}
+      </div>
 
       <h2>7. Disputes</h2>
       <p>
@@ -107,10 +140,17 @@ export default function Refund() {
       </p>
 
       <h2>8. Contact</h2>
-      <p>
-        <strong>Refunds & billing:</strong> <a href="mailto:billing@heynikki.in">billing@heynikki.in</a><br />
-        <strong>General support:</strong> <a href="mailto:support@heynikki.in">support@heynikki.in</a>
-      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 12 }}>
+        {[
+          ["Refunds & billing", "billing@heynikki.in"],
+          ["General support", "support@heynikki.in"],
+        ].map(([k, v]) => (
+          <div key={v} style={{ background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 12, padding: "14px 16px" }}>
+            <div style={{ fontSize: 13, color: "#64748B", marginBottom: 2 }}>{k}</div>
+            <a href={`mailto:${v}`} style={{ fontWeight: 600 }}>{v}</a>
+          </div>
+        ))}
+      </div>
     </LegalLayout>
   );
 }
