@@ -39,15 +39,27 @@ function sampleUrl(voice: string): string | null {
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <label style={{ color: C.mid, fontSize: 12, fontWeight: 600,
+  return <label style={{ color: C.mid, fontSize: 12.5, fontWeight: 600,
     display: "block", marginBottom: 6 }}>{children}</label>;
 }
 function FieldGroup({ children }: { children: React.ReactNode }) {
   return <div style={{ marginBottom: 16 }}>{children}</div>;
 }
 function Card({ children, style, className }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
-  return <div className={className} style={{ background: C.surf, border: "1px solid " + C.bord,
-    borderRadius: 10, padding: 20, ...style }}>{children}</div>;
+  return <div className={className} style={{ background: C.surf, border: "1px solid #E4E9F0",
+    borderRadius: 12, padding: 22, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style }}>{children}</div>;
+}
+// One heading style for every section, so the page reads as one form.
+function SectionHead({ icon, children, desc, right }: { icon?: React.ReactNode; children: React.ReactNode; desc?: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.txt,
+        fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>
+        {icon && <span style={{ color: C.glow, lineHeight: 0 }}>{icon}</span>}{children}{right}
+      </div>
+      {desc && <div style={{ color: C.mid, fontSize: 13.5, marginTop: 4, lineHeight: 1.55 }}>{desc}</div>}
+    </div>
+  );
 }
 
 // One line of the shop's price list as it is being edited. `price` is a
@@ -322,11 +334,17 @@ export default function SetupPage() {
   };
 
   return (
-    <Shell title="Voice Profile Setup">
+    <Shell title="Setup">
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Setup</h1>
+        <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
+          Your business, how Nikki sounds, and what she may do on a call.
+        </p>
+      </div>
       <form onSubmit={handleSave}>
         {error && (
-          <div style={{ background: C.red + "22", border: "1px solid " + C.red + "44",
-            borderRadius: 8, padding: "10px 14px", color: C.red, fontSize: 13, marginBottom: 16 }}>
+          <div style={{ background: C.red + "0D", border: "1px solid " + C.red + "44", borderLeft: "3px solid " + C.red,
+            borderRadius: 10, padding: "12px 14px", color: C.red, fontSize: 13.5, marginBottom: 16 }}>
             {error}
           </div>
         )}
@@ -366,9 +384,7 @@ export default function SetupPage() {
 
         {/* Voice Profile SKU selector */}
         <Card style={{ marginBottom: 16 }}>
-          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
-            Voice Profile
-          </div>
+          <SectionHead desc="Pick the kind of business you run. Press play to hear each voice.">Voice profile</SectionHead>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {PROFILE_SKUS.map(sku => {
               const isSelected = form.profile_sku === sku.id;
@@ -377,14 +393,15 @@ export default function SetupPage() {
               return (
                 <div key={sku.id} onClick={() => setForm(f => ({ ...f, profile_sku: sku.id }))}
                   style={{
-                    padding: 14, borderRadius: 8, cursor: "pointer", position: "relative",
-                    background: isSelected ? C.glow + "22" : C.hi,
-                    border: "1px solid " + (isSelected ? C.glow : C.bord),
+                    padding: 16, borderRadius: 10, cursor: "pointer", position: "relative",
+                    background: isSelected ? C.glow + "0D" : C.surf,
+                    border: "1px solid " + (isSelected ? C.glow : "#E4E9F0"),
+                    boxShadow: isSelected ? "0 0 0 3px " + C.glow + "1F" : "none",
                     transition: "all 0.15s",
                   }}>
-                  <div style={{ marginBottom: 6 }}><sku.icon size={20} /></div>
-                  <div style={{ color: C.txt, fontSize: 12, fontWeight: 700 }}>{sku.name}</div>
-                  <div style={{ color: C.dim, fontSize: 11, marginTop: 3 }}>{sku.desc}</div>
+                  <div style={{ marginBottom: 8, color: isSelected ? C.glow : C.mid }}><sku.icon size={20} /></div>
+                  <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700, paddingRight: 34 }}>{sku.name.replace("Nikki Telugu Receptionist — ", "")}</div>
+                  <div style={{ color: C.mid, fontSize: 12.5, marginTop: 3 }}>{sku.desc}</div>
 
                   {/* Voice preview button (stops click from also picking the card) */}
                   <button
@@ -395,7 +412,7 @@ export default function SetupPage() {
                     style={{
                       position: "absolute", top: 10, right: 10,
                       width: 30, height: 30, borderRadius: "50%",
-                      background: isPlaying ? C.glow : C.bord,
+                      background: isPlaying ? C.glow : "#F1F4F8",
                       color: isPlaying ? "#fff" : C.txt,
                       border: "none", display: "flex", alignItems: "center",
                       justifyContent: "center", fontSize: 12,
@@ -421,12 +438,10 @@ export default function SetupPage() {
         {/* Business details — the inputs here carry no inline style; .nk-form
             in globals.css gives them the same look as the rest of the page. */}
         <Card className="nk-form" style={{ marginBottom: 16 }}>
-          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
-            Business Details
-          </div>
+          <SectionHead>Business details</SectionHead>
 
           <FieldGroup>
-            <Label>Business Name *</Label>
+            <Label>Business name *</Label>
             <input value={form.business_name} onChange={e => setForm(f => ({ ...f, business_name: e.target.value }))}
               placeholder="Ravi Clinic, Banjara Hills" required />
           </FieldGroup>
@@ -450,26 +465,26 @@ export default function SetupPage() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
             <FieldGroup>
-              <Label>Opening Time</Label>
+              <Label>Opening time</Label>
               <input type="time" value={form.open_time}
                 onChange={e => setForm(f => ({ ...f, open_time: e.target.value }))} />
             </FieldGroup>
             <FieldGroup>
-              <Label>Closing Time</Label>
+              <Label>Closing time</Label>
               <input type="time" value={form.close_time}
                 onChange={e => setForm(f => ({ ...f, close_time: e.target.value }))} />
             </FieldGroup>
           </div>
 
           <FieldGroup>
-            <Label>Open Days</Label>
+            <Label>Open days</Label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {DAYS.map(day => (
                 <button key={day} type="button" onClick={() => toggleDay(day)} style={{
-                  padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700,
-                  border: "1px solid " + (form.open_days.includes(day) ? C.glow : C.bord),
-                  background: form.open_days.includes(day) ? C.glow + "33" : C.hi,
-                  color: form.open_days.includes(day) ? C.gbr : C.mid,
+                  padding: "7px 14px", borderRadius: 999, fontSize: 12.5, fontWeight: 600,
+                  border: "1px solid " + (form.open_days.includes(day) ? C.glow + "55" : "#E4E9F0"),
+                  background: form.open_days.includes(day) ? C.glow + "14" : C.surf,
+                  color: form.open_days.includes(day) ? C.glow : C.mid,
                 }}>{day}</button>
               ))}
             </div>
@@ -483,7 +498,7 @@ export default function SetupPage() {
           </FieldGroup>
 
           <FieldGroup>
-            <Label>Appointment Types (comma-separated)</Label>
+            <Label>Appointment types (comma-separated)</Label>
             <input value={form.appointment_types}
               onChange={e => setForm(f => ({ ...f, appointment_types: e.target.value }))}
               placeholder="New Patient, Follow-up, Emergency" />
@@ -496,14 +511,9 @@ export default function SetupPage() {
             rather than burying in advanced settings. Wrong verb endings are
             noticed by a local caller within one sentence. */}
         <Card style={{ marginBottom: 20 }}>
-          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
-            Telugu Region
-          </div>
-          <div style={{ color: C.mid, fontSize: 12, marginBottom: 14, lineHeight: 1.5 }}>
-            Telugu isn&apos;t the same everywhere. Pick the region your callers are from
+          <SectionHead desc={<>Telugu isn&apos;t the same everywhere. Pick the region your callers are from
             and Nikki will use the right words and verb endings — a Warangal caller
-            and a Guntur caller expect different Telugu.
-          </div>
+            and a Guntur caller expect different Telugu.</>}>Telugu region</SectionHead>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
             {[
               { id: "neutral",     t: "Standard",    d: "Understood everywhere" },
@@ -514,8 +524,9 @@ export default function SetupPage() {
               <button key={r.id} type="button"
                 onClick={() => setForm(f => ({ ...f, dialect_region: r.id }))}
                 style={{
-                  background: form.dialect_region === r.id ? C.glow + "22" : C.hi,
-                  border: `1px solid ${form.dialect_region === r.id ? C.glow : C.bord}`,
+                  background: form.dialect_region === r.id ? C.glow + "0D" : C.surf,
+                  border: `1px solid ${form.dialect_region === r.id ? C.glow : "#E4E9F0"}`,
+                  boxShadow: form.dialect_region === r.id ? "0 0 0 3px " + C.glow + "1F" : "none",
                   borderRadius: 10, padding: "12px 14px", cursor: "pointer",
                   textAlign: "left", fontFamily: "inherit",
                 }}>
@@ -523,7 +534,7 @@ export default function SetupPage() {
                   color: form.dialect_region === r.id ? C.glow : C.txt,
                   fontSize: 14, fontWeight: 700,
                 }}>{r.t}</div>
-                <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>{r.d}</div>
+                <div style={{ color: C.mid, fontSize: 12.5, marginTop: 2 }}>{r.d}</div>
               </button>
             ))}
           </div>
@@ -534,14 +545,9 @@ export default function SetupPage() {
             Lead Ad, or Google Form posts to this URL and Nikki can WhatsApp
             an instant ack and/or call them back within ~30 seconds. */}
         <Card className="nk-form" style={{ marginBottom: 20 }}>
-          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
-            Instant Lead Capture
-          </div>
-          <div style={{ color: C.mid, fontSize: 12, marginBottom: 14, lineHeight: 1.5 }}>
-            Connect your website form, Facebook Lead Ads, or Google Form to this
+          <SectionHead desc="Connect your website form, Facebook Lead Ads, or Google Form to this
             link. The moment someone submits it, they become a lead — and Nikki
-            can follow up automatically.
-          </div>
+            can follow up automatically.">Instant lead capture</SectionHead>
 
           {profile?.capture_token && (
             <div style={{ marginBottom: 16 }}>
@@ -549,17 +555,17 @@ export default function SetupPage() {
               <div style={{ display: "flex", gap: 8 }}>
                 <input readOnly
                   value={`${API_URL}/webhooks/lead-capture/${profile.capture_token}`}
-                  style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
+                  style={{ flex: 1, fontFamily: "var(--font-mono), monospace", fontSize: 12.5 }}
                   onClick={e => (e.target as HTMLInputElement).select()} />
                 <button type="button" onClick={() => {
                   navigator.clipboard.writeText(
                     `${API_URL}/webhooks/lead-capture/${profile.capture_token}`);
                 }} style={{
-                  background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 8,
-                  padding: "0 16px", color: C.txt, cursor: "pointer", fontSize: 13,
+                  background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8,
+                  padding: "0 16px", color: C.txt, cursor: "pointer", fontSize: 13.5, fontWeight: 600,
                 }}>Copy</button>
               </div>
-              <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
+              <div style={{ color: C.dim, fontSize: 12, marginTop: 6, lineHeight: 1.55 }}>
                 POST <code>name</code>/<code>full_name</code>, <code>phone</code>/<code>phone_number</code>,
                 and optionally <code>message</code>. Works with a plain HTML form, Zapier,
                 Make, or any tool that can send a webhook.
@@ -575,7 +581,7 @@ export default function SetupPage() {
                 <div style={{ color: C.txt, fontSize: 14, fontWeight: 600 }}>
                   Send an instant WhatsApp reply
                 </div>
-                <div style={{ color: C.dim, fontSize: 11 }}>
+                <div style={{ color: C.mid, fontSize: 12.5 }}>
                   &ldquo;We got your enquiry, we&apos;ll call you shortly&rdquo; — sent the moment they submit.
                 </div>
               </div>
@@ -590,7 +596,7 @@ export default function SetupPage() {
                 <div style={{ color: C.txt, fontSize: 14, fontWeight: 600 }}>
                   Call new leads automatically
                 </div>
-                <div style={{ color: C.dim, fontSize: 11 }}>
+                <div style={{ color: C.mid, fontSize: 12.5 }}>
                   Nikki calls back within ~30 seconds of a form submission.
                 </div>
               </div>
@@ -599,15 +605,15 @@ export default function SetupPage() {
 
           {form.auto_call_new_leads && (
             <div style={{
-              background: C.gold + "0D", border: `1px solid ${C.gold}33`,
+              background: C.gold + "0A", border: `1px solid ${C.gold}44`, borderLeft: `3px solid ${C.gold}`,
               borderRadius: 10, padding: 14, marginTop: 4,
             }}>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
                 <input type="checkbox" checked={form.skip_dnd_for_instant_leads}
                   onChange={e => setForm(f => ({ ...f, skip_dnd_for_instant_leads: e.target.checked }))}
                   style={{ marginTop: 3 }} />
-                <div style={{ fontSize: 12, color: C.mid, lineHeight: 1.6 }}>
-                  <strong style={{ color: C.gold }}>Treat form submissions as consented.</strong>{" "}
+                <div style={{ fontSize: 13, color: C.mid, lineHeight: 1.6 }}>
+                  <strong style={{ color: C.txt }}>Treat form submissions as consented.</strong>{" "}
                   Someone who fills out your own enquiry form is commonly understood
                   to have consented to that follow-up call — different from cold-calling
                   a purchased list. We&apos;re not lawyers; if TRAI DND compliance matters
@@ -621,9 +627,7 @@ export default function SetupPage() {
         </Card>
 
         <Card className="nk-form" style={{ marginBottom: 20 }}>
-          <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800, marginBottom: 14 }}>
-            Phone &amp; WhatsApp
-          </div>
+          <SectionHead>Phone &amp; WhatsApp</SectionHead>
 
           {/* This field used to be labelled "Your Business Phone Number" and
               wrote voice_profiles.did_number — the column meaning "the
@@ -633,27 +637,27 @@ export default function SetupPage() {
               their membership row, and the assigned number is shown
               read-only beside it. */}
           <FieldGroup>
-            <Label>Your Mobile Number</Label>
+            <Label>Your mobile number</Label>
             <div style={{ display: "flex", gap: 8 }}>
               <input value={ownerPhone}
                 onChange={e => setOwnerPhone(e.target.value)}
                 placeholder="98765 43210" style={{ flex: 1 }} />
               <button type="button" onClick={saveOwnerPhone}
-                style={{ padding: "0 16px", borderRadius: 8, border: `1px solid ${C.bord}`,
-                  background: "transparent", color: C.txt, fontWeight: 700, cursor: "pointer" }}>
+                style={{ padding: "0 16px", borderRadius: 8, border: "1px solid #D8DFE8",
+                  background: C.surf, color: C.txt, fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
                 Save
               </button>
             </div>
-            <div style={{ color: phoneMsg === "Saved." ? C.grn : C.dim, fontSize: 11, marginTop: 4 }}>
+            <div style={{ color: phoneMsg === "Saved." ? C.grn : C.dim, fontSize: 12, marginTop: 5 }}>
               {phoneMsg || "Where we send your setup updates, and the number your test call rings."}
             </div>
           </FieldGroup>
 
           <FieldGroup>
-            <Label>Your HeyNikki Number</Label>
+            <Label>Your HeyNikki number</Label>
             <input value={form.did_number || ""} readOnly disabled
               placeholder="Assigned after KYC approval" />
-            <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 5 }}>
               We assign this once your KYC is approved — you'll get a WhatsApp the moment it's live.
             </div>
           </FieldGroup>
@@ -663,7 +667,7 @@ export default function SetupPage() {
             <input value={form.whatsapp_number}
               onChange={e => setForm(f => ({ ...f, whatsapp_number: e.target.value }))}
               placeholder="+91 98765 43210" />
-            <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>Where we send your nightly business summary. This is NOT the number your customers see — that's set on the Verification page once your KYC is approved.</div>
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 5, lineHeight: 1.5 }}>Where we send your nightly business summary. This is NOT the number your customers see — that's set on the Verification page once your KYC is approved.</div>
           </FieldGroup>
         </Card>
 
@@ -674,14 +678,9 @@ export default function SetupPage() {
             discuss price — which sounds like a form, not a receptionist —
             or improvises a discount nobody authorised. */}
         <div>
-          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3 }}>
-            Bargaining
-          </div>
-          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
-            Callers haggle. Tell Nikki exactly what she may agree to, and she will
+          <SectionHead desc="Callers haggle. Tell Nikki exactly what she may agree to, and she will
             never go past it — or leave this off and she will politely say the owner
-            decides pricing.
-          </div>
+            decides pricing.">Bargaining</SectionHead>
 
           <label style={{ display: "flex", gap: 8, alignItems: "center",
             fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
@@ -697,7 +696,7 @@ export default function SetupPage() {
                 <input value={neg.floor_note}
                   onChange={e => setNeg((n: any) => ({ ...n, floor_note: e.target.value }))}
                   placeholder="e.g. ₹3,500 for a root canal — never less" />
-                <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                <div style={{ color: C.dim, fontSize: 12, marginTop: 5 }}>
                   In your own words. She never says this number aloud and never goes under it.
                 </div>
               </div>
@@ -712,7 +711,7 @@ export default function SetupPage() {
                 <input value={neg.offers}
                   onChange={e => setNeg((n: any) => ({ ...n, offers: e.target.value }))}
                   placeholder="free first consultation, home delivery, 3-month EMI" />
-                <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+                <div style={{ color: C.dim, fontSize: 12, marginTop: 5 }}>
                   Comma separated. Most bargaining settles on one of these rather than money.
                 </div>
               </div>
@@ -733,15 +732,9 @@ export default function SetupPage() {
             it. Kept next to Bargaining because both are about money: what
             things cost, and how far she may bend on it. */}
         <Card className="nk-form" style={{ marginBottom: 20 }}>
-          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3,
-            display: "flex", alignItems: "center", gap: 8 }}>
-            <ShoppingBag size={15} /> Orders
-          </div>
-          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
-            Nikki takes orders on the phone — she reads the price list below, totals
+          <SectionHead icon={<ShoppingBag size={16} />} desc={<>Nikki takes orders on the phone — she reads the price list below, totals
             the order, reads it back and sends a WhatsApp confirmation. Everything she
-            takes shows up on your <a href="/orders" style={{ color: C.glow }}>Orders</a> page.
-          </div>
+            takes shows up on your <a href="/orders" style={{ color: C.glow, fontWeight: 600 }}>Orders</a> page.</>}>Orders</SectionHead>
 
           <label style={{ display: "flex", gap: 8, alignItems: "center",
             fontSize: 13.5, color: C.txt, cursor: "pointer" }}>
@@ -753,14 +746,14 @@ export default function SetupPage() {
           {form.order_taking && (
             <div style={{ marginTop: 14 }}>
               <Label>Your price list</Label>
-              <div style={{ color: C.dim, fontSize: 11, marginBottom: 10, lineHeight: 1.5 }}>
+              <div style={{ color: C.dim, fontSize: 12, marginBottom: 10, lineHeight: 1.55 }}>
                 Leave a price blank if it changes daily — Nikki will take the order and
                 say you will confirm the price. Untick <em>Available</em> for something
                 you are out of and she will say &ldquo;not today&rdquo; instead of never having heard of it.
               </div>
 
               {cat.length === 0 && (
-                <div style={{ color: C.dim, fontSize: 12, marginBottom: 10 }}>
+                <div style={{ color: C.mid, fontSize: 13, marginBottom: 10 }}>
                   Nothing on the list yet — add your first item below.
                 </div>
               )}
@@ -769,7 +762,7 @@ export default function SetupPage() {
                 {cat.map((row, i) => (
                   <div key={i} style={{
                     display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
-                    background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 9, padding: 8,
+                    background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 10, padding: 8,
                   }}>
                     <input value={row.name} placeholder="Chicken Biryani"
                       onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
@@ -781,15 +774,15 @@ export default function SetupPage() {
                       onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, unit: e.target.value } : r))}
                       style={{ flex: "1 1 80px", minWidth: 0 }} />
                     <label style={{ display: "flex", alignItems: "center", gap: 6,
-                      fontSize: 12, color: C.mid, cursor: "pointer", whiteSpace: "nowrap" }}>
+                      fontSize: 12.5, color: C.mid, cursor: "pointer", whiteSpace: "nowrap" }}>
                       <input type="checkbox" checked={row.available}
                         onChange={e => setCat(cs => cs.map((r, j) => j === i ? { ...r, available: e.target.checked } : r))} />
                       Available
                     </label>
                     <button type="button" aria-label={`Remove ${row.name || "item"}`}
                       onClick={() => setCat(cs => cs.filter((_, j) => j !== i))}
-                      style={{ background: "transparent", border: `1px solid ${C.bord}`,
-                        borderRadius: 7, color: C.red, padding: "6px 8px", display: "flex" }}>
+                      style={{ background: C.surf, border: "1px solid #D8DFE8",
+                        borderRadius: 8, color: C.red, padding: "7px 9px", display: "flex", cursor: "pointer" }}>
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -797,13 +790,13 @@ export default function SetupPage() {
               </div>
 
               <button type="button" onClick={() => setCat(cs => [...cs, { ...BLANK_ROW }])}
-                style={{ marginTop: 10, background: "transparent", color: C.gbr,
-                  border: `1px solid ${C.glow}66`, borderRadius: 8,
-                  padding: "8px 16px", fontSize: 13, fontWeight: 700 }}>
+                style={{ marginTop: 10, background: C.surf, color: C.glow,
+                  border: "1px solid #D8DFE8", borderRadius: 8, cursor: "pointer",
+                  padding: "8px 16px", fontSize: 13.5, fontWeight: 600 }}>
                 + Add item
               </button>
 
-              <div style={{ color: C.dim, fontSize: 11, marginTop: 10 }}>
+              <div style={{ color: C.dim, fontSize: 12, marginTop: 10 }}>
                 Saved with the rest of this page — press <strong>Save &amp; Go Live</strong> below.
               </div>
             </div>
@@ -817,14 +810,11 @@ export default function SetupPage() {
             call is handled, so a business should turn it on knowing that,
             not find it already on. */}
         <Card className="nk-form" style={{ marginBottom: 20 }}>
-          <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 3,
-            display: "flex", alignItems: "center", gap: 8 }}>
-            <Settings size={15} /> How Nikki decides
-            <span style={{ background: C.gbr + "22", color: C.gbr, fontSize: 10,
-              fontWeight: 800, letterSpacing: ".05em", padding: "2px 7px",
-              borderRadius: 5 }}>BETA</span>
-          </div>
-          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 12, lineHeight: 1.55 }}>
+          <SectionHead icon={<Settings size={16} />}
+            right={<span style={{ background: C.glow + "14", color: C.glow, fontFamily: "var(--font-body), sans-serif",
+              fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, letterSpacing: 0 }}>Beta</span>}>
+            How Nikki decides</SectionHead>
+          <div style={{ color: C.mid, fontSize: 13.5, marginTop: -8, marginBottom: 14, lineHeight: 1.55 }}>
             Normally Nikki works from the words a caller uses. Switched to <em>Checks
             before answering</em>, she looks in your diary and your price list during
             the call — so &ldquo;ten o&apos;clock is free&rdquo; is something she checked, not
@@ -840,16 +830,16 @@ export default function SetupPage() {
             ].map(o => (
               <label key={o.v} style={{
                 display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
-                background: form.agent_mode === o.v ? C.hi : "transparent",
-                border: `1px solid ${form.agent_mode === o.v ? C.glow + "66" : C.bord}`,
-                borderRadius: 9, padding: 10,
+                background: form.agent_mode === o.v ? C.glow + "0D" : C.surf,
+                border: `1px solid ${form.agent_mode === o.v ? C.glow : "#E4E9F0"}`,
+                borderRadius: 10, padding: 12,
               }}>
                 <input type="radio" name="agent_mode" checked={form.agent_mode === o.v}
                   onChange={() => setForm(f => ({ ...f, agent_mode: o.v }))}
                   style={{ marginTop: 2 }} />
                 <span>
                   <span style={{ display: "block", color: C.txt, fontSize: 13.5, fontWeight: 700 }}>{o.t}</span>
-                  <span style={{ display: "block", color: C.dim, fontSize: 11.5, marginTop: 2 }}>{o.d}</span>
+                  <span style={{ display: "block", color: C.mid, fontSize: 12.5, marginTop: 2 }}>{o.d}</span>
                 </span>
               </label>
             ))}
@@ -860,10 +850,10 @@ export default function SetupPage() {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button type="submit" disabled={saving} style={{
             flex: "1 1 200px", background: C.glow, color: "#fff", border: "none",
-            borderRadius: 8, padding: "12px 0", fontSize: 14, fontWeight: 700,
-            opacity: saving ? 0.7 : 1,
+            borderRadius: 8, padding: "12px 0", fontSize: 14.5, fontWeight: 600, cursor: "pointer",
+            boxShadow: "0 1px 2px rgba(15,23,42,0.08)", opacity: saving ? 0.7 : 1,
           }}>
-            {saving ? "Saving..." : saved ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={14} /> Saved!</span>) : "Save & Go Live"}
+            {saving ? "Saving…" : saved ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Check size={14} /> Saved</span>) : "Save & Go Live"}
           </button>
 
           {/* Both preconditions, checked here rather than discovered by a
@@ -873,17 +863,17 @@ export default function SetupPage() {
               field that fixes it sat higher up the same page. */}
           <button type="button" onClick={handleTestCall}
             disabled={testCalling || !profile || !ownerPhone.trim()} style={{
-            padding: "12px 20px", background: "transparent", color: C.gbr,
-            border: "1px solid " + C.glow + "66", borderRadius: 8,
-            fontSize: 13, fontWeight: 700,
+            padding: "12px 20px", background: C.surf, color: C.txt,
+            border: "1px solid #D8DFE8", borderRadius: 8, cursor: "pointer",
+            fontSize: 14, fontWeight: 600,
             opacity: (!profile || testCalling || !ownerPhone.trim()) ? 0.5 : 1,
           }}>
-            {testCalling ? "Calling..." : (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Test Call</span>)}
+            {testCalling ? "Calling…" : (<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={14} color={C.glow} /> Test call</span>)}
           </button>
         </div>
 
         {(!profile || !ownerPhone.trim()) && (
-          <div style={{ color: C.dim, fontSize: 11, marginTop: 8, textAlign: "center" }}>
+          <div style={{ color: C.dim, fontSize: 12.5, marginTop: 8, textAlign: "center" }}>
             {!profile
               ? "Save your profile first to enable test calls"
               : "Add your mobile number above — that's the phone we'll ring"}
@@ -971,7 +961,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
   };
 
   const inputStyle: React.CSSProperties = {
-    background: C2.hi, border: "1px solid " + C2.bord,
+    background: C2.surf, border: "1px solid #D8DFE8",
     borderRadius: 7, padding: "8px 12px",
     color: C2.txt, fontSize: 13,
   };
@@ -980,20 +970,20 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
     on: boolean; onChange: (v: boolean) => void; label: string; desc: string;
   }) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-      padding: "14px 0", borderBottom: "1px solid " + C2.bord + "44" }}>
+      padding: "14px 0", borderBottom: "1px solid #EEF2F6" }}>
       <div>
-        <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{label}</div>
-        <div style={{ color: C2.dim, fontSize: 11 }}>{desc}</div>
+        <div style={{ color: C2.txt, fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{label}</div>
+        <div style={{ color: C2.mid, fontSize: 12.5 }}>{desc}</div>
       </div>
       <button type="button" onClick={() => onChange(!on)} style={{
         width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
-        background: on ? C2.grn : C2.bord, position: "relative", flexShrink: 0,
+        background: on ? C2.glow : "#CBD5E1", position: "relative", flexShrink: 0,
         transition: "background 0.2s",
       }}>
         <span style={{
           position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20,
           borderRadius: "50%", background: "#fff",
-          transition: "left 0.2s", boxShadow: "0 1px 4px #0004",
+          transition: "left 0.2s", boxShadow: "0 1px 3px rgba(15,23,42,0.25)",
         }} />
       </button>
     </div>
@@ -1001,23 +991,19 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
 
   return (
     <div style={{ marginTop: 28 }}>
-      <div style={{ color: C2.txt, fontSize: 15, fontWeight: 900, marginBottom: 4 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><PhoneOff size={15} /> Missed Call Guard</span>
-      </div>
-      <div style={{ color: C2.mid, fontSize: 12, marginBottom: 16 }}>
-        When a call is passed to your team, we ring your phones for {guardSeconds} seconds. If nobody
-        picks up in time, the caller hears a short apology and gets a WhatsApp follow-up so you never lose the lead.
-      </div>
+      <SectionHead icon={<PhoneOff size={16} />} desc={<>When a call is passed to your team, we ring your phones for {guardSeconds} seconds. If nobody
+        picks up in time, the caller hears a short apology and gets a WhatsApp follow-up so you never lose the lead.</>}>
+        Missed call guard</SectionHead>
 
       <Card>
         {loading ? (
-          <div style={{ color: C2.dim, textAlign: "center", padding: 20 }}>Loading...</div>
+          <div style={{ color: C2.mid, textAlign: "center", padding: 20 }}>Loading…</div>
         ) : (
           <>
             <Toggle
               on={guardEnabled}
               onChange={setGuardEnabled}
-              label="Enable Missed Call Guard"
+              label="Turn on missed call guard"
               desc="Give up ringing your team after the timeout below and treat the call as missed"
             />
 
@@ -1026,8 +1012,8 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
                 <div style={{ padding: "14px 0", borderBottom: "1px solid " + C2.bord + "44",
                   display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <div style={{ color: C2.txt, fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Ring time</div>
-                    <div style={{ color: C2.dim, fontSize: 11 }}>
+                    <div style={{ color: C2.txt, fontSize: 14, fontWeight: 600, marginBottom: 2 }}>Ring time</div>
+                    <div style={{ color: C2.mid, fontSize: 12.5 }}>
                       How long your phones ring before the call counts as missed ({GUARD_MIN}–{GUARD_MAX}s)
                     </div>
                   </div>
@@ -1047,16 +1033,16 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
                 <Toggle
                   on={waFallback}
                   onChange={setWaFallback}
-                  label="WhatsApp Follow-up"
+                  label="WhatsApp follow-up"
                   desc="Send the approved missed-call template to the caller on WhatsApp automatically"
                 />
               </>
             )}
 
             {/* Info box */}
-            <div style={{ background: C2.glow + "11", border: "1px solid " + C2.glow + "33",
-              borderRadius: 8, padding: "10px 14px", marginTop: 16, fontSize: 12 }}>
-              <div style={{ color: C2.gbr, fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Settings size={13} /> How it works</div>
+            <div style={{ background: "#F8FAFC", border: "1px solid #EEF2F6", borderLeft: "3px solid " + C2.glow,
+              borderRadius: 10, padding: "12px 14px", marginTop: 16, fontSize: 13 }}>
+              <div style={{ color: C2.txt, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Settings size={13} /> How it works</div>
               <div style={{ color: C2.mid, lineHeight: 1.6 }}>
                 Applies whenever a call reaches your team's phones — a line set to ring
                 people first, or a caller who asks Nikki for a person. Everyone with a phone
@@ -1070,13 +1056,13 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
               <button type="button" onClick={save} disabled={saving} style={{
                 background: saving ? C2.bord : C2.glow,
                 color: "#fff", border: "none", borderRadius: 8,
-                padding: "10px 24px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer",
                 opacity: saving ? 0.7 : 1,
               }}>
-                {saving ? "Saving..." : "Save Guard Settings"}
+                {saving ? "Saving…" : "Save guard settings"}
               </button>
-              {saved && <span style={{ color: C2.grn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Saved!</span>}
-              {saveError && <span style={{ color: C2.red, fontSize: 12 }}>{saveError}</span>}
+              {saved && <span style={{ color: C2.grn, fontSize: 13, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={13} /> Saved</span>}
+              {saveError && <span style={{ color: C2.red, fontSize: 13 }}>{saveError}</span>}
             </div>
           </>
         )}

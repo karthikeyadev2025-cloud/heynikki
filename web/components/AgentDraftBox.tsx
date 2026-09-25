@@ -25,7 +25,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 const C = {
   surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
-  grn: NIKKI.emerald, red: NIKKI.red,
+  grn: NIKKI.emerald, red: NIKKI.red, glow: NIKKI.teal,
 };
 
 export type AgentDraft = {
@@ -78,14 +78,14 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
 
   return (
     <div style={{
-      background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 12,
-      padding: 18, marginBottom: 20,
+      background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+      padding: 22, marginBottom: 16, boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <Sparkles size={16} color={C.grn} />
-        <strong style={{ color: C.txt, fontSize: 15 }}>Describe your business</strong>
+        <Sparkles size={16} color={C.glow} />
+        <strong style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Describe your business</strong>
       </div>
-      <div style={{ color: C.mid, fontSize: 13, marginBottom: 12 }}>
+      <div style={{ color: C.mid, fontSize: 13.5, lineHeight: 1.55, marginBottom: 12 }}>
         Say what you do in a sentence or two and the form below fills itself in.
         You can change anything afterwards — nothing is saved until you press Save.
       </div>
@@ -98,7 +98,7 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
         maxLength={2000}
         style={{
           width: "100%", padding: "12px 14px", fontSize: 14, borderRadius: 10,
-          border: `1px solid ${C.bord}`, background: C.surf, color: C.txt,
+          border: "1px solid #D8DFE8", background: C.surf, color: C.txt,
           outline: "none", resize: "vertical", lineHeight: 1.5,
         }}
       />
@@ -108,9 +108,9 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
           onClick={generate}
           disabled={busy || text.trim().length < 10}
           style={{
-            padding: "10px 18px", borderRadius: 10, border: "none", fontSize: 14,
-            fontWeight: 700, color: "#fff",
-            background: (busy || text.trim().length < 10) ? C.dim : C.grn,
+            padding: "10px 18px", borderRadius: 8, border: "none", fontSize: 14,
+            fontWeight: 600, color: "#fff",
+            background: (busy || text.trim().length < 10) ? "#CBD5E1" : C.glow,
             cursor: (busy || text.trim().length < 10) ? "not-allowed" : "pointer",
             display: "flex", alignItems: "center", gap: 8,
           }}>
@@ -123,8 +123,8 @@ export default function AgentDraftBox({ onDraft }: { onDraft: (d: AgentDraft) =>
         <button type="button"
           onClick={() => { setText(""); setError(""); setDone(false); }}
           style={{
-            padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,
-            background: C.surf, color: C.mid, border: `1px solid ${C.bord}`, cursor: "pointer",
+            padding: "10px 16px", borderRadius: 8, fontSize: 14, fontWeight: 600,
+            background: C.surf, color: C.txt, border: "1px solid #D8DFE8", cursor: "pointer",
           }}>
           Start from scratch
         </button>

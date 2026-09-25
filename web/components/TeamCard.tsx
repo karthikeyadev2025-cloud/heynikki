@@ -7,7 +7,7 @@ import { NIKKI } from "../lib/brand";
 const API = process.env.NEXT_PUBLIC_API_URL;
 const C = {
   surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
-  grn: NIKKI.emerald, gold: NIKKI.gold, red: NIKKI.red,
+  grn: NIKKI.emerald, gold: NIKKI.gold, red: NIKKI.red, glow: NIKKI.teal,
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
@@ -86,13 +86,13 @@ export default function TeamCard() {
 
   const label = { fontSize: 11.5, color: C.dim, marginBottom: 4 } as const;
   const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
-    background: C.hi, color: C.txt, border: `1px solid ${C.bord}` } as const;
+    background: C.surf, color: C.txt, border: "1px solid #D8DFE8" } as const;
 
   return (
-    <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-      padding: 18, marginTop: 18 }}>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", boxShadow: "0 1px 2px rgba(15,23,42,0.04)", borderRadius: 12,
+      padding: 22, marginTop: 20 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800 }}>Your team</div>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Your team</div>
         <div style={{ color: full ? C.gold : C.dim, fontSize: 12.5 }}>
           {d.seats_used} of {d.seats_total} {d.seats_total === 1 ? "seat" : "seats"} used · {d.plan}
         </div>
@@ -172,7 +172,7 @@ export default function TeamCard() {
             </select>
             <button type="button" onClick={invite} disabled={busy || !email.trim() || full}
               style={{ padding: "8px 16px", borderRadius: 8, border: "none", fontSize: 13.5,
-                fontWeight: 800, background: C.grn, color: "#04120a",
+                fontWeight: 600, background: C.glow, color: "#fff",
                 cursor: busy || full ? "default" : "pointer", opacity: full ? .5 : 1 }}>
               {busy ? "…" : "Invite"}
             </button>

@@ -144,13 +144,13 @@ export default function BrochureUpload({ onApplied }: { onApplied?: () => void }
 
   return (
     <div style={{
-      background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 14,
-      padding: 18, marginBottom: 20,
+      background: C.surf, border: "1px solid #E4E9F0", boxShadow: "0 1px 2px rgba(15,23,42,0.04)", borderRadius: 12,
+      padding: 22, marginBottom: 16,
     }}>
-      <div style={{ color: C.txt, fontSize: 15, fontWeight: 800, marginBottom: 4 }}>
+      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 4 }}>
         Already have a brochure?
       </div>
-      <div style={{ color: C.mid, fontSize: 13, lineHeight: 1.55, marginBottom: 14 }}>
+      <div style={{ color: C.mid, fontSize: 13.5, lineHeight: 1.55, marginBottom: 14 }}>
         Upload your brochure, menu, price list or a photo of your board.
         Nikki reads it and fills the form below — you check it before anything changes.
       </div>
@@ -197,7 +197,7 @@ export default function BrochureUpload({ onApplied }: { onApplied?: () => void }
             marginTop: 14, border: `1px solid ${C.grn}55`, borderRadius: 12,
             background: C.grn + "0D", padding: 14,
           }}>
-            <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 800, marginBottom: 2 }}>
+            <div style={{ color: C.txt, fontSize: 14, fontWeight: 700, marginBottom: 2 }}>
               Nikki read this from your file
             </div>
             <div style={{ color: C.mid, fontSize: 12, marginBottom: 10 }}>
@@ -217,7 +217,7 @@ export default function BrochureUpload({ onApplied }: { onApplied?: () => void }
               <button type="button" onClick={() => decide(d.id, "apply")} disabled={busy}
                 style={{
                   padding: "8px 16px", borderRadius: 8, border: "none",
-                  background: C.grn, color: "#04120a", fontSize: 13, fontWeight: 800,
+                  background: C.glow, color: "#fff", fontSize: 13.5, fontWeight: 600,
                   cursor: busy ? "not-allowed" : "pointer",
                 }}>Apply to my setup</button>
               <button type="button" onClick={() => decide(d.id, "dismiss")} disabled={busy}

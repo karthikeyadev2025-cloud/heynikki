@@ -102,13 +102,13 @@ export default function ScriptAndMenu({ tenantId, profileId }:
   };
 
   const Card = ({ children }: { children: React.ReactNode }) => (
-    <div style={{ background: C.surf, border: `1px solid ${C.bord}`,
-                  borderRadius: 14, padding: 18, marginBottom: 16 }}>{children}</div>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                  borderRadius: 12, padding: 22, marginBottom: 16 }}>{children}</div>
   );
   const Title = ({ t, s }: { t: string; s: string }) => (
     <>
-      <div style={{ color: C.txt, fontSize: 15, fontWeight: 800 }}>{t}</div>
-      <div style={{ color: C.mid, fontSize: 12.5, lineHeight: 1.55, margin: "4px 0 14px" }}>{s}</div>
+      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>{t}</div>
+      <div style={{ color: C.mid, fontSize: 13.5, lineHeight: 1.55, margin: "4px 0 16px" }}>{s}</div>
     </>
   );
 
@@ -233,9 +233,9 @@ export default function ScriptAndMenu({ tenantId, profileId }:
 
       {err && <div style={{ color: C.red, fontSize: 13, marginBottom: 10 }}>{err}</div>}
       <button onClick={save} disabled={saving || !profileId}
-        style={{ padding: "11px 22px", borderRadius: 10, border: "none",
+        style={{ padding: "11px 22px", borderRadius: 8, border: "none",
                  background: saved ? C.grn : C.glow, color: "#fff",
-                 fontSize: 14.5, fontWeight: 750,
+                 fontSize: 14.5, fontWeight: 600,
                  cursor: saving || !profileId ? "not-allowed" : "pointer" }}>
         {saving ? "Saving…" : saved ? "Saved" : "Save script and menu"}
       </button>

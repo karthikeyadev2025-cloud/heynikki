@@ -97,8 +97,8 @@ type Stats = {
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <div style={{
-    background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-    padding: 20, ...style,
+    background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+    padding: 20, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style,
   }}>{children}</div>;
 }
 
@@ -109,10 +109,10 @@ function StatusPill({ status }: { status: string }) {
   };
   const col = map[status] || C.mid;
   return <span style={{
-    background: col + "22", color: col, border: `1px solid ${col}44`,
-    fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
-    textTransform: "uppercase", letterSpacing: 0.5,
-  }}>{status}</span>;
+    background: col + "14", color: col, fontSize: 11.5, fontWeight: 600, padding: "3px 9px",
+    borderRadius: 999, textTransform: "capitalize", whiteSpace: "nowrap",
+    display: "inline-flex", alignItems: "center", gap: 5,
+  }}><span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />{status}</span>;
 }
 
 
@@ -173,26 +173,26 @@ function RecipientList({ campaignId }: { campaignId: string }) {
     <div style={{ marginTop: 8 }}>
       <button type="button"
         onClick={() => { setOpen(o => !o); if (!rows) load(); }}
-        style={{ background: "none", border: "none", color: C.gbr, fontSize: 12,
-          fontWeight: 700, cursor: "pointer", padding: 0 }}>
-        {open ? "Hide contacts" : "See contacts"}
+        style={{ background: "none", border: "none", color: C.glow, fontSize: 13,
+          fontWeight: 600, cursor: "pointer", padding: 0 }}>
+        {open ? "Hide contacts" : "See contacts →"}
       </button>
       {open && (
-        <div style={{ marginTop: 8, maxHeight: 260, overflowY: "auto",
-          border: `1px solid ${C.bord}`, borderRadius: 8 }}>
+        <div style={{ marginTop: 10, maxHeight: 280, overflowY: "auto",
+          border: "1px solid #E4E9F0", borderRadius: 10 }}>
           {rows === null ? (
-            <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>Loading…</div>
+            <div style={{ padding: 12, color: C.mid, fontSize: 13 }}>Loading…</div>
           ) : err ? (
             <div style={{ padding: 10, color: C.red, fontSize: 12, display: "flex", gap: 10, alignItems: "center" }}>
               <span style={{ flex: 1 }}>Couldn&apos;t load the contacts: {err}</span>
               <button type="button" onClick={load}
-                style={{ background: "none", border: `1px solid ${C.bord}`, color: C.txt,
-                  borderRadius: 6, padding: "3px 9px", fontSize: 11.5, cursor: "pointer" }}>
+                style={{ background: C.surf, border: "1px solid #D8DFE8", color: C.txt,
+                  borderRadius: 7, padding: "4px 10px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                 Retry
               </button>
             </div>
           ) : rows.length === 0 ? (
-            <div style={{ padding: 10, color: C.dim, fontSize: 12 }}>
+            <div style={{ padding: 12, color: C.mid, fontSize: 13 }}>
               No contacts on this campaign yet — use Upload numbers to add a list.
             </div>
           ) : rows.map((r, i) => {
@@ -200,12 +200,13 @@ function RecipientList({ campaignId }: { campaignId: string }) {
             const outcome = fmtOutcome(r.outcome);
             return (
               <div key={i} style={{ display: "flex", gap: 10, alignItems: "center",
-                padding: "7px 10px", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
-                <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
+                padding: "9px 12px", borderBottom: "1px solid #EEF2F6", fontSize: 13 }}>
+                <span style={{ color: C.txt, fontWeight: 600, minWidth: 104, fontFamily: "var(--font-mono), monospace" }}>{r.phone}</span>
                 <span style={{ color: C.mid, flex: 1 }}>{r.first_name || "—"}</span>
-                <span style={{ color: st.color }}>{st.label}</span>
-                {outcome && <span style={{ color: C.dim, fontSize: 11.5 }}>{outcome}</span>}
-                {r.attempts > 1 && <span style={{ color: C.dim, fontSize: 11.5 }}>{r.attempts} tries</span>}
+                <span style={{ background: st.color + "14", color: st.color, borderRadius: 999, padding: "2px 9px",
+                  fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{st.label}</span>
+                {outcome && <span style={{ color: C.mid, fontSize: 12 }}>{outcome}</span>}
+                {r.attempts > 1 && <span style={{ color: C.dim, fontSize: 12 }}>{r.attempts} tries</span>}
               </div>
             );
           })}
@@ -257,38 +258,39 @@ function OptOutList({ tenantId }: { tenantId: string | null }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <button type="button" onClick={() => setOpen(o => !o)}
-        style={{ background: "none", border: `1px solid ${C.bord}`, color: C.txt,
-          borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+        style={{ background: C.surf, border: "1px solid #D8DFE8", color: C.txt,
+          borderRadius: 8, padding: "8px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
         Do-not-call list{rows.length ? ` (${rows.length})` : ""}
       </button>
       {open && (
-        <div style={{ marginTop: 10, border: `1px solid ${C.bord}`, borderRadius: 10, padding: 14 }}>
-          <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 10, lineHeight: 1.55 }}>
+        <div style={{ marginTop: 10, background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 16,
+          boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+          <div style={{ color: C.mid, fontSize: 13.5, marginBottom: 10, lineHeight: 1.55 }}>
             Numbers here are skipped by every campaign. Add anyone who asks not to be
             called — under TRAI that request has to be honoured.
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap" as const, marginBottom: 10 }}>
             <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="98765 43210"
-              style={{ width: 150, padding: "7px 10px", borderRadius: 7, fontSize: 12.5,
-                background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+              style={{ width: 160, padding: "9px 12px", borderRadius: 8, fontSize: 14,
+                background: C.surf, color: C.txt, border: "1px solid #D8DFE8" }} />
             <input value={reason} onChange={e => setReason(e.target.value)} placeholder="reason (optional)"
-              style={{ flex: 1, minWidth: 160, padding: "7px 10px", borderRadius: 7, fontSize: 12.5,
-                background: C.hi, color: C.txt, border: `1px solid ${C.bord}` }} />
+              style={{ flex: 1, minWidth: 160, padding: "9px 12px", borderRadius: 8, fontSize: 14,
+                background: C.surf, color: C.txt, border: "1px solid #D8DFE8" }} />
             <button type="button" onClick={add}
-              style={{ padding: "7px 14px", borderRadius: 7, border: "none", fontSize: 12.5,
-                fontWeight: 800, background: C.grn, color: "#04120a", cursor: "pointer" }}>
+              style={{ padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13.5,
+                fontWeight: 600, background: C.glow, color: "#fff", cursor: "pointer" }}>
               Add
             </button>
           </div>
           {msg && <div style={{ color: C.mid, fontSize: 12, marginBottom: 8 }}>{msg}</div>}
           {rows.length === 0 ? (
-            <div style={{ color: C.dim, fontSize: 12.5 }}>Nobody on the list yet.</div>
+            <div style={{ color: C.mid, fontSize: 13 }}>Nobody on the list yet.</div>
           ) : (
             <div style={{ maxHeight: 220, overflowY: "auto" }}>
               {rows.map(r => (
                 <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center",
-                  padding: "6px 0", borderBottom: `1px solid ${C.bord}44`, fontSize: 12.5 }}>
-                  <span style={{ color: C.txt, fontWeight: 700, minWidth: 96 }}>{r.phone}</span>
+                  padding: "8px 0", borderBottom: "1px solid #EEF2F6", fontSize: 13 }}>
+                  <span style={{ color: C.txt, fontWeight: 600, minWidth: 104, fontFamily: "var(--font-mono), monospace" }}>{r.phone}</span>
                   <span style={{ color: C.mid, flex: 1 }}>{r.reason || "—"}</span>
                   <button type="button"
                     onClick={async () => {
@@ -296,9 +298,9 @@ function OptOutList({ tenantId }: { tenantId: string | null }) {
                       await sb.from("outbound_opt_outs").delete().eq("id", r.id);
                       load();
                     }}
-                    style={{ background: "none", border: "none", color: C.dim, fontSize: 12,
-                      cursor: "pointer" }}>
-                    remove
+                    style={{ background: "none", border: "none", color: C.red, fontSize: 12.5,
+                      fontWeight: 600, cursor: "pointer" }}>
+                    Remove
                   </button>
                 </div>
               ))}
@@ -322,12 +324,12 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
   const [saving, setSaving] = useState(false);
   const field = (label: React.ReactNode, el: React.ReactNode) => (
     <div style={{ flex: "1 1 140px" }}>
-      <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>{label}</label>
+      <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>{label}</label>
       {el}
     </div>
   );
   return (
-    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.bord}` }}>
+    <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #EEF2F6" }}>
       <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
         {field("First calling day",
           <input type="date" style={inputStyle} value={f.start_date}
@@ -358,8 +360,8 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
           });
           setSaving(false);
         }} style={{
-          background: C.grn, color: "#fff", border: "none", borderRadius: 8,
-          padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: saving ? 0.7 : 1,
+          background: C.glow, color: "#fff", border: "none", borderRadius: 8,
+          padding: "9px 18px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", opacity: saving ? 0.7 : 1,
         }}>{saving ? "Saving…" : "Save schedule"}</button>
         <span style={{ fontSize: 12, color: C.dim }}>
           Times are IST. Changes apply from the dispatcher&apos;s next check, within a minute.
@@ -526,27 +528,28 @@ export default function CampaignsPage() {
   }
 
   const inputStyle: React.CSSProperties = {
-    width: "100%", background: C.hi, border: `1px solid ${C.bord}`,
+    width: "100%", background: C.surf, border: "1px solid #D8DFE8",
     borderRadius: 8, padding: "10px 12px", color: C.txt, fontSize: 14,
     fontFamily: "inherit", boxSizing: "border-box",
   };
 
   return (
     <Shell title="Campaigns">
-      <div style={{ padding: 24, maxWidth: 1000 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: 8 }}>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: 0 }}>
-            Outbound Campaigns
+      <div style={{ maxWidth: 1040 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+          <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: 0 }}>
+            Campaigns
           </h1>
           <button onClick={() => setShowNew(v => !v)} disabled={!outboundAllowed} style={{
-            background: outboundAllowed ? C.glow : C.bord, color: "#fff", border: "none", borderRadius: 8,
-            padding: "10px 18px", fontSize: 14, fontWeight: 700,
+            background: showNew ? C.surf : outboundAllowed ? C.glow : C.bord,
+            color: showNew ? C.txt : "#fff", border: showNew ? "1px solid #D8DFE8" : "none", borderRadius: 8,
+            padding: "10px 18px", fontSize: 14, fontWeight: 600,
             cursor: outboundAllowed ? "pointer" : "not-allowed",
           }} title={outboundAllowed ? "" : "Outbound campaigns are on the Growth plan and above"}>
             {showNew ? "Cancel" : "+ New campaign"}</button>
         </div>
         <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20 }}>
-          Upload a list of numbers and Hey Nikki calls them with your script.
+          Upload a list of numbers and Nikki calls them with your script.
           {!outboundAllowed && (
             <> {" "}<strong style={{ color: C.txt }}>
               Outbound campaigns come with the Growth plan and above —{" "}
@@ -558,10 +561,11 @@ export default function CampaignsPage() {
         {/* Dialling now runs on our own trunk. What is left is operational,
             not missing code, so the banner says which switch is off rather
             than repeating the old "three things outstanding" list. */}
-        <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 20 }}>
+        <Card style={{ border: `1px solid ${C.gold}44`, borderLeft: `3px solid ${C.gold}`, background: C.gold + "0A",
+          boxShadow: "none", padding: "14px 16px", marginBottom: 16 }}>
           <div style={{ display:"flex", gap: 10, alignItems:"flex-start" }}>
-            <AlertTriangle size={16} />
-            <div style={{ fontSize: 13, color: C.txt, lineHeight: 1.6 }}>
+            <span style={{ color: C.gold, lineHeight: 0, marginTop: 3 }}><AlertTriangle size={16} /></span>
+            <div style={{ fontSize: 13.5, color: C.txt, lineHeight: 1.6 }}>
               <strong>Only consented lists.</strong> Campaigns dial on your own
               number, and unanswered calls get a WhatsApp follow-up
               automatically. Upload only numbers that gave you permission to
@@ -588,16 +592,16 @@ export default function CampaignsPage() {
 
         {showNew && (
           <Card style={{ marginBottom: 20 }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 16, color: C.txt }}>New campaign</h3>
-            <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+            <h3 style={{ margin: "0 0 16px", fontFamily: "var(--font-display), sans-serif", fontSize: 19, fontWeight: 700, letterSpacing: "-0.01em", color: C.txt }}>New campaign</h3>
+            <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
               Campaign name
             </label>
             <input style={{ ...inputStyle, marginBottom: 14 }} value={form.name}
               placeholder="e.g. Diwali offer — existing customers"
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
 
-            <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
-              What should Hey Nikki say?
+            <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
+              What should Nikki say?
             </label>
             <textarea style={{ ...inputStyle, minHeight: 90, marginBottom: 14, resize: "vertical" }}
               value={form.script}
@@ -606,14 +610,14 @@ export default function CampaignsPage() {
 
             <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
               <div style={{ flex:"1 1 160px" }}>
-                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
                   First calling day
                 </label>
                 <input type="date" style={inputStyle} value={form.start_date} min={istToday()}
                   onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
               </div>
               <div style={{ flex:"1 1 160px" }}>
-                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
                   Last calling day <span style={{ color: C.dim }}>(optional)</span>
                 </label>
                 <input type="date" style={inputStyle} value={form.end_date} min={form.start_date || istToday()}
@@ -622,48 +626,48 @@ export default function CampaignsPage() {
             </div>
             <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 16 }}>
               <div style={{ flex:"1 1 130px" }}>
-                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
                   Call from
                 </label>
                 <input type="time" style={inputStyle} value={form.window_start}
                   onChange={e => setForm(f => ({ ...f, window_start: e.target.value }))} />
               </div>
               <div style={{ flex:"1 1 130px" }}>
-                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
                   Call until
                 </label>
                 <input type="time" style={inputStyle} value={form.window_end}
                   onChange={e => setForm(f => ({ ...f, window_end: e.target.value }))} />
               </div>
               <div style={{ flex:"1 1 130px" }}>
-                <label style={{ display:"block", fontSize:12, color:C.mid, marginBottom:6 }}>
+                <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
                   Simultaneous calls
                 </label>
                 <input type="number" min={1} max={25} style={inputStyle} value={form.max_concurrent}
                   onChange={e => setForm(f => ({ ...f, max_concurrent: parseInt(e.target.value) || 1 }))} />
               </div>
             </div>
-            <p style={{ fontSize: 12, color: windowProblem(form.window_start, form.window_end) ? C.red : C.mid, margin: "0 0 8px" }}>
+            <p style={{ fontSize: 13, color: windowProblem(form.window_start, form.window_end) ? C.red : C.mid, margin: "0 0 8px" }}>
               {windowProblem(form.window_start, form.window_end) || windowNote(form.window_start, form.window_end)}
             </p>
-            <p style={{ fontSize: 12, color: C.dim, marginTop: 0, marginBottom: 16 }}>
+            <p style={{ fontSize: 12.5, color: C.dim, marginTop: 0, marginBottom: 16, lineHeight: 1.55 }}>
               Leave the days blank to dial from the moment you press Start until the
               list is done. Calls go out only inside your window. It can cross midnight
               (22:00–06:00), and the same time for both (00:00–00:00) means all day.
             </p>
             <button onClick={createCampaign} style={{
-              background: C.grn, color: "#fff", border: "none", borderRadius: 8,
-              padding: "10px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer",
+              background: C.glow, color: "#fff", border: "none", borderRadius: 8,
+              padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer",
             }}>Create campaign</button>
           </Card>
         )}
 
         {loading ? (
-          <p style={{ color: C.mid }}>Loading…</p>
+          <p style={{ color: C.mid, textAlign: "center", padding: 32 }}>Loading campaigns…</p>
         ) : campaigns.length === 0 ? (
           <Card style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Megaphone size={28} /></div>
-            <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 17 }}>No campaigns yet</h3>
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "center", color: C.dim }}><Megaphone size={28} /></div>
+            <h3 style={{ color: C.txt, margin: "0 0 6px", fontSize: 18, fontWeight: 700, fontFamily: "var(--font-display), sans-serif" }}>No campaigns yet</h3>
             <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
               Create one to start building your calling list.
             </p>
@@ -675,28 +679,28 @@ export default function CampaignsPage() {
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap: 12, flexWrap:"wrap" }}>
                 <div style={{ flex: "1 1 260px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap: 10, marginBottom: 6 }}>
-                    <h3 style={{ margin: 0, fontSize: 17, color: C.txt }}>{c.name}</h3>
+                    <h3 style={{ margin: 0, fontFamily: "var(--font-display), sans-serif", fontSize: 18, fontWeight: 700, letterSpacing: "-0.01em", color: C.txt }}>{c.name}</h3>
                     <StatusPill status={c.status === "running" && c.start_date && c.start_date > istToday() ? "scheduled" : c.status} />
                   </div>
-                  <p style={{ color: C.mid, fontSize: 13, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  <p style={{ color: C.mid, fontSize: 14, margin: "0 0 10px", lineHeight: 1.55 }}>
                     {c.script.length > 150 ? c.script.slice(0, 150) + "…" : c.script}
                   </p>
-                  <div style={{ fontSize: 12, color: C.dim, fontFamily: "monospace", display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
-                    <span>{fmtDays(c)} · {c.window_start.slice(0,5)}–{c.window_end.slice(0,5)} IST · up to {c.max_concurrent} at once</span>
+                  <div style={{ fontSize: 12.5, color: C.mid, display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
+                    <span style={{ background: "#F1F4F8", borderRadius: 6, padding: "3px 8px", fontVariantNumeric: "tabular-nums" }}>{fmtDays(c)} · {c.window_start.slice(0,5)}–{c.window_end.slice(0,5)} IST · up to {c.max_concurrent} at once</span>
                     {c.status !== "completed" && c.status !== "cancelled" && (
                       <button onClick={() => setEditing(editing === c.id ? null : c.id)} style={{
-                        background: "none", border: "none", color: C.cyn, cursor: "pointer",
-                        fontSize: 12, padding: 0, fontFamily: "inherit", textDecoration: "underline",
-                      }}>{editing === c.id ? "close" : "change"}</button>
+                        background: "none", border: "none", color: C.glow, cursor: "pointer",
+                        fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "inherit",
+                      }}>{editing === c.id ? "Close" : "Change schedule"}</button>
                     )}
                   </div>
                   {c.status === "running" && c.start_date && c.start_date > istToday() && (
-                    <div style={{ fontSize: 12, color: C.gold, marginTop: 6 }}>
+                    <div style={{ fontSize: 13, color: C.gold, marginTop: 8 }}>
                       Scheduled — dialling begins {fmtDay(c.start_date)} at {c.window_start.slice(0,5)} IST.
                     </div>
                   )}
                   {c.status === "paused" && c.end_date && c.end_date < istToday() && (
-                    <div style={{ fontSize: 12, color: C.gold, marginTop: 6 }}>
+                    <div style={{ fontSize: 13, color: C.gold, marginTop: 8 }}>
                       Last calling day has passed — move the end date to continue.
                     </div>
                   )}
@@ -704,20 +708,20 @@ export default function CampaignsPage() {
                 <div style={{ display:"flex", gap: 8, flexWrap:"wrap" }}>
                   <button onClick={() => setUploadFor(uploadFor === c.id ? null : c.id)}
                     style={{
-                      background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
-                      borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      background: C.surf, color: C.txt, border: "1px solid #D8DFE8",
+                      borderRadius: 8, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer",
                     }}>
                     {uploadFor === c.id ? "Close" : "Upload numbers"}
                   </button>
                   {c.status === "running" ? (
                     <button onClick={() => setStatus(c.id, "paused")} style={{
-                      background: C.gold + "22", color: C.gold, border: `1px solid ${C.gold}44`,
-                      borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      background: C.surf, color: C.gold, border: "1px solid #D8DFE8",
+                      borderRadius: 8, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer",
                     }}>Pause</button>
                   ) : (c.status === "draft" || c.status === "paused") ? (
                     <button onClick={() => setStatus(c.id, "running")} style={{
-                      background: C.grn + "22", color: C.grn, border: `1px solid ${C.grn}44`,
-                      borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      background: C.grn, color: "#fff", border: "none",
+                      borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer",
                     }}>{c.start_date && c.start_date > istToday() ? "Schedule" : "Start"}</button>
                   ) : null}
                 </div>
@@ -732,10 +736,10 @@ export default function CampaignsPage() {
                 <>
                   <div style={{
                     display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(88px, 1fr))",
-                    gap: 10, marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}`,
+                    gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #EEF2F6",
                   }}>
                     {[
-                      { l:"Total",       v:s.total,       c:C.txt },
+                      { l:"Total",       v:s.total,       c:C.glow },
                       { l:"Pending",     v:s.pending,     c:C.mid },
                       { l:"Queued",      v:s.queued,      c:C.cyn },
                       { l:"On a call",   v:s.in_progress, c:C.gbr },
@@ -744,9 +748,12 @@ export default function CampaignsPage() {
                       { l:"Blocked",     v:s.blocked_dnd, c:C.gold },
                       { l:"Opted out",   v:s.opted_out,   c:C.red },
                     ].map(x => (
-                      <div key={x.l}>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: x.c }}>{x.v}</div>
-                        <div style={{ fontSize: 11, color: C.dim, textTransform: "uppercase", letterSpacing: 0.4 }}>{x.l}</div>
+                      // Ink figures; the colour sits on the edge only.
+                      <div key={x.l} style={{ background: "#F8FAFC", borderRadius: 8, padding: "8px 10px",
+                        borderLeft: `3px solid ${x.v ? x.c : "#E4E9F0"}` }}>
+                        <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 20, fontWeight: 700,
+                          color: x.v ? C.txt : C.dim, fontVariantNumeric: "tabular-nums", lineHeight: 1.2 }}>{x.v}</div>
+                        <div style={{ fontSize: 12, color: C.mid, fontWeight: 600 }}>{x.l}</div>
                       </div>
                     ))}
                   </div>
@@ -756,7 +763,7 @@ export default function CampaignsPage() {
                       submit its own enquiry, which is the safe reading of TRAI and
                       was never explained on this page. */}
                   {s.blocked_dnd > 0 && (
-                    <div style={{ color: C.dim, fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+                    <div style={{ color: C.mid, fontSize: 12.5, marginTop: 8, lineHeight: 1.55 }}>
                       Blocked numbers did not submit their own enquiry, and DND scrubbing
                       isn&apos;t switched on — so we don&apos;t dial them. Contacts who filled in
                       your form or asked for a callback are dialled normally.
@@ -770,7 +777,7 @@ export default function CampaignsPage() {
               <RecipientList campaignId={c.id} />
 
               {uploadFor === c.id && (
-                <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.bord}` }}>
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #EEF2F6" }}>
                   {/* Replaces a paste-a-list textarea. That box had no way to
                       show which line was wrong, so a 500-number paste with
                       eight bad rows failed as one opaque error. This parses
@@ -778,7 +785,7 @@ export default function CampaignsPage() {
                       Excel row number, and takes the consent declaration the
                       dispatcher requires before it will dial anything. */}
                   <RecipientImport campaignId={c.id} onDone={() => load()} />
-                  <div style={{ fontSize:12, color:C.dim, marginTop: 10 }}>
+                  <div style={{ fontSize:12.5, color:C.dim, marginTop: 10 }}>
                     Indian mobiles only. Opted-out numbers are removed automatically,
                     and re-importing a corrected sheet skips anyone already added.
                   </div>
