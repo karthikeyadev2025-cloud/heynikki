@@ -1075,9 +1075,13 @@ export async function runWhatsAppRegistrations(): Promise<number> {
 
   // Candidates: a registration row that never finished. 'active' is done,
   // and a row Meta rejected outright carries its reason for a human.
+  // 'requested' too: a first attempt refused before any code was asked for
+  // (Meta's #200, the two-number cap) leaves the row there, and the sweep
+  // skipped it — Nikki Technologies sat unretried from 24 Sep. The API's own
+  // ten-minute guard still stops it ringing Meta more than it should.
   const { data: rows, error } = await sb.from("tenant_whatsapp")
     .select("tenant_id, status, updated_at")
-    .in("status", ["awaiting_signup", "pending_verification"])
+    .in("status", ["requested", "awaiting_signup", "pending_verification"])
     .order("updated_at", { ascending: true })
     .limit(WA_SWEEP_MAX);
   if (error) { log("whatsapp sweep: read failed:", error.message); return 0; }
