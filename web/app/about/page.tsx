@@ -13,6 +13,7 @@ export default function Page() {
   return (
     <ContentPage
       h1="About HeyNikki"
+      eyebrow="About"
       lede="HeyNikki is a Telugu-speaking AI receptionist for Indian small businesses, built and operated by Nikki Technologies in Hyderabad, Telangana."
       cta="Try it free — 100 minutes"
     >
@@ -23,21 +24,30 @@ export default function Page() {
         small business&apos;s phone in the Telugu people actually speak, books the
         appointment, and tells the owner what happened.
       </p>
-      <p>
-        Our only official website is <strong>heynikki.in</strong>. Our support address is{" "}
-        <strong>support@heynikki.in</strong> and our number is <strong>086335 02031</strong>,
-        which is answered by Nikki herself — the same product a customer gets.
-      </p>
 
+      {/* This section exists so a person can check they have the real
+          HeyNikki. It said the same three facts in two paragraphs in a row;
+          they are stated once now, where they can be read at a glance. */}
       <h2>Our official presence</h2>
       <p>
-        Everything official comes from one place. Our website is{" "}
-        <strong>heynikki.in</strong>, our support address is{" "}
-        <strong>support@heynikki.in</strong>, and our number is{" "}
-        <strong>086335 02031</strong>. We do not operate under any other domain
-        or company name, and we will never contact you from an address that is
+        Everything official comes from one place. We do not operate under any other
+        domain or company name, and we will never contact you from an address that is
         not @heynikki.in.
       </p>
+      <div style={{ border: "1px solid #E4E9F0", borderRadius: 14, overflow: "hidden", margin: "18px 0 20px",
+        boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+        {[
+          ["Website", <a key="w" href="https://www.heynikki.in">heynikki.in</a>],
+          ["Support", <a key="e" href="mailto:support@heynikki.in">support@heynikki.in</a>],
+          ["Phone", <><a key="p" href="tel:08633502031">086335 02031</a> <span style={{ color: "#64748B" }}>— answered by Nikki herself, the same product a customer gets</span></>],
+        ].map(([k, v], i) => (
+          <div key={String(k)} style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "14px 20px",
+            borderTop: i ? "1px solid #EEF2F6" : "none", fontSize: 16 }}>
+            <span style={{ width: 90, color: "#64748B", fontWeight: 600 }}>{k}</span>
+            <span style={{ flex: 1, minWidth: 200, fontWeight: 600 }}>{v}</span>
+          </div>
+        ))}
+      </div>
       <p>
         If you reached a different site expecting HeyNikki, it was not us. If in
         doubt, call the number above — it is answered by the product itself.
@@ -64,14 +74,15 @@ export default function Page() {
         <a href="/privacy">privacy policy</a>.
       </p>
 
-      <h2>Contact</h2>
-      <p>
-        <strong>Nikki Technologies</strong><br />
+      <h2>Company</h2>
+      <div style={{ background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 14, padding: "18px 20px",
+        fontSize: 16, lineHeight: 1.7, color: "#475569" }}>
+        <strong style={{ color: "#0F172A" }}>Nikki Technologies</strong><br />
         A unit of Adexos Global Technologies<br />
-        Registered office: Bangalore, Karnataka, India · GSTIN 37AVEPV3515A2ZR<br />
-        support@heynikki.in · 086335 02031<br />
-        <a href="/contact">Contact page</a>
-      </p>
+        Registered office: Bangalore, Karnataka, India<br />
+        GSTIN <span style={{ fontFamily: "var(--font-mono), monospace", color: "#0F172A" }}>37AVEPV3515A2ZR</span><br />
+        <a href="/contact">All the ways to reach us →</a>
+      </div>
     </ContentPage>
   );
 }

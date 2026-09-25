@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import NikkiLogo from "./NikkiLogo";
 
@@ -17,6 +18,21 @@ export default function LegalLayout({
   title: string; lastUpdated?: string; children: React.ReactNode;
   eyebrow?: string; lede?: React.ReactNode; updatedLabel?: string; wide?: boolean;
 }) {
+  // "On this page", built from the document's own headings. Privacy and
+  // Terms run to ten and fourteen numbered sections; a reader looking for
+  // cancellation or data retention should not have to scroll for it.
+  const body = useRef<HTMLDivElement>(null);
+  const [toc, setToc] = useState<{ id: string; text: string }[]>([]);
+  useEffect(() => {
+    if (wide || !body.current) return;
+    const hs = Array.from(body.current.querySelectorAll("h2"));
+    hs.forEach((h, i) => {
+      if (!h.id) h.id = (h.textContent || `s${i}`).toLowerCase()
+        .replace(/^\d+\.\s*/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    });
+    setToc(hs.length >= 4 ? hs.map(h => ({ id: h.id, text: h.textContent || "" })) : []);
+  }, [wide]);
+
   return (
     <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra }}>
       <nav style={{
@@ -42,8 +58,9 @@ export default function LegalLayout({
 
       {/* Body text was #D1D5DB — a grey meant for the old dark theme, left
           behind on white, where every paragraph of every policy was faint. */}
+      <div className={toc.length ? "ll-grid" : undefined}>
       <article style={{
-        maxWidth: wide ? 1080 : 760, margin: "0 auto", padding: "56px 24px 80px",
+        maxWidth: wide ? 1080 : 760, margin: "0 auto", padding: "56px 24px 80px", width: "100%",
         fontSize: 15.5, lineHeight: 1.7, color: J.textMid,
       }}>
         <div style={{
@@ -73,8 +90,32 @@ export default function LegalLayout({
           .legal h2 { font-family: var(--font-display), sans-serif; letter-spacing: -0.015em; font-weight: 700; }
           @media (max-width: 560px) { .ll-home { display: none; } }
         `}</style>
-        <div className="legal">{children}</div>
+        <div className="legal" ref={body}>{children}</div>
       </article>
+      {toc.length > 0 && (
+        <aside className="ll-toc" aria-label="On this page">
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: J.chandra, marginBottom: 10 }}>On this page</div>
+          <ol>
+            {toc.map(t => <li key={t.id}><a href={`#${t.id}`}>{t.text.replace(/^\d+\.\s*/, "")}</a></li>)}
+          </ol>
+        </aside>
+      )}
+      </div>
+      <style>{`
+        .ll-toc { display: none; }
+        @media (min-width: 1180px) {
+          .ll-grid { display: grid; grid-template-columns: minmax(0, 760px) 230px; gap: 48px;
+            justify-content: center; max-width: 1100px; margin: 0 auto; }
+          .ll-grid > article { margin: 0 !important; }
+          .ll-toc { display: block; position: sticky; top: 96px; align-self: start; margin-top: 150px;
+            padding-left: 16px; border-left: 1px solid #E2E8F0; }
+          .ll-toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+          .ll-toc li { counter-increment: s; margin: 0 0 8px; font-size: 13.5px; line-height: 1.4; }
+          .ll-toc li a { color: #475569; text-decoration: none; }
+          .ll-toc li a:hover { color: #12457A; }
+        }
+        .legal h2 { scroll-margin-top: 90px; }
+      `}</style>
 
       <footer style={{
         borderTop: `1px solid ${J.border}`,

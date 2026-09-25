@@ -154,7 +154,7 @@ export default function Privacy() {
       <h2>Grievance Officer</h2>
       <p>
         <strong>Karthikeya</strong><br />
-        Hey Nikki<br />
+        Nikki Technologies (a unit of Adexos Global Technologies)<br />
         Hyderabad, Telangana, India<br />
         Email: <a href="mailto:privacy@heynikki.in">privacy@heynikki.in</a>
       </p>
