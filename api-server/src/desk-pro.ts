@@ -234,8 +234,18 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
           '{"summary": "<two short sentences in English: what the customer wants and what was agreed>",\n' +
           ' "disposition": "booked" | "interested" | "callback" | "not_interested" | "no_answer",\n' +
           ' "follow_up_at": "<ISO 8601 with +05:30 if a callback time was agreed, else null>"}\n' +
-          `The time now is ${nowIst} IST. "no_answer" means nobody really spoke. ` +
-          `A customer who asks for details to be sent is "interested". Never invent a callback time.` },
+          `The time now is ${nowIst} IST. Choose the disposition from what the CUSTOMER did, not ` +
+          `from what the telecaller offered:\n` +
+          `- "booked": a specific appointment, meeting or visit was fixed.\n` +
+          `- "interested": the customer asked for details, a price, a demo or the brochure, or agreed ` +
+          `to a next step (details sent to them, a visit, a follow-up call).\n` +
+          `- "callback": the customer asked to be called later, or said they would call back.\n` +
+          `- "not_interested": the customer declined, said they have no need, or only listened and ` +
+          `neither asked for anything nor agreed to anything. Listening politely, "ok" or "hmm" is ` +
+          `NOT interest.\n` +
+          `- "no_answer": nobody really spoke (ringing, voicemail, a network message, silence).\n` +
+          `If you are unsure between "interested" and "not_interested", choose "not_interested". ` +
+          `Never invent a callback time.` },
         { inline_data: { mime_type: "audio/wav", data: audio.toString("base64") } },
       ] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.2 },

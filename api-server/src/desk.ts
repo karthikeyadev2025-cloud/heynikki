@@ -97,7 +97,7 @@ export function mountDeskRoutes(app: Express, d: Deps) {
         .eq("tenant_id", tenantId).order("created_at", { ascending: true }),
       // With the summary and review columns (066) when they exist.
       sb.from("click_to_call_log")
-        .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid, call_id, ai_summary, qa_score, qa_note")
+        .select("id, agent_user_id, lead_id, callee_number, disposition, notes, duration_seconds, created_at, freeswitch_uuid, call_id, ai_summary, ai_disposition, qa_score, qa_note")
         .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(30)
         .then((r: any) => r.error
           ? sb.from("click_to_call_log")
@@ -211,7 +211,8 @@ export function mountDeskRoutes(app: Express, d: Deps) {
           disposition: r.disposition, notes: r.notes,
           duration_seconds: r.duration_seconds || 0, created_at: r.created_at,
           call_id: r.call_id || null, has_recording: !!(r.call_id && recorded.has(r.call_id)),
-          ai_summary: r.ai_summary || null, qa_score: r.qa_score ?? null, qa_note: r.qa_note || null,
+          ai_summary: r.ai_summary || null, ai_disposition: r.ai_disposition || null,
+          qa_score: r.qa_score ?? null, qa_note: r.qa_note || null,
           live: !r.disposition && !r.duration_seconds
                 && Date.now() - new Date(r.created_at).getTime() < 2 * 3600e3,
         };

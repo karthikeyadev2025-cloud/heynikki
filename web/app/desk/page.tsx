@@ -46,6 +46,7 @@ type Recent = {
   lead_stage: string | null; by: string | null; disposition: string | null;
   notes: string | null; duration_seconds: number; created_at: string; live: boolean;
   call_id?: string | null; has_recording?: boolean; ai_summary?: string | null;
+  ai_disposition?: string | null;
   qa_score?: number | null; qa_note?: string | null;
 };
 /** A lead as the queue and the customer card see it. */
@@ -682,8 +683,20 @@ function Dialer({ d, api, onDone, prefill }: {
     }
   }
 
-  async function outcome(key: string) {
+  // A second look before a lead is written off against what the call
+  // summary heard. On 25 Sep two customers who agreed to receive details or
+  // to be called back were saved "Not interested" with that summary on
+  // screen, and dropped out of every queue. The telecaller still decides.
+  const [second, setSecond] = useState("");
+  async function outcome(key: string, confirmed = false) {
     if (st.phase !== "ended") return;
+    const positive = ["booked", "interested", "callback"];
+    if (!confirmed && ai.state === "done" && ai.disposition && positive.includes(ai.disposition)
+        && (key === "not_interested" || key === "no_answer")) {
+      setSecond(key);
+      return;
+    }
+    setSecond("");
     // "Call back" asks when, first.
     if (key === "callback" && !cbOpen) {
       setCbOpen(true);
@@ -696,7 +709,7 @@ function Dialer({ d, api, onDone, prefill }: {
       if (key === "callback" && cbAt) body.follow_up_at = new Date(cbAt).toISOString();
       await api("/api/calls/disposition", body);
       if (key === "callback" && cbAt) toast.ok(`Callback set for ${fmtTime(new Date(cbAt).toISOString())}`);
-      setSt({ phase: "idle" }); setNotes(""); setNum(""); setCbOpen(false); setCbAt(""); setAi({ state: "idle" }); onDone();
+      setSt({ phase: "idle" }); setNotes(""); setNum(""); setCbOpen(false); setCbAt(""); setAi({ state: "idle" }); setSecond(""); onDone();
     } catch (e: any) { toast.err(e.message); }
     setSaving("");
   }
@@ -818,6 +831,25 @@ function Dialer({ d, api, onDone, prefill }: {
               </button>
             ))}
           </div>
+          {second && ai.disposition && (
+            <div role="alert" style={{ background: C.gold + "12", border: `1px solid ${C.gold}66`, borderRadius: 8,
+              padding: "10px 12px", marginBottom: 8, fontSize: 13, color: C.txt, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                The summary says <span style={{ color: OUTCOME_COLOR[ai.disposition] }}>{OUTCOME_LABEL[ai.disposition]}</span>, not {OUTCOME_LABEL[second]}.
+              </div>
+              <div style={{ color: C.mid, marginBottom: 8 }}>&ldquo;{ai.summary}&rdquo;</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button style={btnStyle(OUTCOME_COLOR[ai.disposition] || C.glow)} disabled={!!saving}
+                  onClick={() => { const k = ai.disposition as string; setSecond(""); outcome(k, true); }}>
+                  Save {OUTCOME_LABEL[ai.disposition]}
+                </button>
+                <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}`, color: C.txt }} disabled={!!saving}
+                  onClick={() => outcome(second, true)}>
+                  {saving === second ? "Saving…" : `Yes, ${OUTCOME_LABEL[second]}`}
+                </button>
+              </div>
+            </div>
+          )}
           {cbOpen && (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: C.gold + "12",
               border: `1px solid ${C.gold}55`, borderRadius: 8, padding: "9px 11px", marginBottom: 8 }}>
@@ -1239,8 +1271,17 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
                     <td style={{ padding: "9px 8px", color: C.mid }}>{r.by || "—"}</td>
                     <td style={{ padding: "9px 8px" }}>
                       {r.disposition ? (
+                        <>
                         <span style={{ background: OUTCOME_COLOR[r.disposition] + "22", color: OUTCOME_COLOR[r.disposition] || C.mid,
                           borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>{OUTCOME_LABEL[r.disposition] || r.disposition}</span>
+                        {/* Written off against what the summary heard: worth a look. */}
+                        {(r.disposition === "not_interested" || r.disposition === "no_answer")
+                          && r.ai_disposition && ["booked", "interested", "callback"].includes(r.ai_disposition) && (
+                          <div title={r.ai_summary || ""} style={{ color: C.gold, fontSize: 11.5, fontWeight: 600, marginTop: 3, whiteSpace: "nowrap" }}>
+                            Summary says {OUTCOME_LABEL[r.ai_disposition]}
+                          </div>
+                        )}
+                        </>
                       ) : r.live ? (
                         <span style={{ color: C.grn, fontSize: 11.5, fontWeight: 700 }}>● live</span>
                       ) : (
