@@ -36,21 +36,22 @@ const APPT_STATUS: Record<string, { label: string; color: string }> = {
 };
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return <div style={{ background: C.surf, border: "1px solid " + C.bord,
-    borderRadius: 10, padding: 16, ...style }}>{children}</div>;
+  return <div style={{ background: C.surf, border: "1px solid #E4E9F0",
+    borderRadius: 12, padding: 18, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style }}>{children}</div>;
 }
 
 function StatCard({ icon: Icon, value, label, color }: { icon: React.ComponentType<{ size?: number }>; value: string | number; label: string; color: string }) {
   return (
-    <Card>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
-            letterSpacing: "0.1em", marginBottom: 6 }}>{label}</div>
-          <div style={{ color, fontSize: 26, fontWeight: 900 }}>{value}</div>
-        </div>
-        <Icon size={22} />
+    // Figure in ink, colour only on the edge and the icon: four coloured
+    // numbers side by side read as four alarms.
+    <Card style={{ position: "relative", overflow: "hidden", padding: "16px 18px 14px" }}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: color }} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <span style={{ color: C.mid, fontSize: 13, fontWeight: 600 }}>{label}</span>
+        <span style={{ color, lineHeight: 0 }}><Icon size={17} /></span>
       </div>
+      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 32, fontWeight: 700,
+        lineHeight: 1.1, marginTop: 8, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </Card>
   );
 }

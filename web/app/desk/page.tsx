@@ -126,12 +126,14 @@ function Card({ title, icon, children, style, right }: {
   style?: React.CSSProperties; right?: React.ReactNode;
 }) {
   return (
-    <section style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 18, minWidth: 0, ...style }}>
+    <section style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 18, minWidth: 0,
+      boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style }}>
       {/* flexWrap + minWidth:0 — "Dial a number" beside "rings +91 90000
           00001 first" could not shrink on a phone, and that single row set
           a 436px floor under the whole column. */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-        <div style={{ color: C.txt, fontSize: 14.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 15.5, fontWeight: 700,
+          letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           {icon}{title}
         </div>
         {right}
@@ -504,7 +506,8 @@ function Stats({ d, api, reloadKey }: { d: Desk | null; api: (p: string, b?: any
   const tile = (label: string, value: string, sub?: string) => (
     <div style={{ background: C.hi, borderRadius: 8, padding: "9px 10px" }}>
       <div style={{ fontSize: 11, color: C.dim, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 19, fontWeight: 800, color: C.txt, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 22, fontWeight: 700, color: C.txt,
+        letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: C.dim }}>{sub}</div>}
     </div>
   );

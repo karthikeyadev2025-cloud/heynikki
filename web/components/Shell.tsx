@@ -6,7 +6,7 @@ import { forgetDevice } from "../lib/native";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X, LogOut } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import Toaster from "./Toast";
 import NikkiLogo from "./NikkiLogo";
@@ -19,27 +19,42 @@ const C = {
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
-const NAV_ITEMS = [
-  { href: "/dashboard",   icon: Radio,         label: "Reception"   },
-  { href: "/desk",        icon: Headset,       label: "Human Desk"  },
-  { href: "/calls",       icon: Phone,         label: "All Calls"   },
-  { href: "/leads",       icon: Users,         label: "Leads"       },
-  { href: "/appointments",icon: Calendar,      label: "Appointments"},
-  { href: "/orders",      icon: ShoppingBag,   label: "Orders"      },
-  { href: "/campaigns",   icon: Megaphone,     label: "Campaigns"   },
-  { href: "/analytics",   icon: BarChart3,     label: "Analytics"   },
-  { href: "/quality",     icon: Gauge,         label: "Call Quality"},
-  { href: "/whatsapp",    icon: MessageCircle, label: "WhatsApp"    },  // restored v4.0
-  { href: "/knowledge",   icon: Brain,         label: "Teach Nikki" },
-  { href: "/verification", icon: ShieldCheck,  label: "Verification" },
-  { href: "/setup",       icon: Settings,      label: "Setup"       },
-  { href: "/billing",     icon: CreditCard,    label: "Billing"     },
-  { href: "/api-keys",    icon: KeyRound,      label: "API keys"    },
+// Grouped by what the person came to do, not listed flat. `staff: true` is
+// what a telecaller (member/support) sees: their Desk and the customer
+// records they work from — not billing, keys or the owner's settings, which
+// the API refuses them anyway.
+const NAV_GROUPS: { title: string; items: { href: string; icon: any; label: string; staff?: boolean }[] }[] = [
+  { title: "Front desk", items: [
+    { href: "/dashboard",    icon: Radio,         label: "Reception" },
+    { href: "/desk",         icon: Headset,       label: "Human Desk",   staff: true },
+  ]},
+  { title: "Customers", items: [
+    { href: "/calls",        icon: Phone,         label: "All Calls",    staff: true },
+    { href: "/leads",        icon: Users,         label: "Leads",        staff: true },
+    { href: "/appointments", icon: Calendar,      label: "Appointments", staff: true },
+    { href: "/orders",       icon: ShoppingBag,   label: "Orders",       staff: true },
+    { href: "/whatsapp",     icon: MessageCircle, label: "WhatsApp",     staff: true },
+  ]},
+  { title: "Grow", items: [
+    { href: "/campaigns",    icon: Megaphone,     label: "Campaigns" },
+    { href: "/analytics",    icon: BarChart3,     label: "Analytics" },
+    { href: "/quality",      icon: Gauge,         label: "Call Quality" },
+  ]},
+  { title: "Nikki", items: [
+    { href: "/knowledge",    icon: Brain,         label: "Teach Nikki" },
+    { href: "/setup",        icon: Settings,      label: "Setup" },
+  ]},
+  { title: "Account", items: [
+    { href: "/verification", icon: ShieldCheck,   label: "Verification" },
+    { href: "/billing",      icon: CreditCard,    label: "Billing" },
+    { href: "/api-keys",     icon: KeyRound,      label: "API keys" },
+  ]},
 ];
 
 
 export default function Shell({ children, title }: { children: React.ReactNode; title?: string }) {
   const [tenant, setTenant]     = useState<Tenant | null>(null);
+  const [me, setMe]             = useState<{ role: string; name: string; email: string } | null>(null);
   const [pathname, setPathname] = useState("/dashboard");
   const [sideOpen, setSideOpen] = useState(false);
 
@@ -133,9 +148,10 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       if (!data.user) { window.location.href = "/login"; return; }
       const { data: tu } = await sb
         .from("tenant_users")
-        .select("tenant_id")
+        .select("tenant_id, role, display_name")
         .eq("user_id", data.user.id)
         .single();
+      setMe({ role: (tu as any)?.role || "member", name: (tu as any)?.display_name || "", email: data.user.email || "" });
       if (tu) {
         const { data: t } = await sb
           .from("tenants")
@@ -154,113 +170,91 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
     ? Math.max(0, Math.round(Number(tenant.credit_minutes)))
     : null;
 
-  // Under 900px the sidebar is off-canvas (see .nk-side in globals.css):
-  // before this it sat fixed at 220px on a 390px phone and the page lived
-  // in the 170px beside it.
+  const staff = me ? !["owner", "super_admin"].includes(me.role) : false;
+  const who = me?.name || (me?.email ? me.email.split("@")[0] : "");
+  const initials = (who || tenant?.name || "?").split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+  const signOut = async () => {
+    await forgetDevice();          // the phone app's listener + token
+    await createClient().auth.signOut();
+    window.location.href = "/login";
+  };
+
+  // Under 900px the sidebar is off-canvas (see .nk-side in globals.css).
   const Sidebar = () => (
-    <div className={"nk-side" + (sideOpen ? " open" : "")} style={{
-      background: C.surf, borderRight: "1px solid " + C.bord,
-    }}>
-      {/* Logo — canonical NikkiLogo, same mark as the landing page and
-          the favicon. This used to be a glowing green dot plus the bare
-          word "Nikki", which shared nothing with the brand anywhere else
-          on the site. */}
-      <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid " + C.bord }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <a href="/dashboard" aria-label="HeyNikki dashboard" style={{ textDecoration: "none", display: "inline-block" }}>
-            <NikkiLogo size={30} dark />
-          </a>
-          <button className="nk-burger" aria-label="Close menu" onClick={() => setSideOpen(false)}
-            style={{ background: "none", border: 0, color: C.mid, padding: 4 }}><X size={18} /></button>
-        </div>
-        {tenant && (
-          <div style={{ color: C.dim, fontSize: 11, marginTop: 6 }}>
-            {tenant.name}
-          </div>
-        )}
+    <div className={"nk-side" + (sideOpen ? " open" : "")}>
+      <div style={{ padding: "18px 18px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <a href={staff ? "/desk" : "/dashboard"} aria-label="HeyNikki home" style={{ display: "inline-block" }}>
+          <NikkiLogo size={30} dark />
+        </a>
+        <button className="nk-burger" aria-label="Close menu" onClick={() => setSideOpen(false)}
+          style={{ background: "none", border: 0, color: C.mid, padding: 4 }}><X size={18} /></button>
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
-        {NAV_ITEMS.map(item => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          const Icon = item.icon;
+      <nav className="nk-nav" aria-label="Sections">
+        {NAV_GROUPS.map(g => {
+          const items = g.items.filter(it => !staff || it.staff);
+          if (!items.length) return null;
           return (
-            <a key={item.href} href={item.href} onClick={() => setSideOpen(false)} style={{
-              display: "flex", alignItems: "center", gap: 10, textDecoration: "none",
-              padding: "9px 10px", borderRadius: 8, marginBottom: 2,
-              background: active ? C.glow + "33" : "transparent",
-              border: "1px solid " + (active ? C.glow + "44" : "transparent"),
-              color: active ? C.gbr : C.mid, fontSize: 13, fontWeight: active ? 700 : 400,
-              transition: "all 0.15s",
-            }}>
-              <Icon size={16} />
-              <span>{item.label}</span>
-            </a>
+            <div key={g.title}>
+              <div className="nk-navgroup">{g.title}</div>
+              {items.map(item => {
+                const active = pathname === item.href || pathname.startsWith(item.href + "/");
+                const Icon = item.icon;
+                return (
+                  <a key={item.href} href={item.href} className="nk-navitem" onClick={() => setSideOpen(false)}
+                    aria-current={active ? "page" : undefined}>
+                    <Icon size={16} /><span>{item.label}</span>
+                  </a>
+                );
+              })}
+            </div>
           );
         })}
       </nav>
 
-      {/* Trial / Plan badge */}
+      {/* Who is signed in, for which business, and what is left to spend.
+          "Free minutes" is what actually stops calls on a trial. */}
       {tenant && (
-        <div style={{ padding: "12px 12px 16px", borderTop: "1px solid " + C.bord }}>
-          {tenant.status === "trial" && minsLeft !== null ? (
-            <div style={{ background: C.gold + "22", border: "1px solid " + C.gold + "44",
-              borderRadius: 8, padding: "8px 10px" }}>
-              <div style={{ color: C.gold, fontSize: 11, fontWeight: 800 }}>{minsLeft} free minutes left</div>
-              <a href="/billing" style={{ color: C.glow, fontSize: 11, display: "block", marginTop: 3 }}>
-                Upgrade now →
-              </a>
+        <div className="nk-user">
+          <span className="nk-avatar" aria-hidden>{initials}</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 650, color: C.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {who || tenant.name}
             </div>
-          ) : (
-            <div style={{ color: C.dim, fontSize: 11, padding: "4px 10px" }}>
-              Plan: <span style={{ color: C.gbr, fontWeight: 700 }}>{tenant.plan}</span>
+            <div style={{ fontSize: 11.5, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {tenant.status === "trial" && minsLeft !== null
+                ? <a href="/billing" style={{ color: C.gold, fontWeight: 650 }}>{minsLeft} free min left · upgrade</a>
+                : <>{tenant.name}{!staff && tenant.plan ? <> · <span style={{ textTransform: "capitalize" }}>{tenant.plan}</span></> : null}</>}
             </div>
-          )}
+          </div>
+          <button onClick={signOut} aria-label="Sign out" title="Sign out"
+            style={{ background: "none", border: 0, color: C.dim, padding: 4, lineHeight: 0 }}>
+            <LogOut size={16} />
+          </button>
         </div>
       )}
-
-      {/* Logout */}
-      <div style={{ padding: "0 8px 16px" }}>
-        <button onClick={async () => {
-          await forgetDevice();          // the phone app's listener + token
-          await createClient().auth.signOut();
-          window.location.href = "/login";
-        }} style={{
-          width: "100%", background: "none", border: "1px solid " + C.bord,
-          color: C.dim, borderRadius: 8, padding: "8px 0", fontSize: 12,
-        }}>Sign Out</button>
-      </div>
     </div>
   );
 
   return (
-    <div className="nk-shell" style={{ display: "flex", minHeight: "100vh", background: C.bg, color: C.txt }}>
+    <div className="nk-shell" style={{ display: "flex", minHeight: "100vh", color: C.txt }}>
       <Sidebar />
       {sideOpen && <div className="nk-scrim" onClick={() => setSideOpen(false)} />}
-      {/* Main content */}
-      <div className="nk-main" style={{ background: C.bg }}>
-        {/* Top bar */}
+      <div className="nk-main">
         <div className="nk-topbar" style={{
-          height: 56, borderBottom: "1px solid " + C.bord,
+          height: 60, borderBottom: "1px solid #E4E9F0",
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 24px", background: C.surf, position: "sticky", top: 0, zIndex: 30, gap: 10,
+          padding: "0 32px", position: "sticky", top: 0, zIndex: 30, gap: 12,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
             <button className="nk-burger" aria-label="Open menu" onClick={() => setSideOpen(true)}
-              style={{ background: "none", border: "1px solid " + C.bord, borderRadius: 8, color: C.txt, padding: 6, alignItems: "center" }}>
+              style={{ background: "#fff", border: "1px solid #E4E9F0", borderRadius: 8, color: C.txt, padding: 6, alignItems: "center" }}>
               <Menu size={18} />
             </button>
-            <div style={{ color: C.txt, fontSize: 16, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title || "Dashboard"}</div>
+            <h1 className="nk-title">{title || "Dashboard"}</h1>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <LiveCallBadge />
-            <div className="nk-hide-mobile" style={{ color: C.dim, fontSize: 12 }}>
-              {tenant?.name || "Loading..."}
-            </div>
-          </div>
+          <LineStatus />
         </div>
-        {/* Page */}
         <div className="nk-page fade-in">
           {children}
         </div>
@@ -271,30 +265,53 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   );
 }
 
-function LiveCallBadge() {
-  const [count, setCount] = useState(0);
+/**
+ * The promise, on every screen: is Nikki answering this business's number
+ * right now — and while calls are running, how many. Green and breathing when
+ * she is on the line; terracotta with the count while calls are live; the
+ * team's own mode when the Desk has the phones.
+ */
+function LineStatus() {
+  const [live, setLive] = useState(0);
+  const [line, setLine] = useState<{ number: string; mode: string } | null>(null);
   useEffect(() => {
     const sb = createClient();
+    // Tenant-scoped by RLS (tenant_read_own_dids). The published number is
+    // the incoming-only one when the business has marked one (064).
+    sb.from("dids").select("number, routing_mode, use_for_outbound").eq("status", "assigned").order("number")
+      .then(({ data, error }) => {
+        const rows = (data || []) as any[];
+        if (error || !rows.length) return;
+        const pick = rows.find(r => r.use_for_outbound === false) || rows[0];
+        setLine({ number: String(pick.number), mode: String(pick.routing_mode || "ai") });
+      });
     const fetchActive = async () => {
-      const { count: c } = await sb
-        .from("calls")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "active");
-      setCount(c || 0);
+      const { count: c } = await sb.from("calls").select("*", { count: "exact", head: true }).eq("status", "active");
+      setLive(c || 0);
     };
     fetchActive();
     const interval = setInterval(fetchActive, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  if (count === 0) return null;
+  const pretty = (n: string) => n.length === 10 ? `${n.slice(0, 5)} ${n.slice(5)}` : n;
+  if (live > 0) {
+    return (
+      <div className="nk-status" style={{ color: "#E5533D", background: "#E5533D12", borderColor: "#E5533D40" }} role="status">
+        <span className="dot" style={{ background: "#E5533D" }} />
+        {live} live call{live > 1 ? "s" : ""}
+      </div>
+    );
+  }
+  if (!line) return null;
+  const team = line.mode === "human";
+  const color = team ? "#12457A" : "#0E9F6E";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6,
-      background: C.grn + "22", border: "1px solid " + C.grn + "44",
-      borderRadius: 20, padding: "4px 10px", fontSize: 11, color: C.grn }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.grn,
-        animation: "pulse 2s infinite" }} />
-      {count} live call{count > 1 ? "s" : ""}
-    </div>
+    <a href="/desk" className="nk-status" style={{ color, background: color + "10", borderColor: color + "33" }}
+      title={team ? "Your team answers incoming calls — change it on the Human Desk" : "Nikki answers incoming calls — change it on the Human Desk"}>
+      <span className="dot" style={{ background: color }} />
+      <span className="nk-hide-mobile">{team ? "Team answering" : "Nikki answering"}</span>
+      <span className="num">{pretty(line.number)}</span>
+    </a>
   );
 }
