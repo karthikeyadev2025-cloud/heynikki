@@ -35,9 +35,8 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 function StatusPill({ status }: { status: string | null | undefined }) {
   const meta = STATUS_META[status || ""] || { label: status || "—", color: C.dim };
   return (
-    <span style={{ background: meta.color + "22", color: meta.color,
-      border: "1px solid " + meta.color + "44", borderRadius: 20,
-      padding: "2px 8px", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
+    <span style={{ background: meta.color + "14", color: meta.color,
+      borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap",
       display: "inline-flex", alignItems: "center", gap: 5 }}>
       {status === "active" && (
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: meta.color,
@@ -513,9 +512,9 @@ export default function CallsPage() {
   };
 
   const chip = (on: boolean, color: string): React.CSSProperties => ({
-    padding: "7px 12px", borderRadius: 7, fontSize: 12, fontWeight: 700,
-    background: on ? color + "33" : C.hi, color: on ? color : C.mid,
-    border: "1px solid " + (on ? color : C.bord), cursor: "pointer", whiteSpace: "nowrap",
+    padding: "6px 13px", borderRadius: 999, fontSize: 12.5, fontWeight: 600,
+    background: on ? color + "14" : C.surf, color: on ? color : C.mid,
+    border: "1px solid " + (on ? color + "55" : "#E4E9F0"), cursor: "pointer", whiteSpace: "nowrap",
   });
   const dateInput: React.CSSProperties = {
     padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.bord}`,
@@ -543,7 +542,7 @@ export default function CallsPage() {
             placeholder="Search what was said, or a phone number…"
             aria-label="Search calls and transcripts"
             style={{ width: "100%", padding: "9px 12px 9px 32px", borderRadius: 8, boxSizing: "border-box",
-                     border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: 13 }} />
+                     border: "1px solid #E4E9F0", background: C.surf, color: C.txt, fontSize: 13.5 }} />
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {RANGES.map(r => (
@@ -602,7 +601,8 @@ export default function CallsPage() {
           padding: "9px 12px", marginBottom: 12, color: C.red, fontSize: 12.5 }}>{error}</div>
       )}
 
-      <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, overflow: "hidden" }}>
+      <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, overflow: "hidden",
+        boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
         {loading ? (
           <div style={{ textAlign: "center", padding: 48, color: C.mid }}>
             {query ? "Searching calls and transcripts…" : "Loading calls…"}
@@ -636,61 +636,62 @@ export default function CallsPage() {
           <div className="nk-scroll">
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ background: C.hi }}>
+              <tr style={{ background: "#F8FAFC" }}>
                 {["Caller","Direction","Status","Duration","Reason","WhatsApp","Booked","Time",""].map(h => (
-                  <th key={h} style={{ color: C.dim, fontSize: 10, fontWeight: 700,
-                    textTransform: "uppercase", letterSpacing: "0.08em",
-                    padding: "10px 12px", textAlign: "left" }}>{h}</th>
+                  <th key={h} style={{ color: C.mid, fontSize: 11.5, fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap",
+                    padding: "11px 14px", textAlign: "left", borderBottom: "1px solid #E4E9F0" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map(call => (
                 <tr key={call.id}
-                  style={{ borderBottom: "1px solid " + C.bord + "44", cursor: "pointer",
+                  style={{ borderBottom: "1px solid #EEF1F5", cursor: "pointer",
                            opacity: opening === call.id ? 0.6 : 1 }}
                   onClick={() => openCall(call.id)}
-                  onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
+                  onMouseEnter={e => (e.currentTarget.style.background = "#F9FAFC")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                  <td style={{ padding: "10px 12px", color: C.txt, fontSize: 13, fontWeight: 600 }}>
+                  <td style={{ padding: "12px 14px", color: C.txt, fontSize: 13.5, fontWeight: 500,
+                    fontFamily: "var(--font-mono), monospace" }}>
                     {call.caller_number || "Unknown"}
                     {/* Why this call came back from a search, without opening it. */}
                     {call.snippet && (
-                      <div style={{ color: C.mid, fontSize: 11.5, fontWeight: 400, marginTop: 3,
+                      <div style={{ color: C.mid, fontSize: 12, fontWeight: 400, marginTop: 3, fontFamily: "var(--font-body), sans-serif",
                         maxWidth: 320, whiteSpace: "normal", lineHeight: 1.45 }}>
                         “{call.snippet}”
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: "10px 12px" }}>
+                  <td style={{ padding: "12px 14px" }}>
                     <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
                       fontSize: 11, fontWeight: 600 }}>
                       {call.direction === "inbound" ? "↙ Inbound" : "↗ Outbound"}
                     </span>
                   </td>
-                  <td style={{ padding: "10px 12px" }}>
+                  <td style={{ padding: "12px 14px" }}>
                     <StatusPill status={call.status} />
                   </td>
-                  <td style={{ padding: "10px 12px", color: C.mid, fontSize: 12 }}>
+                  <td style={{ padding: "12px 14px", color: C.mid, fontSize: 12.5 }}>
                     {formatDur(call.duration_seconds)}
                   </td>
-                  <td style={{ padding: "10px 12px" }}>
+                  <td style={{ padding: "12px 14px" }}>
                     <IntentBadge intent={call.intent} />
                   </td>
-                  <td style={{ padding: "10px 12px", fontSize: 13,
+                  <td style={{ padding: "12px 14px", fontSize: 13,
                     color: call.wa_sent ? C.grn : C.dim }}>
                     {call.wa_sent ? <Check size={14} color={C.grn} /> : "—"}
                   </td>
-                  <td style={{ padding: "10px 12px", fontSize: 13,
+                  <td style={{ padding: "12px 14px", fontSize: 13,
                     color: call.appointment_created ? C.grn : C.dim }}>
                     {call.appointment_created ? <Check size={14} color={C.grn} /> : "—"}
                   </td>
-                  <td style={{ padding: "10px 12px", color: C.dim, fontSize: 11, whiteSpace: "nowrap" }}>
+                  <td style={{ padding: "12px 14px", color: C.mid, fontSize: 12.5, whiteSpace: "nowrap" }}>
                     {formatTime(call.created_at)}
                   </td>
-                  <td style={{ padding: "10px 12px" }}>
-                    <span style={{ color: C.glow, fontSize: 12 }}>
-                      {opening === call.id ? "Opening…" : "View →"}
+                  <td style={{ padding: "12px 14px" }}>
+                    <span style={{ color: opening === call.id ? C.glow : C.dim, fontSize: 12.5 }} aria-label="Open call">
+                      {opening === call.id ? "Opening…" : "›"}
                     </span>
                   </td>
                 </tr>

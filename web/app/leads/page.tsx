@@ -594,10 +594,11 @@ export default function LeadsPage() {
     boxSizing: "border-box",
   };
   const chip = (on: boolean, color: string): React.CSSProperties => ({
-    background: on ? color + "1F" : C.surf, color: on ? color : C.mid,
-    border: `1px solid ${on ? color + "88" : C.bord}`, borderRadius: 20,
-    padding: "6px 12px", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap",
+    background: on ? color + "14" : C.surf, color: on ? color : C.mid,
+    border: `1px solid ${on ? color + "55" : "#E4E9F0"}`, borderRadius: 999,
+    padding: "6px 13px", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
     display: "inline-flex", alignItems: "center", gap: 6,
+    boxShadow: on ? "none" : "0 1px 1px rgba(15,23,42,0.03)",
   });
 
   return (
@@ -665,7 +666,7 @@ export default function LeadsPage() {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>Leads</h1>
+          <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Leads</h1>
           <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
             Everyone who called, what they wanted, and where they are in your pipeline.
           </p>
@@ -820,7 +821,8 @@ export default function LeadsPage() {
           )}
         </div>
       ) : (
-        <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
           {/* Header row (desktop only) */}
           <div className="nk-leadrow nk-leadhead">
             <input type="checkbox" aria-label="Select all" checked={allShownSelected}
@@ -842,9 +844,10 @@ export default function LeadsPage() {
                 {/* identity */}
                 <div style={{ minWidth: 0, display: "flex", gap: 10, alignItems: "center" }}>
                   <div title={`Score ${l.score}/100`} style={{
-                    width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-                    background: sc + "1A", color: sc, border: `1px solid ${sc}44`,
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800,
+                    width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+                    background: sc + "14", color: sc, boxShadow: `inset 0 0 0 2px ${sc}55`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontFamily: "var(--font-display), sans-serif", fontSize: 13.5, fontWeight: 700,
                   }}>{l.score}</div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>

@@ -63,6 +63,19 @@ function fmtDate(d: string | null): string {
   return dt.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
 }
 
+/** "Today", "Tomorrow", or the date — the heading over each day's bookings. */
+function dayHeading(d: string | null): string {
+  if (!d) return "No date captured";
+  const dt = new Date(d + "T00:00:00");
+  if (isNaN(dt.getTime())) return d;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((dt.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return fmtDate(d);
+}
+
 function isUpcoming(d: string | null): boolean {
   if (!d) return false;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -236,8 +249,11 @@ export default function AppointmentsPage() {
 
   return (
     <Shell title="Appointments">
-      <div style={{ padding: 24, maxWidth: 960 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>
+      {/* No inner padding: .nk-page already gives the page its margins, and
+          the two together pushed this list in twice as far as any other. */}
+      <div style={{ maxWidth: 1040 }}>
+        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700,
+          letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>
           Appointments
         </h1>
         <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20 }}>
@@ -268,15 +284,18 @@ export default function AppointmentsPage() {
             /leads both had a download button; the one list a clinic actually
             wants in a spreadsheet — tomorrow's bookings — did not. */}
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-          {(["upcoming", "all"] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} style={{
-              background: filter === f ? C.glow : C.hi,
-              color: filter === f ? "#fff" : C.mid,
-              border: `1px solid ${filter === f ? C.glow : C.bord}`,
-              borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600,
-              cursor: "pointer", textTransform: "capitalize",
-            }}>{f === "upcoming" ? "Upcoming" : "All bookings"}</button>
-          ))}
+          <div role="tablist" aria-label="Which bookings" style={{ display: "inline-flex", background: "#EEF1F5",
+            borderRadius: 10, padding: 3, gap: 2 }}>
+            {(["upcoming", "all"] as const).map(f => (
+              <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} style={{
+                background: filter === f ? C.surf : "transparent",
+                color: filter === f ? C.txt : C.mid,
+                border: 0, borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600,
+                boxShadow: filter === f ? "0 1px 2px rgba(15,23,42,0.08)" : "none",
+                cursor: "pointer",
+              }}>{f === "upcoming" ? "Upcoming" : "All bookings"}</button>
+            ))}
+          </div>
           <div style={{ marginLeft: "auto" }}>
             <ExportButton path="/api/export/appointments.csv" label="Download CSV"
               title="Download every booking as a CSV for Excel or Sheets" />
@@ -310,21 +329,41 @@ export default function AppointmentsPage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {shown.map(a => {
+            {shown.map((a, idx) => {
               const col = STATUS_COLORS[a.status] || C.mid;
+              // A heading where the day changes — the list is ordered by
+              // slot_date — so "tomorrow" is something you see, not work out.
+              const newDay = idx === 0 || shown[idx - 1].slot_date !== a.slot_date;
+              const d = a.slot_date ? new Date(a.slot_date + "T00:00:00") : null;
               return (
-                <div key={a.id} style={{
-                  background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-                  padding: 16, display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap",
+                <div key={a.id}>
+                {newDay && (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: idx === 0 ? "4px 2px 8px" : "18px 2px 8px" }}>
+                    <span style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 16, fontWeight: 700, color: C.txt }}>
+                      {dayHeading(a.slot_date)}
+                    </span>
+                    {d && dayHeading(a.slot_date) !== fmtDate(a.slot_date) && (
+                      <span style={{ fontSize: 12.5, color: C.dim }}>{fmtDate(a.slot_date)}</span>
+                    )}
+                  </div>
+                )}
+                <div style={{
+                  background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+                  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                  padding: 16, display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap",
                 }}>
-                  {/* date block */}
+                  {/* date tile: the edge carries the status */}
                   <div style={{
-                    background: C.hi, borderRadius: 10, padding: "10px 14px",
-                    textAlign: "center", minWidth: 76,
+                    background: "#F8FAFC", borderRadius: 10, padding: "9px 12px 10px",
+                    textAlign: "center", minWidth: 72, borderLeft: `3px solid ${col}`,
                   }}>
-                    <div style={{ fontSize: 12, color: C.mid, fontWeight: 600 }}>{fmtDate(a.slot_date)}</div>
-                    <div style={{ fontSize: 15, color: C.txt, fontWeight: 800, marginTop: 2 }}>
-                      {a.slot_time || "—"}
+                    <div style={{ fontSize: 11, color: C.mid, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      {d ? d.toLocaleDateString("en-IN", { month: "short" }) : "—"}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 24, fontWeight: 700,
+                      color: C.txt, lineHeight: 1.05 }}>{d ? d.getDate() : "?"}</div>
+                    <div style={{ fontSize: 12.5, color: C.txt, fontWeight: 600, marginTop: 3 }}>
+                      {a.slot_time || "time?"}
                     </div>
                   </div>
 
@@ -332,22 +371,21 @@ export default function AppointmentsPage() {
                   <div style={{ flex: "1 1 200px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
                       {a.booking_ref && (
-                        <span style={{
-                          background: C.cyn + "1A", color: C.cyn, border: `1px solid ${C.cyn}55`,
-                          fontSize: 12, fontWeight: 800, padding: "2px 8px", borderRadius: 6,
-                          fontFamily: "monospace", letterSpacing: 0.5,
+                        <span title="Booking number" style={{
+                          background: "#F1F4F8", color: C.mid,
+                          fontSize: 12, fontWeight: 500, padding: "2px 8px", borderRadius: 6,
+                          fontFamily: "var(--font-mono), monospace", letterSpacing: 0.3,
                         }}>{a.booking_ref}</span>
                       )}
                       <span style={{ fontSize: 16, fontWeight: 700, color: C.txt }}>
                         {a.caller_name || "Unknown caller"}
                       </span>
                       <span style={{
-                        background: col + "22", color: col, border: `1px solid ${col}44`,
-                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
-                        textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap",
-                      }}>{STATUS_LABELS[a.status] || a.status}</span>
+                        background: col + "14", color: col, display: "inline-flex", alignItems: "center", gap: 5,
+                        fontSize: 11.5, fontWeight: 600, padding: "3px 9px 3px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                      }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />{STATUS_LABELS[a.status] || a.status}</span>
                     </div>
-                    <div style={{ fontSize: 13, color: C.mid, fontFamily: "monospace" }}>
+                    <div style={{ fontSize: 13, color: C.mid, fontFamily: "var(--font-mono), monospace" }}>
                       {a.caller_number}
                     </div>
                     {a.service && (
@@ -374,33 +412,34 @@ export default function AppointmentsPage() {
                   {a.status === "pending" && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <button onClick={() => updateStatus(a.id, "confirmed")} style={{
-                        background: C.grn + "22", color: C.grn, border: `1px solid ${C.grn}44`,
-                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: C.grn, color: "#fff", border: `1px solid ${C.grn}`,
+                        borderRadius: 8, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
                       }}>Confirm</button>
                       <button onClick={() => updateStatus(a.id, "cancelled")} style={{
-                        background: C.red + "22", color: C.red, border: `1px solid ${C.red}44`,
-                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: C.surf, color: C.red, border: "1px solid #E4E9F0",
+                        borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
                       }}>Cancel</button>
                     </div>
                   )}
                   {a.status === "confirmed" && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <button onClick={() => updateStatus(a.id, "completed")} style={{
-                        background: C.cyn + "22", color: C.cyn, border: `1px solid ${C.cyn}44`,
-                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: C.surf, color: C.cyn, border: "1px solid #E4E9F0",
+                        borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
                       }}>Done</button>
                       <button onClick={() => updateStatus(a.id, "no_show")} style={{
-                        background: C.gold + "22", color: C.gold, border: `1px solid ${C.gold}44`,
-                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: C.surf, color: C.gold, border: "1px solid #E4E9F0",
+                        borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
                       }}>No-show</button>
                       <button onClick={() => updateStatus(a.id, "cancelled")} style={{
-                        background: C.red + "22", color: C.red, border: `1px solid ${C.red}44`,
-                        borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: C.surf, color: C.red, border: "1px solid #E4E9F0",
+                        borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
                       }}>Cancel</button>
                     </div>
                   )}
                   <AddToCalendar appointment={a} business={business} />
                   </div>
+                </div>
                 </div>
               );
             })}

@@ -20,9 +20,9 @@ export default function IntentBadge({ intent, title }: {
   const label = intentLabel(intent);
   return (
     <span title={title} style={{
-      background: col + "22", color: col, border: "1px solid " + col + "44",
-      borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 700,
-      letterSpacing: "0.01em", whiteSpace: "nowrap", display: "inline-block",
+      background: col + "14", color: col,
+      borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600,
+      whiteSpace: "nowrap", display: "inline-block", lineHeight: 1.4,
     }}>
       {label}
     </span>
