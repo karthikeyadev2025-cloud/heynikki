@@ -68,7 +68,7 @@ function UsageRing({ used, total, period }: { used: number; total: number; perio
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
       <svg width={100} height={100}>
-        <circle cx={50} cy={50} r={r} fill="none" stroke={C.hi} strokeWidth={10} />
+        <circle cx={50} cy={50} r={r} fill="none" stroke="#EEF2F6" strokeWidth={10} />
         <circle cx={50} cy={50} r={r} fill="none" stroke={color} strokeWidth={10}
           strokeDasharray={`${dash} ${circ - dash}`}
           strokeLinecap="round"
@@ -76,26 +76,26 @@ function UsageRing({ used, total, period }: { used: number; total: number; perio
           style={{ transition: "stroke-dasharray 0.5s ease" }} />
         {hasTotal ? (
           <>
-            <text x={50} y={46} textAnchor="middle" fill={color} fontSize={16} fontWeight={900}>{pct}%</text>
-            <text x={50} y={60} textAnchor="middle" fill={C.dim} fontSize={9}>used</text>
+            <text x={50} y={48} textAnchor="middle" fill={C.txt} fontSize={18} fontWeight={700}>{pct}%</text>
+            <text x={50} y={62} textAnchor="middle" fill={C.dim} fontSize={10}>used</text>
           </>
         ) : (
           <>
-            <text x={50} y={46} textAnchor="middle" fill={C.txt} fontSize={16} fontWeight={900}>{used}</text>
-            <text x={50} y={60} textAnchor="middle" fill={C.dim} fontSize={9}>min used</text>
+            <text x={50} y={48} textAnchor="middle" fill={C.txt} fontSize={18} fontWeight={700}>{used}</text>
+            <text x={50} y={62} textAnchor="middle" fill={C.dim} fontSize={10}>min used</text>
           </>
         )}
       </svg>
       <div>
-        <div style={{ color: C.txt, fontSize: 16, fontWeight: 900 }}>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
           {used}
-          <span style={{ color: C.mid, fontSize: 12, fontWeight: 400 }}>
+          <span style={{ color: C.mid, fontFamily: "var(--font-body), sans-serif", fontSize: 14, fontWeight: 500, letterSpacing: 0 }}>
             {hasTotal ? ` / ${total} min` : " min"}
           </span>
         </div>
-        <div style={{ color: C.mid, fontSize: 12, marginTop: 4 }}>{period}</div>
+        <div style={{ color: C.mid, fontSize: 13.5, marginTop: 4 }}>{period}</div>
         {hasTotal && (
-          <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
+          <div style={{ color: C.dim, fontSize: 12.5, marginTop: 2 }}>
             {Math.max(0, total - used)} minutes remaining
           </div>
         )}
@@ -308,6 +308,13 @@ export default function BillingPage() {
     return { used: Math.ceil((usage?.used_seconds || 0) / 60), total: 0, period: "This month" };
   })();
 
+  // The saving shown on the toggle comes from the prices on the cards. It was
+  // a fixed "-20%" while annual billing actually saves a third.
+  const annualSave = (() => {
+    const p = PLANS.find((x: any) => x.price > 0 && x.annual > 0);
+    return p ? Math.round((1 - p.annual / p.price) * 100) : 0;
+  })();
+
   return (
     <Shell title="Billing">
       {/* next/script, not a bare <script> in JSX. React does not render a
@@ -320,48 +327,47 @@ export default function BillingPage() {
       <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading billing...</div>
+        <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading billing…</div>
       ) : (
         <>
           <style>{`
             @media (max-width: 760px) { .billing-grid { grid-template-columns: 1fr !important; } }
           `}</style>
+          <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Billing</h1>
+          <p style={{ color: C.mid, fontSize: 14, margin: "0 0 20px" }}>Your plan, the minutes you have used, and the plans you can move to.</p>
           {/* Current plan + usage */}
           <div className="billing-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-            <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, padding: 20 }}>
-              <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
-                letterSpacing: "0.1em", marginBottom: 10 }}>Current Plan</div>
+            <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 22, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", }}>
+              <div style={{ color: C.mid, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Current plan</div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                 {/* On a trial the `plan` column is just the tier the account
                     was created against — nothing is paid for yet. Printing
                     "Starter" beside a "FREE" badge read as though the shop
                     were already subscribed to Starter. */}
-                <span style={{ color: C.txt, fontSize: 22, fontWeight: 900, textTransform: "capitalize" }}>
+                <span style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", textTransform: "capitalize" }}>
                   {tenant?.status === "trial" ? "Free trial" : (tenant?.plan || "Trial")}
                 </span>
                 {tenant?.status === "trial" && (
-                  <span style={{ background: C.gold + "22", color: C.gold,
-                    border: "1px solid " + C.gold + "44", borderRadius: 4,
-                    padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>
-                    FREE — {Math.max(0, Math.round(Number(tenant?.credit_minutes ?? 0)))} minutes left
+                  <span style={{ background: C.gold + "14", color: C.gold, borderRadius: 999,
+                    padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
+                    Free · {Math.max(0, Math.round(Number(tenant?.credit_minutes ?? 0)))} minutes left
                   </span>
                 )}
               </div>
-              <a href="#plans" style={{ color: C.glow, fontSize: 13, fontWeight: 700 }}>
+              <a href="#plans" style={{ color: C.glow, fontSize: 13.5, fontWeight: 600, textDecoration: "none" }}>
                 Upgrade plan →
               </a>
             </div>
 
-            <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, padding: 20 }}>
-              <div style={{ color: C.mid, fontSize: 11, textTransform: "uppercase",
-                letterSpacing: "0.1em", marginBottom: 10 }}>Minutes Usage</div>
+            <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 22, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", }}>
+              <div style={{ color: C.mid, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Minutes used</div>
               {usage || trial ? (
                 <>
                   <UsageRing used={ring.used} total={ring.total} period={ring.period} />
                   {/* What actually happens at zero. The owner watching this
                       ring needs to know calls stop rather than that a bill
                       quietly grows. */}
-                  <div style={{ color: C.dim, fontSize: 11.5, lineHeight: 1.55, marginTop: 10 }}>
+                  <div style={{ color: C.mid, fontSize: 12.5, lineHeight: 1.55, marginTop: 12 }}>
                     When these run out Nikki stops answering until you move up a plan —
                     nothing extra is charged to you.{" "}
                     {ring.total > 0 && ring.used >= ring.total
@@ -370,17 +376,17 @@ export default function BillingPage() {
                   </div>
                 </>
               ) : (
-                <div style={{ color: C.dim, fontSize: 12 }}>No usage data yet</div>
+                <div style={{ color: C.mid, fontSize: 13.5 }}>No calls yet this period.</div>
               )}
             </div>
           </div>
 
           {/* Plans */}
           <div id="plans">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ color: C.txt, fontSize: 14, fontWeight: 800 }}>Choose a Plan</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+              <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 19, fontWeight: 700, letterSpacing: "-0.01em" }}>Choose a plan</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ color: C.mid, fontSize: 12 }}>Monthly</span>
+                <span style={{ color: annual ? C.mid : C.txt, fontSize: 13, fontWeight: 600 }}>Monthly</span>
                 <button onClick={() => setAnnual(!annual)} style={{
                   width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
                   background: annual ? C.glow : C.bord, position: "relative",
@@ -391,7 +397,8 @@ export default function BillingPage() {
                     transition: "left 0.2s",
                   }} />
                 </button>
-                <span style={{ color: C.mid, fontSize: 12 }}>Annual <span style={{ color: C.grn, fontWeight: 700 }}>-20%</span></span>
+                <span style={{ color: annual ? C.txt : C.mid, fontSize: 13, fontWeight: 600 }}>Annual{annualSave > 0 && (
+                  <span style={{ marginLeft: 6, background: C.grn + "14", color: C.grn, borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>save {annualSave}%</span>)}</span>
               </div>
             </div>
 
@@ -413,50 +420,54 @@ export default function BillingPage() {
                 return (
                   <div key={plan.id} style={{
                     background: C.surf,
-                    border: "1px solid " + (plan.popular ? C.glow : isCurrent ? C.grn : C.bord),
-                    borderRadius: 10, padding: 18, position: "relative",
+                    border: "1px solid " + (plan.popular ? C.glow : isCurrent ? C.grn : "#E4E9F0"),
+                    boxShadow: plan.popular ? "0 0 0 3px " + C.glow + "1F, 0 8px 24px rgba(15,23,42,0.06)" : "0 1px 2px rgba(15,23,42,0.04)",
+                    borderRadius: 12, padding: 22, position: "relative", display: "flex", flexDirection: "column",
                   }}>
                     {plan.popular && !isCurrent && (
                       <div style={{ position: "absolute", top: -10, left: "50%",
                         transform: "translateX(-50%)", background: C.glow, color: "#fff",
-                        fontSize: 9, fontWeight: 800, padding: "2px 12px", borderRadius: 20,
-                        whiteSpace: "nowrap" }}>MOST POPULAR</div>
+                        fontSize: 11.5, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
+                        whiteSpace: "nowrap" }}>Most popular</div>
                     )}
                     {isCurrent && (
                       <div style={{ position: "absolute", top: -10, left: "50%",
                         transform: "translateX(-50%)", background: C.grn, color: "#fff",
-                        fontSize: 9, fontWeight: 800, padding: "2px 12px", borderRadius: 20,
-                        whiteSpace: "nowrap" }}>CURRENT PLAN</div>
+                        fontSize: 11.5, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
+                        whiteSpace: "nowrap" }}>Your plan</div>
                     )}
-                    <div style={{ color: plan.color, fontSize: 14, fontWeight: 900, marginBottom: 6 }}>
+                    <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
                       {plan.name}
                     </div>
                     <div style={{ marginBottom: 4 }}>
-                      <span style={{ color: C.txt, fontSize: 22, fontWeight: 900 }}>
+                      <span style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
                       {(plan as any).perMinute ? `₹${(plan as any).perMinute}` : `₹${price.toLocaleString()}`}
                     </span>
-                      <span style={{ color: C.dim, fontSize: 11 }}>{(plan as any).perMinute ? "/min" : "/mo"}</span>
+                      <span style={{ color: C.mid, fontSize: 13, marginLeft: 2 }}>{(plan as any).perMinute ? "/min" : "/month"}</span>
+                      {annual && !(plan as any).perMinute && <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>billed yearly</div>}
                     </div>
-                    <div style={{ color: C.dim, fontSize: 10, marginBottom: 14 }}>
+                    <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 16, paddingBottom: 14, borderBottom: "1px solid #EEF2F6" }}>
                       {plan.minutes} mins · {plan.profiles} profile{plan.profiles > 1 ? "s" : ""} · {plan.numbers} number{plan.numbers > 1 ? "s" : ""}
                     </div>
                     {plan.features.map((f: string) => (
-                      <div key={f} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
-                        <Check size={11} color={C.grn} />
-                        <span style={{ color: C.mid, fontSize: 11 }}>{f}</span>
+                      <div key={f} style={{ display: "flex", gap: 8, marginBottom: 7, alignItems: "flex-start" }}>
+                        <Check size={14} color={C.grn} style={{ flexShrink: 0, marginTop: 2 }} />
+                        <span style={{ color: C.txt, fontSize: 13.5, lineHeight: 1.45 }}>{f}</span>
                       </div>
                     ))}
+                    <div style={{ height: 16 }} />
                     <button onClick={() => !isCurrent && handleUpgrade(plan.id)}
                       disabled={isCurrent || upgrading === plan.id}
                       style={{
-                        width: "100%", marginTop: 14,
-                        background: isCurrent ? C.grn + "22" : plan.popular ? C.glow : "transparent",
-                        color: isCurrent ? C.grn : plan.popular ? "#fff" : C.gbr,
-                        border: "1px solid " + (isCurrent ? C.grn : plan.popular ? C.glow : C.bord),
-                        borderRadius: 7, padding: "9px 0", fontSize: 12, fontWeight: 700,
+                        width: "100%", marginTop: "auto",
+                        background: isCurrent ? C.grn + "14" : plan.popular ? C.glow : C.surf,
+                        color: isCurrent ? C.grn : plan.popular ? "#fff" : C.txt,
+                        border: isCurrent || plan.popular ? "none" : "1px solid #D8DFE8",
+                        borderRadius: 8, padding: "11px 0", fontSize: 14, fontWeight: 600,
+                        cursor: isCurrent ? "default" : "pointer",
                         opacity: (isCurrent || upgrading === plan.id) ? 0.7 : 1,
                       }}>
-                      {isCurrent ? "Current Plan" : upgrading === plan.id ? "Opening..." : `${verb} ${plan.name}`}
+                      {isCurrent ? "Your current plan" : upgrading === plan.id ? "Opening…" : `${verb} ${plan.name}`}
                     </button>
                   </div>
                 );
@@ -472,7 +483,7 @@ export default function BillingPage() {
               last one quoting a price that does not exist. Do not put a rate
               back here unless a checkout that can actually sell minutes
               ships with it. */}
-          <div style={{ textAlign: "center", marginTop: 14, color: C.dim, fontSize: 11, lineHeight: 1.6 }}>
+          <div style={{ textAlign: "center", marginTop: 18, color: C.mid, fontSize: 13, lineHeight: 1.6 }}>
             New accounts start with 100 free minutes · You are never charged for going over ·
             Cancel anytime
           </div>
