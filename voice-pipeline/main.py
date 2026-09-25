@@ -2265,7 +2265,8 @@ class SupabaseClient:
             log.debug(f"recent outbound lookup failed: {e}")
             return {}
 
-    async def get_caller_history(self, caller_number: str, voice_profile_id: str) -> dict:
+    async def get_caller_history(self, caller_number: str, voice_profile_id: str,
+                                 fs_uuid: str = "") -> dict:
         """What we already know about this caller, for a human opening.
 
         Nothing made Nikki feel more like a machine than greeting a caller
@@ -2287,9 +2288,16 @@ class SupabaseClient:
                     # Inbound only. Our own calls to them — the Desk and
                     # campaigns now dial from these numbers — are not them
                     # ringing us, and get_recent_outbound says those.
+                    # The API writes this call's row before the pipeline
+                    # connects, so without excluding it every caller had "1
+                    # previous call": on 25 Sep all fifteen first-time callers
+                    # were thanked for calling again. The FreeSWITCH uuid is
+                    # stored in livekit_room_id; older rows have it null.
                     params={"caller_number": f"like.*{digits}",
                             "voice_profile_id": f"eq.{voice_profile_id}",
                             "direction": "eq.inbound",
+                            **({"or": f"(livekit_room_id.is.null,livekit_room_id.neq.{fs_uuid})"}
+                               if fs_uuid else {}),
                             "select": "id,created_at,intent,status",
                             "order": "created_at.desc", "limit": "5"},
                 )
@@ -3338,7 +3346,16 @@ class NikkiAgent:
             _prev_bot = next(
                 (t["content"] for t in reversed(self.transcript)
                  if t.get("role") == "assistant"), "")
-            if _is_phantom_turn(user_text, _prev_bot):
+            # The greeting is audio only and never enters the transcript, so
+            # before her first reply _prev_bot was empty and a caller's
+            # "Okay." to "…చెప్పండి!" read as noise. On 25 Sep that caller
+            # then heard nothing and hung up. The first short answer to the
+            # opening is a turn; the model is told what to do with it.
+            _first_answer = (not _prev_bot and bool(getattr(self, "opened_with", ""))
+                             and not getattr(self, "_answered_opening", False))
+            if _first_answer:
+                self._answered_opening = True
+            if not _first_answer and _is_phantom_turn(user_text, _prev_bot):
                 # Not a turn. Nothing is recorded and nothing is said — the
                 # silent-caller timer brings her back if they really went
                 # quiet. See _is_phantom_turn for the call that earned this.
@@ -3399,7 +3416,7 @@ class NikkiAgent:
             # spoken early; _run_turn then speaks the filtered reply whole.
             _raw_clause_cb = first_clause_cb
             if _raw_clause_cb is not None:
-                _known = _known_numbers(self.profile, self.knowledge)
+                _known = _known_numbers(self.profile, self.knowledge, self.slots.get("phone"))
 
                 def first_clause_cb(prefix: str) -> None:  # noqa: F811
                     why = _first_clause_hold_reason(prefix, user_text, _prev_bot,
@@ -3519,7 +3536,7 @@ class NikkiAgent:
                 log.info("dropped a closing question that repeated the last turn")
 
             response, _numfix = _fix_known_numbers(
-                response, _known_numbers(self.profile, self.knowledge))
+                response, _known_numbers(self.profile, self.knowledge, self.slots.get("phone")))
             if _numfix:
                 log.warning("corrected a mis-read phone number: %s", _numfix)
 
@@ -4892,8 +4909,12 @@ def _edit_distance(a: str, b: str) -> int:
     return prev[-1]
 
 
-def _known_numbers(profile: dict | None, knowledge: list[str] | None) -> list[str]:
-    seen: list[str] = []
+def _known_numbers(profile: dict | None, knowledge: list[str] | None,
+                   caller: str | None = None) -> list[str]:
+    # The caller's own number too. On 25 Sep she promised details to "your
+    # WhatsApp number 74347459" — the last eight of 8074347459 — and nothing
+    # corrected it, because only the business's numbers were known.
+    seen: list[str] = [caller] if caller and re.fullmatch(r"[6-9]\d{9}", caller) else []
     pools = [str((profile or {}).get(k) or "") for k in
              ("whatsapp_number", "phone", "contact_number", "did_number")]
     pools += [str(k) for k in (knowledge or [])]
@@ -6473,7 +6494,20 @@ def _outbound_opener(profile: dict, kind: str, first_name: str = "",
     }[kind]
 
 
-def _greeting_text(profile: dict, history: dict | None = None) -> str:
+def _called_them_recently(recent: dict | None, hours: float = 6) -> bool:
+    """We dialled this number in the last few hours (Desk or campaign)."""
+    at = (recent or {}).get("last_outbound_at")
+    if not at:
+        return False
+    try:
+        t = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) - t < timedelta(hours=hours)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _greeting_text(profile: dict, history: dict | None = None,
+                   recent: dict | None = None) -> str:
     """Warm brand greeting, spoken right after the TRAI disclosure.
 
     Previously the caller heard the disclosure and then silence — she waited
@@ -6487,6 +6521,22 @@ def _greeting_text(profile: dict, history: dict | None = None) -> str:
     # A returning caller still gets recognised, but AFTER the scripted
     # opening rather than instead of it, so the business keeps its words and
     # the caller keeps being remembered.
+    # A customer ringing back the number that just rang them. On 25 Sep five
+    # of them in one afternoon heard a generic opening — "thanks for calling
+    # again, tell me" — and waited to be told why they had been called; two
+    # hung up in silence. Say it in the first sentence, as a person would.
+    called = _called_them_recently(recent)
+    lang_c = _tenant_lang(profile)
+    biz_c  = (profile.get("business_name") or "").strip()
+    if called:
+        if lang_c == "hi-IN":
+            return f"नमस्ते, {biz_c} से बोल रहे हैं — हमने अभी आपको कॉल किया था। बताइए, मैं कैसे मदद करूँ?"
+        if lang_c == "bn-IN":
+            return f"নমস্কার, {biz_c} থেকে বলছি — আমরা একটু আগে আপনাকে ফোন করেছিলাম। বলুন, কীভাবে সাহায্য করতে পারি?"
+        if lang_c == "en-IN":
+            return f"Hello, {biz_c} here — we called you a little while ago. How can I help?"
+        return f"హలో, {biz_c} అండి — ఇందాకే మేము మీకు కాల్ చేశాం. చెప్పండి, ఎలా సహాయం చేయగలను?"
+
     script = (profile.get("greeting_script") or "").strip()
     if script:
         if (history or {}).get("previous_calls"):
@@ -6539,7 +6589,8 @@ async def _greeting_audio(agent) -> bytes:
     pid = str((agent.profile or {}).get("id") or "default")
     # Separate cache entry per variant, or a returning caller would be served
     # the stranger greeting from cache and the recognition would never be heard.
-    variant = "back" if (agent.caller_history or {}).get("previous_calls") else "new"
+    variant = ("rang" if _called_them_recently(getattr(agent, "recent_outbound", None))
+               else "back" if (agent.caller_history or {}).get("previous_calls") else "new")
     # The greeting text is part of the key. Without it, an owner editing their
     # greeting_script on /setup would change nothing a caller ever hears — the
     # first call cached a wav under this name and every later call reads it
@@ -6548,7 +6599,8 @@ async def _greeting_audio(agent) -> bytes:
     # With the tenant's language: without it a Hindi greeting went through the
     # Telugu number/time rewriting.
     text = normalize_for_tts(getattr(agent, "greeting_override", None)
-                             or _greeting_text(agent.profile, agent.caller_history),
+                             or _greeting_text(agent.profile, agent.caller_history,
+                                               getattr(agent, "recent_outbound", None)),
                              (agent.profile or {}).get("pronunciation_map"),
                              getattr(agent, "lang", LANG_DEFAULT))
     stamp = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
@@ -8992,7 +9044,7 @@ async def freeswitch_ws(
             # Two lookups, one round trip's worth of waiting: how many times
             # they have rung, and what they last asked this business for.
             agent.caller_history, agent.caller_memory, agent.recent_outbound = await asyncio.gather(
-                db.get_caller_history(caller_number, (profile or {}).get("id", "")),
+                db.get_caller_history(caller_number, (profile or {}).get("id", ""), fs_uuid),
                 db.get_caller_memory(caller_number, (profile or {}).get("tenant_id", "")),
                 db.get_recent_outbound(caller_number, (profile or {}).get("tenant_id", ""))
                 if not getattr(agent, "is_outbound", False) else asyncio.sleep(0, result={}),
@@ -9023,7 +9075,9 @@ async def freeswitch_ws(
         # she was ringing. Tell her what she has already said.
         if greet:
             _opened = (getattr(agent, "greeting_override", None)
-                       or _greeting_text(agent.profile, agent.caller_history))
+                       or _greeting_text(agent.profile, agent.caller_history,
+                                         getattr(agent, "recent_outbound", None)))
+            agent.opened_with = _opened
             agent.system_prompt += (
                 f"\n\n[CALL ALREADY OPENED] You have just said: «{_opened}». "
                 "Do not greet or introduce yourself again. If the caller only says "

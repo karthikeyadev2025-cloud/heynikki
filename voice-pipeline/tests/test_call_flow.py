@@ -848,6 +848,26 @@ def test_heynikki_prompt_answers_who_built_it():
     assert "WHO BUILT YOU" in ours and "Hyderabad" in ours
 
 
+def test_callback_greeting_says_we_called_them():
+    # 25 Sep: customers ringing back a Desk number heard "thanks for calling
+    # again" and waited to be told why they had been called.
+    from datetime import datetime, timedelta, timezone
+    prof = {"business_name": "Nikki Technologies", "id": "p"}
+    just_now = {"last_outbound_at": (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()}
+    long_ago = {"last_outbound_at": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()}
+    assert "కాల్ చేశాం" in main._greeting_text(prof, {"previous_calls": 1}, just_now)
+    assert "కాల్ చేశాం" not in main._greeting_text(prof, {"previous_calls": 1}, long_ago)
+    assert "కాల్ చేశాం" not in main._greeting_text(prof, {}, None)
+
+
+def test_callers_own_number_is_corrected_when_misread():
+    # 25 Sep: "మీ WhatsApp నెంబర్ 74347459 కి పంపిస్తాను" for 8074347459.
+    known = main._known_numbers({"business_name": "x"}, [], "8074347459")
+    fixed, fixes = main._fix_known_numbers("మీ WhatsApp నెంబర్ 74347459 కి పంపిస్తాను", known)
+    assert "8074347459" in fixed and fixes
+    assert main._known_numbers({"business_name": "x"}, [], "12345") == []
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
