@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import NikkiLogo from "../../components/NikkiLogo";
+import AuthFrame from "../../components/AuthFrame";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { isNativeApp, nativeGoogleSignIn, installAuthDeepLink } from "../../lib/native";
 import { landingFor } from "../../lib/landing";
@@ -18,8 +18,10 @@ const C = {
   border: "#E2E8F0", borderHi: "#CBD5E1",
   emerald: "#10B981", orange: "#F97316", ink: "#0F172A",
   textMid: "#475569", textDim: "#94A3B8", red: "#DC2626",
-  grad: "linear-gradient(135deg, #10B981 0%, #14B8A6 55%, #F97316 100%)",
-  focus: "0 0 0 3px rgba(16,185,129,0.22)",
+  // One solid brand teal for the primary action, as in the app itself. The
+  // green-to-orange gradient here matched nothing else on the site.
+  teal: "#12457A",
+  focus: "0 0 0 3px rgba(18,69,122,0.16)",
 };
 
 // 16px, not 14. Mobile Safari zooms the whole page in when a focused input's
@@ -27,15 +29,15 @@ const C = {
 // the email field on a phone got a sideways-scrolling, half-visible form on
 // the one screen that must not fight them.
 const inputBase: React.CSSProperties = {
-  width: "100%", padding: "12px 14px", fontSize: 16,
-  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+  width: "100%", padding: "12px 14px", fontSize: 16, fontFamily: "inherit",
+  background: C.surface, border: "1px solid #D8DFE8", borderRadius: 10,
   color: C.ink, outline: "none",
   transition: "border-color .15s ease, box-shadow .15s ease",
 };
 
 const labelStyle: React.CSSProperties = {
-  display: "block", color: C.textMid, fontSize: 11,
-  marginBottom: 6, fontWeight: 700, letterSpacing: 0.5,
+  display: "block", color: C.ink, fontSize: 13.5,
+  marginBottom: 7, fontWeight: 600,
 };
 
 export default function LoginPage() {
@@ -68,11 +70,11 @@ export default function LoginPage() {
   // set outline:none for the rounded look and previously replaced it with
   // nothing, which left keyboard users with no focus indicator at all.
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = C.emerald;
+    e.currentTarget.style.borderColor = C.teal;
     e.currentTarget.style.boxShadow = C.focus;
   };
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = C.border;
+    e.currentTarget.style.borderColor = "#D8DFE8";
     e.currentTarget.style.boxShadow = "none";
   };
 
@@ -173,38 +175,35 @@ export default function LoginPage() {
   const busy = loading || googleLoading;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, display: "flex",
-      alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
+    <AuthFrame>
+      <div style={{ color: C.ink }}>
 
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ marginBottom: 18, display: "inline-block" }}>
-            <NikkiLogo size={84} variant="stacked" />
-          </div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: C.ink, margin: "0 0 6px", letterSpacing: -0.5 }}>
+        <div style={{ marginBottom: 28 }}>
+          <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 32, fontWeight: 700,
+            color: C.ink, margin: "0 0 6px", letterSpacing: "-0.025em" }}>
             Welcome back
           </h1>
-          <div style={{ color: C.textMid, fontSize: 14 }}>
-            Sign in to your HeyNikki account
+          <div style={{ color: C.textMid, fontSize: 15 }}>
+            Sign in to see today&apos;s calls, bookings and orders.
           </div>
         </div>
 
-        <div style={{ background: C.vault, border: `1px solid ${C.border}`, borderRadius: 16, padding: 32 }}>
+        <div>
           {/* Email or phone. A toggle rather than two pages: the OTP only
               means anything for the number just typed, and a second route
               invites a refresh that throws it away. */}
           <div role="tablist" aria-label="Sign-in method"
-               style={{ display: "flex", gap: 6, marginBottom: 20,
-                        background: C.surface, border: `1px solid ${C.border}`,
-                        borderRadius: 10, padding: 4 }}>
+               style={{ display: "flex", gap: 4, marginBottom: 22,
+                        background: "#F1F4F8", borderRadius: 10, padding: 4 }}>
             {(["email", "phone"] as const).map(m => (
               <button key={m} type="button" role="tab" aria-selected={mode === m}
                 onClick={() => { setMode(m); setError(""); setOtpSent(false); }}
                 style={{
                   flex: 1, padding: "8px 10px", borderRadius: 7, border: "none",
-                  fontSize: 13, fontWeight: 700, cursor: "pointer",
-                  background: mode === m ? C.ink : "transparent",
-                  color: mode === m ? "#fff" : C.textMid,
+                  fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                  background: mode === m ? "#fff" : "transparent",
+                  color: mode === m ? C.ink : C.textMid,
+                  boxShadow: mode === m ? "0 1px 3px rgba(15,23,42,0.12)" : "none",
                 }}>
                 {m === "email" ? "Email" : "Mobile"}
               </button>
@@ -218,8 +217,8 @@ export default function LoginPage() {
                 aria-live="polite"
                 style={{
                   background: "#FEF2F2", color: C.red,
-                  padding: "10px 12px", borderRadius: 8,
-                  fontSize: 13, marginBottom: 16,
+                  padding: "11px 14px", borderRadius: 10,
+                  fontSize: 14, marginBottom: 18, lineHeight: 1.5,
                   border: "1px solid #FECACA",
                 }}
               >
@@ -229,10 +228,10 @@ export default function LoginPage() {
 
             {mode === "phone" ? (
               <>
-                <label htmlFor="phone" style={labelStyle}>MOBILE NUMBER</label>
+                <label htmlFor="phone" style={labelStyle}>Mobile number</label>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                   <span style={{ ...inputBase, width: 62, display: "flex", alignItems: "center",
-                                 justifyContent: "center", color: C.textMid, background: C.vault }}>+91</span>
+                                 justifyContent: "center", color: C.textMid, background: "#F1F4F8" }}>+91</span>
                   <input
                     id="phone" name="phone" type="tel" inputMode="numeric"
                     value={phone} onChange={e => setPhone(e.target.value)}
@@ -246,7 +245,7 @@ export default function LoginPage() {
 
                 {otpSent && (
                   <>
-                    <label htmlFor="otp" style={labelStyle}>6-DIGIT CODE</label>
+                    <label htmlFor="otp" style={labelStyle}>6-digit code</label>
                     <input
                       id="otp" name="otp" inputMode="numeric" maxLength={6}
                       value={otp} onChange={e => setOtp(e.target.value)}
@@ -258,8 +257,8 @@ export default function LoginPage() {
                     />
                     <div style={{ textAlign: "right", marginBottom: 16 }}>
                       <button type="button" onClick={() => { setOtpSent(false); setOtp(""); }}
-                        style={{ background: "none", border: "none", color: C.textMid,
-                                 fontSize: 12, cursor: "pointer", padding: 0 }}>
+                        style={{ background: "none", border: "none", color: C.teal, fontWeight: 600,
+                                 fontSize: 13, cursor: "pointer", padding: 0 }}>
                         Wrong number?
                       </button>
                     </div>
@@ -267,8 +266,8 @@ export default function LoginPage() {
                 )}
 
                 <button type="submit" disabled={busy} style={{
-                  width: "100%", padding: "13px", fontSize: 15, fontWeight: 700,
-                  background: busy ? C.borderHi : C.grad, color: "#fff",
+                  width: "100%", padding: "13px", fontSize: 15.5, fontWeight: 600, fontFamily: "inherit",
+                  background: busy ? C.borderHi : C.teal, color: "#fff",
                   border: "none", borderRadius: 10, cursor: busy ? "not-allowed" : "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                   marginBottom: 16,
@@ -280,7 +279,7 @@ export default function LoginPage() {
               </>
             ) : (
             <>
-            <label htmlFor="email" style={labelStyle}>EMAIL</label>
+            <label htmlFor="email" style={labelStyle}>Email</label>
             <input
               id="email" name="email" type="email"
               value={email} onChange={e => setEmail(e.target.value)}
@@ -291,7 +290,7 @@ export default function LoginPage() {
               style={{ ...inputBase, marginBottom: 16 }}
             />
 
-            <label htmlFor="password" style={labelStyle}>PASSWORD</label>
+            <label htmlFor="password" style={labelStyle}>Password</label>
             <div style={{ position: "relative", marginBottom: 8 }}>
               <input
                 id="password" name="password"
@@ -317,15 +316,15 @@ export default function LoginPage() {
               </button>
             </div>
 
-            <div style={{ textAlign: "right", marginBottom: 16 }}>
-              <Link href="/forgot-password" style={{ color: C.textMid, fontSize: 12, textDecoration: "none" }}>
+            <div style={{ textAlign: "right", marginBottom: 20 }}>
+              <Link href="/forgot-password" style={{ color: C.teal, fontSize: 13.5, fontWeight: 600, textDecoration: "none" }}>
                 Forgot password?
               </Link>
             </div>
 
             <button type="submit" disabled={busy} style={{
-              width: "100%", padding: "13px", fontSize: 15, fontWeight: 700,
-              background: busy ? C.borderHi : C.grad,
+              width: "100%", padding: "13px", fontSize: 15.5, fontWeight: 600, fontFamily: "inherit",
+              background: busy ? C.borderHi : C.teal,
               color: "#FFFFFF", border: "none", borderRadius: 10,
               cursor: busy ? "not-allowed" : "pointer", marginBottom: 16,
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -333,22 +332,22 @@ export default function LoginPage() {
             }}>
               {loading
                 ? <><Loader2 size={16} className="hn-spin" /> Signing in…</>
-                : <>Sign In →</>}
+                : <>Sign in</>}
             </button>
 
             </>
             )}
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.textDim, fontSize: 11, margin: "16px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, color: C.textDim, fontSize: 12.5, margin: "8px 0 16px" }}>
               <div style={{ flex: 1, height: 1, background: C.border }} />
-              OR
+              or
               <div style={{ flex: 1, height: 1, background: C.border }} />
             </div>
 
             <button type="button" onClick={handleGoogle} disabled={busy} style={{
-              width: "100%", padding: "12px", fontSize: 14, fontWeight: 600,
+              width: "100%", padding: "12px", fontSize: 15, fontWeight: 600, fontFamily: "inherit",
               background: C.surface, color: C.ink,
-              border: `1px solid ${C.border}`, borderRadius: 10,
+              border: "1px solid #D8DFE8", borderRadius: 10,
               cursor: busy ? "not-allowed" : "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
             }}>
@@ -365,10 +364,10 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: C.textMid }}>
+        <div style={{ marginTop: 28, paddingTop: 20, borderTop: "1px solid #EEF2F6", fontSize: 14.5, color: C.textMid }}>
           New to HeyNikki?{" "}
-          <Link href="/signup" style={{ color: C.emerald, fontWeight: 700, textDecoration: "none" }}>
-            Start free — 100 minutes →
+          <Link href="/signup" style={{ color: C.teal, fontWeight: 600, textDecoration: "none" }}>
+            Start free with 100 minutes
           </Link>
         </div>
       </div>
@@ -377,6 +376,6 @@ export default function LoginPage() {
         @keyframes hn-spin-kf { to { transform: rotate(360deg); } }
         .hn-spin { animation: hn-spin-kf .8s linear infinite; }
       `}</style>
-    </div>
+    </AuthFrame>
   );
 }

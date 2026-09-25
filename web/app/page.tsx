@@ -21,7 +21,7 @@ import NikkiLogo from "../components/NikkiLogo";
 import MobileCta from "../components/MobileCta";
 import {
   Phone, Users, ShieldCheck, MessageCircle, Languages,
-  Clock, ArrowRight, Plus, Minus, IndianRupee,
+  ArrowRight, Plus, Minus, IndianRupee,
   ShoppingBag, CalendarCheck, PhoneOutgoing, BookUser,
   Terminal, Smartphone, LayoutDashboard, Volume2,
   ListChecks, CalendarClock, Sparkles, PhoneCall, ChartColumn,
@@ -510,8 +510,10 @@ export default function Home() {
           Nikki answers; your team dials. Every person on your plan gets the Desk — on
           the same numbers, in the same dashboard, with nothing to remember between calls.
         </p>
+        {/* Six cards: three across (or two, or one) — never four, which left
+            two empty cells showing the grid's background. */}
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(268px, 1fr))",
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
           gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden",
         }}>
           {[
@@ -842,7 +844,7 @@ export default function Home() {
         </p>
 
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20,
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 20,
         }}>
           {[
             ["One business, one wall",
@@ -999,11 +1001,18 @@ export default function Home() {
         }}>
           Put Nikki on my number <ArrowRight size={17} />
         </a>
-        <div style={{
-          marginTop: 24, display: "inline-flex", alignItems: "center", gap: 8,
-          color: "rgba(255,255,255,0.4)", fontFamily: M, fontSize: 12,
-        }}>
-          <Clock size={13} /> Live within one business day of KYC approval
+        {/* Was a second "live within one business day" line, repeating the
+            paragraph above and sitting on the button's baseline. The number
+            is the more useful thing to put here. */}
+        <div style={{ marginTop: 22 }}>
+          <a href="tel:+918633502031" style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            color: "rgba(255,255,255,0.62)", fontSize: 14.5, textDecoration: "none",
+          }}>
+            <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: C.live,
+              boxShadow: "0 0 0 4px rgba(34,197,94,0.18)" }} />
+            Or hear her first: <strong style={{ color: "#fff" }}>+91 86335 02031</strong>
+          </a>
         </div>
       </Section>
 
@@ -1014,7 +1023,7 @@ export default function Home() {
           gap: 18, alignItems: "center", justifyContent: "space-between",
         }}>
           <span style={{ fontFamily: M, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-            © {new Date().getFullYear()} Hey Nikki · Hyderabad
+            © {new Date().getFullYear()} Nikki Technologies · a unit of Adexos Global Technologies
           </span>
           <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
             {["Developers", "Pricing", "About", "Privacy", "Terms", "Refund Policy", "Contact"].map((l) => (
@@ -1194,7 +1203,9 @@ export default function Home() {
            colours, which is the only reason this port is CSS and
            not a rewrite of the component holding the microphone. */
         .v2-voice { margin:32px 0 0; }
-        .v2-voice .wwn { display:flex; flex-wrap:wrap; align-items:center; gap:14px; }
+        /* globals.css makes .wwn a centred column for its other home; here it
+           sits under the call number as one left-aligned row. */
+        .v2-voice .wwn { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:14px; }
         .v2-voice .wwn-bars { display:flex; align-items:center; gap:3px; height:26px; }
         .v2-voice .wwn-bars span {
           width:3px; height:26px; border-radius:2px; background:rgba(255,255,255,.34);
@@ -1214,7 +1225,7 @@ export default function Home() {
           background:none; border:0; color:#7a7a7a; font-size:12.5px;
           text-decoration:underline; cursor:pointer; padding:0;
         }
-        .v2-voice .wwn-note, .v2-voice .wwn-err { flex-basis:100%; margin:0; font-size:12.5px; }
+        .v2-voice .wwn-note, .v2-voice .wwn-err { flex-basis:100%; margin:0; font-size:12.5px; text-align:left; max-width:none; }
         .v2-voice .wwn-note { color:#7a7a7a; }
         .v2-voice .wwn-err  { color:#ff9a8a; }
         .v2-voice .wwn-lines {

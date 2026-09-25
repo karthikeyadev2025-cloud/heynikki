@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "../../lib/supabase";
-import NikkiLogo from "../../components/NikkiLogo";
+import AuthFrame from "../../components/AuthFrame";
 import { Mail } from "lucide-react";
 
 const J = {
@@ -11,6 +11,21 @@ const J = {
   mercury: "#12457A", surya: "#E5533D", chandra: "#0F172A",
   textMid: "#475569", textDim: "#94A3B8", red: "#EF4444",
   grad: "linear-gradient(135deg, #12457A 0%, #1D6FA5 100%)",
+};
+
+// Shared with the login page's look: sentence-case labels, 16px inputs (no
+// iOS zoom), and a visible focus ring from the .su-in rule below.
+const inp: React.CSSProperties = {
+  width: "100%", padding: "12px 14px", fontSize: 16, fontFamily: "inherit",
+  background: "#FFFFFF", border: "1px solid #D8DFE8", borderRadius: 10,
+  color: "#0F172A", outline: "none",
+};
+const lab: React.CSSProperties = {
+  display: "block", color: "#0F172A", fontSize: 13.5, marginBottom: 7, fontWeight: 600,
+};
+const H1: React.CSSProperties = {
+  fontFamily: "var(--font-display), sans-serif", fontSize: 32, fontWeight: 700,
+  color: "#0F172A", margin: "0 0 6px", letterSpacing: "-0.025em",
 };
 
 // Supabase speaks to developers; this page speaks to a shop owner in
@@ -128,27 +143,23 @@ export default function SignupPage() {
 
   if (done && joining) {
     return (
-      <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, display: "flex",
-        alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <div style={{
-          background: J.vault, border: `1px solid ${J.border}`,
-          borderRadius: 16, padding: 40, maxWidth: 420, textAlign: "center",
-        }}>
-          <div style={{ marginBottom: 16, display: "flex", justifyContent: "center" }}><Mail size={44} /></div>
-          <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, color: J.chandra }}>
+      <AuthFrame>
+        <div style={{ color: J.chandra }}>
+          <MailBadge />
+          <h1 style={H1}>
             Check your email
-          </h2>
-          <p style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+          </h1>
+          <p style={{ color: J.textMid, fontSize: 15, lineHeight: 1.6, margin: "0 0 18px" }}>
             We sent a confirmation link to<br />
             <span style={{ color: J.mercury, fontWeight: 700 }}>{email}</span>.<br />
             Open it, and you&apos;ll join <strong style={{ color: J.chandra }}>{invite?.business}</strong>{" "}
             automatically.
           </p>
-          <p style={{ color: J.textDim, fontSize: 12, margin: 0 }}>
+          <p style={{ color: J.textDim, fontSize: 13.5, margin: 0 }}>
             Can&apos;t see it? Check your spam folder — it arrives within a minute.
           </p>
         </div>
-      </div>
+      </AuthFrame>
     );
   }
 
@@ -159,51 +170,37 @@ export default function SignupPage() {
       : invite.status === "error" ? "We couldn't check this invite link. Check your connection and reload the page."
       : "This invite link isn't valid — it may have been replaced by a newer one.";
     return (
-      <div style={{ minHeight: "100vh", background: J.bg, display: "flex",
-        alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <div style={{
-          background: J.vault, border: `1px solid ${J.border}`,
-          borderRadius: 16, padding: 36, maxWidth: 420, textAlign: "center",
-        }}>
-          <div style={{ marginBottom: 16, display: "inline-block" }}>
-            <NikkiLogo size={64} variant="icon" />
-          </div>
-          <h2 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 10px", color: J.chandra }}>{why}</h2>
-          <p style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6, margin: "0 0 20px" }}>
+      <AuthFrame>
+        <div>
+          <h1 style={{ ...H1, fontSize: 26, margin: "0 0 10px" }}>{why}</h1>
+          <p style={{ color: J.textMid, fontSize: 15, lineHeight: 1.6, margin: "0 0 20px" }}>
             {invite.status === "error"
               ? "If it keeps happening, ask the person who invited you to send the link again."
               : "Ask the person who invited you to copy your link again from their Team page and send it to you."}
           </p>
           {invite.status === "used" && (
-            <Link href="/login" style={{ color: J.mercury, fontWeight: 700, textDecoration: "none", fontSize: 14 }}>
+            <Link href="/login" style={{ color: J.mercury, fontWeight: 600, textDecoration: "none", fontSize: 15 }}>
               Already joined? Sign in →
             </Link>
           )}
         </div>
-      </div>
+      </AuthFrame>
     );
   }
 
   if (done) {
     return (
-      <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra, display: "flex",
-        alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <div style={{
-          background: J.vault, border: `1px solid ${J.border}`,
-          borderRadius: 16, padding: 40, maxWidth: 420, textAlign: "center",
-        }}>
-          <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <NikkiLogo size={64} variant="icon" />
-          </div>
-          <div style={{ marginBottom: 16, display: "flex", justifyContent: "center" }}><Mail size={44} /></div>
-          <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 8, color: J.chandra }}>
+      <AuthFrame>
+        <div style={{ color: J.chandra }}>
+          <MailBadge />
+          <h1 style={H1}>
             Check your email
-          </h2>
-          <p style={{ color: J.textMid, fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
-            We sent a confirmation link to<br />
-            <span style={{ color: J.mercury, fontWeight: 700 }}>{email}</span>
+          </h1>
+          <p style={{ color: J.textMid, fontSize: 15, lineHeight: 1.6, margin: "0 0 6px" }}>
+            We sent a confirmation link to{" "}
+            <span style={{ color: J.mercury, fontWeight: 600 }}>{email}</span>.
           </p>
-          <p style={{ color: J.textDim, fontSize: 12, marginBottom: 20 }}>
+          <p style={{ color: J.textDim, fontSize: 13.5, marginBottom: 22 }}>
             Can&apos;t see it? Check your spam folder — it arrives within a minute.
           </p>
 
@@ -213,10 +210,11 @@ export default function SignupPage() {
               time they learned it was when they went looking for a number
               that was not there. Say the sequence up front; it is short, and
               every step of it is real. */}
+          <div style={{ color: J.chandra, fontSize: 15, fontWeight: 700, marginBottom: 10 }}>What happens next</div>
           <ol style={{
-            textAlign: "left", margin: "0 0 24px", padding: "16px 18px 16px 34px",
-            background: J.surface, border: `1px solid ${J.border}`, borderRadius: 12,
-            color: J.textMid, fontSize: 13, lineHeight: 1.65,
+            textAlign: "left", margin: "0 0 26px", padding: "16px 18px 16px 36px",
+            background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 12,
+            color: J.textMid, fontSize: 14, lineHeight: 1.6,
           }}>
             <li style={{ marginBottom: 8 }}>
               <strong style={{ color: J.chandra }}>Confirm your email</strong> — then sign
@@ -241,46 +239,36 @@ export default function SignupPage() {
           </ol>
 
           <Link href="/login" style={{
-            display: "inline-block", background: J.grad, color: J.bg,
-            padding: "12px 28px", borderRadius: 10, textDecoration: "none",
-            fontWeight: 700, fontSize: 14,
-          }}>Go to Sign In</Link>
+            display: "block", textAlign: "center", background: J.mercury, color: "#fff",
+            padding: "13px 28px", borderRadius: 10, textDecoration: "none",
+            fontWeight: 600, fontSize: 15.5,
+          }}>Go to sign in</Link>
         </div>
-      </div>
+      </AuthFrame>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: J.bg, display: "flex",
-      alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
+    <AuthFrame>
+      <div>
 
-        <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ marginBottom: 20, display: "inline-block" }}>
-            <NikkiLogo size={84} variant="stacked" />
-          </div>
-          <h1 style={{
-            fontSize: 22, fontWeight: 800, color: J.chandra,
-            margin: "0 0 6px", letterSpacing: -0.5,
-          }}>{invite?.status === "loading" ? "Checking your invite…"
-               : joining ? `Join ${invite?.business} on HeyNikki` : "Start free — 100 minutes"}</h1>
-          <div style={{ color: J.textMid, fontSize: 14 }}>
-            {joining ? "You've been invited to their team. Create your account to join."
-                     : invite?.status === "loading" ? "\u00a0" : "100 minutes free · No credit card required"}
+        <div style={{ marginBottom: 26 }}>
+          <h1 style={H1}>{invite?.status === "loading" ? "Checking your invite…"
+               : joining ? `Join ${invite?.business}` : "Start free"}</h1>
+          <div style={{ color: J.textMid, fontSize: 15, lineHeight: 1.55 }}>
+            {joining ? "You've been invited to their team on HeyNikki. Create your account to join."
+                     : invite?.status === "loading" ? "\u00a0" : "100 free minutes on real calls. No card needed."}
           </div>
         </div>
 
-        <div style={{
-          background: J.vault, border: `1px solid ${J.border}`,
-          borderRadius: 16, padding: 32,
-        }}>
+        <div>
           <form onSubmit={handleSignup}>
             {error && (
-              <div style={{
-                background: `${J.red}22`, color: J.red,
-                padding: "10px 12px", borderRadius: 8,
-                fontSize: 13, marginBottom: 16,
-                border: `1px solid ${J.red}44`,
+              <div role="alert" style={{
+                background: "#FEF2F2", color: "#DC2626",
+                padding: "11px 14px", borderRadius: 10,
+                fontSize: 14, marginBottom: 18, lineHeight: 1.5,
+                border: "1px solid #FECACA",
               }}>{error === "ALREADY_REGISTERED" ? (
                 <>
                   This email already has a HeyNikki account, so no new confirmation email was sent.{" "}
@@ -295,23 +283,19 @@ export default function SignupPage() {
             )}
 
             {!joining && (<>
-            <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
-              BUSINESS NAME
+            <label style={lab}>
+              Business name
             </label>
             <input
               type="text" value={businessName} onChange={e => setBusinessName(e.target.value)}
               required placeholder="Ravi Clinic, Banjara Hills"
-              style={{
-                width: "100%", padding: "12px 14px", fontSize: 16,
-                background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
-                color: J.chandra, marginBottom: 14, outline: "none",
-              }}
+              className="su-in" style={{ ...inp, marginBottom: 16 }}
             />
             </>)}
 
-            <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
-              {joining ? <>YOUR MOBILE NUMBER <span style={{ color: J.textDim, fontWeight: 400, letterSpacing: 0 }}>(optional)</span></>
-                       : "YOUR WHATSAPP NUMBER"}
+            <label style={lab}>
+              {joining ? <>Your mobile number <span style={{ color: J.textDim, fontWeight: 400 }}>(optional)</span></>
+                       : "Your WhatsApp number"}
             </label>
             <input
               type="tel" value={ownerPhone}
@@ -323,56 +307,44 @@ export default function SignupPage() {
               // the person who knows the right number is still looking.
               pattern="^(\+?91)?[\s]*[6-9][0-9\s]{9,13}$"
               title="10-digit mobile starting 6-9"
-              style={{
-                width: "100%", padding: "12px 14px", fontSize: 16,
-                background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
-                color: J.chandra, marginBottom: 6, outline: "none",
-              }}
+              className="su-in" style={{ ...inp, marginBottom: 6 }}
             />
-            <div style={{ color: J.textDim, fontSize: 11.5, marginBottom: 14, lineHeight: 1.5 }}>
+            <div style={{ color: J.textDim, fontSize: 13, marginBottom: 16, lineHeight: 1.5 }}>
               {joining ? "The number the Desk rings you on for calls. You can add it later."
                        : "Where we send your setup updates. Not shown to your callers."}
             </div>
 
-            <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
-              EMAIL
+            <label style={lab}>
+              Email
             </label>
             <input
               type="email" value={email} onChange={e => setEmail(e.target.value)}
               required placeholder="you@business.in"
-              style={{
-                width: "100%", padding: "12px 14px", fontSize: 16,
-                background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
-                color: J.chandra, marginBottom: 14, outline: "none",
-              }}
+              className="su-in" style={{ ...inp, marginBottom: 16 }}
             />
 
-            <label style={{ display: "block", color: J.textMid, fontSize: 11, marginBottom: 6, fontWeight: 700, letterSpacing: 0.5 }}>
-              PASSWORD <span style={{ color: J.textDim, fontWeight: 400, letterSpacing: 0 }}>(min 8 chars)</span>
+            <label style={lab}>
+              Password <span style={{ color: J.textDim, fontWeight: 400 }}>(at least 8 characters)</span>
             </label>
             <input
               type="password" value={password} onChange={e => setPassword(e.target.value)}
               required minLength={8} placeholder="••••••••"
-              style={{
-                width: "100%", padding: "12px 14px", fontSize: 16,
-                background: J.surface, border: `1px solid ${J.border}`, borderRadius: 10,
-                color: J.chandra, marginBottom: 20, outline: "none",
-              }}
+              className="su-in" style={{ ...inp, marginBottom: 22 }}
             />
 
             <button type="submit" disabled={loading || invite?.status === "loading"} style={{
-              width: "100%", padding: "13px", fontSize: 15, fontWeight: 700,
-              background: loading ? J.surface : J.grad,
-              color: loading ? J.textMid : J.bg, border: "none", borderRadius: 10,
-              cursor: loading ? "wait" : "pointer", marginBottom: 10,
+              width: "100%", padding: "13px", fontSize: 15.5, fontWeight: 600, fontFamily: "inherit",
+              background: loading ? J.borderHi : J.mercury,
+              color: "#fff", border: "none", borderRadius: 10,
+              cursor: loading ? "wait" : "pointer", marginBottom: 12,
             }}>
-              {loading ? "Creating account..." : joining ? "Create account & join →" : "Start free →"}
+              {loading ? "Creating your account…" : joining ? "Create account and join" : "Create my account"}
             </button>
 
             {/* These were plain text. An agreement the user cannot read before
                 accepting is not an agreement, and Razorpay's merchant review
                 looks for exactly this link pair on the signup surface. */}
-            <p style={{ fontSize: 11.5, color: J.textDim, textAlign: "center", margin: 0, lineHeight: 1.6 }}>
+            <p style={{ fontSize: 13, color: J.textDim, margin: 0, lineHeight: 1.6 }}>
               By creating an account you agree to our{" "}
               <Link href="/terms" style={{ color: J.mercury, fontWeight: 600 }}>Terms of Service</Link>{" "}
               and{" "}
@@ -381,13 +353,26 @@ export default function SignupPage() {
           </form>
         </div>
 
-        <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: J.textMid }}>
+        <div style={{ marginTop: 28, paddingTop: 20, borderTop: "1px solid #EEF2F6", fontSize: 14.5, color: J.textMid }}>
           Already have an account?{" "}
-          <Link href={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} style={{ color: J.mercury, fontWeight: 700, textDecoration: "none" }}>
-            Sign in →
+          <Link href={inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : "/login"} style={{ color: J.mercury, fontWeight: 600, textDecoration: "none" }}>
+            Sign in
           </Link>
         </div>
       </div>
+      <style>{`
+        .su-in { transition: border-color .15s ease, box-shadow .15s ease; }
+        .su-in:focus { border-color: #12457A !important; box-shadow: 0 0 0 3px rgba(18,69,122,0.16); }
+      `}</style>
+    </AuthFrame>
+  );
+}
+
+function MailBadge() {
+  return (
+    <div style={{ width: 52, height: 52, borderRadius: 14, background: "#12457A14", color: "#12457A",
+      display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+      <Mail size={24} />
     </div>
   );
 }
