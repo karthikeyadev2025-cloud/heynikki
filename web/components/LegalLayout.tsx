@@ -8,9 +8,15 @@ const J = {
   textMid: "#475569", textDim: "#94A3B8",
 };
 
+// Pricing and Contact share this frame with the legal pages, so the eyebrow,
+// the date line and the width are the page's to choose: a pricing page
+// labelled "Legal" with a "Last updated" stamp read as a policy document.
 export default function LegalLayout({
-  title, lastUpdated, children,
-}: { title: string; lastUpdated: string; children: React.ReactNode }) {
+  title, lastUpdated, children, eyebrow = "Legal", lede, updatedLabel = "Last updated:", wide = false,
+}: {
+  title: string; lastUpdated?: string; children: React.ReactNode;
+  eyebrow?: string; lede?: React.ReactNode; updatedLabel?: string; wide?: boolean;
+}) {
   return (
     <div style={{ minHeight: "100vh", background: J.bg, color: J.chandra }}>
       <nav style={{
@@ -23,26 +29,36 @@ export default function LegalLayout({
         <Link href="/" style={{ textDecoration: "none" }}>
           <NikkiLogo size={36} variant="horizontal" />
         </Link>
-        <Link href="/" style={{
-          color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none",
-        }}>← Back to home</Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          <Link href="/" className="ll-home" style={{
+            color: J.textMid, fontSize: 14, fontWeight: 600, textDecoration: "none",
+          }}>← Back to home</Link>
+          <Link href="/signup" style={{
+            background: J.mercury, color: "#fff", fontSize: 14, fontWeight: 600,
+            padding: "9px 16px", borderRadius: 999, textDecoration: "none", whiteSpace: "nowrap",
+          }}>Start free</Link>
+        </div>
       </nav>
 
+      {/* Body text was #D1D5DB — a grey meant for the old dark theme, left
+          behind on white, where every paragraph of every policy was faint. */}
       <article style={{
-        maxWidth: 760, margin: "0 auto", padding: "60px 24px 80px",
-        fontSize: 15, lineHeight: 1.7, color: "#D1D5DB",
+        maxWidth: wide ? 1080 : 760, margin: "0 auto", padding: "56px 24px 80px",
+        fontSize: 15.5, lineHeight: 1.7, color: J.textMid,
       }}>
         <div style={{
-          fontSize: 12, color: J.surya, fontWeight: 800,
-          letterSpacing: 2, textTransform: "uppercase", marginBottom: 12,
-        }}>Legal</div>
+          display: "flex", alignItems: "center", gap: 10,
+          fontFamily: "var(--font-mono), monospace", fontSize: 12, color: J.mercury,
+          letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 14,
+        }}><span aria-hidden style={{ width: 18, height: 1, background: J.mercury }} />{eyebrow}</div>
         <h1 style={{
-          fontSize: 36, fontWeight: 900, color: J.chandra,
-          margin: "0 0 12px", letterSpacing: -1,
+          fontFamily: "var(--font-display), sans-serif", fontSize: "clamp(32px, 5vw, 46px)", fontWeight: 700,
+          color: J.chandra, margin: "0 0 12px", letterSpacing: "-0.03em", lineHeight: 1.08,
         }}>{title}</h1>
-        <p style={{ color: J.textMid, fontSize: 13, marginBottom: 40 }}>
-          Last updated: {lastUpdated}
-        </p>
+        {lede && <p style={{ color: J.textMid, fontSize: 18, lineHeight: 1.6, margin: "0 0 12px", maxWidth: 640 }}>{lede}</p>}
+        {lastUpdated
+          ? <p style={{ color: J.textDim, fontSize: 13, marginBottom: 40 }}>{updatedLabel} {lastUpdated}</p>
+          : <div style={{ height: 28 }} />}
 
         <style>{`
           .legal h2 { font-size: 22px; font-weight: 800; color: #0F172A; margin: 36px 0 12px; }
@@ -54,6 +70,8 @@ export default function LegalLayout({
           .legal a:hover { text-decoration: underline; }
           .legal strong { color: #0F172A; }
           .legal hr { border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0; }
+          .legal h2 { font-family: var(--font-display), sans-serif; letter-spacing: -0.015em; font-weight: 700; }
+          @media (max-width: 560px) { .ll-home { display: none; } }
         `}</style>
         <div className="legal">{children}</div>
       </article>
@@ -64,7 +82,7 @@ export default function LegalLayout({
         color: J.textMid, fontSize: 13,
       }}>
         <div style={{ marginBottom: 12 }}>
-          © {new Date().getFullYear()} HeyNikki. Made in India 🇮🇳
+          © {new Date().getFullYear()} Nikki Technologies · a unit of Adexos Global Technologies · Made in India
         </div>
         <div style={{ display: "flex", gap: 20, justifyContent: "center", flexWrap: "wrap" }}>
           <Link href="/privacy"        style={{ color: J.textMid, textDecoration: "none" }}>Privacy</Link>

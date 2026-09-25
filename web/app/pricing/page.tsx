@@ -1,4 +1,5 @@
 import LegalLayout from "../../components/LegalLayout";
+import { Check } from "lucide-react";
 
 export const metadata = {
   title: "Pricing — Hey Nikki",
@@ -60,92 +61,148 @@ const TIERS = [
   },
 ];
 
+// The middle plan is the one most accounts choose; the homepage says the same.
+const POPULAR = "Growth";
+
+const card: React.CSSProperties = {
+  background: "#fff", border: "1px solid #E4E9F0", borderRadius: 14, padding: 24,
+  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+};
+
 export default function Pricing() {
   return (
-    <LegalLayout title="Pricing" lastUpdated="24 September 2026">
-      <p>
-        Simple INR pricing, billed monthly. Every plan includes the Hey Nikki Telugu
-        AI receptionist, the dashboard, call recordings and transcripts. Prices are
-        exclusive of GST. Annual billing saves a third.
-      </p>
+    <LegalLayout
+      title="Pricing"
+      eyebrow="Pricing"
+      wide
+      lede={<>Simple INR pricing, billed monthly. Every plan includes the Telugu AI
+        receptionist, the dashboard, call recordings and transcripts. Prices are exclusive
+        of GST. Annual billing saves a third.</>}
+      updatedLabel="Prices as of"
+      lastUpdated="24 September 2026"
+    >
+      {/* Free minutes first: it is the thing every visitor can use today. */}
+      <div style={{ ...card, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap",
+        borderLeft: "3px solid #22C55E", marginBottom: 24 }}>
+        <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700,
+          color: "#0F172A", letterSpacing: "-0.02em", lineHeight: 1 }}>100 min</div>
+        <div style={{ flex: "1 1 320px", fontSize: 15, lineHeight: 1.55 }}>
+          <strong>Free on every new account</strong> — no card required, and no time limit.
+          After they run out, choose a plan or your account becomes read-only. Nothing is deleted.
+        </div>
+        <a href="/signup" style={{ background: "#12457A", color: "#fff", padding: "11px 20px", borderRadius: 999,
+          fontWeight: 600, fontSize: 14.5, textDecoration: "none", whiteSpace: "nowrap" }}>Start free</a>
+      </div>
 
-      {TIERS.map(t => (
-        <section key={t.name}>
-          <h2>
-            {t.name} — ₹{t.price}/month
-          </h2>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 290px), 1fr))",
+        gap: 18, alignItems: "stretch", marginBottom: 56 }}>
+        {TIERS.map(t => {
+          const pop = t.name === POPULAR;
+          return (
+            <section key={t.name} style={{
+              ...card, position: "relative", display: "flex", flexDirection: "column",
+              ...(pop ? { border: "1px solid #12457A", boxShadow: "0 0 0 3px rgba(18,69,122,0.12), 0 12px 32px rgba(15,23,42,0.08)" } : {}),
+            }}>
+              {pop && (
+                <span style={{ position: "absolute", top: -12, left: 24, background: "#12457A", color: "#fff",
+                  fontSize: 12, fontWeight: 600, padding: "3px 12px", borderRadius: 999 }}>
+                  Most businesses start here
+                </span>
+              )}
+              <h2 style={{ margin: "0 0 10px", fontSize: 18, color: "#0F172A" }}>{t.name}</h2>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                <span style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 40, fontWeight: 700,
+                  color: "#0F172A", letterSpacing: "-0.03em", lineHeight: 1 }}>₹{t.price}</span>
+                <span style={{ fontSize: 14, color: "#475569" }}>/month</span>
+              </div>
+              <div style={{ fontSize: 13.5, color: "#64748B", margin: "6px 0 16px" }}>
+                or ₹{t.annual}/month billed yearly (₹{t.year})
+              </div>
+              <div style={{ fontSize: 13.5, color: "#0F172A", background: "#F1F4F8", borderRadius: 8,
+                padding: "8px 12px", marginBottom: 18, lineHeight: 1.5 }}>{t.line}</div>
+              <ul style={{ listStyle: "none", padding: 0, margin: "0 0 22px", flex: 1 }}>
+                {t.points.map(pt => (
+                  <li key={pt} style={{ display: "flex", gap: 10, alignItems: "flex-start",
+                    fontSize: 14.5, lineHeight: 1.5, color: "#334155", marginBottom: 9 }}>
+                    <Check size={16} color="#16A34A" style={{ flexShrink: 0, marginTop: 3 }} />{pt}
+                  </li>
+                ))}
+              </ul>
+              <a href="/signup" style={{
+                display: "block", textAlign: "center", padding: "12px", borderRadius: 10,
+                fontWeight: 600, fontSize: 15, textDecoration: "none",
+                ...(pop ? { background: "#12457A", color: "#fff" }
+                        : { background: "#fff", color: "#0F172A", border: "1px solid #D8DFE8" }),
+              }}>Start with {t.name}</a>
+            </section>
+          );
+        })}
+      </div>
+
+      <h2 style={{ fontSize: 26, margin: "0 0 18px" }}>How billing works</h2>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 18 }}>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>If you go over your minutes</h3>
           <p>
-            <em>{t.line}</em> · ₹{t.year}/year billed annually (₹{t.annual}/month)
+            {/* Say the whole of it. The dashboard's billing page quotes "₹15/extra
+                minute" while this page previously said only "upgrade", so a
+                customer comparing the two found two different stories. What the
+                code does (usage.ts minutesGate): calls are REFUSED once the plan's
+                minutes are gone unless bought credit remains — nothing is ever
+                billed to them without a purchase. */}
+            You are never billed automatically for going over. When your included minutes run
+            out, calls stop until you upgrade to the next plan, which you can do at any time
+            from the billing page. Nothing is ever charged to you that you did not buy.
           </p>
-          <ul>
-            {t.points.map(p => <li key={p}>{p}</li>)}
-          </ul>
-        </section>
-      ))}
+          <p style={{ marginBottom: 0 }}>
+            {/* Do NOT advertise buyable add-on minutes here. The Razorpay webhook
+                can grant them (notes.type === "addon_minutes" → credit_ledger),
+                but NOTHING in the product creates such an order: there is no
+                endpoint and no button, so a customer cannot buy them today. The
+                dashboard's billing page quoted "Overage: ₹15/extra minute" for
+                the same unbuyable thing; that line is gone now and the page says
+                calls stop instead.
+                If a top-up flow ships, say so here and quote plan_overage_paise. */}
+            If you need extra minutes before your next billing date and do not want to move
+            up a plan, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> and
+            we will add them to your account and invoice you for them.
+          </p>
+        </div>
 
-      <h2>Free minutes</h2>
-      <p>
-        Every new account gets <strong>100 free minutes</strong> — no card required, and
-        no time limit. After they run out, choose a plan or your account becomes
-        read-only. Nothing is deleted.
-      </p>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>Numbers and seats</h3>
+          <p style={{ marginBottom: 0 }}>
+            Business numbers and team seats come with your plan — one of each on Starter,
+            three on Growth, ten on Scale. Numbers are assigned by our team once your KYC
+            is approved; forward the number you already use to it, or hand out the new one.
+          </p>
+        </div>
 
-      <h2>If you go over your minutes</h2>
-      <p>
-        {/* Say the whole of it. The dashboard's billing page quotes "₹15/extra
-            minute" while this page previously said only "upgrade", so a
-            customer comparing the two found two different stories. What the
-            code does (usage.ts minutesGate): calls are REFUSED once the plan's
-            minutes are gone unless bought credit remains — nothing is ever
-            billed to them without a purchase. */}
-        You are never billed automatically for going over. When your included minutes run
-        out, calls stop until you upgrade to the next plan, which you can do at any time
-        from the billing page. Nothing is ever charged to you that you did not buy.
-      </p>
-      <p>
-        {/* Do NOT advertise buyable add-on minutes here. The Razorpay webhook
-            can grant them (notes.type === "addon_minutes" → credit_ledger),
-            but NOTHING in the product creates such an order: there is no
-            endpoint and no button, so a customer cannot buy them today. The
-            dashboard's billing page quoted "Overage: ₹15/extra minute" for
-            the same unbuyable thing; that line is gone now and the page says
-            calls stop instead.
-            If a top-up flow ships, say so here and quote plan_overage_paise. */}
-        If you need extra minutes before your next billing date and do not want to move
-        up a plan, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> and
-        we will add them to your account and invoice you for them.
-      </p>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>Cancellation and refunds</h3>
+          <p style={{ marginBottom: 0 }}>
+            {/* Was "message us on WhatsApp and it's done the same day" — but no
+                WhatsApp support number is published anywhere on this site, and
+                cancellation is a super-admin action, so "same day" was a promise
+                nobody was on the hook for. Give the channels that actually exist. */}
+            Cancel any month. Email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a>{" "}
+            from the address on your account or call <a href="tel:+918633502031">+91 86335 02031</a>,
+            and we action it within one business day. You keep access until the end of the
+            period you&apos;ve paid for, and your call recordings and transcripts stay
+            exportable. See the <a href="/refund-policy">Refund Policy</a> for refunds.
+          </p>
+        </div>
 
-      <h2>Numbers and seats</h2>
-      <p>
-        Business numbers and team seats come with your plan — one of each on Starter,
-        three on Growth, ten on Scale. Numbers are assigned by our team once your KYC
-        is approved; forward the number you already use to it, or hand out the new one.
-      </p>
-
-      <h2>Cancellation</h2>
-      <p>
-        {/* Was "message us on WhatsApp and it's done the same day" — but no
-            WhatsApp support number is published anywhere on this site, and
-            cancellation is a super-admin action, so "same day" was a promise
-            nobody was on the hook for. Give the channels that actually exist. */}
-        Cancel any month. Email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a>{" "}
-        from the address on your account or call <a href="tel:+918633502031">+91 86335 02031</a>,
-        and we action it within one business day. You keep access until the end of the
-        period you&apos;ve paid for, and your call recordings and transcripts stay
-        exportable. See the <a href="/refund-policy">Refund Policy</a> for refunds.
-      </p>
-
-      <h2>Refunds</h2>
-      <p>See our <a href="/refund-policy">Refund Policy</a> for full details.</p>
-
-      <h2>Need something different?</h2>
-      <p>
-        Multi-branch businesses, high call volumes and custom integrations (CRM,
-        calendar systems) are quoted individually. Email
-        <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume
-        and we&apos;ll come back with a price.
-      </p>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>Need something different?</h3>
+          <p style={{ marginBottom: 0 }}>
+            Multi-branch businesses, high call volumes and custom integrations (CRM,
+            calendar systems) are quoted individually. Email
+            <a href="mailto:hello@heynikki.in"> hello@heynikki.in</a> with your call volume
+            and we&apos;ll come back with a price.
+          </p>
+        </div>
+      </div>
     </LegalLayout>
   );
 }
