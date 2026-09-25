@@ -868,6 +868,15 @@ def test_callers_own_number_is_corrected_when_misread():
     assert main._known_numbers({"business_name": "x"}, [], "12345") == []
 
 
+def test_no_one_second_filler_and_none_on_hold_requests():
+    # 25 Sep: "ఒక్కండి అన్న" (wait) was answered, 1.2s in, with the filler
+    # "ఒక్క సెకను" — then silence, because the reply was SILENT.
+    assert "te_4.wav" not in main._NEUTRAL_FILLERS
+    for held in ("ఒక్కండి అన్న.", "ఒక్క నిమిషం", "ఆగండి", "hold on", "one sec"):
+        assert main._CALLER_HOLD_RE.search(held), held
+    assert not main._CALLER_HOLD_RE.search("మీ దగ్గర వెబ్‌సైట్ ధర ఎంత?")
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():

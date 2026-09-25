@@ -6289,7 +6289,19 @@ _FILLER_DIR = pathlib.Path(_TTS_SPOOL) / "fillers"
 # Only the two non-committal clips are ever eligible now, and the whole
 # thing is OFF unless NIKKI_FILLER_DELAY is set (seconds; 1.2 is sane).
 # The first-clause fast path already has audio out in ~1.3s.
-_NEUTRAL_FILLERS = {"te_4.wav", "te_5.wav"}
+# te_4 "ఒక్క సెకను" is out too: it PROMISES something is coming, and the
+# filler fires 1.2s into the turn — before we know whether there will be a
+# reply. When the model then answers SILENT (the caller said "ఒక్కండి
+# అన్న", hold on) or the words turn out to be noise, the caller heard "one
+# second" and then nothing: 6302457889 on 25 Sep asked her to wait and was
+# told to wait. "ఉమ్" commits to nothing.
+_NEUTRAL_FILLERS = {"te_5.wav"}
+
+# The caller asking for a moment. No filler for these: the right answer is
+# quiet, and any sound — even "ఉమ్" — talks over the one thing they asked.
+_CALLER_HOLD_RE = re.compile(
+    r"ఒక్క\s*(?:నిమిష|నిముష|సెకన|క్షణ)|ఒక్కండి|ఆగండి|ఆగు|ఉండండి|ఉండు|వెయిట్|"
+    r"hold\s*on|one\s*(?:sec|second|minute|min)|\bwait\b|just a (?:sec|second|minute)", re.I)
 _FILLER_DELAY = float(os.getenv("NIKKI_FILLER_DELAY", "0") or 0)
 
 
@@ -7927,7 +7939,14 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # ~1100ms, so the caller waits about two and a half seconds. The
         # filler is what stands in that gap; firing it at 1.1s left the first
         # second bare.
-        filler_task = asyncio.create_task(_play_filler(fs_uuid, delay=_FILLER_DELAY))
+        # Words already streamed in that need no answer get no filler: a hold
+        # request is answered with quiet, a bare "ఆ"/"okay" is usually not a
+        # turn at all. When the words are not known yet, the filler runs.
+        _t = (transcript or "").strip()
+        _no_filler = bool(_t) and (bool(_CALLER_HOLD_RE.search(_t))
+                                   or bool(_BACKCHANNEL_RE.match(_t)))
+        filler_task = asyncio.create_task(
+            _play_filler(fs_uuid, delay=0 if _no_filler else _FILLER_DELAY))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
 
         # ── First-clause fast path ──────────────────────────────────────
