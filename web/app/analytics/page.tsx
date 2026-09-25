@@ -6,7 +6,6 @@ import { createClient } from "../../lib/supabase";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, ComposedChart } from "recharts";
-import { BarChart3, Trophy } from "lucide-react";
 import { NIKKI } from "../../lib/brand";
 import { intentColor, intentLabel } from "../../lib/intent";
 
@@ -54,11 +53,12 @@ function Card({ children, title, subtitle, style }: {
   children: React.ReactNode; title?: string; subtitle?: string; style?: React.CSSProperties;
 }) {
   return (
-    <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10, padding: 16, ...style }}>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 20,
+      boxShadow: "0 1px 2px rgba(15,23,42,0.04)", ...style }}>
       {title && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>{title}</div>
-          {subtitle && <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>{subtitle}</div>}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: C.txt, fontSize: 15, fontWeight: 700 }}>{title}</div>
+          {subtitle && <div style={{ color: C.mid, fontSize: 13, marginTop: 3 }}>{subtitle}</div>}
         </div>
       )}
       {children}
@@ -70,12 +70,15 @@ function KpiCard({ label, value, sub, color, trend }: {
   label: string; value: string | number; sub?: string; color: string; trend?: number;
 }) {
   return (
-    <Card>
-      <div style={{ color: C.mid, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>{label}</div>
-      <div style={{ color, fontSize: 26, fontWeight: 900 }}>{value}</div>
-      {sub && <div style={{ color: C.dim, fontSize: 11, marginTop: 3 }}>{sub}</div>}
+    // Figure in ink, colour only on the edge — as on the dashboard.
+    <Card style={{ position: "relative", overflow: "hidden", padding: "16px 18px 14px" }}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: color }} />
+      <div style={{ color: C.mid, fontSize: 13, fontWeight: 600 }}>{label}</div>
+      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1.1,
+        marginTop: 6, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ color: C.mid, fontSize: 12.5, marginTop: 4 }}>{sub}</div>}
       {trend !== undefined && (
-        <div style={{ color: trend >= 0 ? C.grn : C.red, fontSize: 11, marginTop: 4, fontWeight: 700 }}>
+        <div style={{ color: trend >= 0 ? C.grn : C.red, fontSize: 12.5, marginTop: 4, fontWeight: 600 }}>
           {trend >= 0 ? "↑" : "↓"} {Math.abs(trend)}% vs last period
         </div>
       )}
@@ -86,10 +89,11 @@ function KpiCard({ label, value, sub, color, trend }: {
 const Tooltip2 = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: C.hi, border: "1px solid " + C.bord, borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 8, padding: "8px 12px", fontSize: 12.5,
+      boxShadow: "0 8px 24px rgba(15,23,42,0.12)" }}>
       <div style={{ color: C.mid, marginBottom: 4 }}>{label}</div>
       {payload.map((p: any, i: number) => (
-        <div key={i} style={{ color: p.color || C.gbr, fontWeight: 700 }}>
+        <div key={i} style={{ color: p.color || C.gbr, fontWeight: 600 }}>
           {p.name}: {p.value}
         </div>
       ))}
@@ -280,37 +284,41 @@ export default function AnalyticsPage() {
   return (
     <Shell title="Analytics">
       {loading ? (
-        <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading analytics...</div>
+        <div style={{ textAlign: "center", padding: 48, color: C.mid }}>Loading analytics…</div>
       ) : (
         <>
           {/* Range selector */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <div style={{ color: C.txt, fontSize: 16, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}><BarChart3 size={16} /> ROI Analytics</div>
-            <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+            <div>
+              <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Analytics</h1>
+              <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>What Nikki handled, what it saved you, and whether calls are getting better.</p>
+            </div>
+            {/* Segmented control: one choice, so one bordered group. */}
+            <div style={{ display: "inline-flex", background: C.surf, border: "1px solid #E4E9F0", borderRadius: 10, padding: 3 }}>
               {(["7", "30", "90"] as const).map(r => (
                 <button key={r} onClick={() => { setLoading(true); setRange(r); }}
-                  style={{ padding: "6px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700,
-                    cursor: "pointer", background: range === r ? C.glow : C.hi,
+                  style={{ padding: "6px 14px", borderRadius: 7, border: "none", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", background: range === r ? C.glow : "transparent",
                     color: range === r ? "#fff" : C.mid }}>
-                  {r}d
+                  {r} days
                 </button>
               ))}
             </div>
           </div>
 
           {/* ── ROI Summary Strip ──────────────────────────────── */}
-          <div style={{ background: `linear-gradient(135deg, ${C.glow}18, ${C.grn}0D)`,
-            border: "1px solid " + C.glow + "33", borderRadius: 10,
-            padding: "16px 20px", marginBottom: 20,
-            display: "flex", justifyContent: "space-around", flexWrap: "wrap", gap: 12 }}>
+          {/* The one dark band on the page: the answer to "is Nikki worth it". */}
+          <div style={{ background: C.glow, borderRadius: 12, padding: "18px 22px", marginBottom: 20,
+            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
             {[
-              { label: "Staff Cost Avoided", value: `₹${humanCostSaved.toLocaleString()}`, color: C.grn },
-              { label: "Calls Auto-Resolved", value: `${aiHandled}`,                       color: C.gbr },
-              { label: "Est. value (assumed)",     value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.cyn },
+              { label: "Staff cost avoided",   value: `₹${humanCostSaved.toLocaleString("en-IN")}` },
+              { label: "Calls Nikki resolved", value: `${aiHandled}` },
+              { label: "Est. value (assumed)", value: `₹${Math.round(waRevenue).toLocaleString("en-IN")}` },
             ].map(s => (
-              <div key={s.label} style={{ textAlign: "center" }}>
-                <div style={{ color: s.color, fontSize: 22, fontWeight: 900 }}>{s.value}</div>
-                <div style={{ color: C.mid, fontSize: 10, marginTop: 3, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.label}</div>
+              <div key={s.label}>
+                <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: 600 }}>{s.label}</div>
+                <div style={{ color: "#fff", fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em",
+                  marginTop: 4, fontVariantNumeric: "tabular-nums" }}>{s.value}</div>
               </div>
             ))}
           </div>
@@ -343,16 +351,16 @@ export default function AnalyticsPage() {
             const negative = quality.filter((q: any) => q.sentiment === "negative").length;
 
             return (
-              <div style={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 10,
-                            padding: 20, marginBottom: 20 }}>
-                <div style={{ color: C.txt, fontSize: 14, fontWeight: 900, marginBottom: 4 }}>
+              <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+                            padding: 20, marginBottom: 20, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+                <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 3 }}>
                   Conversation quality
                 </div>
-                <div style={{ color: C.mid, fontSize: 12, marginBottom: 14 }}>
+                <div style={{ color: C.mid, fontSize: 13, marginBottom: 16 }}>
                   {n} scored conversation{n === 1 ? "" : "s"} · calls with fewer than four turns are not scored
                 </div>
 
-                <div style={{ display: "flex", gap: 26, flexWrap: "wrap", marginBottom: 16 }}>
+                <div style={{ display: "flex", gap: 32, flexWrap: "wrap", marginBottom: 16 }}>
                   {[
                     { l: "Avg score",     v: `${avg}`,        c: avg >= 70 ? C.grn : avg >= 45 ? C.gold : C.red },
                     // The commercial number: a call that ends politely with
@@ -361,9 +369,10 @@ export default function AnalyticsPage() {
                     { l: "Ended with a next step", v: `${nextRate}%`, c: nextRate >= 40 ? C.grn : C.red },
                     { l: "Negative callers", v: `${negative}/${n}`, c: negative ? C.red : C.grn },
                   ].map(s => (
-                    <div key={s.l}>
-                      <div style={{ color: s.c, fontSize: 22, fontWeight: 900 }}>{s.v}</div>
-                      <div style={{ color: C.mid, fontSize: 10, marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>{s.l}</div>
+                    <div key={s.l} style={{ borderLeft: `3px solid ${s.c}`, paddingLeft: 12 }}>
+                      <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em",
+                        fontVariantNumeric: "tabular-nums", lineHeight: 1.15 }}>{s.v}</div>
+                      <div style={{ color: C.mid, fontSize: 13, fontWeight: 600, marginTop: 2 }}>{s.l}</div>
                     </div>
                   ))}
                 </div>
@@ -371,18 +380,18 @@ export default function AnalyticsPage() {
                 {series.length > 1 && (
                   <ResponsiveContainer width="100%" height={180}>
                     <LineChart data={series}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.bord} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#EEF2F6" vertical={false} />
                       <XAxis dataKey="day" stroke={C.dim} fontSize={11} />
                       <YAxis domain={[0, 100]} stroke={C.dim} fontSize={11} />
-                      <Tooltip contentStyle={{ background: C.surf, border: "1px solid " + C.bord, borderRadius: 8 }} />
-                      <Legend />
+                      <Tooltip content={<Tooltip2 />} />
+                      <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12.5, color: C.mid, paddingTop: 8 }} />
                       <Line type="monotone" dataKey="score" name="Quality" stroke={C.gbr} strokeWidth={2} dot={false} />
                       <Line type="monotone" dataKey="next"  name="Next step %" stroke={C.grn} strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
                 {series.length <= 1 && (
-                  <div style={{ color: C.dim, fontSize: 12 }}>
+                  <div style={{ color: C.mid, fontSize: 13 }}>
                     A trend needs calls on more than one day.
                   </div>
                 )}
@@ -392,17 +401,18 @@ export default function AnalyticsPage() {
 
           {/* ── KPI Row ────────────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
-            <KpiCard label="Total Calls"      value={totalCalls}         color={C.gbr}  />
-            <KpiCard label="AI Handled"       value={aiHandled}          color={C.glow} sub={`${totalCalls ? Math.round(aiHandled/totalCalls*100) : 0}% auto-resolved`} />
+            <KpiCard label="Total calls"      value={totalCalls}         color={C.gbr}  />
+            <KpiCard label="Nikki handled"    value={aiHandled}          color={C.glow} sub={`${totalCalls ? Math.round(aiHandled/totalCalls*100) : 0}% resolved without staff`} />
             <KpiCard label="Appointments"     value={appointments}       color={C.grn}  sub={`${totalCalls ? Math.round(appointments/totalCalls*100) : 0}% booking rate`} />
-            <KpiCard label="Missed Calls"     value={missedCalls}        color={C.gold} sub={`${waMissedFollowups} WhatsApp follow-up${waMissedFollowups === 1 ? "" : "s"} sent`} />
-            <KpiCard label="Avg Duration"     value={`${avgDur}s`}       color={C.cyn}  />
+            <KpiCard label="Missed calls"     value={missedCalls}        color={C.gold} sub={`${waMissedFollowups} WhatsApp follow-up${waMissedFollowups === 1 ? "" : "s"} sent`} />
+            <KpiCard label="Average length"   value={`${avgDur}s`}       color={C.cyn}  />
           </div>
 
           {/* ── Daily Calls + Cost Saved ───────────────────────── */}
-          <Card title="Daily Call Volume & Savings" subtitle="AI handled calls vs savings vs missed"
+          <Card title="Calls per day"
+            subtitle={`Handled by Nikki, appointments booked, and missed${chartDays < parseInt(range) ? ` — last ${chartDays} days` : ""}`}
             style={{ marginBottom: 16 }}>
-            {chartDays < parseInt(range) ? ` — last ${chartDays} days` : ""}<ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={220}>
               <ComposedChart data={dailyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gAI" x1="0" y1="0" x2="0" y2="1">
@@ -414,12 +424,12 @@ export default function AnalyticsPage() {
                     <stop offset="95%" stopColor={C.grn} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="day" tick={{ fill: C.dim, fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.mid, fontSize: 10 }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="day" tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<Tooltip2 />} cursor={{ fill: C.hi + "88" }} />
                 <Legend iconType="circle" iconSize={8}
-                  wrapperStyle={{ fontSize: 11, color: C.mid, paddingTop: 8 }} />
-                <Area type="monotone" dataKey="ai_handled"   name="AI Handled"    stroke={C.glow} fill="url(#gAI)"  strokeWidth={2} />
+                  wrapperStyle={{ fontSize: 12.5, color: C.mid, paddingTop: 8 }} />
+                <Area type="monotone" dataKey="ai_handled"   name="Nikki handled"    stroke={C.glow} fill="url(#gAI)"  strokeWidth={2} />
                 <Area type="monotone" dataKey="appointments" name="Appointments"  stroke={C.grn}  fill="url(#gGrn)" strokeWidth={2} />
                 <Bar  dataKey="missed"       name="Missed"       fill={C.gold} radius={[2,2,0,0]} />
               </ComposedChart>
@@ -428,31 +438,30 @@ export default function AnalyticsPage() {
 
           {/* ── Lead Funnel + CTC Dispositions ──────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
-            <Card title="Lead Funnel" subtitle={`${leads.length} total leads · ${conversionRate}% conversion`}>
+            <Card title="Lead funnel" subtitle={`${leads.length} total leads · ${conversionRate}% conversion`}>
               {leadFunnelData.map((s, i) => (
                 <div key={s.stage} style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ color: C.mid, fontSize: 12 }}>{s.stage}</span>
-                    <span style={{ color: s.color, fontSize: 12, fontWeight: 700 }}>{s.count}</span>
+                    <span style={{ color: C.txt, fontSize: 13 }}>{s.stage}</span>
+                    <span style={{ color: C.txt, fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{s.count}</span>
                   </div>
-                  <div style={{ height: 6, background: C.bord, borderRadius: 3 }}>
+                  <div style={{ height: 8, background: "#EEF2F6", borderRadius: 999 }}>
                     <div style={{
                       width: leads.length ? `${(s.count / leads.length) * 100}%` : "0%",
-                      height: "100%", borderRadius: 3,
+                      height: "100%", borderRadius: 999,
                       background: s.color,
-                      boxShadow: s.count > 0 ? `0 0 8px ${s.color}66` : "none",
                       transition: "width 0.6s ease",
                     }} />
                   </div>
                 </div>
               ))}
               {won > 0 && (
-                <div style={{ marginTop: 12, textAlign: "center" }}>
-                  <div style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid #EEF2F6" }}>
+                  <div style={{ color: C.grn, fontSize: 13.5, fontWeight: 600 }}>
                     {won} client{won === 1 ? "" : "s"} won · ₹{wonRevenue.toLocaleString("en-IN")}
                     {assumedCount > 0 ? " est." : ""}
                   </div>
-                  <div style={{ color: C.dim, fontSize: 10.5, marginTop: 3 }}>
+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 3, lineHeight: 1.5 }}>
                     {assumedCount === 0
                       ? "Deal values you recorded on each lead"
                       : assumedCount === won
@@ -463,10 +472,10 @@ export default function AnalyticsPage() {
               )}
             </Card>
 
-            <Card title="CTC Call Dispositions" subtitle="Outcomes from Click-to-Call sales calls">
+            <Card title="Desk call outcomes" subtitle="What happened on the calls your team made from the Desk">
               {ctcDispData.length === 0 ? (
-                <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 40 }}>
-                  No Click-to-Call calls yet
+                <div style={{ color: C.mid, fontSize: 13, textAlign: "center", padding: 40 }}>
+                  No Desk calls yet
                 </div>
               ) : (
                 <>
@@ -481,11 +490,11 @@ export default function AnalyticsPage() {
                       <Tooltip formatter={(v: any, n: any) => [v, n]} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", justifyContent: "center", marginTop: 8 }}>
                     {ctcDispData.map(d => (
                       <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ width: 8, height: 8, borderRadius: "50%", background: DISP_COLORS[d.name] || C.mid, flexShrink: 0 }} />
-                        <span style={{ color: C.mid, fontSize: 10 }}>{d.name}: {d.value}</span>
+                        <span style={{ color: C.mid, fontSize: 12 }}>{d.name.replace(/_/g, " ").replace(/^./, (x: string) => x.toUpperCase())}: <strong style={{ color: C.txt, fontWeight: 600 }}>{d.value}</strong></span>
                       </div>
                     ))}
                   </div>
@@ -496,7 +505,7 @@ export default function AnalyticsPage() {
 
           {/* ── WhatsApp + Intent ────────────────────────────────── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
-            <Card title="WhatsApp Dispatch Performance" subtitle={`${waSent} sent · ${waConversionRate}% delivered`}>
+            <Card title="WhatsApp messages" subtitle={`${waSent} sent · ${waConversionRate}% delivered`}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
                 {[
                   { label: "Sent",      value: waSent,                                  color: C.gbr  },
@@ -509,26 +518,26 @@ export default function AnalyticsPage() {
                   // shop being told its customer follow-ups are failing when
                   // it has never sent one.
                   { label: "Failed",    value: custWa.filter(w => w.status === "failed").length, color: C.red },
-                  { label: "Est. Revenue", value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.gold },
+                  { label: "Est. revenue", value: `₹${Math.round(waRevenue).toLocaleString()}`, color: C.gold },
                 ].map(s => (
-                  <div key={s.label} style={{ background: C.hi, borderRadius: 8, padding: "10px 12px" }}>
-                    <div style={{ color: C.mid, fontSize: 10, marginBottom: 4 }}>{s.label}</div>
-                    <div style={{ color: s.color, fontSize: 18, fontWeight: 900 }}>{s.value}</div>
+                  <div key={s.label} style={{ background: "#F8FAFC", borderRadius: 8, padding: "10px 12px",
+                    borderLeft: `3px solid ${s.color}` }}>
+                    <div style={{ color: C.mid, fontSize: 12.5, fontWeight: 600, marginBottom: 2 }}>{s.label}</div>
+                    <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 22, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
               {/* Delivery bar */}
-              <div style={{ height: 6, background: C.bord, borderRadius: 3 }}>
-                <div style={{ width: `${waConversionRate}%`, height: "100%", borderRadius: 3,
-                  background: `linear-gradient(90deg, ${C.grn}, ${C.cyn})`,
-                  boxShadow: `0 0 10px ${C.grn}88`, transition: "width 0.6s ease" }} />
+              <div style={{ height: 8, background: "#EEF2F6", borderRadius: 999 }}>
+                <div style={{ width: `${waConversionRate}%`, height: "100%", borderRadius: 999,
+                  background: C.grn, transition: "width 0.6s ease" }} />
               </div>
-              <div style={{ color: C.dim, fontSize: 10, marginTop: 4, textAlign: "right" }}>{waConversionRate}% delivery rate</div>
+              <div style={{ color: C.mid, fontSize: 12, marginTop: 6, textAlign: "right" }}>{waConversionRate}% delivery rate</div>
             </Card>
 
             <Card title="Why people called" subtitle={`What callers wanted (last ${range} days)`}>
               {intentData.length === 0 ? (
-                <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 40 }}>No calls yet</div>
+                <div style={{ color: C.mid, fontSize: 13, textAlign: "center", padding: 40 }}>No calls yet</div>
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={140}>
@@ -542,11 +551,11 @@ export default function AnalyticsPage() {
                       <Tooltip formatter={(v: any, n: any) => [v, String(n)]} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", justifyContent: "center", marginTop: 8 }}>
                     {intentData.map(d => (
                       <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
-                        <span style={{ color: C.mid, fontSize: 10 }}>{d.name}: {d.value}</span>
+                        <span style={{ color: C.mid, fontSize: 12 }}>{d.name}: <strong style={{ color: C.txt, fontWeight: 600 }}>{d.value}</strong></span>
                       </div>
                     ))}
                   </div>
@@ -556,13 +565,13 @@ export default function AnalyticsPage() {
           </div>
 
           {/* ── Peak Hours ─────────────────────────────────────── */}
-          <Card title="Peak Call Hours" subtitle="When your customers call most (IST) — use to plan staff coverage">
-            <ResponsiveContainer width="100%" height={140}>
+          <Card title="Busiest hours" subtitle="When your customers call most (IST) — use to plan staff coverage">
+            <ResponsiveContainer width="100%" height={180}>
               <BarChart data={hourWindow} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 9 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.mid, fontSize: 10 }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<Tooltip2 />} cursor={{ fill: C.hi + "88" }} />
-                <Bar dataKey="calls" name="Calls" fill={C.gold} radius={[3,3,0,0]} />
+                <Bar dataKey="calls" name="Calls" fill={C.glow} radius={[4,4,0,0]} />
               </BarChart>
             </ResponsiveContainer>
           </Card>
