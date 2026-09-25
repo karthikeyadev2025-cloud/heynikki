@@ -11,7 +11,7 @@ import { waStatus } from "./WhatsAppSender";
 // exports surface/vault/text, not surf/hi/txt.
 const C = {
   surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
-  grn: NIKKI.emerald, gold: NIKKI.gold, gbr: NIKKI.tealLight,
+  grn: NIKKI.emerald, gold: NIKKI.gold, gbr: NIKKI.tealLight, glow: NIKKI.teal,
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
 };
 
@@ -64,15 +64,16 @@ export default function WhatsAppNumberChoice() {
   const live = s?.status === "active";
 
   return (
-    <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-      padding: 18, marginTop: 18, maxWidth: 720 }}>
+    <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+      boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: 22, marginTop: 18, maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ color: C.txt, fontSize: 15.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 8 }}>
           <MessageCircle size={16} /> Your WhatsApp number
         </div>
         {s && (
-          <span style={{ background: st.color + "22", color: st.color, border: `1px solid ${st.color}44`,
-            borderRadius: 4, padding: "2px 8px", fontSize: 10.5, fontWeight: 700 }}>{st.label}</span>
+          <span style={{ background: st.color + "14", color: st.color, borderRadius: 999, padding: "3px 9px",
+            fontSize: 11.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: st.color }} />{st.label}</span>
         )}
       </div>
 
@@ -80,7 +81,7 @@ export default function WhatsAppNumberChoice() {
         <div style={{ color: NIKKI.red, fontSize: 12.5, marginTop: 8 }}>{err}</div>
       ) : s && (
         <>
-          <div style={{ color: C.mid, fontSize: 12.5, marginTop: 6, lineHeight: 1.55 }}>
+          <div style={{ color: C.mid, fontSize: 13.5, marginTop: 8, lineHeight: 1.55 }}>
             Customers get confirmations, brochures and follow-ups from{" "}
             <strong style={{ color: live ? C.grn : C.gold }}>{s.sending_as}</strong>
             {live
@@ -89,7 +90,7 @@ export default function WhatsAppNumberChoice() {
           </div>
 
           {!live && (
-            <div style={{ color: C.mid, fontSize: 12.5, marginTop: 8, lineHeight: 1.55 }}>
+            <div style={{ color: C.mid, fontSize: 13.5, marginTop: 8, lineHeight: 1.55 }}>
               {!s.kyc_approved
                 ? "Once your KYC is approved you can move WhatsApp to your own number from the WhatsApp page."
                 : s.on_waba
@@ -99,7 +100,7 @@ export default function WhatsAppNumberChoice() {
           )}
 
           <Link href="/whatsapp" style={{ display: "inline-flex", alignItems: "center", gap: 6,
-            marginTop: 12, color: C.gbr, fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
+            marginTop: 14, color: C.glow, fontSize: 13.5, fontWeight: 600, textDecoration: "none" }}>
             {live ? "Manage on the WhatsApp page" : s.kyc_approved ? "Set up on the WhatsApp page" : "Open the WhatsApp page"}
             <ArrowRight size={14} />
           </Link>

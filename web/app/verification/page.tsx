@@ -111,18 +111,54 @@ export default function VerificationPage() {
       pending:  [C.gold, <Clock key="p" size={11} />],
     };
     const [c, icon] = map[s] || map.pending;
-    return <span style={{ color: c, background: `${c}18`, border: `1px solid ${c}44`,
-                          borderRadius: 20, padding: "2px 8px", fontSize: 11,
-                          display: "inline-flex", gap: 4, alignItems: "center" }}>{icon}{s}</span>;
+    return <span style={{ color: c, background: `${c}14`, borderRadius: 999, padding: "3px 9px",
+                          fontSize: 11.5, fontWeight: 600,
+                          display: "inline-flex", gap: 4, alignItems: "center" }}>{icon}{s === "pending" ? "In review" : s.charAt(0).toUpperCase() + s.slice(1)}</span>;
   };
 
   return (
     <Shell title="Verification">
-      <p style={{ color: C.mid, fontSize: 13, maxWidth: "62ch", marginTop: 0 }}>
+      <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Verification</h1>
+      <p style={{ color: C.mid, fontSize: 14, maxWidth: "68ch", margin: "0 0 20px", lineHeight: 1.6 }}>
         We need to verify your business before we can hand over a phone number —
         this is a requirement from the telecom operator, not us. Upload any one of
         GST, PAN or business registration to get started.
       </p>
+
+      {/* Where they are in the three steps that end with a number. The
+          steps are a real sequence, so they are numbered. */}
+      {ready && (() => {
+        const uploaded = docs.length > 0;
+        const approved = docs.some(d => d.status === "approved");
+        const steps = [
+          { t: "Upload a document", done: uploaded, now: !uploaded },
+          { t: "We review it",      done: approved, now: uploaded && !approved, sub: "Usually within one working day" },
+          { t: "Your number is assigned", done: false, now: approved, sub: "We WhatsApp you when it's live" },
+        ];
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10,
+            marginBottom: 20, maxWidth: 720 }}>
+            {steps.map((st, i) => {
+              const col = st.done ? C.grn : st.now ? C.teal : "#CBD5E1";
+              return (
+                <div key={st.t} style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: "12px 14px",
+                  display: "flex", gap: 10, alignItems: "flex-start", opacity: st.done || st.now ? 1 : 0.7 }}>
+                  <span style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, display: "inline-flex",
+                    alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700,
+                    background: st.done ? C.grn : st.now ? C.teal + "14" : "#F1F4F8",
+                    color: st.done ? "#fff" : col, border: st.now ? `1px solid ${C.teal}55` : "none" }}>
+                    {st.done ? <Check size={13} /> : i + 1}
+                  </span>
+                  <div>
+                    <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 600 }}>{st.t}</div>
+                    {st.sub && <div style={{ color: C.mid, fontSize: 12, marginTop: 2 }}>{st.sub}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {err && <Note tone="err">{err}</Note>}
       {ok  && <Note tone="ok">{ok}</Note>}
@@ -134,47 +170,53 @@ export default function VerificationPage() {
         <Note tone="ok">Your document is with us for review — usually within one working day.</Note>
       )}
 
-      <div style={{ background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 10,
-                    padding: 16, marginBottom: 18, maxWidth: 560 }}>
-        <label style={{ display: "block", fontSize: 11, color: C.mid, marginBottom: 6 }}>
+      <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: 22, marginBottom: 18, maxWidth: 720 }}>
+        <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 14 }}>
+          Upload a document
+        </div>
+        <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: C.mid, marginBottom: 6 }}>
           Document type
         </label>
         <select value={type} onChange={e => setType(e.target.value)}
-                style={{ background: C.hi, color: C.txt, border: `1px solid ${C.bord}`,
-                         borderRadius: 7, padding: "8px 10px", fontSize: 13, width: "100%",
-                         marginBottom: 12 }}>
+                style={{ background: C.surf, color: C.txt, border: "1px solid #D8DFE8",
+                         borderRadius: 8, padding: "9px 12px", fontSize: 14, width: "100%",
+                         marginBottom: 14 }}>
           {DOC_TYPES.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
         </select>
 
         <label style={{ display: "inline-flex", gap: 8, alignItems: "center", cursor: busy ? "wait" : "pointer",
-                        background: C.teal, color: "#fff", borderRadius: 7,
-                        padding: "9px 16px", fontSize: 13, fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+                        background: C.teal, color: "#fff", borderRadius: 8,
+                        padding: "10px 18px", fontSize: 14, fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
           <Upload size={14} /> {busy ? "Uploading…" : "Choose file"}
           <input type="file" disabled={busy} style={{ display: "none" }}
                  accept={ALLOWED.join(",")}
                  onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.currentTarget.value = ""; }} />
         </label>
-        <span style={{ color: C.dim, fontSize: 11, marginLeft: 10 }}>
+        <span style={{ color: C.dim, fontSize: 12.5, marginLeft: 12 }}>
           JPG, PNG, WEBP or PDF · up to 10 MB
         </span>
       </div>
 
-      <div style={{ maxWidth: 720 }}>
-        {!ready && <p style={{ color: C.dim, fontSize: 12 }}>Loading…</p>}
+      <div style={{ maxWidth: 720, background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #EEF2F6", color: C.txt, fontSize: 15, fontWeight: 700 }}>
+          Your documents
+        </div>
+        {!ready && <p style={{ color: C.mid, fontSize: 13, padding: "0 18px" }}>Loading…</p>}
         {ready && docs.length === 0 && !err && (
-          <p style={{ color: C.dim, fontSize: 12 }}>Nothing uploaded yet.</p>
+          <p style={{ color: C.mid, fontSize: 13.5, padding: "4px 18px 8px" }}>Nothing uploaded yet.</p>
         )}
-        {docs.map(d => (
+        {docs.map((d, i) => (
           <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "center",
-                                   padding: "10px 12px", borderBottom: `1px solid ${C.bord}` }}>
-            <FileText size={15} color={C.dim} />
-            <span style={{ flex: 1, color: C.txt, fontSize: 13 }}>
+                                   padding: "12px 18px", borderTop: i === 0 ? "none" : "1px solid #EEF2F6" }}>
+            <span style={{ width: 32, height: 32, borderRadius: 8, background: "#F1F4F8", color: C.mid, flexShrink: 0,
+              display: "inline-flex", alignItems: "center", justifyContent: "center" }}><FileText size={15} /></span>
+            <span style={{ flex: 1, minWidth: 0, color: C.txt, fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>
               {d.file_name || d.doc_type}
-              <span style={{ color: C.dim, fontSize: 11, marginLeft: 8 }}>
+              <span style={{ display: "block", color: C.dim, fontSize: 12.5, fontWeight: 400, marginTop: 1 }}>
                 {DOC_TYPES.find(t => t.id === d.doc_type)?.label || d.doc_type}
               </span>
               {d.review_note && (
-                <span style={{ display: "block", color: C.red, fontSize: 11, marginTop: 2 }}>
+                <span style={{ display: "block", color: C.red, fontSize: 12.5, fontWeight: 500, marginTop: 3 }}>
                   {d.review_note}
                 </span>
               )}
@@ -191,7 +233,8 @@ export default function VerificationPage() {
 
 function Note({ tone, children }: { tone: "ok" | "err"; children: React.ReactNode }) {
   const c = tone === "ok" ? C.grn : C.red;
-  return <div style={{ background: `${c}18`, border: `1px solid ${c}44`, color: c,
-                       borderRadius: 8, padding: "8px 12px", fontSize: 12,
-                       marginBottom: 12, maxWidth: 560 }}>{children}</div>;
+  return <div style={{ background: `${c}0A`, border: `1px solid ${c}44`, borderLeft: `3px solid ${c}`,
+                       color: tone === "ok" ? C.txt : c,
+                       borderRadius: 10, padding: "10px 14px", fontSize: 13.5,
+                       marginBottom: 12, maxWidth: 720 }}>{children}</div>;
 }

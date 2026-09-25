@@ -146,47 +146,47 @@ export default function KnowledgePage() {
   const pending = entries.filter(e => !e.embedding).length;
 
   const inputStyle: React.CSSProperties = {
-    width: "100%", background: C.hi, border: `1px solid ${C.bord}`,
+    width: "100%", background: C.surf, border: "1px solid #D8DFE8",
     borderRadius: 8, padding: "10px 12px", color: C.txt, fontSize: 14,
     fontFamily: "inherit", boxSizing: "border-box",
   };
 
   return (
     <Shell title="Teach Nikki">
-      <div style={{ padding: 24, maxWidth: 900 }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: C.txt, margin: "0 0 4px" }}>
+      <div style={{ maxWidth: 900 }}>
+        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>
           Teach Nikki
         </h1>
-        <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20, lineHeight: 1.6 }}>
+        <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20, lineHeight: 1.6, maxWidth: "68ch" }}>
           Tell Nikki about your business the way you&apos;d brief a new receptionist on
           their first day. Anything you add here, she can answer on calls — in Telugu,
           in your words.
         </p>
 
         {error && (
-          <div style={{ background: C.red + "0D", border: `1px solid ${C.red}55`,
-            borderRadius: 10, padding: 14, marginBottom: 16, color: C.red, fontSize: 13 }}>
+          <div style={{ background: C.red + "0A", border: `1px solid ${C.red}44`, borderLeft: `3px solid ${C.red}`,
+            borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: C.red, fontSize: 13.5 }}>
             {error}
           </div>
         )}
         {notice && (
-          <div style={{ background: C.grn + "0D", border: `1px solid ${C.grn}55`,
-            borderRadius: 10, padding: 14, marginBottom: 16, color: C.grn, fontSize: 13 }}>
+          <div style={{ background: C.grn + "0A", border: `1px solid ${C.grn}44`, borderLeft: `3px solid ${C.grn}`,
+            borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: C.txt, fontSize: 13.5 }}>
             {notice}
           </div>
         )}
 
         {/* composer */}
-        <div style={{ background: C.surf, border: `1px solid ${C.bord}`,
-          borderRadius: 12, padding: 20, marginBottom: 20 }}>
-          <label style={{ display: "block", fontSize: 12, color: C.mid, marginBottom: 6 }}>
+        <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: 22, marginBottom: 20 }}>
+          <label style={{ display: "block", color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700,
+            letterSpacing: "-0.01em", marginBottom: 10 }}>
             What should Nikki know?
           </label>
           {/* Say it before the click, not after: the composer used to look
               entirely usable and only explained itself once saving failed. */}
           {!profileId && (
             <div style={{ color: C.mid, fontSize: 13, marginBottom: 10, lineHeight: 1.55 }}>
-              Finish <a href="/setup" style={{ color: C.grn }}>your setup</a> first — Nikki
+              Finish <a href="/setup" style={{ color: C.glow, fontWeight: 600 }}>your setup</a> first — Nikki
               needs a voice profile before she can learn about your business.
             </div>
           )}
@@ -205,11 +205,11 @@ export default function KnowledgePage() {
           />
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button onClick={addEntry} disabled={saving} style={{
-              background: saving ? C.dim : C.glow, color: "#fff", border: "none",
-              borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 700,
+              background: saving ? "#CBD5E1" : C.glow, color: "#fff", border: "none",
+              borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600,
               cursor: saving ? "not-allowed" : "pointer",
             }}>{saving ? "Saving…" : "Teach Nikki"}</button>
-            <span style={{ fontSize: 12, color: C.dim }}>
+            <span style={{ fontSize: 13, color: C.dim }}>
               One fact or a short paragraph works best.
             </span>
           </div>
@@ -217,24 +217,23 @@ export default function KnowledgePage() {
 
         {/* suggestions — only while the base is empty */}
         {entries.length === 0 && !loading && (
-          <div style={{ background: C.surf, border: `1px solid ${C.bord}`,
-            borderRadius: 12, padding: 20, marginBottom: 20 }}>
-            <div style={{ color: C.txt, fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+          <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: 22, marginBottom: 20 }}>
+            <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 3 }}>
               Callers usually ask these
             </div>
-            <div style={{ color: C.mid, fontSize: 12, marginBottom: 14 }}>
+            <div style={{ color: C.mid, fontSize: 13, marginBottom: 14 }}>
               Tap one to start — then replace the example with your real details.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10 }}>
               {SUGGESTIONS.map(s => (
                 <button key={s.q} onClick={() => setDraft(s.hint)} style={{
-                  background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 10,
+                  background: "#F8FAFC", border: "1px solid #E4E9F0", borderRadius: 10,
                   padding: 14, cursor: "pointer", textAlign: "left", fontFamily: "inherit",
                 }}>
-                  <div style={{ color: C.gbr, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+                  <div style={{ color: C.txt, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
                     &ldquo;{s.q}&rdquo;
                   </div>
-                  <div style={{ color: C.dim, fontSize: 11, lineHeight: 1.5 }}>{s.hint}</div>
+                  <div style={{ color: C.mid, fontSize: 12.5, lineHeight: 1.5 }}>{s.hint}</div>
                 </button>
               ))}
             </div>
@@ -242,40 +241,43 @@ export default function KnowledgePage() {
         )}
 
         {pending > 0 && (
-          <div style={{ background: C.gold + "0D", border: `1px solid ${C.gold}44`,
-            borderRadius: 10, padding: 12, marginBottom: 16, color: C.gold, fontSize: 13 }}>
+          <div style={{ background: C.gold + "0A", border: `1px solid ${C.gold}44`, borderLeft: `3px solid ${C.gold}`,
+            borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: C.txt, fontSize: 13.5 }}>
             {pending} {pending === 1 ? "entry is" : "entries are"} still being processed —
             Nikki will start using {pending === 1 ? "it" : "them"} within a few minutes.
           </div>
         )}
 
         {loading ? (
-          <p style={{ color: C.mid }}>Loading…</p>
+          <p style={{ color: C.mid, textAlign: "center", padding: 24 }}>Loading…</p>
         ) : entries.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", margin: "4px 0 2px" }}>
+              What Nikki knows <span style={{ color: C.dim, fontFamily: "var(--font-body), sans-serif", fontSize: 13.5, fontWeight: 500 }}>· {entries.length}</span>
+            </div>
             {entries.map(e => (
               <div key={e.id} style={{
-                background: C.surf, border: `1px solid ${C.bord}`, borderRadius: 12,
-                padding: 16, display: "flex", gap: 12, alignItems: "flex-start",
+                background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                padding: "16px 18px", display: "flex", gap: 12, alignItems: "flex-start",
               }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {e.source_name && (
-                    <div style={{ color: C.gbr, fontSize: 11, fontWeight: 700,
-                      textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 }}>
+                    <div style={{ display: "inline-block", background: C.glow + "14", color: C.glow, fontSize: 12, fontWeight: 600,
+                      borderRadius: 999, padding: "2px 10px", marginBottom: 8 }}>
                       {e.source_name}
                     </div>
                   )}
                   <div style={{ color: C.txt, fontSize: 14, lineHeight: 1.6,
                     whiteSpace: "pre-wrap" }}>{e.content}</div>
-                  <div style={{ marginTop: 6, fontSize: 11,
+                  <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 600,
                     color: e.embedding ? C.grn : C.gold }}>
-                    {e.embedding ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Nikki knows this</span>) : (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Loader2 size={12} /> processing…</span>)}
+                    {e.embedding ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Nikki knows this</span>) : (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Loader2 size={12} /> Learning this…</span>)}
                   </div>
                 </div>
-                <button onClick={() => removeEntry(e.id)} title="Remove" style={{
-                  background: "none", border: "none", color: C.dim, fontSize: 18,
-                  cursor: "pointer", lineHeight: 1, padding: 4,
-                }}>×</button>
+                <button onClick={() => removeEntry(e.id)} title="Remove" aria-label="Remove" style={{
+                  background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8, color: C.red,
+                  cursor: "pointer", padding: "5px 11px", fontSize: 12.5, fontWeight: 600,
+                }}>Remove</button>
               </div>
             ))}
           </div>
