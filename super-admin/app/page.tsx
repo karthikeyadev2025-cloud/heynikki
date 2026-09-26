@@ -4313,7 +4313,7 @@ function PricingEnginePanel({ token }: { token: string }) {
       {prefix && <span style={{ color: C.dim, fontSize: TYPE.xs }}>{prefix}</span>}
       <input
         type="number"
-        value={field.includes("paise") ? Math.round(val(plan, field) / 100) : val(plan, field)}
+        value={field.includes("paise") ? Math.round(val(plan, field) / 100) : (val(plan, field) ?? "")}
         onChange={e => set(plan.id, field, field.includes("paise") ? parseInt(e.target.value) * 100 : parseInt(e.target.value))}
         style={{ width: 80, background: C.hi, border: "1px solid " + C.bord, color: C.txt,
           borderRadius: 6, padding: "5px 8px", fontSize: TYPE.sm, textAlign: "right" }}
@@ -4349,7 +4349,7 @@ function PricingEnginePanel({ token }: { token: string }) {
           <div className="nk-scroll">
             <table className="nk-table">
               <thead>
-                <tr>{["Plan", "Monthly (₹)", "Annual (₹)", "Minutes", "Max Profiles", "Max DIDs", "Concurrent", "Recording Days"].map(h => (
+                <tr>{["Plan", "Monthly (₹)", "Annual (₹)", "Nikki min", "Desk min", "Seats", "Max Profiles", "Max DIDs", "Concurrent", "Recording Days"].map(h => (
                   <th key={h}>{h}</th>
                 ))}</tr>
               </thead>
@@ -4358,10 +4358,13 @@ function PricingEnginePanel({ token }: { token: string }) {
                   <tr key={plan.id} style={{ borderBottom: "1px solid " + C.bord + "44" }}>
                     <td style={{ padding: "12px" }}>
                       <Pill label={plan.id} color={PLAN_COLORS[plan.id] || C.mid} />
+                      {plan.display_name && <div style={{ color: C.mid, fontSize: 11.5, marginTop: 4 }}>{plan.display_name}</div>}
                     </td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="price_monthly_paise" prefix="₹" /></td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="price_annual_paise" prefix="₹" /></td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="minutes_per_month" suffix="min" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="desk_minutes_per_month" suffix="min" /></td>
+                    <td style={{ padding: "12px" }}><Input plan={plan} field="max_seats" /></td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="max_voice_profiles" /></td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="max_phone_numbers" /></td>
                     <td style={{ padding: "12px" }}><Input plan={plan} field="max_concurrent_calls" /></td>

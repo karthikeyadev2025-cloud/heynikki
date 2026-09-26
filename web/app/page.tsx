@@ -577,10 +577,10 @@ export default function Home() {
             },
             {
               icon: Terminal, t: "Or drive it from your own software",
-              // plans.api_access is true on Scale only. Advertising the API
-              // without saying so sends a Starter customer to /developers to
+              // plans.api_access is true on Business only. Advertising the API
+              // without saying so sends a Shop customer to /developers to
               // find a key they cannot be issued.
-              d: "A REST API for the calls she places and the orders she takes, with a signed webhook when each call finishes. Your booking system can ask her to ring somebody. Included on the Scale plan.",
+              d: "A REST API for the calls she places and the orders she takes, with a signed webhook when each call finishes. Your booking system can ask her to ring somebody. Included on the Business plan.",
               link: { href: "/developers", label: "Read the API docs" },
             },
           ].map(({ icon: Icon, t, d, link }) => (
@@ -747,23 +747,24 @@ export default function Home() {
             // the page advertised one tier and mentioned two. These are the
             // three that exist in platform_config as plan_tier_1/2/3, with
             // their real caps.
+            // Mirror of the plans table (070). Change the row first.
             {
-              name: "Starter", price: "1,999", note: "per month",
-              points: ["200 minutes included", "1 number · 1 person", "2 calls at once",
+              name: "Shop", price: "3,999", note: "per month",
+              points: ["400 Nikki minutes + 300 telecaller minutes", "1 number · 1 person", "2 calls at once",
                        "Telecaller Desk · call summaries · quality scoring",
                        "Appointments, orders, leads · recordings kept 3 months"],
             },
             {
-              name: "Growth", price: "4,999", note: "per month",
+              name: "Team", price: "9,999", note: "per month",
               highlight: true, badge: "Most businesses start here",
-              points: ["600 minutes included", "3 numbers · 3 people on the account", "5 calls at once",
-                       "Outbound campaigns",
+              points: ["1,000 Nikki minutes + 1,500 telecaller minutes", "2 numbers · 3 people on the account", "4 calls at once",
+                       "Outbound campaigns · new leads called back automatically",
                        "Recordings kept 1 year"],
             },
             {
-              name: "Scale", price: "9,999", note: "per month",
-              points: ["1,500 minutes included", "10 numbers · 10 people on the account", "10 calls at once",
-                       "API access", "Priority support on WhatsApp"],
+              name: "Business", price: "24,999", note: "per month",
+              points: ["2,500 Nikki minutes + 3,500 telecaller minutes", "5 numbers · 8 people on the account", "6 calls at once",
+                       "API access and webhooks", "Priority support on WhatsApp"],
             },
           ].map((p) => (
             <div key={p.name} style={{
@@ -819,7 +820,7 @@ export default function Home() {
         </div>
 
         <p style={{ marginTop: 22, fontSize: 13.5, color: C.textDim, fontFamily: M }}>
-          Prices exclusive of GST · Cancel any month · Need more minutes? Upgrade any time · Numbers and seats come with the plan
+          Prices exclusive of GST · Pay yearly, get two months free · Cancel any month · Nikki and telecaller minutes counted separately
         </p>
       </Section>
 
@@ -938,7 +939,7 @@ export default function Home() {
             },
             {
               q: "Can my own software talk to it?",
-              a: "Yes \u2014 there is a REST API with scoped keys, included on the Scale plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
+              a: "Yes \u2014 there is a REST API with scoped keys, included on the Business plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
             },
             {
               q: "My customers call from the roadside. Will she hear them?",

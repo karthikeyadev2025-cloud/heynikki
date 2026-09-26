@@ -21,6 +21,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const PAID_PLANS = ["starter", "growth", "scale"];
 
+/**
+ * Two allowances, since 070 (the Shop / Team / Business plans):
+ *   ai   — minutes Nikki spends on calls (inbound, campaigns, API calls).
+ *   desk — minutes people spend: telecaller Desk calls and calls a line
+ *          hands straight to the team. These rows carry intent 'transfer'.
+ * They cost very differently (speech, voice and model vs trunk alone), and
+ * one pool meant a busy telecaller used up the minutes that keep Nikki
+ * answering. Before 070 is applied there is no desk column; desk calls then
+ * share the AI pool exactly as they always did.
+ */
+export type MinuteKind = "ai" | "desk";
+
 /** First instant of the current month in IST, as an ISO string with offset. */
 export function istMonthStart(now = Date.now()): string {
   const ist = new Date(now + 5.5 * 3600 * 1000).toISOString();
@@ -38,7 +50,7 @@ export function istMonthKey(now = Date.now()): string {
  * under-counts exactly the tenants most likely to be over.
  */
 export async function monthUsedSeconds(
-  sb: SupabaseClient, tenantId: string, excludeCallId?: string,
+  sb: SupabaseClient, tenantId: string, excludeCallId?: string, kind?: MinuteKind,
 ): Promise<number> {
   const PAGE = 1000;
   let total = 0;
@@ -46,6 +58,8 @@ export async function monthUsedSeconds(
     let q = sb.from("calls").select("id,duration_seconds")
       .eq("tenant_id", tenantId).gte("created_at", istMonthStart());
     if (excludeCallId) q = q.neq("id", excludeCallId);
+    if (kind === "desk") q = q.eq("intent", "transfer");
+    if (kind === "ai")   q = q.or("intent.is.null,intent.neq.transfer");
     const { data, error } = await q.order("id").range(from, from + PAGE - 1);
     if (error) throw new Error(`usage read failed: ${error.message}`);
     for (const r of data || []) total += Number((r as any).duration_seconds) || 0;
@@ -59,6 +73,37 @@ export async function planMinutes(sb: SupabaseClient, plan: string): Promise<num
     .eq("id", plan).maybeSingle();
   if (error) throw new Error(`plan read failed: ${error.message}`);
   return Number(data?.minutes_per_month) || 0;
+}
+
+/** The plan's Desk allowance, or null before 070 (desk then shares the AI pool). */
+export async function planDeskMinutes(sb: SupabaseClient, plan: string): Promise<number | null> {
+  const { data, error } = await sb.from("plans").select("desk_minutes_per_month")
+    .eq("id", plan).maybeSingle();
+  if (error) {
+    if (/desk_minutes_per_month/.test(error.message)) return null;
+    throw new Error(`plan read failed: ${error.message}`);
+  }
+  const raw = (data as any)?.desk_minutes_per_month;
+  const n = Number(raw);
+  return raw === null || raw === undefined || !Number.isFinite(n) ? null : n;
+}
+
+/** Usage and allowance for one kind of minute, honouring the pre-070 fallback. */
+async function meter(sb: SupabaseClient, tenantId: string, plan: string, kind: MinuteKind,
+                     excludeCallId?: string): Promise<{ secs: number; limit: number }> {
+  const deskLimit = await planDeskMinutes(sb, plan);
+  if (deskLimit === null) {
+    // Before 070: one shared pool for every call, as it always was.
+    const [secs, limit] = await Promise.all([monthUsedSeconds(sb, tenantId, excludeCallId), planMinutes(sb, plan)]);
+    return { secs, limit };
+  }
+  if (kind === "desk") {
+    return { secs: await monthUsedSeconds(sb, tenantId, excludeCallId, "desk"), limit: deskLimit };
+  }
+  const [secs, limit] = await Promise.all([
+    monthUsedSeconds(sb, tenantId, excludeCallId, "ai"), planMinutes(sb, plan),
+  ]);
+  return { secs, limit };
 }
 
 export type MinutesGate = {
@@ -78,7 +123,8 @@ export type MinutesGate = {
  * caller because the meter could not be read is worse than one unmetered
  * call — and keeps the trial check exactly as strict as before.
  */
-export async function minutesGate(sb: SupabaseClient, tenantId: string): Promise<MinutesGate> {
+export async function minutesGate(sb: SupabaseClient, tenantId: string,
+                                  kind: MinuteKind = "ai"): Promise<MinutesGate> {
   const { data: t } = await sb.from("tenants").select("plan, credit_minutes")
     .eq("id", tenantId).maybeSingle();
   const plan    = String(t?.plan || "").toLowerCase();
@@ -93,14 +139,16 @@ export async function minutesGate(sb: SupabaseClient, tenantId: string): Promise
   }
 
   try {
-    const [secs, limit] = await Promise.all([monthUsedSeconds(sb, tenantId), planMinutes(sb, plan)]);
+    const { secs, limit } = await meter(sb, tenantId, plan, kind);
     const used = Math.ceil(secs / 60);
     if (limit <= 0 || used < limit || credits > 0) {
       return { ok: true, paid, usedMinutes: used, limitMinutes: limit, credits };
     }
     return { ok: false, paid, usedMinutes: used, limitMinutes: limit, credits,
              reason: "plan_minutes_exhausted",
-             message: "This number's minutes for the month have run out." };
+             message: kind === "desk"
+               ? "The team's calling minutes for the month have run out."
+               : "This number's minutes for the month have run out." };
   } catch (e: any) {
     console.error(`[usage] gate read failed for ${tenantId} — allowing the call: ${e?.message || e}`);
     return { ok: true, paid, usedMinutes: 0, limitMinutes: 0, credits };
@@ -123,9 +171,10 @@ export async function creditMinutesToSpend(
   const plan = String(t?.plan || "").toLowerCase();
   if (!PAID_PLANS.includes(plan)) return callMinutes;
   try {
-    const [before, limit] = await Promise.all([
-      monthUsedSeconds(sb, tenantId, callId), planMinutes(sb, plan),
-    ]);
+    // Overage is measured against the pool this call belongs to.
+    const { data: c } = await sb.from("calls").select("intent").eq("id", callId).maybeSingle();
+    const kind: MinuteKind = (c as any)?.intent === "transfer" ? "desk" : "ai";
+    const { secs: before, limit } = await meter(sb, tenantId, plan, kind, callId);
     if (limit <= 0) return 0;
     const usedBefore = Math.ceil(before / 60);
     const usedAfter  = Math.ceil((before + callSeconds) / 60);

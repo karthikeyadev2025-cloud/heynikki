@@ -1,5 +1,6 @@
 // components/Shell.tsx — Main dashboard shell with sidebar
 "use client";
+import { planLabel } from "../lib/plans";
 import { useState, useEffect } from "react";
 import { createClient } from "../lib/supabase";
 import { forgetDevice } from "../lib/native";
@@ -224,7 +225,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
             <div style={{ fontSize: 11.5, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {tenant.status === "trial" && minsLeft !== null
                 ? <a href="/billing" style={{ color: C.gold, fontWeight: 650 }}>{minsLeft} free min left · upgrade</a>
-                : <>{tenant.name}{!staff && tenant.plan ? <> · <span style={{ textTransform: "capitalize" }}>{tenant.plan}</span></> : null}</>}
+                : <>{tenant.name}{!staff && tenant.plan ? <> · <span>{planLabel(tenant.plan)}</span></> : null}</>}
             </div>
           </div>
           <button onClick={signOut} aria-label="Sign out" title="Sign out"

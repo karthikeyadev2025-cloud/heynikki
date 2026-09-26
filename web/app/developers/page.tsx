@@ -140,9 +140,9 @@ export default function DevelopersPage() {
             Scale) — which is what the documented 402 plan_upgrade_required
             means. A developer should learn that here, not from a 402. */}
         <P>
-          API access is included on the <Link href="/pricing" style={{ color: C.teal }}>Scale plan</Link>.
-          Outbound calling additionally requires a plan with outbound campaigns (Growth or
-          Scale); a request without it returns{" "}
+          API access is included on the <Link href="/pricing" style={{ color: C.teal }}>Business plan</Link>.
+          Outbound calling additionally requires a plan with outbound campaigns (Team or
+          Business); a request without it returns{" "}
           <code style={{ fontFamily: mono }}>402 plan_upgrade_required</code>.
         </P>
         <P>

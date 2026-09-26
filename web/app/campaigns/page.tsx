@@ -545,14 +545,14 @@ export default function CampaignsPage() {
             color: showNew ? C.txt : "#fff", border: showNew ? "1px solid #D8DFE8" : "none", borderRadius: 8,
             padding: "10px 18px", fontSize: 14, fontWeight: 600,
             cursor: outboundAllowed ? "pointer" : "not-allowed",
-          }} title={outboundAllowed ? "" : "Outbound campaigns are on the Growth plan and above"}>
+          }} title={outboundAllowed ? "" : "Outbound campaigns are on the Team plan and above"}>
             {showNew ? "Cancel" : "+ New campaign"}</button>
         </div>
         <p style={{ color: C.mid, fontSize: 14, marginTop: 0, marginBottom: 20 }}>
           Upload a list of numbers and Nikki calls them with your script.
           {!outboundAllowed && (
             <> {" "}<strong style={{ color: C.txt }}>
-              Outbound campaigns come with the Growth plan and above —{" "}
+              Outbound campaigns come with the Team plan and above —{" "}
               <a href="/billing" style={{ color: C.glow }}>upgrade</a> to switch them on.
             </strong></>
           )}

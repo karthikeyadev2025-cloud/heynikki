@@ -1,5 +1,6 @@
 "use client";
 
+import { planLabel } from "../../lib/plans";
 import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
@@ -96,7 +97,7 @@ export default function ApiKeysPage() {
         const plan = String(t?.plan || "trial");
         const pr   = await fetch(`${API_URL}/api/platform/pricing`).then(r => r.json());
         const tier = (pr?.tiers || []).find((x: any) => x.id === plan);
-        setPlanName(tier?.name || (plan === "trial" ? "the free trial" : plan));
+        setPlanName(tier?.name || (plan === "trial" ? "the free trial" : planLabel(plan)));
         // Trial has no tier row, and a trial does not include API access.
         setApiAllowed(!!tier?.api_access);
       } catch {
@@ -233,11 +234,11 @@ export default function ApiKeysPage() {
             <Lock size={18} color={J.surya} style={{ flexShrink: 0, marginTop: 2 }} />
             <div style={{ flex: "1 1 240px", minWidth: 0 }}>
               <div style={{ color: J.chandra, fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
-                API keys come with the Scale plan
+                API keys come with the Business plan
               </div>
               <p style={{ color: J.textMid, fontSize: 13.5, lineHeight: 1.6, margin: 0 }}>
                 You are on {planName || "a plan"}, which does not include them. Move up to
-                Scale and you can issue a key here straight away — everything else on your
+                Business and you can issue a key here straight away — everything else on your
                 account stays exactly as it is.
               </p>
             </div>

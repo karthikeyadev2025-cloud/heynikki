@@ -127,11 +127,15 @@ Caller → Jio / Vi SIP trunk → FreeSWITCH (Exotel = fallback)
 | Deploy | Vercel (web) + AWS Mumbai ap-south-1 (EC2: FreeSWITCH, pipeline, API, n8n) |
 
 ## Subscription Plans
-| Plan | Price | Minutes | Profiles |
-|------|-------|---------|---------|
-| Starter | ₹1,999/mo | 200 | 1 |
-| Growth | ₹4,999/mo | 600 | 3 |
-| Scale | ₹9,999/mo | 1,500 | 10 |
+Source of truth: the `plans` table (migration 070). Plan ids stay
+`starter` / `growth` / `scale`; customers see Shop / Team / Business.
+Nikki (AI) minutes and telecaller (Desk) minutes are separate allowances.
+
+| Plan | Price | Annual | Nikki min | Desk min | Seats | Numbers | At once | Campaigns | API |
+|------|-------|--------|-----------|----------|-------|---------|---------|-----------|-----|
+| Shop | ₹3,999/mo | ₹39,990 | 400 | 300 | 1 | 1 | 2 | — | — |
+| Team | ₹9,999/mo | ₹99,990 | 1,000 | 1,500 | 3 | 2 | 4 | ✓ | — |
+| Business | ₹24,999/mo | ₹2,49,990 | 2,500 | 3,500 | 8 | 5 | 6 | ✓ | ✓ |
 
 ## Security
 - Multi-tenant RLS at DB level (cross-tenant leak structurally impossible)

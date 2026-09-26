@@ -108,7 +108,7 @@ def test_prompt_carries_no_hardcoded_price():
     # Pricing drifted into three different answers once. It now comes from
     # platform_config via the API, so no literal may creep back in.
     p = main.PROFILE_PROMPTS["heynikki"]
-    for literal in ("5,999", "1,999", "9,999", "3.5"):
+    for literal in ("5,999", "1,999", "9,999", "3,999", "24,999", "3.5"):
         assert literal not in p, f"{literal} must come from the catalogue"
 
 
@@ -818,7 +818,8 @@ def test_transcript_timestamps_carry_an_offset():
 def test_price_list_quotes_only_what_billing_sells(monkeypatch):
     catalogue = {"per_minute_paise": 350, "overage_paise": 1500,
                  "addons": {"crm_seat_paise": 199900, "number_paise": 199900},
-                 "tiers": [{"name": "Starter", "monthly_paise": 199900, "minutes": 200,
+                 "tiers": [{"name": "Shop", "monthly_paise": 399900, "annual_paise": 3999000,
+                            "minutes": 400, "desk_minutes": 300,
                             "numbers": 1, "seats": 1, "concurrent": 2,
                             "outbound_campaigns": False, "api_access": False}]}
 
@@ -836,7 +837,8 @@ def test_price_list_quotes_only_what_billing_sells(monkeypatch):
     main._PRICING_CACHE.update({"at": 0.0, "text": ""})
     asyncio.run(main._refresh_pricing())
     text = main._PRICING_CACHE["text"]
-    assert "Rs 1,999/month" in text and "200 minutes" in text
+    assert "Rs 3,999/month" in text and "400 minutes" in text
+    assert "300 telecaller minutes" in text and "Rs 39,990/year" in text
     for unsold in ("3.50", "15.00", "Pay as you go:", "Extra CRM seat", "Extra number"):
         assert unsold not in text, unsold
     assert "upgrade" in text.lower()

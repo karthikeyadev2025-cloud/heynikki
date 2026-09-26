@@ -1,6 +1,10 @@
 /**
  * One-shot script to create Nikki's 3 Razorpay subscription plans.
  *
+ * NOT USED BY CHECKOUT: /api/billing/create-subscription creates one-off
+ * orders priced from the plans table (070). Kept in step in case
+ * recurring subscriptions are switched on.
+ *
  * Run AFTER you've created the Razorpay account and added keys to .env:
  *   cd api-server
  *   npm install -D ts-node
@@ -31,23 +35,23 @@ const PLANS = [
   {
     code: "starter",
     period: "monthly", interval: 1,
-    item: { name: "Nikki Starter",
+    item: { name: "Nikki Shop",
             description: "200 mins/mo · 1 voice profile · Telugu AI receptionist",
-            amount: 199900, currency: "INR" },
+            amount: 399900, currency: "INR" },
   },
   {
     code: "growth",
     period: "monthly", interval: 1,
-    item: { name: "Nikki Growth",
+    item: { name: "Nikki Team",
             description: "600 mins/mo · 3 voice profiles · custom greetings · appointment booking",
-            amount: 499900, currency: "INR" },
+            amount: 999900, currency: "INR" },
   },
   {
     code: "scale",
     period: "monthly", interval: 1,
-    item: { name: "Nikki Scale",
+    item: { name: "Nikki Business",
             description: "1,500 mins/mo · 10 voice profiles · multi-branch · dedicated manager",
-            amount: 999900, currency: "INR" },
+            amount: 2499900, currency: "INR" },
   },
 ];
 

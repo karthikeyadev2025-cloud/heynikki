@@ -5,7 +5,7 @@ export const metadata = {
   description:
     "Your clinic's phone answered in Telugu while you are with a patient. Books "
     + "appointments, quotes your treatment prices, sends WhatsApp confirmations and "
-    + "reminders. From ₹1,999/month, 100 free minutes.",
+    + "reminders. From ₹3,999/month, 100 free minutes.",
   alternates: { canonical: "https://www.heynikki.in/for/clinics" },
 };
 
@@ -43,7 +43,7 @@ export default function Page() {
       <p>
         Recordings are encrypted before they are stored and only your account can play
         them. Retention follows your plan — seven days on the free plan, ninety days on
-        Starter, a year on Growth — and old audio is deleted automatically rather than
+        Shop, a year on Team, two years on Business — and old audio is deleted automatically rather than
         accumulating indefinitely. Full detail in the <a href="/privacy">privacy policy</a>.
       </p>
 

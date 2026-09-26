@@ -199,12 +199,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           // The real plans, from the plans table. This block previously listed
           // an "AI Telecaller" at 5999 and two 1999 modules that no longer
           // exist — Google was being handed a price list we do not charge.
-          { "@type": "Offer", name: "Starter", price: "1999", priceCurrency: "INR",
-            description: "200 minutes, one business number, appointments and leads" },
-          { "@type": "Offer", name: "Growth", price: "4999", priceCurrency: "INR",
-            description: "600 minutes, three numbers, outbound campaigns" },
-          { "@type": "Offer", name: "Scale", price: "9999", priceCurrency: "INR",
-            description: "1500 minutes, ten numbers, API access" },
+          { "@type": "Offer", name: "Shop", price: "3999", priceCurrency: "INR",
+            description: "400 Nikki minutes and 300 telecaller minutes a month, one business number, appointments, orders and leads" },
+          { "@type": "Offer", name: "Team", price: "9999", priceCurrency: "INR",
+            description: "1,000 Nikki minutes and 1,500 telecaller minutes, two numbers, three people, outbound campaigns" },
+          { "@type": "Offer", name: "Business", price: "24999", priceCurrency: "INR",
+            description: "2,500 Nikki minutes and 3,500 telecaller minutes, five numbers, eight people, API access" },
         ],
       },
       {
@@ -243,7 +243,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             name: "Can my own software talk to it?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes — there is a REST API with scoped keys, included on the Scale plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
+              text: "Yes — there is a REST API with scoped keys, included on the Business plan. Your booking system can ask Nikki to ring a customer and say something, read back the orders she took, and receive a signed webhook when each call finishes. The full reference is at heynikki.in/developers.",
             },
           },
           {
@@ -306,13 +306,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             "@type": "Question",
             name: "How much does a Telugu AI receptionist cost?",
             acceptedAnswer: { "@type": "Answer", text:
-              "Plans start at Rs 1,999 a month for 200 minutes, and every new account gets 100 free minutes with no card required. A human receptionist costs around Rs 15,000 a month and goes home at seven." },
+              "Plans start at Rs 3,999 a month for 400 minutes of Nikki answering plus a telecaller seat, and every new account gets 100 free minutes with no card required. A human receptionist costs around Rs 15,000 a month and goes home at seven." },
           },
           {
             "@type": "Question",
             name: "Can it call customers back, not just answer?",
             acceptedAnswer: { "@type": "Answer", text:
-              "Yes. Upload a list and Nikki dials out — old customers, enquiries, festival offers — and reports who was interested. Outbound campaigns are on the Growth plan and above." },
+              "Yes. Upload a list and Nikki dials out — old customers, enquiries, festival offers — and reports who was interested. Outbound campaigns are on the Team plan and above." },
           },
         ],
       },

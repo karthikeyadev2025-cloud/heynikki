@@ -5,7 +5,7 @@ export const metadata = {
   description:
     "An AI telecaller that rings your customer list in Telugu, has a real conversation, "
     + "and tells you who was interested. No calling team, no scripts read badly. "
-    + "Outbound campaigns from ₹4,999/month.",
+    + "Outbound campaigns from ₹9,999/month.",
   alternates: { canonical: "https://www.heynikki.in/ai-telecaller" },
 };
 
@@ -60,9 +60,9 @@ export default function Page() {
 
       <h2>What it costs</h2>
       <p>
-        Outbound campaigns are on the <strong>Growth plan, ₹4,999 a month</strong>, which
-        includes 600 minutes and five simultaneous calls. Inbound answering is included on
-        every plan from ₹1,999. <a href="/pricing">See pricing</a>, or read about the{" "}
+        Outbound campaigns are on the <strong>Team plan, ₹9,999 a month</strong>, which
+        includes 1,000 Nikki minutes, 1,500 telecaller minutes and four simultaneous calls.
+        Inbound answering is included on every plan from ₹3,999. <a href="/pricing">See pricing</a>, or read about the{" "}
         <a href="/telugu-ai-receptionist">inbound receptionist</a>.
       </p>
 
@@ -74,7 +74,7 @@ export default function Page() {
         { q: "Can it negotiate on price?",
           a: "Within limits you set. You give the lowest figure you will accept, the largest discount she may offer, and what she can offer instead of money. She concedes once, never goes below your floor, and never invents a discount." },
         { q: "How many calls can it make at once?",
-          a: "Five simultaneous calls on Growth and ten on Scale. Unlike a team, that capacity does not need hiring, training or a shift roster." },
+          a: "Four simultaneous calls on Team and six on Business. Unlike a team, that capacity does not need hiring, training or a shift roster." },
         { q: "What happens when someone asks not to be called again?",
           a: "Add them to the do-not-call list from your dashboard and no campaign will dial them again. Anyone on your team can do it — honouring that request should never wait for the owner." },
       ]} />

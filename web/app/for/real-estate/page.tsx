@@ -5,7 +5,7 @@ export const metadata = {
   description:
     "Every property enquiry answered in Telugu, even during a site visit. Nikki quotes "
     + "from your project brochure, captures the lead with budget and intent, and books "
-    + "site visits. From ₹1,999/month.",
+    + "site visits. From ₹3,999/month.",
   alternates: { canonical: "https://www.heynikki.in/for/real-estate" },
 };
 
@@ -54,8 +54,8 @@ export default function Page() {
 
       <h2>What it costs</h2>
       <p>
-        From <strong>₹1,999 a month</strong> for answering; outbound campaigns are on
-        Growth at ₹4,999. Start with <strong>100 free minutes</strong> — no card. Read the{" "}
+        From <strong>₹3,999 a month</strong> for answering; outbound campaigns are on
+        Team at ₹9,999. Start with <strong>100 free minutes</strong> — no card. Read the{" "}
         <a href="/telugu-ai-receptionist">receptionist overview</a> or{" "}
         <a href="/pricing">pricing</a>.
       </p>

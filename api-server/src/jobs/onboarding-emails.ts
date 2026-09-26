@@ -83,8 +83,9 @@ but they do run out, and calls stop when they do.
 To keep her answering without a gap, pick a plan when you're ready:
   → ${dashboardUrl}/billing
 
-Plans start at ₹1,999/month (Starter — 200 mins). The first month is
-fully refundable within 7 days if Nikki doesn't fit.
+Plans start at ₹3,999/month (Shop — 400 minutes of Nikki answering
+plus a telecaller seat). The first month is fully refundable within
+7 days if Nikki doesn't fit.
 
 If you'd rather not continue, no action needed. Your account stays
 read-only and everything is exportable from the dashboard.

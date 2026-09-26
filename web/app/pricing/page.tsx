@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 export const metadata = {
   title: "Pricing — Hey Nikki",
   description:
-    "Hey Nikki pricing: Starter ₹1,999, Growth ₹4,999, Scale ₹9,999 per month. "
+    "Hey Nikki pricing: Shop ₹3,999, Team ₹9,999, Business ₹24,999 per month. "
     + "Every plan includes the Telugu AI receptionist, dashboard, recordings and "
     + "WhatsApp confirmations. 100 free minutes to start.",
 };
@@ -26,35 +26,37 @@ export const metadata = {
 // never a source: change the plans row first, then this, then the homepage.
 const TIERS = [
   {
-    name: "Starter", price: "1,999", annual: "1,333", year: "15,999",
-    line: "200 minutes · 1 number · 1 person · 2 calls at once",
+    name: "Shop", price: "3,999", annual: "3,333", year: "39,990",
+    line: "400 Nikki minutes · 300 telecaller minutes · 1 number · 1 person · 2 calls at once",
     points: [
       "Telugu, Hindi or English — your pick for the line, Tenglish understood",
       "Inbound reception on your own number",
-      "Appointments written straight to your dashboard",
+      "Appointments and orders written straight to your dashboard",
       "WhatsApp confirmation on every booking",
-      "Call recordings and transcripts, kept 3 months",
       "Missed-call follow-up on WhatsApp",
+      "Call recordings and transcripts, kept 3 months",
       "Call quality scoring on every call",
-      "Telecaller Desk: click-to-call, next-call queue, callbacks with reminders, call summaries",
+      "Telecaller Desk for one person: click-to-call, next-call queue, callbacks with reminders, call summaries",
     ],
   },
   {
-    name: "Growth", price: "4,999", annual: "3,333", year: "39,999",
-    line: "600 minutes · 3 numbers · 3 people · 5 calls at once",
+    name: "Team", price: "9,999", annual: "8,333", year: "99,990",
+    line: "1,000 Nikki minutes · 1,500 telecaller minutes · 2 numbers · 3 people · 4 calls at once",
     points: [
-      "Everything in Starter",
-      "Outbound campaigns",
-      "A calling number for each telecaller",
+      "Everything in Shop",
+      "Outbound campaigns, and new website leads called back automatically",
+      "A calling number for each telecaller — callbacks ring them first",
+      "3 voice profiles",
       "Recordings kept 1 year",
     ],
   },
   {
-    name: "Scale", price: "9,999", annual: "6,666", year: "79,999",
-    line: "1,500 minutes · 10 numbers · 10 people · 10 calls at once",
+    name: "Business", price: "24,999", annual: "20,833", year: "2,49,990",
+    line: "2,500 Nikki minutes · 3,500 telecaller minutes · 5 numbers · 8 people · 6 calls at once",
     points: [
-      "Everything in Growth",
-      "API access",
+      "Everything in Team",
+      "API access and signed webhooks",
+      "10 voice profiles",
       "Recordings kept 2 years",
       "Priority support on WhatsApp: +91 94407 69495",
     ],
@@ -62,7 +64,7 @@ const TIERS = [
 ];
 
 // The middle plan is the one most accounts choose; the homepage says the same.
-const POPULAR = "Growth";
+const POPULAR = "Team";
 
 const card: React.CSSProperties = {
   background: "#fff", border: "1px solid #E4E9F0", borderRadius: 14, padding: 24,
@@ -77,9 +79,9 @@ export default function Pricing() {
       wide
       lede={<>Simple INR pricing, billed monthly. Every plan includes the Telugu AI
         receptionist, the dashboard, call recordings and transcripts. Prices are exclusive
-        of GST. Annual billing saves a third.</>}
+        of GST. Pay yearly and get two months free.</>}
       updatedLabel="Prices as of"
-      lastUpdated="24 September 2026"
+      lastUpdated="26 September 2026"
     >
       {/* Free minutes first: it is the thing every visitor can use today. */}
       <div style={{ ...card, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap",
@@ -150,9 +152,11 @@ export default function Pricing() {
                 code does (usage.ts minutesGate): calls are REFUSED once the plan's
                 minutes are gone unless bought credit remains — nothing is ever
                 billed to them without a purchase. */}
-            You are never billed automatically for going over. When your included minutes run
-            out, calls stop until you upgrade to the next plan, which you can do at any time
-            from the billing page. Nothing is ever charged to you that you did not buy.
+            Nikki&apos;s minutes and your telecallers&apos; minutes are counted separately, so a busy
+            calling day never uses up the minutes that keep Nikki answering. You are never
+            billed automatically for going over: when either runs out, those calls stop until
+            you upgrade to the next plan, which you can do at any time from the billing page.
+            Nothing is ever charged to you that you did not buy.
           </p>
           <p style={{ marginBottom: 0 }}>
             {/* Do NOT advertise buyable add-on minutes here. The Razorpay webhook
@@ -172,9 +176,10 @@ export default function Pricing() {
         <div style={card}>
           <h3 style={{ marginTop: 0 }}>Numbers and seats</h3>
           <p style={{ marginBottom: 0 }}>
-            Business numbers and team seats come with your plan — one of each on Starter,
-            three on Growth, ten on Scale. Numbers are assigned by our team once your KYC
-            is approved; forward the number you already use to it, or hand out the new one.
+            Business numbers and team seats come with your plan — one number and one person
+            on Shop, two numbers and three people on Team, five numbers and eight people on
+            Business. Numbers are assigned by our team once your KYC is approved; forward the
+            number you already use to it, or hand out the new one.
           </p>
         </div>
 

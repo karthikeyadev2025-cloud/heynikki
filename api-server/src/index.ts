@@ -405,7 +405,14 @@ app.post("/webhooks/lead-capture/:token", async (req, res) => {
         .catch(e => console.error("[lead-capture] whatsapp ack failed:", e));
     }
 
-    if (match.auto_call_new_leads) {
+    // Calling a new lead back is outbound calling, sold from the Team plan;
+    // it skipped the gate the campaign routes check.
+    const mayCall = match.auto_call_new_leads
+      ? (await planAllows(match.tenant_id, "outbound_campaigns")).ok : false;
+    if (match.auto_call_new_leads && !mayCall) {
+      console.log(`[lead-capture] ${match.tenant_id}: auto-call is on but the plan has no outbound calling — skipped`);
+    }
+    if (mayCall) {
       sb.from("outbound_recipients").insert({
         tenant_id:  match.tenant_id,
         campaign_id: null,
@@ -726,8 +733,8 @@ async function planAllows(tenantId: string, feature: PlanFeature): Promise<{ ok:
   if (!row) return { ok: false, msg: "Your plan could not be read — contact us and we'll sort it." };
   if (row[feature]) return { ok: true, msg: "" };
   const need = feature === "outbound_campaigns"
-    ? "Outbound calling is on the Growth plan and above."
-    : "API access is on the Scale plan.";
+    ? "Outbound calling is on the Team plan and above."
+    : "API access is on the Business plan.";
   return { ok: false, msg: `${need} You're on ${row.display_name || row.id}.` };
 }
 
@@ -2063,13 +2070,18 @@ app.post("/api/billing/create-subscription", verifyJWT, async (req, res) => {
   if (!(await requireOwner(sb, userId, tenantId, res, "Only the account owner can change the plan."))) return;
 
   const { plan_id, annual } = req.body;
-  const planAmounts: Record<string, { monthly: number; annual: number }> = {
-    starter: { monthly: 199900, annual: 1599900 },
-    growth:  { monthly: 499900, annual: 3999900 },
-    scale:   { monthly: 999900, annual: 7999900 },
-  };
-  const amounts = planAmounts[plan_id];
-  if (!amounts) return res.status(400).json({ error: "Invalid plan" });
+  // The price is the plans row — the same one the pricing page, the billing
+  // page and every limit read. These were literals, so a price changed in
+  // the panel was shown to the customer and then charged at the old figure.
+  if (!["starter", "growth", "scale"].includes(String(plan_id))) {
+    return res.status(400).json({ error: "Invalid plan" });
+  }
+  const { data: priceRow } = await sb.from("plans")
+    .select("price_monthly_paise, price_annual_paise").eq("id", String(plan_id)).maybeSingle();
+  const amounts = priceRow && Number(priceRow.price_monthly_paise) > 0
+    ? { monthly: Number(priceRow.price_monthly_paise), annual: Number(priceRow.price_annual_paise) }
+    : null;
+  if (!amounts || !(amounts.annual > 0)) return res.status(503).json({ error: "This plan's price could not be read — try again in a minute." });
 
   try {
     // Create Razorpay order (for one-time) or subscription (for recurring)
@@ -3818,10 +3830,15 @@ app.get("/api/platform/pricing", async (_req, res) => {
     // plan_tier_1/2/3 in platform_config predates the plans table having
     // max_seats and max_voice_profiles, and it never gained them — which is
     // how /billing came to render a tier's SEAT count in its PROFILE slot.
-    const { data: planRows } = await sb.from("plans")
-      .select("id, display_name, price_monthly_paise, price_annual_paise, minutes_per_month, max_phone_numbers, max_seats, max_voice_profiles, max_concurrent_calls, recording_days, api_access, outbound_campaigns")
-      .neq("id", "trial")
+    const PLAN_COLS = "id, display_name, price_monthly_paise, price_annual_paise, minutes_per_month, max_phone_numbers, max_seats, max_voice_profiles, max_concurrent_calls, recording_days, api_access, outbound_campaigns";
+    // desk_minutes_per_month arrives with 070; read without it until then.
+    let { data: planRows, error: planErr }: { data: any[] | null; error: any } = await sb.from("plans")
+      .select(`${PLAN_COLS}, desk_minutes_per_month`).neq("id", "trial")
       .order("price_monthly_paise", { ascending: true });
+    if (planErr) {
+      ({ data: planRows } = await sb.from("plans").select(PLAN_COLS).neq("id", "trial")
+        .order("price_monthly_paise", { ascending: true }));
+    }
 
     // Concurrency can never exceed what the trunk physically carries, whatever
     // a plan row claims. Clamped here so a mis-typed value cannot sell
@@ -3833,6 +3850,7 @@ app.get("/api/platform/pricing", async (_req, res) => {
       monthly_paise: p.price_monthly_paise,
       annual_paise:  p.price_annual_paise,
       minutes:       p.minutes_per_month,
+      desk_minutes:  p.desk_minutes_per_month ?? null,
       numbers:       p.max_phone_numbers,
       seats:         p.max_seats,
       profiles:      p.max_voice_profiles,
@@ -3966,7 +3984,7 @@ app.post("/api/admin/plans/:id", verifySuperAdmin, async (req: any, res) => {
   const ALLOWED = ["display_name", "price_monthly_paise", "price_annual_paise",
                    "minutes_per_month", "max_voice_profiles", "max_phone_numbers",
                    "max_concurrent_calls", "outbound_campaigns", "api_access",
-                   "recording_days"];
+                   "recording_days", "max_seats", "desk_minutes_per_month"];
   const patch: Record<string, any> = {};
   for (const k of ALLOWED) if (req.body?.[k] !== undefined) patch[k] = req.body[k];
   if (!Object.keys(patch).length) return res.status(400).json({ error: "Nothing to change" });
@@ -6324,7 +6342,8 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     }
     // Minutes. Paid plans used to skip this entirely, so the 200 minutes
     // Starter includes were unlimited in practice — see usage.ts.
-    const gate = await minutesGate(sb, did.tenant_id);
+    const gate = await minutesGate(sb, did.tenant_id,
+      !isOutbound && did.routing_mode === "human" ? "desk" : "ai");
     if (!gate.ok) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} ${gate.reason} ` +
         `(${gate.usedMinutes}/${gate.limitMinutes} min, credits ${gate.credits}) — refusing`);
@@ -7348,10 +7367,10 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     // Desk calls ride the same trunk and are billed the same minute, so
     // the same gate applies: a trial with no credits left cannot dial.
-    const gate = await minutesGate(sb, tenantId);
+    const gate = await minutesGate(sb, tenantId, "desk");
     if (!gate.ok) {
       return res.status(402).json({ error: gate.reason, detail: gate.reason === "plan_minutes_exhausted"
-        ? "This month's plan minutes are used up. Upgrade on the Billing page to keep dialling."
+        ? "This month's team calling minutes are used up. Upgrade on the Billing page to keep dialling."
         : "This account has no call minutes left. Top up on the Billing page to dial." });
     }
 
@@ -7817,7 +7836,7 @@ You can chat, answer general questions, do quick math, tell the date/time (given
 Phone actions like calling contacts, alarms and timers are handled separately — if they ask for one, just say you're on it.
 If asked who you are or what you can do on this phone: you are Nikki, their voice assistant — you can chat and answer questions, call people from their contacts, set alarms and timers, and once they sign in, tell them about their business calls, leads and appointments. Do not describe the business product as what you yourself do unless they ask about Hey Nikki the product.
 
-ABOUT HEY NIKKI (what you are, when asked): Hey Nikki is an AI receptionist for Indian businesses — clinics, salons, real estate, shops. She answers the business phone 24x7 in Telugu, English and Hindi, books appointments, takes down leads, sends WhatsApp confirmations and follow-ups, guards missed calls, and can run outbound telecalling campaigns. Owners get a dashboard and a mobile app. Plans: Starter ₹1,999/month (200 minutes, 1 number, 1 person), Growth ₹4,999/month (600 minutes, 3 numbers, 3 people, WhatsApp follow-up, outbound campaigns), Scale ₹9,999/month (1,500 minutes, 10 numbers, 10 people, API access). There is a free trial with 100 minutes; sign up at heynikki.in. This person is not signed in — if they ask about "my business", "my calls" or "my appointments", tell them to sign in to the app and you'll be able to help with that.`;
+ABOUT HEY NIKKI (what you are, when asked): Hey Nikki is an AI receptionist for Indian businesses — clinics, salons, real estate, shops. She answers the business phone 24x7 in Telugu, English and Hindi, books appointments, takes down leads, sends WhatsApp confirmations and follow-ups, guards missed calls, and can run outbound telecalling campaigns. Owners get a dashboard and a mobile app. Plans: Shop ₹3,999/month (400 minutes of Nikki answering plus 300 telecaller minutes, 1 number, 1 person), Team ₹9,999/month (1,000 Nikki minutes plus 1,500 telecaller minutes, 2 numbers, 3 people, outbound campaigns), Business ₹24,999/month (2,500 Nikki minutes plus 3,500 telecaller minutes, 5 numbers, 8 people, API access); pay yearly for two months free. There is a free trial with 100 minutes; sign up at heynikki.in. This person is not signed in — if they ask about "my business", "my calls" or "my appointments", tell them to sign in to the app and you'll be able to help with that.`;
 
 async function appAssistantTurn(sessionId: string, transcript: string, lang: string, onText?: (soFar: string) => void): Promise<string> {
   const key = process.env.GEMINI_API_KEY;

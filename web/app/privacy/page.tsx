@@ -73,8 +73,8 @@ export default function Privacy() {
       <h2>4. How long we keep your data</h2>
       <ul>
         <li><strong>Call recordings:</strong> kept for the period your plan
-        includes — 7 days on the free plan, 90 days on Starter, 1 year on
-        Growth, 2 years on Scale — then permanently deleted automatically.
+        includes — 7 days on the free plan, 90 days on Shop, 1 year on
+        Team, 2 years on Business — then permanently deleted automatically.
         The recordings are encrypted at rest, and you can ask us to delete
         any recording sooner.</li>
         <li><strong>Transcripts:</strong> 2 years (for analytics and dispute resolution).</li>

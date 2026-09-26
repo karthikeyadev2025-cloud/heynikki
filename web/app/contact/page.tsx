@@ -64,7 +64,7 @@ export default function Contact() {
           <span style={{ ...iconBox, background: "rgba(34,197,94,0.1)", color: "#16A34A" }}><MessageCircle size={18} /></span>
           <h3 style={{ margin: "0 0 2px" }}>WhatsApp</h3>
           <a href="https://wa.me/919440769495" style={big}>+91 94407 69495</a>
-          <p style={{ margin: 0, fontSize: 14.5 }}>Priority support for accounts on the Scale plan.</p>
+          <p style={{ margin: 0, fontSize: 14.5 }}>Priority support for accounts on the Business plan.</p>
         </div>
       </div>
 

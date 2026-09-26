@@ -1,5 +1,6 @@
 // app/billing/page.tsx
 "use client";
+import { planLabel } from "../../lib/plans";
 import { useState, useEffect } from "react";
 import Script from "next/script";
 import { toast } from "../../components/Toast";
@@ -33,23 +34,24 @@ const PLANS_FALLBACK = [
      400 "Invalid plan" because no such row exists in `plans`, so the
      left-most, most prominent card on this page was a dead end for every
      customer who pressed it. Offer it again when it exists end to end. */
+  // Mirror of the plans table (070) — only shown if the API is unreachable.
   {
-    id: "starter", name: "Starter", price: 1999, annual: 1333,
-    minutes: 200, profiles: 1, seats: 1, numbers: 1, concurrent: 2,
+    id: "starter", name: "Shop", price: 3999, annual: 3333,
+    minutes: 400, desk: 300, profiles: 1, seats: 1, numbers: 1, concurrent: 2,
     color: C.mid,
-    features: ["Telugu, Hindi or English","Inbound reception on your number","Appointments & WhatsApp confirmations","Telecaller Desk & call summaries","Recordings 90 days"],
+    features: ["Telugu, Hindi or English","Inbound reception on your number","Appointments, orders & WhatsApp confirmations","Telecaller Desk & call summaries","Recordings 90 days"],
   },
   {
-    id: "growth", name: "Growth", price: 4999, annual: 3333,
-    minutes: 600, profiles: 3, seats: 3, numbers: 3, concurrent: 5,
+    id: "growth", name: "Team", price: 9999, annual: 8333,
+    minutes: 1000, desk: 1500, profiles: 3, seats: 3, numbers: 2, concurrent: 4,
     color: C.gbr, popular: true,
-    features: ["Everything in Starter","Team members (3 seats)","Outbound campaigns","3 voice profiles","Recordings 1 year"],
+    features: ["Everything in Shop","Team members (3 seats)","Outbound campaigns & auto-call new leads","3 voice profiles","Recordings 1 year"],
   },
   {
-    id: "scale", name: "Scale", price: 9999, annual: 6666,
-    minutes: 1500, profiles: 10, seats: 10, numbers: 10, concurrent: 10,
+    id: "scale", name: "Business", price: 24999, annual: 20833,
+    minutes: 2500, desk: 3500, profiles: 10, seats: 8, numbers: 5, concurrent: 6,
     color: C.gold,
-    features: ["Everything in Growth","Team members (10 seats)","API access + webhooks","10 voice profiles","Priority support on WhatsApp"],
+    features: ["Everything in Team","Team members (8 seats)","API access + webhooks","10 voice profiles","Priority support on WhatsApp"],
   },
 ];
 
@@ -137,6 +139,7 @@ export default function BillingPage() {
           // is actually charged from whenever the two were not exactly -20%.
           annual: t.annual_paise ? Math.round(rupees(t.annual_paise) / 12) : Math.round(rupees(t.monthly_paise) * 0.8),
           minutes: t.minutes,
+          desk: t.desk_minutes ?? null,
           // profiles: t.seats was a straight mix-up of two different caps.
           // Growth has 3 voice profiles and 3 seats; Scale has 10 and 10.
           // Reading seats into profiles made this page tell a Scale customer
@@ -171,7 +174,7 @@ export default function BillingPage() {
         // call_minutes.used_seconds is a counter nothing increments — this
         // ring read empty for every customer forever. The month's calls are
         // the source of truth; the row is still read for plan_limit_seconds.
-        sb.from("calls").select("duration_seconds").eq("tenant_id", tu.tenant_id)
+        sb.from("calls").select("duration_seconds, intent").eq("tenant_id", tu.tenant_id)
           .gte("created_at", new Date().toISOString().slice(0, 7) + "-01T00:00:00"),
         sb.from("call_minutes").select("*").eq("tenant_id", tu.tenant_id)
           .eq("month", new Date().toISOString().slice(0, 7)).maybeSingle(),
@@ -179,13 +182,18 @@ export default function BillingPage() {
         sb.from("credit_ledger").select("delta").eq("tenant_id", tu.tenant_id),
       ]);
       setTenant(t);
+      // Nikki's minutes and the team's are separate allowances (070): calls
+      // handled by people carry intent 'transfer'.
+      const secsOf = (desk: boolean) => (monthCalls || [])
+        .filter((c: any) => (c.intent === "transfer") === desk)
+        .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0);
       setUsage({
-        used_seconds: (monthCalls || [])
-          .reduce((sum: number, c: any) => sum + (c.duration_seconds || 0), 0),
+        used_seconds: secsOf(false),
+        desk_seconds: secsOf(true),
         // Only the call_minutes row is known here; the plan tier's allowance
         // comes from the live pricing catalogue and is resolved at render.
         plan_limit_seconds: u?.plan_limit_seconds ?? 0,
-      });
+      } as any);
       const rows = (ledger || []) as { delta: number | string }[];
       setTrial({
         granted: rows.reduce((s, r) => s + Math.max(0, Number(r.delta) || 0), 0),
@@ -345,7 +353,7 @@ export default function BillingPage() {
                     "Starter" beside a "FREE" badge read as though the shop
                     were already subscribed to Starter. */}
                 <span style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", textTransform: "capitalize" }}>
-                  {tenant?.status === "trial" ? "Free trial" : (tenant?.plan || "Trial")}
+                  {tenant?.status === "trial" ? "Free trial" : planLabel(tenant?.plan)}
                 </span>
                 {tenant?.status === "trial" && (
                   <span style={{ background: C.gold + "14", color: C.gold, borderRadius: 999,
@@ -360,10 +368,29 @@ export default function BillingPage() {
             </div>
 
             <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 22, boxShadow: "0 1px 2px rgba(15,23,42,0.04)", }}>
-              <div style={{ color: C.mid, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Minutes used</div>
+              <div style={{ color: C.mid, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Nikki&apos;s minutes</div>
               {usage || trial ? (
                 <>
                   <UsageRing used={ring.used} total={ring.total} period={ring.period} />
+                  {/* The team's own allowance (070), shown as a bar under Nikki's ring. */}
+                  {onPaid && (() => {
+                    const deskTotal = Number((PLANS.find((p: any) => p.id === planId) as any)?.desk) || 0;
+                    const deskUsed = Math.ceil(((usage as any)?.desk_seconds || 0) / 60);
+                    if (!deskTotal) return null;
+                    const pct = Math.min(100, Math.round((deskUsed / deskTotal) * 100));
+                    return (
+                      <div style={{ marginTop: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: C.txt, marginBottom: 6 }}>
+                          <span style={{ fontWeight: 600 }}>Telecaller minutes</span>
+                          <span style={{ fontVariantNumeric: "tabular-nums" }}>{deskUsed.toLocaleString("en-IN")} / {deskTotal.toLocaleString("en-IN")}</span>
+                        </div>
+                        <div style={{ height: 8, background: "#EEF2F6", borderRadius: 999 }}>
+                          <div style={{ width: `${pct}%`, height: "100%", borderRadius: 999,
+                            background: pct > 90 ? C.red : pct > 70 ? C.gold : C.glow }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* What actually happens at zero. The owner watching this
                       ring needs to know calls stop rather than that a bill
                       quietly grows. */}
@@ -447,7 +474,7 @@ export default function BillingPage() {
                       {annual && !(plan as any).perMinute && <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>billed yearly</div>}
                     </div>
                     <div style={{ color: C.mid, fontSize: 12.5, marginBottom: 16, paddingBottom: 14, borderBottom: "1px solid #EEF2F6" }}>
-                      {plan.minutes} mins · {plan.profiles} profile{plan.profiles > 1 ? "s" : ""} · {plan.numbers} number{plan.numbers > 1 ? "s" : ""}
+                      {plan.minutes.toLocaleString("en-IN")} Nikki min{plan.desk ? ` + ${Number(plan.desk).toLocaleString("en-IN")} telecaller min` : ""} · {plan.numbers} number{plan.numbers > 1 ? "s" : ""} · {plan.concurrent} at once
                     </div>
                     {plan.features.map((f: string) => (
                       <div key={f} style={{ display: "flex", gap: 8, marginBottom: 7, alignItems: "flex-start" }}>

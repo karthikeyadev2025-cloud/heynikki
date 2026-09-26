@@ -672,8 +672,11 @@ async def _refresh_pricing() -> None:
                  "and never invent a plan or a price that is not listed here.]"]
         for t in d.get("tiers", []):
             lines.append(
-                f"\n- {t.get('name')}: Rs {rup(t.get('monthly_paise', 0))}/month, "
-                f"{t.get('minutes')} minutes, {t.get('numbers')} number(s), "
+                f"\n- {t.get('name')}: Rs {rup(t.get('monthly_paise', 0))}/month "
+                f"(Rs {rup(t.get('annual_paise', 0))}/year), "
+                f"{t.get('minutes')} minutes of Nikki answering"
+                + (f" plus {t.get('desk_minutes')} telecaller minutes" if t.get("desk_minutes") else "")
+                + f", {t.get('numbers')} number(s), "
                 f"{t.get('seats')} team seat(s), {t.get('concurrent')} calls at once"
                 + (", outbound campaigns" if t.get("outbound_campaigns") else "")
                 + (", API access" if t.get("api_access") else "") + "."

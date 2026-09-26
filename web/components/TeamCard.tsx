@@ -1,5 +1,6 @@
 "use client";
 
+import { planLabel } from "../lib/plans";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase";
 import { NIKKI } from "../lib/brand";
@@ -94,7 +95,7 @@ export default function TeamCard() {
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
         <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em" }}>Your team</div>
         <div style={{ color: full ? C.gold : C.dim, fontSize: 12.5 }}>
-          {d.seats_used} of {d.seats_total} {d.seats_total === 1 ? "seat" : "seats"} used · {d.plan}
+          {d.seats_used} of {d.seats_total} {d.seats_total === 1 ? "seat" : "seats"} used · {planLabel(d.plan)}
         </div>
       </div>
       <div style={{ color: C.mid, fontSize: 12.5, margin: "6px 0 14px", lineHeight: 1.55 }}>
@@ -179,7 +180,7 @@ export default function TeamCard() {
           </div>
           {full && (
             <div style={{ color: C.gold, fontSize: 12, marginTop: 7 }}>
-              All {d.seats_total} {d.seats_total === 1 ? "seat is" : "seats are"} used on {d.plan}.
+              All {d.seats_total} {d.seats_total === 1 ? "seat is" : "seats are"} used on {planLabel(d.plan)}.
               Upgrade to add more people.
             </div>
           )}

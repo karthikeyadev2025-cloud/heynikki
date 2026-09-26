@@ -5,7 +5,7 @@ export const metadata = {
   description:
     "A Telugu-speaking AI receptionist for Indian small businesses. Answers your existing "
     + "business number in Telugu, Hindi or English, books appointments, captures leads and "
-    + "follows up on WhatsApp. From ₹1,999/month. 100 free minutes.",
+    + "follows up on WhatsApp. From ₹3,999/month. 100 free minutes.",
   alternates: { canonical: "https://www.heynikki.in/telugu-ai-receptionist" },
 };
 
@@ -69,7 +69,7 @@ export default function Page() {
       <p>
         Every new account starts with <strong>100 free minutes</strong> — about 25 real
         customer calls — with no card and no time limit. After that, plans start at{" "}
-        <strong>₹1,999 a month</strong> for 200 minutes, one business number, appointments,
+        <strong>₹3,999 a month</strong> for 400 minutes, one business number, appointments,
         leads and WhatsApp follow-ups. <a href="/pricing">Full pricing</a>.
       </p>
 
@@ -83,7 +83,7 @@ export default function Page() {
         { q: "Do callers know they are speaking to an AI?",
           a: "Yes. TRAI requires disclosure at the start of every automated call and Nikki gives it. Asked directly, she always says she is an AI assistant." },
         { q: "How much does a Telugu AI receptionist cost in India?",
-          a: "HeyNikki starts at ₹1,999 a month for 200 minutes, with 100 free minutes to begin. A human receptionist costs roughly ₹15,000 a month and works one shift." },
+          a: "HeyNikki starts at ₹3,999 a month for 400 minutes, with 100 free minutes to begin. A human receptionist costs roughly ₹15,000 a month and works one shift." },
       ]} />
     </ContentPage>
   );
