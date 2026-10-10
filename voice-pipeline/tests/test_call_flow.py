@@ -1150,3 +1150,19 @@ def test_insurance_desk_promises_no_return_and_decides_no_claim():
         assert "medical history" in low
     assert "policyholder" in main._outbound_rules_block({"profile_sku": "insurance"})
 
+
+# ── a WhatsApp she promised has to go ─────────────────────────────────────
+def test_a_whatsapp_she_promised_is_recognised():
+    said = lambda *lines: [{"role": "assistant", "content": l} for l in lines]
+    # The three lines from the 10 Oct calls that were followed by nothing.
+    assert main._promised_whatsapp(said("సేవలకు సంబంధించిన పూర్తి వివరాలు మీ WhatsAppకి పంపిస్తానండి."))
+    assert main._promised_whatsapp(said("సరేనండి, మీ వాట్సాప్‌కి వివరాలు పంపిస్తాను."))
+    assert main._promised_whatsapp(said("అవునండి, నమస్తే! మీ నంబర్‌కే డీటెయిల్స్ వాట్సాప్ చేస్తానండి."))
+    assert main._promised_whatsapp(said("Sure, I'll put the details on WhatsApp and send them now."))
+    # A question, a refusal and a plain mention are not promises.
+    assert not main._promised_whatsapp(said("మీరు కాల్ చేస్తున్న ఈ నంబర్‌కే వాట్సాప్ పంపమంటారా?"))
+    assert not main._promised_whatsapp(said("లొకేషన్ వాట్సాప్‌లో పంపలేనండి, అడ్రస్ చెప్తాను."))
+    assert not main._promised_whatsapp(said("మా వాట్సాప్ నంబర్ ఇదేనండి."))
+    # Only what SHE said counts — a caller asking is not her promising.
+    assert not main._promised_whatsapp([{"role": "user", "content": "WhatsApp కి details పంపిస్తారా, send చేయండి"}])
+    assert not main._promised_whatsapp([])

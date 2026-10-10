@@ -8022,7 +8022,14 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         # to uninterested people earns blocks, and enough blocks drop the
         # number's quality rating to Low, which throttles every template
         # including the transactional ones.
-        if stage in ("qualified", "won") and not getattr(agent, "opted_out", False):
+        #
+        # ...and for anyone she TOLD it was coming. On 10 Oct a caller asked
+        # for the details, heard "మీ వాట్సాప్‌కి వివరాలు పంపిస్తాను" three times,
+        # was scored 60/contacted, and got nothing; he rang back two minutes
+        # later to say so and was promised it a fourth time. What she said on
+        # the call outranks what the scorer thought of it afterwards.
+        promised = _promised_whatsapp(turns)
+        if (stage in ("qualified", "won") or promised) and not getattr(agent, "opted_out", False):
             cfg = await _read_platform_config()
             await _fire_automation_webhook("interested-lead", {
                 "caller_number":   digits,
@@ -8031,9 +8038,33 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
                 "business_name":   prof.get("business_name", "our team"),
                 "whatsapp_number": prof.get("whatsapp_number") or digits,
             }, cfg)
-            log.info(f"[FS] {fs_uuid}: brochure fired — stage={stage} score={score}")
+            log.info(f"[FS] {fs_uuid}: brochure fired — stage={stage} score={score}"
+                     + (" (promised on the call)" if promised else ""))
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
+
+
+# "I'll send it on WhatsApp", said by her, in either script. The send word
+# has to follow WhatsApp within the same sentence, so "WhatsApp lo pampalenu"
+# style refusals (పంపలే…) and a bare mention of WhatsApp do not count.
+_WA_PROMISE = re.compile(
+    r"(?:వాట్సాప్|వాట్సప్|whatsapp)[^.?!।\n]{0,80}?"
+    r"(?:పంపిస్తా|పంపుతా|పంపిస్తున్నా|పెడతా|షేర్ చేస్తా|చేస్తానండి|send|share)",
+    re.I)
+
+
+_WA_REFUSAL = re.compile(r"పంపలే|కుదరద|చేయలే|can't|cannot|can not|unable|not able", re.I)
+
+
+def _promised_whatsapp(turns: list[dict]) -> bool:
+    """True when she told the caller something is coming on WhatsApp."""
+    for t in (turns or []):
+        if t.get("role") != "assistant":
+            continue
+        for sentence in re.split(r"[.?!।\n]+", str(t.get("content") or "")):
+            if _WA_PROMISE.search(sentence) and not _WA_REFUSAL.search(sentence):
+                return True
+    return False
 
 
 # ── UTTERANCE COMPLETENESS ──────────────────────────────────────────
