@@ -755,9 +755,10 @@ async function tick(): Promise<void> {
 // Capped at 20 dispatches per tick (every 30s) so a burst of form
 // submissions can't overwhelm the trunk or a single tenant's concurrency.
 // Instant callbacks have no campaign window and dial as soon as the row
-// appears, at any hour.
+// appears, at any hour — except for a collections desk (see below).
 async function tickInstant(): Promise<void> {
   _gateCache = new Map();
+  _collectionsCache = new Map();
   const { data: pending } = await sb.from("outbound_recipients")
     .select("*").eq("is_instant", true).eq("status", "pending")
     .or(`next_attempt_at.is.null,next_attempt_at.lte.${new Date().toISOString()}`)
@@ -769,6 +770,12 @@ async function tickInstant(): Promise<void> {
     // Claim before anything else. An API DELETE (pending → failed) or an
     // opt-out (pending → opted_out) that arrived after the select above is
     // respected here instead of being overwritten by "scrubbing".
+    // A collections desk rings nobody outside 08:00–19:00 IST — not from a
+    // campaign (hoursOk above) and not from here either: an API-placed
+    // reminder or a callback queued at night waits, still pending, for the
+    // morning.
+    if (await isCollectionsDesk(r) && !inCollectionsHours(Date.now())) continue;
+
     if (!await transition(r.id, "pending", { status: "scrubbing" })) continue;
 
     if (await isOptedOut(r.tenant_id, r.phone)) {

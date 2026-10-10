@@ -1163,6 +1163,7 @@ def test_a_whatsapp_she_promised_is_recognised():
     assert not main._promised_whatsapp(said("మీరు కాల్ చేస్తున్న ఈ నంబర్‌కే వాట్సాప్ పంపమంటారా?"))
     assert not main._promised_whatsapp(said("లొకేషన్ వాట్సాప్‌లో పంపలేనండి, అడ్రస్ చెప్తాను."))
     assert not main._promised_whatsapp(said("మా వాట్సాప్ నంబర్ ఇదేనండి."))
+    assert not main._promised_whatsapp(said("మీ వాట్సాప్ నంబర్‌కి రేపు కాల్ చేస్తానండి."))
     # Only what SHE said counts — a caller asking is not her promising.
     assert not main._promised_whatsapp([{"role": "user", "content": "WhatsApp కి details పంపిస్తారా, send చేయండి"}])
     assert not main._promised_whatsapp([])
@@ -1205,3 +1206,9 @@ def test_person_facts_block_is_empty_without_figures():
     assert "never work out interest" in b
     # The privacy rule travels with the figures themselves.
     assert "offer to pay" in b and "not the amount, not the date" in b
+
+
+def test_no_sales_brochure_after_a_collections_call():
+    import inspect
+    src = inspect.getsource(main._score_and_log_lead)
+    assert 'prof.get("profile_sku") == "loan_recovery"' in src

@@ -450,6 +450,7 @@ they cannot pay because of illness, a lost job or a death in the family:
 do not question it — say an officer will check and call them.
 Never take a payment on the call, and never ask for a card number, UPI
 PIN, OTP or password.
+Nothing is sent on WhatsApp from this desk — never say it will be.
 If they ask not to be called, or not at certain hours, say it is noted
 and end the call politely.
 Never name a vendor or a technology.
@@ -8085,6 +8086,12 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         # the call outranks what the scorer thought of it afterwards.
         promised = _promised_whatsapp(turns)
         wanted = (stage in ("qualified", "won") or promised) and not getattr(agent, "opted_out", False)
+        # Never after a collections call. The brochure reads "thanks for your
+        # interest — here are the details you asked for", and a borrower who
+        # agreed a payment date is scored as a good lead: he would be sent a
+        # sales message by his lender for promising to pay.
+        if prof.get("profile_sku") == "loan_recovery":
+            wanted = False
         # Once a day per number: he rang twice in two minutes and was
         # promised it both times, which is one message, not two.
         if wanted and await _brochure_sent_recently(agent.db, prof.get("tenant_id"), digits):
@@ -8136,7 +8143,11 @@ async def _brochure_sent_recently(db, tenant_id: str | None, digits: str, hours:
 # style refusals (పంపలే…) and a bare mention of WhatsApp do not count.
 _WA_PROMISE = re.compile(
     r"(?:వాట్సాప్|వాట్సప్|whatsapp)[^.?!।\n]{0,80}?"
-    r"(?:పంపిస్తా|పంపుతా|పంపిస్తున్నా|పెడతా|షేర్ చేస్తా|చేస్తానండి|send|share)",
+    r"(?:పంపిస్తా|పంపుతా|పంపిస్తున్నా|పెడతా|షేర్ చేస్తా|send|share)"
+    # "వాట్సాప్ చేస్తాను" — WhatsApp as the verb — only when the two words
+    # touch. With a gap allowed, "మీ వాట్సాప్ నంబర్‌కి రేపు కాల్ చేస్తానండి" (I
+    # will CALL your WhatsApp number tomorrow) read as a promise to send.
+    r"|(?:వాట్సాప్|వాట్సప్|whatsapp)\s+చేస్తా",
     re.I)
 
 
