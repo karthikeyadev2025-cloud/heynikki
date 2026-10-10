@@ -352,8 +352,9 @@ not told. Say you will check, and offer a callback.
 Asked whether the doctor is in right now ("డాక్టర్ గారు ఉన్నారా?"): you
 cannot see the clinic from the phone, so never answer yes or no. Say you
 will check and confirm, then offer to book the appointment.
-Medical emergency: say "Emergency ki 108 call cheyyandi" immediately, then
-transfer.
+Medical emergency: tell them at once, in the caller's own language and
+script, to call 108 — then transfer. That sentence comes before anything
+else. Write the number as the digits 108, never as a word.
 Never name a vendor or a technology.
 """,
     "real_estate": """You are the receptionist for this property business, answering its phone.
@@ -408,8 +409,9 @@ Say the desk will check and call back.
 Asked about an admitted patient: never confirm or share anything about a
 patient — take the caller's name and have the ward desk call them.
 Medical emergency — chest pain, breathlessness, heavy bleeding, an
-accident, someone unconscious: say "Emergency ki 108 call cheyyandi"
-immediately, then transfer.
+accident, someone unconscious: tell them at once, in the caller's own
+language and script, to call 108 — then transfer. That sentence comes
+before anything else. Write the number as the digits 108, never as a word.
 Never name a vendor or a technology.
 """,
     "consultancy": """You are the front desk of this consultancy, answering its phone.
@@ -468,8 +470,9 @@ Find out which of these the call is, then handle it:
 - A renewal or a premium that is due: the policy number if they have it
   and when they plan to pay; then a callback from an advisor.
 - A claim: the policy number, what happened and when; then say the claims
-  team will call them. If someone is hurt or in hospital right now, say
-  "Emergency ki 108 call cheyyandi" first.
+  team will call them. If someone is hurt or in hospital right now, first
+  tell them, in the caller's own language and script, to call 108 (written
+  as those digits, never as a word).
 - A change on a policy — address, nominee, a statement, a copy: what they
   need and the policy number; then a callback from the service team.
 You cannot: quote a premium, a sum assured, a bonus, a return, a maturity
@@ -539,7 +542,10 @@ OUTBOUND_RULES = {
         "with them by name if you know it, otherwise with the account holder. Until they "
         "say yes, say NOTHING about a loan, dues or money. If it is someone else, or they "
         "will not say: ask only for a good time to reach the account holder, and say goodbye "
-        "once they have answered.\n"
+        "once they have answered. If they guess (\"is this about his loan?\"), neither "
+        "confirm nor deny it — say only that you need to speak with the account holder. "
+        "With anyone but the borrower, never say the words loan, instalment, dues or "
+        "payment yourself, not even to say you cannot discuss them.\n"
         "- Once confirmed, say plainly why you are calling and ask when they can pay. Ask "
         "once; if they avoid it, ask one more time and no more.\n"
         "- State an amount or a due date only if it is in the goal or the facts. Never "
@@ -1013,7 +1019,8 @@ def _person_facts_block(person: dict | None) -> str:
             + "\nSay these ONLY to that person, after they have said it is them. Anyone else — "
               "a wife, husband, parent, child, colleague, or someone who will not say who they "
               "are — gets none of it: not the amount, not the date, not that anything is due, "
-              "EVEN IF they ask how much or offer to pay it themselves. Tell them only that you "
+              "EVEN IF they ask how much or offer to pay it themselves. If they guess what the "
+              "call is about (\"is it about the loan?\"), neither confirm nor deny it. Tell them only that you "
               "will call back for that person and ask a good time; say goodbye only after "
               "they have answered.\n"
               "Say the amount in words, as money is spoken. These are the only figures you "
@@ -1069,13 +1076,25 @@ def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> st
     services = ", ".join(profile.get("services", []))
     appt_types = ", ".join(profile.get("appointment_types", []))
 
+    # The Telugu greeting words are examples for a Telugu line only. In the
+    # prompt of an English business they were the nearest greeting to hand,
+    # and one reply in nine opened "నమస్కారం, I cannot quote prices…".
+    if _tenant_lang(profile) == "te-IN":
+        clock_greeting = ('Any time greeting you do use must match the clock: "గుడ్ మార్నింగ్" only '
+                          'before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at '
+                          'night or before 05:00 say only "నమస్కారం" — never "good morning" at night.')
+    else:
+        clock_greeting = ("Any time greeting you do use must match the clock — morning before 12:00, "
+                          "afternoon until 16:00, evening until 21:00, and late at night a plain hello, "
+                          f"never \"good morning\" — and is said in {LANG_NAMES.get(_tenant_lang(profile), 'the caller language')}, "
+                          "never in Telugu.")
     return f"""{frozen}
 Your name: {profile.get('display_name') or 'నిక్కి'} (this is what you call yourself)
 Business: {profile.get('business_name', 'Our Business')}
 Working Hours: {open_days}, {open_t} – {close_t}
 Services: {services or 'General services'}
 Appointment Types: {appt_types or 'General appointment'}
-Today: {now} ({weekday}) — it is {part} right now. If a [CALL ALREADY OPENED] note appears below, the opening has been said — never greet or introduce yourself again. Any time greeting you do use must match the clock: "గుడ్ మార్నింగ్" only before 12:00, "గుడ్ ఆఫ్టర్నూన్" 12:00–16:00, "గుడ్ ఈవెనింగ్" 16:00–21:00; late at night or before 05:00 say only "నమస్కారం" — never "good morning" at night.
+Today: {now} ({weekday}) — it is {part} right now. If a [CALL ALREADY OPENED] note appears below, the opening has been said — never greet or introduce yourself again. {clock_greeting}
 {_knowledge_block(knowledge)}{_negotiation_block(profile.get('negotiation'))}{_order_block(profile)}
 """ + _persona_for(_tenant_lang(profile)) + (
         # Hey Nikki's OWN tariff. It was appended for every tenant, so a
@@ -1986,6 +2005,10 @@ class GeminiLLM:
         # the SAME stall line every failed turn otherwise, so the second one
         # has to say something different from the first — see _stall_reply.
         self._consecutive_failures = 0
+        # The tenant's language, set by the agent that owns this client. The
+        # stall lines below never pass through the model, so without it an
+        # English or Hindi business's caller was apologised to in Telugu.
+        self.lang = LANG_DEFAULT
         self.api_key = GEMINI_KEY
         self.base_url = (
             # GEMINI_MODEL holds a MODEL NAME, not a URL — compose the URL
@@ -2416,12 +2439,26 @@ class GeminiLLM:
         a number in the CRM rather than a hang-up.
         """
         self._consecutive_failures += 1
+        lang = getattr(self, "lang", LANG_DEFAULT)
         if self._consecutive_failures >= 3:
-            return ("క్షమించండి, ఈ కాల్‌లో సమస్య ఉంది. "
-                    "మీ ఫోన్ నంబర్ చెప్తే మా టీమ్ మీకు తిరిగి కాల్ చేస్తుంది.")
+            return _say(lang,
+                        "క్షమించండి, ఈ కాల్‌లో సమస్య ఉంది. "
+                        "మీ ఫోన్ నంబర్ చెప్తే మా టీమ్ మీకు తిరిగి కాల్ చేస్తుంది.",
+                        hi="माफ़ कीजिए, इस कॉल में दिक्कत आ रही है। "
+                           "अपना फ़ोन नंबर बता दीजिए, हमारी टीम आपको वापस कॉल करेगी।",
+                        bn="দুঃখিত, এই কলে সমস্যা হচ্ছে। "
+                           "আপনার ফোন নম্বরটা বলুন, আমাদের টিম আপনাকে আবার কল করবে।",
+                        en="Sorry, there is a problem on this call. "
+                           "Please tell me your phone number and our team will call you back.")
         if self._consecutive_failures == 2:
-            return "క్షమించండి, ఇంకా వినిపించలేదు. కొంచెం నెమ్మదిగా చెప్తారా?"
-        return "క్షమించండి, నాకు సరిగ్గా వినిపించలేదు. మళ్ళీ చెప్తారా?"
+            return _say(lang, "క్షమించండి, ఇంకా వినిపించలేదు. కొంచెం నెమ్మదిగా చెప్తారా?",
+                        hi="माफ़ कीजिए, अभी भी सुनाई नहीं दिया। थोड़ा धीरे बोलेंगे?",
+                        bn="দুঃখিত, এখনও শুনতে পাইনি। একটু ধীরে বলবেন?",
+                        en="Sorry, I still didn't catch that. Could you say it a little slower?")
+        return _say(lang, "క్షమించండి, నాకు సరిగ్గా వినిపించలేదు. మళ్ళీ చెప్తారా?",
+                    hi="माफ़ कीजिए, ठीक से सुनाई नहीं दिया। फिर से बोलेंगे?",
+                    bn="দুঃখিত, ঠিকমতো শুনতে পাইনি। আবার বলবেন?",
+                    en="Sorry, I didn't catch that. Could you say it again?")
 
     # A SECOND Gemini model, on the same key. Measured 8 Sep: the OpenAI
     # fallback below has never been able to run — OPENAI_API_KEY is not set
@@ -3219,6 +3256,7 @@ class NikkiAgent:
         self.stt         = SarvamSTT(self.lang)
         self.tts         = SarvamTTS(self.lang)
         self.llm         = GeminiLLM()
+        self.llm.lang    = self.lang     # so a failed turn apologises in this language
         self.db          = SupabaseClient()
         self.history     : list[dict] = []
         # Facts survive OUTSIDE the rolling history window. Without this the

@@ -1212,3 +1212,17 @@ def test_no_sales_brochure_after_a_collections_call():
     import inspect
     src = inspect.getsource(main._score_and_log_lead)
     assert 'prof.get("profile_sku") == "loan_recovery"' in src
+
+
+# ── a failed turn apologises in the business's language ───────────────────
+def test_stall_line_follows_the_tenant_language():
+    for lang, script in (("te-IN", r"[\u0C00-\u0C7F]"), ("hi-IN", r"[\u0900-\u097F]"),
+                         ("bn-IN", r"[\u0980-\u09FF]"), ("en-IN", r"^[\x00-\x7F]+$")):
+        llm = main.GeminiLLM(); llm.lang = lang
+        lines = [llm._stall_reply() for _ in range(3)]
+        assert len(set(lines)) == 3, "each consecutive failure says something different"
+        import re as _re
+        for line in lines:
+            assert _re.search(script, line), (lang, line)
+            if lang != "te-IN":
+                assert not _re.search(r"[\u0C00-\u0C7F]", line), (lang, line)
