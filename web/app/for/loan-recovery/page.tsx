@@ -48,14 +48,15 @@ export default function Page() {
         already queued.
       </p>
 
-      <h2>What it does not do yet</h2>
+      <h2>Each borrower&apos;s own amount</h2>
       <p>
-        She does not read out an outstanding amount for each borrower. She states a
-        figure or a due date only when it is written in the campaign&apos;s script, so a
-        reminder for one due date works well and a list with a different amount per
-        person does not, today. Asked &quot;how much do I owe&quot;, she says an accounts
-        officer will call with the details. Settlements, waivers and new instalment
-        plans are always your officer&apos;s decision, never hers.
+        Add an <strong>amount</strong> and a <strong>due date</strong> column to the
+        list you upload and she states that borrower&apos;s own figure, in words, once she
+        knows she has the borrower. Nobody else hears it: a wife or a son who says
+        &quot;tell me how much, I will pay&quot; is told only that she will call back for the
+        account holder. She never works out interest, a penalty or a total from the
+        figure, and settlements, waivers and new instalment plans are always your
+        officer&apos;s decision.
       </p>
 
       <h2>Borrowers who call back</h2>
@@ -81,7 +82,7 @@ export default function Page() {
         { q: "What if a family member answers the borrower's phone?",
           a: "She says nothing about a loan, dues or money. She asks only for a good time to reach the account holder and ends the call." },
         { q: "Can it tell each borrower how much they owe?",
-          a: "Not yet. She states an amount or due date only when it is written in the campaign script, which suits one reminder for one due date. Asked for a figure she does not have, she says an accounts officer will call." },
+          a: "Yes, when your list has an amount column, and a due date column if you want the date said too. She states it only to the borrower. Without those columns she says an accounts officer will call with the details." },
         { q: "What does it do when a borrower says they cannot pay?",
           a: "She does not argue or press. She says an accounts officer will call to talk it through, and ends the call. Disputes such as already paid or not my loan are handled the same way." },
         { q: "Does it call at night or early in the morning?",

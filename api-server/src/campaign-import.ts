@@ -67,7 +67,48 @@ const PHONE_KEYS = ["phone", "mobile", "number", "phone number", "mobile number"
 const NAME_KEYS  = ["name", "first name", "first_name", "customer name",
                     "full name", "fullname", "contact name", "client name"];
 
+// What this one person owes and by when — a loan instalment, a premium, a
+// fee. Optional: without them a call can only say "your instalment is
+// pending" and hand the figure to a person.
+const AMOUNT_KEYS = ["amount", "amount due", "due amount", "emi", "emi amount", "premium",
+                     "premium amount", "outstanding", "balance", "fee due", "dues"];
+const DUE_KEYS    = ["due date", "due on", "duedate", "emi date", "renewal date", "expiry date",
+                     "expiry", "last date", "pay by"];
+
 const norm = (h: string) => h.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+
+/**
+ * An amount from a sheet, as the digits Nikki may say: "₹12,500.00" → "12500".
+ * Anything that is not plainly a positive sum of money is dropped rather
+ * than read out to a borrower.
+ */
+export function cleanAmount(raw: unknown): string | null {
+  const t = String(raw ?? "").replace(/₹|rs\.?|inr|\/-|,|\s/gi, "");
+  if (!/^\d{1,9}(\.\d{1,2})?$/.test(t)) return null;
+  const n = Math.round(parseFloat(t));
+  return n > 0 ? String(n) : null;
+}
+
+/**
+ * A due date from a sheet, kept as written when it looks like a date and
+ * nothing else ("15-10-2026", "15 Oct 2026", "2026-10-15"). This text ends
+ * up in a prompt, so it is letters, digits and date punctuation only.
+ */
+export function cleanDue(raw: unknown): string | null {
+  const t = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!t || t.length > 20 || !/\d/.test(t) || !/^[A-Za-z0-9 ,./-]+$/.test(t)) return null;
+  return t;
+}
+
+/** The optional per-person columns, when the sheet has them. */
+export function detectExtras(header: string[]): { amount: number; due: number } {
+  const h = header.map(norm);
+  const find = (keys: string[]) => {
+    for (const k of keys) { const i = h.indexOf(k); if (i !== -1) return i; }
+    return -1;                       // exact only: "amount paid" must not become the amount due
+  };
+  return { amount: find(AMOUNT_KEYS), due: find(DUE_KEYS) };
+}
 
 export function detectColumns(header: string[]): { phone: number; name: number } {
   const h = header.map(norm);
@@ -230,12 +271,16 @@ export function mountCampaignImport(
             hint: `Rename a column to "phone". Saw: ${header.join(", ")}`,
           });
         }
+        const extra = detectExtras(header);
         items = table.slice(1).map(r => ({
           phone: r[col.phone] ?? "",
           name:  col.name !== -1 ? (r[col.name] ?? "") : "",
+          amount: extra.amount !== -1 ? (r[extra.amount] ?? "") : "",
+          due:    extra.due !== -1 ? (r[extra.due] ?? "") : "",
         }));
       } else if (Array.isArray(rawRows)) {
-        items = rawRows.map((r: any) => ({ phone: String(r.phone ?? ""), name: String(r.name ?? "") }));
+        items = rawRows.map((r: any) => ({ phone: String(r.phone ?? ""), name: String(r.name ?? ""),
+          amount: String(r.amount ?? ""), due: String(r.due_date ?? "") }));
       } else {
         return res.status(400).json({ error: "Provide csv text or a rows array" });
       }
@@ -249,7 +294,7 @@ export function mountCampaignImport(
       const invalid: { row: number; value: string }[] = [];
       const dupes:   { row: number; value: string }[] = [];
       const seen = new Map<string, number>();
-      const clean: { phone: string; name: string }[] = [];
+      const clean: { phone: string; name: string; amount: string | null; due: string | null }[] = [];
 
       items.forEach((it, idx) => {
         const rowNo = idx + 2;
@@ -257,7 +302,8 @@ export function mountCampaignImport(
         if (!phone)          { invalid.push({ row: rowNo, value: it.phone }); return; }
         if (seen.has(phone)) { dupes.push({ row: rowNo, value: phone });      return; }
         seen.set(phone, rowNo);
-        clean.push({ phone, name: (it.name || "").trim().slice(0, 120) });
+        clean.push({ phone, name: (it.name || "").trim().slice(0, 120),
+          amount: cleanAmount(it.amount), due: cleanDue(it.due) });
       });
 
       if (clean.length === 0) {
@@ -292,6 +338,10 @@ export function mountCampaignImport(
           tenant_id:   c.tenant_id,
           phone:       x.phone,
           first_name:  x.name || null,
+          // Read by the pipeline when it rings this number (the dispatcher
+          // only ever adds keys to metadata, so these survive).
+          ...(x.amount || x.due ? { metadata: {
+            ...(x.amount ? { amount_due: x.amount } : {}), ...(x.due ? { due_date: x.due } : {}) } } : {}),
           status:      "pending",       // dispatcher scrubs before queueing
         }));
         const { error } = await sb.from("outbound_recipients").insert(chunk);

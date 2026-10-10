@@ -31,13 +31,31 @@ const C = {
   grn: NIKKI.emerald, hi: NIKKI.vault,
 };
 
-type Parsed = { phone: string; name: string; row: number };
+type Parsed = { phone: string; name: string; row: number; amount?: string; due?: string };
 type Bad    = { row: number; value: string; why: string };
 
 const PHONE_KEYS = ["phone", "mobile", "number", "phone number", "mobile number",
                     "contact", "contact number", "phone_no", "mob", "cell", "whatsapp"];
 const NAME_KEYS  = ["name", "first name", "first_name", "customer name",
                     "full name", "fullname", "contact name", "client name"];
+
+// The same optional columns the server knows (campaign-import.ts): what each
+// person owes and by when.
+const AMOUNT_KEYS = ["amount", "amount due", "due amount", "emi", "emi amount", "premium",
+                     "premium amount", "outstanding", "balance", "fee due", "dues"];
+const DUE_KEYS    = ["due date", "due on", "duedate", "emi date", "renewal date", "expiry date",
+                     "expiry", "last date", "pay by"];
+
+/** A date cell as text. Excel hands a real date over as a day count
+ *  (46310), which would otherwise be read out as a number. */
+function cellDate(v: unknown): string {
+  if (typeof v === "number" && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400_000));
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()];
+    return `${d.getUTCDate()} ${mon} ${d.getUTCFullYear()}`;
+  }
+  return String(v ?? "").trim();
+}
 
 const norm = (h: string) => String(h ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 
@@ -78,6 +96,11 @@ export default function RecipientImport({
     const header = (table[0] || []).map((c: any) => String(c ?? ""));
     const pCol = pickColumn(header, PHONE_KEYS);
     const nCol = pickColumn(header, NAME_KEYS);
+    // Optional: what each person owes and by when. Exact header names only,
+    // so "amount paid" is never read as the amount due.
+    const exact = (keys: string[]) => header.findIndex(h => keys.includes(norm(h)));
+    const aCol = exact(AMOUNT_KEYS);
+    const dCol = exact(DUE_KEYS);
     if (pCol === -1) {
       setError(`No phone column found. Rename one to "phone". Columns seen: ${header.join(", ")}`);
       return;
@@ -95,7 +118,9 @@ export default function RecipientImport({
       if (!phone)          { bads.push({ row: rowNo, value: String(raw), why: "not a valid Indian mobile" }); return; }
       if (seen.has(phone)) { bads.push({ row: rowNo, value: phone,       why: "duplicate in this file" });    return; }
       seen.add(phone);
-      good.push({ phone, name: nCol !== -1 ? String(r?.[nCol] ?? "").trim() : "", row: rowNo });
+      good.push({ phone, name: nCol !== -1 ? String(r?.[nCol] ?? "").trim() : "", row: rowNo,
+        amount: aCol !== -1 ? String(r?.[aCol] ?? "").trim() : "",
+        due: dCol !== -1 ? cellDate(r?.[dCol]) : "" });
     });
 
     setRows(good); setBad(bads);
@@ -145,7 +170,7 @@ export default function RecipientImport({
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          rows: rows.map(x => ({ phone: x.phone, name: x.name })),
+          rows: rows.map(x => ({ phone: x.phone, name: x.name, amount: x.amount || "", due_date: x.due || "" })),
           consent_declared: consent,
         }),
       });
@@ -199,6 +224,11 @@ export default function RecipientImport({
         <div style={{ marginTop: 16 }}>
           <div style={{ display: "flex", gap: 16, fontSize: 13, marginBottom: 10 }}>
             <span style={{ color: C.grn, fontWeight: 700 }}>{rows.length} ready</span>
+            {rows.some(x => x.amount || x.due) && (
+              <span style={{ color: C.mid }}>
+                {rows.filter(x => x.amount).length} with an amount, {rows.filter(x => x.due).length} with a due date
+              </span>
+            )}
             {bad.length > 0 && <span style={{ color: C.red, fontWeight: 700 }}>{bad.length} skipped</span>}
           </div>
 

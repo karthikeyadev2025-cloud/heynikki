@@ -67,14 +67,14 @@ export default function Page() {
         for those, and they are right to.
       </p>
 
-      <h2>What it does not do yet</h2>
+      <h2>Each customer&apos;s own premium and date</h2>
       <p>
-        She does not read out a different premium or due date for each customer. A
-        figure or a date is said only when it is written in the campaign&apos;s script, so
-        one campaign per renewal date works well, and a single list with a different
-        amount on every row does not, today. She also does not carry out verification
-        calls that have to follow a fixed regulatory wording. You remain responsible
-        for the solicitation and calling-hours rules that apply to you.
+        Add a <strong>premium</strong> and a <strong>renewal date</strong> or{" "}
+        <strong>due date</strong> column to the list you upload and she states that
+        customer&apos;s own figure and date, to the policyholder only. She does not carry out
+        verification calls that have to follow a fixed regulatory wording, and you
+        remain responsible for the solicitation and calling-hours rules that apply to
+        you.
       </p>
 
       <h2>Getting started</h2>
@@ -92,7 +92,7 @@ export default function Page() {
         { q: "Can it tell a customer whether their claim will be paid?",
           a: "No. She takes the policy number, what happened and when, and passes it to your claims team. She never says a claim is approved, payable or rejected." },
         { q: "Can it remind every customer of their own premium amount?",
-          a: "Not yet. She states an amount or a date only when it is written in the campaign script, so run one campaign per due date. Asked for a figure she does not have, she says an advisor will call." },
+          a: "Yes, when your list has a premium column, and a renewal or due date column for the date. She says them only to the policyholder. Without those columns she says an advisor will call with the figure." },
         { q: "What if a family member answers a renewal call?",
           a: "She says only where she is calling from and asks when the policyholder can be reached. Nothing about the policy is discussed with anyone else." },
         { q: "Does it take premium payments over the phone?",

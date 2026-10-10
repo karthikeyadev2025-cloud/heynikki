@@ -537,7 +537,8 @@ OUTBOUND_RULES = {
         "- FIRST make sure you are speaking to the borrower: ask whether you are speaking "
         "with them by name if you know it, otherwise with the account holder. Until they "
         "say yes, say NOTHING about a loan, dues or money. If it is someone else, or they "
-        "will not say: ask only for a good time to reach the account holder, and end the call.\n"
+        "will not say: ask only for a good time to reach the account holder, and say goodbye "
+        "once they have answered.\n"
         "- Once confirmed, say plainly why you are calling and ask when they can pay. Ask "
         "once; if they avoid it, ask one more time and no more.\n"
         "- State an amount or a due date only if it is in the goal or the facts. Never "
@@ -561,7 +562,8 @@ OUTBOUND_RULES = {
         "if you know it. Until they say yes, say NOTHING about a policy, a renewal, a "
         "premium or a claim — not even which kind of policy. If it is anyone else, even "
         "family, and even if they ask what it is about: say only that you are calling from "
-        "the business, ask for a good time to reach the policyholder, and end the call.\n"
+        "the business and ask for a good time to reach the policyholder; say goodbye once "
+        "they have answered.\n"
         "- One invitation: a meeting or a callback from an advisor. Never recommend or "
         "compare plans yourself.\n"
         "- Never call a return, a bonus or a benefit guaranteed, and never state a premium, "
@@ -970,6 +972,51 @@ def _spoken_name(raw) -> str:
     if not name or len(name) > 40 or re.search(r"[\d=+/\\<>{}\[\]()@#$%^&*_:;,\"|~`!?-]", name):
         return ""
     return name
+
+
+def _spoken_amount(raw) -> str:
+    """A whole rupee amount from an uploaded list, or '' if it is anything else."""
+    t = str(raw or "").strip()
+    return t if re.fullmatch(r"[1-9]\d{0,8}", t) else ""
+
+
+def _spoken_date(raw) -> str:
+    """A due date from an uploaded list — date characters only, or ''."""
+    t = re.sub(r"\s+", " ", str(raw or "")).strip()
+    return t if t and len(t) <= 20 and re.search(r"\d", t) and re.fullmatch(r"[A-Za-z0-9 ,./-]+", t) else ""
+
+
+def _person_facts_block(person: dict | None) -> str:
+    """What the list says THIS person owes, for a call that is about it.
+
+    Until this, a reminder could only say "your instalment is pending" and
+    send "how much?" to an officer. The rules for the kind of business still
+    apply to these: a collections call says nothing of them until it has
+    the borrower.
+    """
+    p = person or {}
+    lines = []
+    if p.get("amount_due"):
+        lines.append(f"Amount due: {p['amount_due']} rupees")
+    if p.get("due_date"):
+        lines.append(f"Due date: {p['due_date']}")
+    if not lines:
+        return ""
+    who = f"{p['name']} " if p.get("name") else "the person this call is for "
+    # The privacy line lives HERE, beside the figures, not only in the rules
+    # for the kind of business. With the amount in the prompt and the rule
+    # six lines away, a wife who said "tell me how much, I will pay" was
+    # told the amount, both times it was tried.
+    return ("\n\n[PRIVATE — for " + who + "only, from the business's own list]\n"
+            + "\n".join(lines)
+            + "\nSay these ONLY to that person, after they have said it is them. Anyone else — "
+              "a wife, husband, parent, child, colleague, or someone who will not say who they "
+              "are — gets none of it: not the amount, not the date, not that anything is due, "
+              "EVEN IF they ask how much or offer to pay it themselves. Tell them only that you "
+              "will call back for that person and ask a good time; say goodbye only after "
+              "they have answered.\n"
+              "Say the amount in words, as money is spoken. These are the only figures you "
+              "may state; never work out interest, a penalty or a total from them.\n")
 
 
 def _now_ist() -> datetime:
@@ -2831,25 +2878,33 @@ class SupabaseClient:
             log.warning(f"[campaign] script fetch failed: {e}")
             return ""
 
-    async def get_campaign_recipient_name(self, campaign_id: str, phone: str) -> str:
-        """The name uploaded against this number in this campaign, or ''."""
+    async def get_campaign_recipient(self, campaign_id: str, phone: str) -> dict:
+        """What the uploaded list says about this number: {name, amount_due, due_date}.
+
+        Every value is cleaned here, whatever the import did, because it is
+        about to be put in a prompt and said aloud to a stranger.
+        """
         digits = "".join(c for c in (phone or "") if c.isdigit())[-10:]
         if len(digits) != 10:
-            return ""
+            return {}
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 r = await client.get(
                     f"{self.url}/rest/v1/outbound_recipients",
                     headers=self.headers,
-                    params={"select": "first_name", "campaign_id": f"eq.{campaign_id}",
+                    params={"select": "first_name,metadata", "campaign_id": f"eq.{campaign_id}",
                             "phone": f"like.*{digits}", "limit": "1"},
                 )
                 if r.status_code != 200 or not r.json():
-                    return ""
-                return _spoken_name(r.json()[0].get("first_name"))
-        except Exception as e:  # noqa: BLE001 - a missing name must never cost the call
-            log.warning(f"[campaign] recipient name fetch failed: {e}")
-            return ""
+                    return {}
+                row = r.json()[0]
+                meta = row.get("metadata") or {}
+                return {"name": _spoken_name(row.get("first_name")),
+                        "amount_due": _spoken_amount(meta.get("amount_due")),
+                        "due_date": _spoken_date(meta.get("due_date"))}
+        except Exception as e:  # noqa: BLE001 - a missing row must never cost the call
+            log.warning(f"[campaign] recipient fetch failed: {e}")
+            return {}
 
     async def get_knowledge(self, voice_profile_id: str) -> list[str]:
         """Everything this business has taught Nikki, newest first."""
@@ -8981,14 +9036,15 @@ async def freeswitch_ws(
                 # Who this number belongs to, from the uploaded list. A
                 # collections call cannot check it has the borrower without
                 # a name to ask for.
-                first_name = await db.get_campaign_recipient_name(campaign_id, caller_number)
-                agent.system_prompt = build_outbound_prompt(camp, first_name or None).replace(
+                person = await db.get_campaign_recipient(campaign_id, caller_number)
+                agent.system_prompt = build_outbound_prompt(camp, person.get("name") or None).replace(
                     "__LANGUAGE_RULE__",
                     _LANGUAGE_RULE.get(agent.lang, _LANGUAGE_RULE["te-IN"]))
                 # The script replaced the whole prompt, business facts and
                 # tool instructions included — while the tools themselves
                 # stayed declared, so a model that did not know the date was
                 # still free to book an appointment.
+                agent.system_prompt += _person_facts_block(person)
                 agent.system_prompt += _outbound_rules_block(profile)
                 agent.system_prompt += _business_context_block(profile, knowledge)
                 if agent.use_tools:

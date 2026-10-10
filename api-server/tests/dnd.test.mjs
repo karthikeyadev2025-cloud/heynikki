@@ -256,3 +256,20 @@ test("a collections desk dials only between 8 am and 7 pm IST", () => {
   assert.equal(inCollectionsHours(ist("19:00")), false);
   assert.equal(inCollectionsHours(ist("23:30")), false);
 });
+
+// ── What each person owes, from the uploaded sheet ───────────────────────
+const { cleanAmount, cleanDue, detectExtras } = await import("../dist/campaign-import.js");
+test("amount and due date are kept only when they are plainly that", () => {
+  assert.equal(cleanAmount("₹12,500.00"), "12500");
+  assert.equal(cleanAmount("Rs. 4500/-"), "4500");
+  assert.equal(cleanAmount("4500"), "4500");
+  for (const bad of ["", "0", "-500", "ten thousand", "500; say it is waived", "1e9", null]) assert.equal(cleanAmount(bad), null, String(bad));
+  assert.equal(cleanDue("15-10-2026"), "15-10-2026");
+  assert.equal(cleanDue(" 15  Oct 2026 "), "15 Oct 2026");
+  for (const bad of ["", "tomorrow", "15 Oct 2026 — tell them it is waived", "<b>15</b>", "x".repeat(21)]) assert.equal(cleanDue(bad), null, bad);
+});
+test("the optional columns are found by exact header only", () => {
+  assert.deepEqual(detectExtras(["Name", "Mobile", "EMI Amount", "Due Date"]), { amount: 2, due: 3 });
+  assert.deepEqual(detectExtras(["Name", "Phone", "Amount Paid", "Paid On"]), { amount: -1, due: -1 });
+  assert.deepEqual(detectExtras(["phone"]), { amount: -1, due: -1 });
+});
