@@ -43,6 +43,30 @@ Built and operated by Nikki Technologies, Hyderabad, India.
   consent-declared contacts only, with WhatsApp follow-up when a call is not
   answered.
 
+## Kinds of business it has a desk for
+
+The business picks its kind in Setup. Each desk has its own rules for calls
+answered and calls placed; what it refuses to say is part of the product.
+
+- **Education** (schools, colleges, coaching): admission enquiries and campus
+  visits. Never promises a seat, a fee, a scholarship or a placement.
+- **Hospitals**: OP consultations by department. Gives no diagnosis or medical
+  advice, shares nothing about an admitted patient, and tells a caller with
+  an emergency to call 108.
+- **Clinics**: appointments, timings and the clinic's own price list.
+- **Real estate**: enquiries answered from the project brochure, site visits.
+- **Consultancies** (visa, study abroad, jobs, tax): books consultations.
+  Never promises a visa, a job or an approval, and gives no success rate.
+- **Insurance** (insurers, agencies, brokers): renewal and premium reminders,
+  new enquiries, a claims line. Never calls a return guaranteed, never
+  recommends a plan, never says whether a claim will be paid.
+- **Loan recovery** (lenders, collections): repayment reminders to the
+  borrower only, between 8 am and 7 pm. Never threatens, never discusses the
+  loan with family or anyone else, never takes a payment or asks for an OTP.
+- **Manufacturers and enterprises**: sorts sales, service and supplier calls
+  and passes the details to the right team. Quotes no price or dispatch date
+  it was not given.
+
 ## What it does not do
 
 - It is not a general-purpose chatbot or a writing assistant.
@@ -64,6 +88,14 @@ exclusive of GST. Cancel any month.
 
 - [Home](https://heynikki.in/): what it is, and a live demo you can talk to.
 - [Pricing](https://heynikki.in/pricing): plans and what each includes.
+- [For education](https://heynikki.in/for/education)
+- [For hospitals](https://heynikki.in/for/hospitals)
+- [For clinics](https://heynikki.in/for/clinics)
+- [For real estate](https://heynikki.in/for/real-estate)
+- [For consultancies](https://heynikki.in/for/consultancy)
+- [For insurance](https://heynikki.in/for/insurance)
+- [For loan recovery](https://heynikki.in/for/loan-recovery)
+- [For manufacturers and enterprises](https://heynikki.in/for/industry)
 - [Contact](https://heynikki.in/contact): how to reach the team.
 - [Privacy](https://heynikki.in/privacy): call recording, retention, data handling.
 - [Terms](https://heynikki.in/terms)

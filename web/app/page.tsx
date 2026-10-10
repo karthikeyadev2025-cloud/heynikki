@@ -25,6 +25,7 @@ import {
   ShoppingBag, CalendarCheck, PhoneOutgoing, BookUser,
   Terminal, Smartphone, LayoutDashboard, Volume2,
   ListChecks, CalendarClock, Sparkles, PhoneCall, ChartColumn,
+  GraduationCap, Hospital, Stethoscope, Building2, Briefcase, Landmark, Factory,
 } from "lucide-react";
 
 const C = {
@@ -603,6 +604,60 @@ export default function Home() {
                 </a>
               )}
             </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* ══ INDUSTRIES ══════════════════════════════════════
+          Each kind of business has its own desk in the pipeline
+          (PROFILE_PROMPTS, supabase/073–074) and its own page under
+          /for. These pages were reachable only from the footer; a
+          hospital or a lender landing here could not tell the product
+          was built for them. One line per card, and each line is a
+          thing that desk really does or really refuses to do. ══════ */}
+      <Section id="industries">
+        <Eyebrow>Built for your kind of business</Eyebrow>
+        <h2 style={{
+          fontFamily: D, fontSize: "clamp(30px, 4vw, 46px)", lineHeight: 1.1,
+          letterSpacing: "-0.03em", fontWeight: 700, margin: "18px 0 12px", color: C.ink,
+        }}>
+          She knows what your desk must never say.
+        </h2>
+        <p style={{ fontSize: 16.5, color: C.textMid, maxWidth: 640, lineHeight: 1.65, margin: "0 0 46px" }}>
+          A college, a hospital and a lender do not answer the phone the same way. Pick
+          your kind of business in Setup and Nikki takes that desk — for the calls that
+          come in and the ones she makes.
+        </p>
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 270px), 1fr))",
+          gap: 1, background: C.line, border: `1px solid ${C.line}`, borderRadius: 16, overflow: "hidden",
+        }}>
+          {[
+            { href: "/for/education", icon: GraduationCap, t: "Schools, colleges, coaching",
+              d: "Admission enquiries answered and campus visits booked. Never promises a seat." },
+            { href: "/for/hospitals", icon: Hospital, t: "Hospitals",
+              d: "OP bookings by department. An emergency is sent to 108 and your staff, not a slot." },
+            { href: "/for/clinics", icon: Stethoscope, t: "Clinics",
+              d: "Appointments, timings and your price list, while you are with a patient." },
+            { href: "/for/real-estate", icon: Building2, t: "Real estate",
+              d: "Enquiries answered from your brochure, budget captured, site visits booked." },
+            { href: "/for/consultancy", icon: Briefcase, t: "Consultancies",
+              d: "Consultations booked for visa, study abroad, jobs and tax. No promised outcomes." },
+            { href: "/for/insurance", icon: ShieldCheck, t: "Insurance",
+              d: "Renewal and premium reminders, and a claims line. Never calls a return guaranteed." },
+            { href: "/for/loan-recovery", icon: Landmark, t: "Loan recovery",
+              d: "Repayment reminders to the borrower only, 8 am to 7 pm, with no threats." },
+            { href: "/for/industry", icon: Factory, t: "Manufacturers and enterprises",
+              d: "Sales, service and supplier calls sorted and passed to the right team." },
+          ].map(({ href, icon: Icon, t, d }) => (
+            <a key={href} href={href} style={{ background: C.card, padding: "26px 24px", textDecoration: "none", display: "block" }}>
+              <Icon size={20} color={C.teal} strokeWidth={1.7} />
+              <div style={{ fontWeight: 650, fontSize: 16, margin: "12px 0 6px", color: C.ink }}>{t}</div>
+              <div style={{ fontSize: 14.5, lineHeight: 1.6, color: C.textMid }}>{d}</div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, fontSize: 13.5, fontWeight: 600, color: C.teal }}>
+                How it works <ArrowRight size={14} />
+              </div>
+            </a>
           ))}
         </div>
       </Section>

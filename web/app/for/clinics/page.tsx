@@ -47,6 +47,16 @@ export default function Page() {
         accumulating indefinitely. Full detail in the <a href="/privacy">privacy policy</a>.
       </p>
 
+      <h2>Calls she makes for you</h2>
+      <p>
+        On the Team plan and above she also rings your patients: a follow-up visit that
+        is due, or a health camp or check-up package you are running. Ready scripts for
+        both are in the campaign form. If anyone other than the patient picks up, she
+        says only that she is calling from the clinic and asks when to reach them —
+        never the doctor or the reason for the visit. Anyone who asks not to be called
+        is not called again.
+      </p>
+
       <h2>Getting started</h2>
       <p>
         Upload your price list or brochure and she reads it herself — no forms to fill in.
