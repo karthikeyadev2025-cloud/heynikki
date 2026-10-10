@@ -1763,14 +1763,11 @@ app.get("/api/whatsapp/templates", verifyJWT, async (req: any, res) => {
   }
 });
 
-app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
-  const tenantId = await getTenantId(req.user.id);
-  if (!tenantId) return res.status(403).json({ error: "No tenant" });
-  const to = String(req.body?.to_number || "").replace(/\D/g, "").slice(-10);
-  const name = String(req.body?.template_name || "").trim();
-  if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
-  if (!name) return res.status(400).json({ error: "template_name required" });
-
+// One approved template to one number, as one business. Shared by the
+// business's own WhatsApp page and the Super Admin inbox, where a template
+// is the only way to write to someone outside Meta's 24-hour window.
+async function sendApprovedTemplate(tenantId: string, to: string, name: string, variables: any):
+  Promise<{ status: number; body: any }> {
   // Checked against the WABA, not wa_templates (see metaTemplates above):
   // the language must be the one Meta approved, and the parameter count
   // must match exactly or Meta answers 132000 instead of delivering.
@@ -1778,22 +1775,22 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
   try {
     tpl = (await metaTemplates()).find(t => t.name === name && t.status === "approved");
   } catch (e: any) {
-    return res.status(502).json({ error: `Could not check the template with WhatsApp: ${e.message}` });
+    return { status: 502, body: { error: `Could not check the template with WhatsApp: ${e.message}` } };
   }
   if (!tpl || META_TPL_HIDDEN.test(name)) {
-    return res.status(404).json({ error: "That template is not approved on WhatsApp" });
+    return { status: 404, body: { error: "That template is not approved on WhatsApp" } };
   }
   const lang = tpl.language;
 
   // Sent in {{1}}, {{2}}… order whatever the keys were called.
-  const rawVars = req.body?.variables && typeof req.body.variables === "object" ? req.body.variables : {};
+  const rawVars = variables && typeof variables === "object" ? variables : {};
   const vars = Object.keys(rawVars)
     .sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0))
     .map(k => String(rawVars[k] ?? "").trim().slice(0, 200));
   if (vars.length !== tpl.variables.length || vars.some(v => !v)) {
-    return res.status(400).json({
+    return { status: 400, body: {
       error: `This template needs ${tpl.variables.length} value(s): ${tpl.variables.join(", ")}`,
-    });
+    } };
   }
   const sender = await resolveWaSender(tenantId);
   // (to, template, lang, params, senderId) — params and lang are not
@@ -1801,14 +1798,25 @@ app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
   const result = await sendTemplateViaMeta(to, name, lang, vars, sender.phoneId);
   if (!result?.ok) {
     console.error(`[wa manual] ${name} to ${to}: ${result?.error}`);
-    return res.status(502).json({ error: result?.error || "WhatsApp rejected the template" });
+    return { status: 502, body: { error: result?.error || "WhatsApp rejected the template" } };
   }
   await sb.from("wa_dispatch_log").insert({
     tenant_id: tenantId, to_number: to, message_type: "manual_template",
-    message_body: `template:${name}`, status: "sent",
+    message_body: tpl.body_text ? tpl.body_text.replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => vars[Number(n) - 1] ?? "") : `template:${name}`, status: "sent",
     provider_msg_id: result.id || null,
   }).then(r => r.error && console.error("[wa manual] log:", r.error.message));
-  res.json({ ok: true });
+  return { status: 200, body: { ok: true } };
+}
+
+app.post("/api/whatsapp/send-template", verifyJWT, async (req: any, res) => {
+  const tenantId = await getTenantId(req.user.id);
+  if (!tenantId) return res.status(403).json({ error: "No tenant" });
+  const to = String(req.body?.to_number || "").replace(/\D/g, "").slice(-10);
+  const name = String(req.body?.template_name || "").trim();
+  if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
+  if (!name) return res.status(400).json({ error: "template_name required" });
+  const r = await sendApprovedTemplate(tenantId, to, name, req.body?.variables);
+  res.status(r.status).json(r.body);
 });
 
 app.post("/api/whatsapp/send", verifyInternal, async (req, res) => {
@@ -2858,7 +2866,28 @@ app.get("/api/admin/whatsapp/inbox", verifySuperAdmin, async (req: any, res) => 
       last: r.body, last_type: r.msg_type, last_at: r.received_at, unread: r.read_at ? 0 : 1, count: 1 });
     else { c.count += 1; if (!r.read_at) c.unread += 1; if (!c.lead_id && r.lead_id) c.lead_id = r.lead_id; }
   }
-  const list = Array.from(convos.values()).slice(0, 200);
+  // What we sent is part of the conversation too: the row shows whichever
+  // message is newest, either way. A number that has never written appears
+  // only when a person started the chat (a reply or a template sent by
+  // hand) — every automatic brochure and reminder would bury the inbox.
+  const { data: sent } = await sb.from("wa_dispatch_log")
+    .select("tenant_id, to_number, message_type, message_body, status, sent_at")
+    .order("sent_at", { ascending: false }).limit(1500);
+  const seenOut = new Set<string>();
+  for (const o of sent || []) {
+    const number = last10(String(o.to_number || ""));
+    const k = `${o.tenant_id}|${number}`;
+    if (!o.tenant_id || number.length !== 10 || seenOut.has(k)) continue;
+    seenOut.add(k);                                    // newest first: only the latest per chat matters
+    const c = convos.get(k);
+    const manual = o.message_type === "manual_reply" || o.message_type === "manual_template";
+    if (!c && !manual) continue;
+    const mine = { last: o.message_body, last_type: "text", last_at: o.sent_at, last_dir: "out", last_status: o.status };
+    if (!c) convos.set(k, { tenant_id: o.tenant_id, number, lead_id: null, unread: 0, count: 0, ...mine });
+    else if (String(o.sent_at) > String(c.last_at)) Object.assign(c, mine);
+  }
+  const list = Array.from(convos.values())
+    .sort((a, b) => String(b.last_at).localeCompare(String(a.last_at))).slice(0, 200);
   const tenantIds = Array.from(new Set(list.map(c => c.tenant_id)));
   const leadIds = Array.from(new Set(list.map(c => c.lead_id).filter(Boolean)));
   const [{ data: tenants }, { data: leads }] = await Promise.all([
@@ -2867,8 +2896,11 @@ app.get("/api/admin/whatsapp/inbox", verifySuperAdmin, async (req: any, res) => 
   ]);
   const tName = new Map((tenants || []).map((t: any) => [t.id, t.name]));
   const lName = new Map((leads || []).map((l: any) => [l.id, l.name]));
+  // Every business, for starting a new chat as one of them.
+  const { data: allTenants } = await sb.from("tenants").select("id, name").order("name").limit(500);
   res.json({
     platform_tenant_id: PLATFORM_TENANT_ID,
+    tenants: (allTenants || []).map((t: any) => ({ id: t.id, name: t.id === PLATFORM_TENANT_ID ? "HeyNikki (platform)" : t.name })),
     conversations: list.map(c => ({ ...c,
       tenant_name: c.tenant_id === PLATFORM_TENANT_ID ? "HeyNikki (platform)" : (tName.get(c.tenant_id) || "—"),
       name: c.lead_id ? lName.get(c.lead_id) || null : null })),
@@ -2881,14 +2913,19 @@ app.get("/api/admin/whatsapp/thread", verifySuperAdmin, async (req: any, res) =>
   const number = last10(String(req.query.number || ""));
   if (!/^[0-9a-f-]{36}$/i.test(tenantId) || number.length !== 10) return res.status(400).json({ error: "tenant_id and number required" });
   const forms = [number, `91${number}`, `+91${number}`];
-  const [{ data: inb }, { data: out }] = await Promise.all([
-    sb.from("wa_inbound").select("id, body, msg_type, received_at, read_at")
-      .eq("tenant_id", tenantId).eq("from_number", number).order("received_at", { ascending: true }).limit(300),
+  const inbound = (cols: string) => sb.from("wa_inbound").select(cols)
+    .eq("tenant_id", tenantId).eq("from_number", number).order("received_at", { ascending: true }).limit(300);
+  const [inbRes, { data: out }] = await Promise.all([
+    // Before 072 there are no media columns; the thread still opens.
+    inbound("id, body, msg_type, received_at, read_at, media_id, media_mime, media_name")
+      .then((r: any) => r.error ? inbound("id, body, msg_type, received_at, read_at") : r),
     sb.from("wa_dispatch_log").select("id, message_type, message_body, status, sent_at")
       .eq("tenant_id", tenantId).in("to_number", forms).order("sent_at", { ascending: true }).limit(300),
   ]);
+  const inb = (inbRes as any).data as any[] | null;
   const msgs = [
-    ...(inb || []).map((m: any) => ({ id: m.id, dir: "in", body: m.body, type: m.msg_type, at: m.received_at })),
+    ...(inb || []).map((m: any) => ({ id: m.id, dir: "in", body: m.body, type: m.msg_type, at: m.received_at,
+      media: m.media_id ? { mime: m.media_mime || null, name: m.media_name || null } : null })),
     ...(out || []).map((m: any) => ({ id: m.id, dir: "out", body: m.message_body, type: m.message_type, status: m.status, at: m.sent_at })),
   ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const lastIn = (inb || []).length ? (inb as any[])[(inb as any[]).length - 1].received_at : null;
@@ -2898,6 +2935,63 @@ app.get("/api/admin/whatsapp/thread", verifySuperAdmin, async (req: any, res) =>
   res.json({ messages: msgs,
     window_open: !!lastIn && Date.now() - new Date(lastIn).getTime() < 24 * 3600 * 1000,
     window_closes_at: lastIn ? new Date(new Date(lastIn).getTime() + 24 * 3600 * 1000).toISOString() : null });
+});
+
+// Approved templates, for writing to someone outside the 24-hour window.
+app.get("/api/admin/whatsapp/templates", verifySuperAdmin, async (_req: any, res) => {
+  try {
+    const list = (await metaTemplates())
+      .filter(t => t.status === "approved" && !META_TPL_HIDDEN.test(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ templates: list });
+  } catch (e: any) {
+    res.status(502).json({ error: `Could not load templates from WhatsApp: ${e.message}` });
+  }
+});
+
+// Send one, as the conversation's business — also how a new chat is started.
+app.post("/api/admin/whatsapp/send-template", verifySuperAdmin, async (req: any, res) => {
+  const tenantId = String(req.body?.tenant_id || "");
+  const to = last10(String(req.body?.number || ""));
+  const name = String(req.body?.template_name || "").trim();
+  if (!/^[0-9a-f-]{36}$/i.test(tenantId)) return res.status(400).json({ error: "tenant_id required" });
+  if (!/^[6-9]\d{9}$/.test(to)) return res.status(400).json({ error: "Enter a valid 10-digit mobile number" });
+  if (!name) return res.status(400).json({ error: "Pick a template" });
+  const { data: opt } = await sb.from("outbound_opt_outs").select("phone")
+    .eq("tenant_id", tenantId).in("phone", [to, `91${to}`, `+91${to}`]).limit(1).maybeSingle();
+  if (opt) return res.status(409).json({ error: "This number asked not to be contacted." });
+  const r = await sendApprovedTemplate(tenantId, to, name, req.body?.variables);
+  if (r.status === 200) await audit("admin.whatsapp_template", { tenantId, actorId: req.user?.id, req, metadata: { to, template: name } });
+  res.status(r.status).json(r.body);
+});
+
+// The file behind one inbound message. Meta gives a media id; the id is
+// exchanged for a short-lived URL, and both steps need the platform token,
+// so the browser cannot fetch it itself — it is passed through here.
+app.get("/api/admin/whatsapp/media/:id", verifySuperAdmin, async (req: any, res) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: "Bad id" });
+  const { data: row, error } = await sb.from("wa_inbound").select("media_id, media_mime, media_name")
+    .eq("id", req.params.id).maybeSingle();
+  if (error) return res.status(503).json({ error: "Media needs migration 072." });
+  if (!row?.media_id) return res.status(404).json({ error: "This message has no file." });
+  const token = process.env.META_WA_TOKEN;
+  if (!token) return res.status(503).json({ error: "META_WA_TOKEN not set" });
+  try {
+    const auth = { Authorization: `Bearer ${token}` };
+    const meta: any = await fetch(`https://graph.facebook.com/${META_VER()}/${encodeURIComponent(row.media_id)}`,
+      { headers: auth, signal: AbortSignal.timeout(15_000) }).then(r => r.json());
+    if (!meta?.url) {
+      return res.status(410).json({ error: "WhatsApp no longer has this file (it keeps media for about 30 days)." });
+    }
+    const file = await fetch(meta.url, { headers: auth, signal: AbortSignal.timeout(30_000) });
+    if (!file.ok) return res.status(502).json({ error: `WhatsApp returned ${file.status} for the file.` });
+    res.setHeader("Content-Type", row.media_mime || meta.mime_type || "application/octet-stream");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    if (row.media_name) res.setHeader("Content-Disposition", `inline; filename="${String(row.media_name).replace(/[^\w. -]/g, "_")}"`);
+    res.send(Buffer.from(await file.arrayBuffer()));
+  } catch (e: any) {
+    res.status(502).json({ error: `Could not fetch the file (${e?.message || "network"}).` });
+  }
 });
 
 // Reply, as the business the conversation belongs to (their own number if
@@ -5039,6 +5133,7 @@ import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
 import { followUpFor } from "./desk-learn";
+import { inboundParts } from "./wa-inbound";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
@@ -6729,7 +6824,8 @@ app.post("/webhooks/whatsapp", async (req, res) => {
       for (const ch of entry.changes || []) {
         const v = ch.value || {};
         for (const m of v.messages || []) {
-          const text = m.text?.body ?? `[${m.type}]`;
+          const parts = inboundParts(m);
+          const text = parts.body;
           const from = String(m.from || "").replace(/\D/g, "").slice(-10);
           console.log(`[WhatsApp] in from ${from}: ${String(text).slice(0, 200)}`);
           if (!from) continue;
@@ -6771,7 +6867,7 @@ app.post("/webhooks/whatsapp", async (req, res) => {
             console.log(`[WhatsApp] message from ${from} filed to the platform inbox`);
           }
 
-          const { error: inErr } = await sb.from("wa_inbound").insert({
+          const row = {
             tenant_id: tenantId,
             lead_id:   lead?.id || null,
             from_number: from,
@@ -6781,7 +6877,13 @@ app.post("/webhooks/whatsapp", async (req, res) => {
             received_at: m.timestamp
               ? new Date(Number(m.timestamp) * 1000).toISOString()
               : new Date().toISOString(),
-          });
+          };
+          // The media columns arrive with 072; without it the message still lands.
+          let { error: inErr } = await sb.from("wa_inbound").insert({ ...row,
+            media_id: parts.media_id, media_mime: parts.media_mime, media_name: parts.media_name });
+          if (inErr && /media_(id|mime|name)/.test(inErr.message)) {
+            ({ error: inErr } = await sb.from("wa_inbound").insert(row));
+          }
           // A duplicate is Meta redelivering, which is expected and fine.
           if (inErr && !/duplicate key/i.test(inErr.message)) {
             console.error("[WhatsApp] inbound store failed:", inErr.message);

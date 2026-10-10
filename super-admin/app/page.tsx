@@ -2,7 +2,7 @@
 // Deploy to: admin.heynikki.in (separate Vercel project)
 // Access: super_admin role only
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer } from "recharts";
@@ -15,7 +15,7 @@ import {
   Check, AlertTriangle, RefreshCw, Bot, User, Users,
   X, Tag, Clock, Download, UserPlus, MessageSquare, Activity, ShieldCheck, Gauge, MessageCircle, Menu, Mic,
   HeartPulse, Beaker, Mail, Send, Eye, Ban, Timer,
-  Headphones, Siren, CircleCheck, Radio, Hourglass, Search, LogOut, ChevronRight, CornerDownLeft } from "lucide-react";
+  Headphones, Siren, CircleCheck, Radio, Hourglass, Search, LogOut, ChevronRight, CornerDownLeft, ArrowLeft, CheckCheck, Copy } from "lucide-react";
 
 // ── ENV ──────────────────────────────────────────────────
 const sb = createClient(
@@ -2747,131 +2747,488 @@ function btn(color: string) {
  * Every business's incoming WhatsApp, and the platform's own.
  *
  * The shared platform number (+91 94407 69495) is on the Cloud API, which
- * means it cannot also run in the WhatsApp app on a phone — so this is where
- * its messages are read and answered. Messages from someone no business has
- * spoken to are kept under the platform tenant (they used to be dropped).
- * Replies go out as the conversation's business, free text inside Meta's
- * 24-hour window only.
+ * means it cannot also run in the WhatsApp app on a phone — so this screen
+ * IS the phone's WhatsApp for that number, and is built to be used from a
+ * phone: one pane at a time under 760px, the open chat refreshing on its
+ * own, ticks for sent / delivered / read. Messages from someone no business
+ * has spoken to are kept under the platform tenant (they used to be
+ * dropped). Replies go out as the conversation's business, free text inside
+ * Meta's 24-hour window only.
  */
+const WA = { out: "#D9FDD3", in: "#FFFFFF", wall: "#EFEAE2", tick: "#53BDEB", head: "#F0F2F5", ink: "#111B21", sub: "#667781" };
+const WA_CSS = `
+  .wa-shell{display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);height:min(74vh,760px);min-height:440px;
+    border:1px solid ${C.bord};border-radius:12px;overflow:hidden;background:${C.surf}}
+  .wa-list{display:flex;flex-direction:column;min-height:0;border-right:1px solid ${C.bord}}
+  .wa-chat{display:flex;flex-direction:column;min-height:0;min-width:0;background:${WA.wall}}
+  .wa-row{display:flex;gap:10px;align-items:center;width:100%;text-align:left;background:transparent;border:0;
+    border-bottom:1px solid ${C.bord}66;padding:10px 12px;cursor:pointer;color:${WA.ink};font-family:inherit}
+  .wa-row:hover{background:${WA.head}} .wa-row[aria-current=true]{background:#E9EDEF}
+  .wa-row:focus-visible,.wa-icon:focus-visible{outline:2px solid ${C.glow};outline-offset:-2px}
+  .wa-av{flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;color:#fff}
+  .wa-icon{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;border:0;background:transparent;
+    color:${WA.sub};cursor:pointer}
+  .wa-icon:hover{background:#0000000d}
+  .wa-back{display:none}
+  .wa-bub{max-width:min(78%,560px);border-radius:8px;padding:6px 9px 4px;box-shadow:0 1px .5px #0b141a21;font-size:14.5px;
+    line-height:1.4;color:${WA.ink};white-space:pre-wrap;word-break:break-word}
+  .wa-meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:11px;color:${WA.sub};margin-top:1px}
+  .wa-day{align-self:center;background:#FFFFFFE6;color:${WA.sub};font-size:12px;border-radius:8px;padding:4px 10px;
+    box-shadow:0 1px .5px #0b141a21;margin:6px 0}
+  .wa-input{flex:1;resize:none;border:0;outline:0;border-radius:20px;padding:10px 14px;font:inherit;font-size:15px;
+    line-height:1.35;background:#fff;color:${WA.ink};max-height:120px}
+  @media (max-width:760px){
+    .wa-shell{grid-template-columns:minmax(0,1fr);height:calc(100dvh - 190px);min-height:380px;border-radius:10px}
+    .wa-shell[data-open=true] .wa-list{display:none}
+    .wa-shell[data-open=false] .wa-chat{display:none}
+    .wa-back{display:grid}
+    .wa-bub{max-width:86%}
+  }
+`;
+const WA_AVATARS = ["#00A884", "#7F66FF", "#D4775A", "#1FA2D8", "#C9820A", "#D9432F", "#5B8DEF"];
+
+// A photo, voice note, video or document a customer sent. The file is
+// fetched through the API with the admin token (an <img src> cannot carry
+// one) and shown from memory; the object URL is released when the chat closes.
+function WaMedia({ token, id, media }: { token: string; id: string; media: { mime: string | null; name: string | null } }) {
+  const [url, setUrl] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let made = "", gone = false;
+    fetch(`${API}/api/admin/whatsapp/media/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async r => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Could not load the file.");
+        return r.blob();
+      })
+      .then(b => { if (gone) return; made = URL.createObjectURL(b); setUrl(made); })
+      .catch(e => { if (!gone) setErr(e.message); });
+    return () => { gone = true; if (made) URL.revokeObjectURL(made); };
+  }, [id, token]);
+  const mime = media.mime || "";
+  if (err) return <div style={{ color: C.red, fontSize: 12.5 }}>{err}</div>;
+  if (!url) return <div style={{ width: 220, height: mime.startsWith("image/") || mime.startsWith("video/") ? 160 : 40, borderRadius: 6, background: "#0000000d", display: "grid", placeItems: "center", color: WA.sub, fontSize: 12.5 }}>Loading…</div>;
+  if (mime.startsWith("image/")) return (
+    <a href={url} target="_blank" rel="noreferrer" title="Open full size">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt={media.name || "Photo from the customer"} style={{ display: "block", maxWidth: "100%", maxHeight: 320, borderRadius: 6 }} />
+    </a>
+  );
+  if (mime.startsWith("audio/")) return <audio controls src={url} style={{ width: 260, maxWidth: "100%" }} />;
+  if (mime.startsWith("video/")) return <video controls src={url} style={{ display: "block", maxWidth: "100%", maxHeight: 320, borderRadius: 6 }} />;
+  return (
+    <a href={url} download={media.name || "file"} style={{ display: "flex", alignItems: "center", gap: 8, color: WA.ink, fontWeight: 600, textDecoration: "none",
+      background: "#0000000d", borderRadius: 6, padding: "8px 10px" }}>
+      <Download size={16} /> {media.name || "Document"}
+    </a>
+  );
+}
+
+// Message text with its links made tappable — a shared location arrives as
+// a maps link, and a customer's website as plain text.
+function waText(body: string) {
+  return String(body).split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
+    i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer" style={{ color: "#027EB5", wordBreak: "break-all" }}>{part}</a> : part);
+}
+
+// A short two-note chime for a new message, made in the browser so there
+// is no sound file to ship. Silent if the browser has not allowed audio yet.
+function waChime() {
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    const ctx = new Ctx();
+    [[880, 0], [1175, 0.12]].forEach(([hz, at]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = hz; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.22);
+      o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.25);
+    });
+    setTimeout(() => ctx.close().catch(() => 0), 800);
+  } catch { /* no audio: the badge and the tab title still say so */ }
+}
+
 function WhatsAppInbox({ token }: { token: string }) {
   const H = { Authorization: `Bearer ${token}` };
+  const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
+  const [platformId, setPlatformId] = useState("");
+  const [pending, setPending] = useState<{ key: string; body: string; at: string } | null>(null);
+  const [templates, setTemplates] = useState<any[] | null>(null);
+  const [tplErr, setTplErr] = useState("");
+  const [tpl, setTpl] = useState("");
+  const [tplVars, setTplVars] = useState<Record<string, string>>({});
+  const [showTpl, setShowTpl] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [newNum, setNewNum] = useState("");
+  const [newTenant, setNewTenant] = useState("");
+  const [alerts, setAlerts] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  const [copied, setCopied] = useState(false);
   const [convos, setConvos] = useState<any[] | null>(null);
   const [err, setErr] = useState("");
   const [sel, setSel] = useState<any | null>(null);
   const [thread, setThread] = useState<any | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState("");
+  const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "unread" | "platform">("all");
+  const endRef = useRef<HTMLDivElement | null>(null);
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  const selKey = sel ? `${sel.tenant_id}|${sel.number}` : "";
 
   const load = useCallback(() => {
     fetch(`${API}/api/admin/whatsapp/inbox`, { headers: H })
-      .then(r => r.json()).then(j => { if (j.error) setErr(j.error); else { setConvos(j.conversations || []); setErr(""); } })
+      .then(r => r.json()).then(j => {
+        if (j.error) return setErr(j.error);
+        setConvos(j.conversations || []); setTenants(j.tenants || []); setPlatformId(j.platform_tenant_id || ""); setErr("");
+      })
       .catch(e => setErr(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
 
-  const open = useCallback((c: any) => {
-    setSel(c); setThread(null); setText("");
-    fetch(`${API}/api/admin/whatsapp/thread?tenant_id=${c.tenant_id}&number=${c.number}`, { headers: H })
-      .then(r => r.json()).then(j => { setThread(j); load(); }).catch(() => setThread({ messages: [], error: true }));
+  // The open chat is fetched again every 6 s, so a reply appears without
+  // anyone pressing anything. A fetch that comes back after the chat was
+  // switched is dropped rather than shown under the wrong name.
+  const live = useRef("");
+  const fetchThread = useCallback((c: any) => {
+    const key = `${c.tenant_id}|${c.number}`;
+    return fetch(`${API}/api/admin/whatsapp/thread?tenant_id=${c.tenant_id}&number=${c.number}`, { headers: H })
+      .then(r => r.json()).then(j => { if (live.current === key) setThread(j); })
+      .catch(() => { if (live.current === key) setThread((t: any) => t || { messages: [], error: true }); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, load]);
+  }, [token]);
+  useEffect(() => {
+    live.current = selKey;
+    if (!sel) return;
+    fetchThread(sel).then(load);
+    const t = setInterval(() => { if (!document.hidden) fetchThread(sel); }, 6000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey]);
+
+  const open = (c: any) => { setSel(c); setThread(null); setText(""); setSendErr(""); setShowTpl(false); setTpl(""); setTplVars({}); setStarting(false); };
+
+  // New messages announce themselves: a chime, the count in the tab title,
+  // and a system notification when the tab is in the background and the
+  // browser has been allowed to show one.
+  const unreadTotal = (convos || []).reduce((n, c) => n + (c.unread || 0), 0);
+  const lastUnread = useRef<number | null>(null);
+  useEffect(() => {
+    if (!convos) return;
+    if (lastUnread.current !== null && unreadTotal > lastUnread.current) {
+      waChime();
+      const c = convos.find(x => x.unread > 0);
+      if (c && document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try { new Notification(c.name || c.number, { body: c.last || "New WhatsApp message", tag: "wa-inbox" }); } catch { /* not allowed here */ }
+      }
+    }
+    lastUnread.current = unreadTotal;
+    const base = document.title.replace(/^\(\d+\)\s*/, "");
+    document.title = unreadTotal > 0 ? `(${unreadTotal}) ${base}` : base;
+    return () => { document.title = document.title.replace(/^\(\d+\)\s*/, ""); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unreadTotal, !!convos]);
+
+  // Esc steps back out of the open chat.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && sel && !text) setSel(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sel, text]);
+
+  // Approved templates: the only thing WhatsApp delivers outside the 24-hour window.
+  const loadTemplates = () => {
+    if (templates) return;
+    fetch(`${API}/api/admin/whatsapp/templates`, { headers: H }).then(r => r.json())
+      .then(j => { if (j.error) setTplErr(j.error); else setTemplates(j.templates || []); })
+      .catch(() => setTplErr("Could not load templates."));
+  };
+  const tplSel = (templates || []).find(t => t.name === tpl);
+  async function sendTemplate() {
+    if (!sel || !tplSel || sending) return;
+    setSending(true); setSendErr("");
+    try {
+      const variables: Record<string, string> = {};
+      (tplSel.variables as string[]).forEach((_, i) => { variables[String(i + 1)] = (tplVars[String(i + 1)] || "").trim(); });
+      const r = await fetch(`${API}/api/admin/whatsapp/send-template`, { method: "POST",
+        headers: { ...H, "Content-Type": "application/json" },
+        body: JSON.stringify({ tenant_id: sel.tenant_id, number: sel.number, template_name: tplSel.name, variables }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setSendErr(j.error || "WhatsApp did not accept the template.");
+      else { setShowTpl(false); setTpl(""); setTplVars({}); await fetchThread(sel); load(); }
+    } catch { setSendErr("No connection — nothing was sent."); }
+    finally { setSending(false); }
+  }
+  const tplPreview = tplSel ? String(tplSel.body_text || "").replace(/\{\{(\d+)\}\}/g, (_: string, n: string) => tplVars[n]?.trim() || `[${tplSel.variables[Number(n) - 1]}]`) : "";
+
+  function startChat() {
+    const number = newNum.replace(/\D/g, "").slice(-10);
+    if (!/^[6-9]\d{9}$/.test(number)) return;
+    const tenant_id = newTenant || platformId;
+    const known = (convos || []).find(c => c.tenant_id === tenant_id && c.number === number);
+    open(known || { tenant_id, number, name: null, unread: 0, tenant_name: tenants.find(t => t.id === tenant_id)?.name || "HeyNikki (platform)" });
+    setNewNum("");
+  }
+  const msgCount = (thread?.messages?.length || 0) + (pending ? 1 : 0);
+  // Scroll the chat itself, not the page: scrollIntoView would drag the whole screen down.
+  useEffect(() => { const el = endRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgCount, selKey]);
 
   async function send() {
-    if (!sel || !text.trim()) return;
-    setSending(true);
+    const body = text.trim();
+    if (!sel || !body || sending) return;
+    setSending(true); setSendErr("");
+    // Shown at once with a clock; the real row replaces it when the send lands.
+    setPending({ key: selKey, body, at: new Date().toISOString() }); setText("");
+    if (boxRef.current) boxRef.current.style.height = "auto";
     try {
       const r = await fetch(`${API}/api/admin/whatsapp/reply`, { method: "POST",
         headers: { ...H, "Content-Type": "application/json" },
-        body: JSON.stringify({ tenant_id: sel.tenant_id, number: sel.number, text }) });
-      const j = await r.json();
-      if (!r.ok) alert(j.error || "Send failed"); else { setText(""); open(sel); }
-    } finally { setSending(false); }
+        body: JSON.stringify({ tenant_id: sel.tenant_id, number: sel.number, text: body }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setSendErr(j.error || "WhatsApp did not accept the message."); setText(body); }
+      else { await fetchThread(sel); load(); }
+    } catch { setSendErr("No connection — the message was not sent."); setText(body); }
+    finally { setPending(null); setSending(false); boxRef.current?.focus(); }
   }
 
+  const needle = q.trim().toLowerCase();
   const shown = (convos || []).filter(c =>
-    filter === "unread" ? c.unread > 0 : filter === "platform" ? c.tenant_name === "HeyNikki (platform)" : true);
-  const time = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    (filter === "unread" ? c.unread > 0 : filter === "platform" ? c.tenant_name === "HeyNikki (platform)" : true)
+    && (!needle || `${c.name || ""} ${c.number} ${c.tenant_name} ${c.last || ""}`.toLowerCase().includes(needle)));
+  const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+  const dayKey = (iso: string) => new Date(iso).toDateString();
+  const dayLabel = (iso: string) => {
+    const d = new Date(iso), today = new Date(), y = new Date(Date.now() - 86400_000);
+    if (d.toDateString() === today.toDateString()) return "Today";
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  };
+  const listTime = (iso: string) => dayLabel(iso) === "Today" ? clock(iso) : dayLabel(iso);
+  const avatar = (c: any) => {
+    const label = (c.name || "").trim();
+    const initials = label ? label.split(/\s+/).slice(0, 2).map((w: string) => w[0]).join("").toUpperCase() : String(c.number).slice(-2);
+    return <span className="wa-av" style={{ background: WA_AVATARS[Number(String(c.number).slice(-3)) % WA_AVATARS.length] }}>{initials}</span>;
+  };
+  const preview = (c: any) => c.last || (c.last_type && c.last_type !== "text" ? `[${c.last_type}]` : "");
+  const pretty = (n: string) => String(n).length === 10 ? `+91 ${String(n).slice(0, 5)} ${String(n).slice(5)}` : n;
+  const closes = thread?.window_open && thread.window_closes_at ? new Date(thread.window_closes_at).getTime() - Date.now() : 0;
+  const hoursLeft = Math.floor(closes / 3600_000);
 
   return (
-    <Card>
-      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.sm, flexWrap: "wrap" as const }}>
-        <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 800 }}>WhatsApp inbox</div>
-        <div style={{ color: C.dim, fontSize: TYPE.xs }}>every business&apos;s incoming messages · the platform&apos;s own (support) · refreshes every 20 s</div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-          {(["all", "unread", "platform"] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)} style={{ padding: "3px 10px", borderRadius: 999, fontSize: TYPE.xs, fontWeight: 700,
-              cursor: "pointer", background: filter === f ? C.glow + "22" : "transparent", color: filter === f ? C.gbr : C.mid,
-              border: `1px solid ${filter === f ? C.glow : C.bord}` }}>{f === "platform" ? "HeyNikki support" : f}</button>
-          ))}
-        </div>
-      </div>
-      {err ? <ErrorNote msg={err} onRetry={load} /> : !convos ? <Loading rows={3} label="Loading messages" /> : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(0, 2fr)", gap: SPACE.md, minHeight: 360 }}>
-          <div style={{ borderRight: `1px solid ${C.bord}`, paddingRight: SPACE.sm, maxHeight: 520, overflowY: "auto" as const }}>
-            {shown.length === 0 ? <div style={{ color: C.dim, fontSize: TYPE.sm }}>No messages.</div> : shown.map(c => {
-              const on = sel && sel.tenant_id === c.tenant_id && sel.number === c.number;
-              return (
-                <button key={`${c.tenant_id}|${c.number}`} onClick={() => open(c)} style={{ display: "block", width: "100%", textAlign: "left" as const,
-                  background: on ? C.hi : "transparent", border: "none", borderBottom: `1px solid ${C.bord}33`, padding: "8px 6px",
-                  cursor: "pointer", color: C.txt, fontFamily: "inherit" }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span style={{ fontWeight: 800, fontSize: TYPE.sm }}>{c.name || c.number}</span>
-                    {c.unread > 0 && <span style={{ background: C.grn, color: "#04120a", borderRadius: 999, padding: "0 7px", fontSize: TYPE.xs, fontWeight: 800 }}>{c.unread}</span>}
-                    <span style={{ marginLeft: "auto", color: C.dim, fontSize: TYPE.xs }}>{time(c.last_at)}</span>
-                  </div>
-                  <div style={{ color: C.gbr, fontSize: TYPE.xs }}>{c.tenant_name}{c.name ? ` · ${c.number}` : ""}</div>
-                  <div style={{ color: C.mid, fontSize: TYPE.xs, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.last}</div>
-                </button>
-              );
-            })}
+    <div>
+      <style>{WA_CSS}</style>
+      {err ? <ErrorNote msg={err} onRetry={load} /> : !convos ? <Loading rows={4} label="Loading messages" /> : (
+        <div className="wa-shell" data-open={!!sel}>
+          {/* ── chats ── */}
+          <div className="wa-list">
+            <div style={{ padding: "12px 12px 8px", background: C.surf }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: WA.ink }}>Chats</span>
+                <span style={{ fontSize: TYPE.xs, color: C.dim }}>{unreadTotal > 0 ? `${unreadTotal} unread` : "all read"}</span>
+                {alerts === "default" && (
+                  <button onClick={() => Notification.requestPermission().then(setAlerts)} style={{ marginLeft: "auto", border: 0, background: "transparent",
+                    color: "#0A6B4F", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Turn on alerts</button>
+                )}
+                <button className="wa-icon" onClick={() => setStarting(v => !v)} aria-label="New chat" aria-expanded={starting} title="New chat"
+                  style={{ marginLeft: alerts === "default" ? 0 : "auto", width: 34, height: 34, background: starting ? "#D9FDD3" : undefined }}><UserPlus size={17} /></button>
+              </div>
+              {starting && (
+                <form onSubmit={e => { e.preventDefault(); startChat(); }} style={{ display: "grid", gap: 6, background: WA.head, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                  <input value={newNum} onChange={e => setNewNum(e.target.value)} inputMode="tel" autoFocus placeholder="10-digit mobile number" aria-label="Mobile number"
+                    style={{ border: `1px solid ${C.bord}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "inherit", color: WA.ink }} />
+                  <select value={newTenant || platformId} onChange={e => setNewTenant(e.target.value)} aria-label="Send as"
+                    style={{ border: `1px solid ${C.bord}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "inherit", color: WA.ink, background: "#fff" }}>
+                    {tenants.map(t => <option key={t.id} value={t.id}>Send as {t.name}</option>)}
+                  </select>
+                  <button type="submit" disabled={!/^[6-9]\d{9}$/.test(newNum.replace(/\D/g, "").slice(-10))} style={{ border: 0, borderRadius: 8, padding: "8px 10px",
+                    background: "#00A884", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+                    opacity: /^[6-9]\d{9}$/.test(newNum.replace(/\D/g, "").slice(-10)) ? 1 : 0.5 }}>Open chat</button>
+                  <div style={{ fontSize: 11.5, color: WA.sub, lineHeight: 1.4 }}>A first message has to be an approved template — WhatsApp&apos;s rule. Free typing opens once they reply.</div>
+                </form>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, background: WA.head, borderRadius: 20, padding: "7px 12px" }}>
+                <Search size={15} color={WA.sub} />
+                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, number or business" aria-label="Search chats"
+                  style={{ flex: 1, minWidth: 0, border: 0, outline: 0, background: "transparent", fontSize: 14, color: WA.ink, fontFamily: "inherit" }} />
+                {q && <button onClick={() => setQ("")} aria-label="Clear search" style={{ border: 0, background: "transparent", cursor: "pointer", color: WA.sub, display: "grid" }}><X size={15} /></button>}
+              </label>
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                {(["all", "unread", "platform"] as const).map(f => (
+                  <button key={f} onClick={() => setFilter(f)} aria-pressed={filter === f} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 12.5,
+                    fontWeight: 600, cursor: "pointer", border: 0, fontFamily: "inherit",
+                    background: filter === f ? "#D9FDD3" : WA.head, color: filter === f ? "#0A6B4F" : WA.sub }}>
+                    {f === "platform" ? "HeyNikki support" : f === "all" ? "All" : "Unread"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" as const }}>
+              {shown.length === 0 ? (
+                <div style={{ color: C.dim, fontSize: TYPE.sm, padding: 24, textAlign: "center" as const }}>
+                  {needle ? `Nothing matches “${q}”.` : filter === "unread" ? "Nothing unread." : "No messages yet."}
+                </div>
+              ) : shown.map(c => {
+                const key = `${c.tenant_id}|${c.number}`;
+                return (
+                  <button key={key} className="wa-row" aria-current={key === selKey} onClick={() => open(c)}>
+                    {avatar(c)}
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                        <span style={{ fontWeight: c.unread > 0 ? 700 : 600, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name || pretty(c.number)}</span>
+                        <span style={{ marginLeft: "auto", flex: "none", fontSize: 12, color: c.unread > 0 ? "#00A884" : WA.sub, fontWeight: c.unread > 0 ? 700 : 400 }}>{listTime(c.last_at)}</span>
+                      </span>
+                      <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {c.last_dir === "out" && (c.last_status === "failed" ? <AlertTriangle size={13} color={C.red} style={{ flex: "none" }} />
+                          : c.last_status === "sent" || !c.last_status ? <Check size={14} color={WA.sub} style={{ flex: "none" }} />
+                          : <CheckCheck size={15} color={c.last_status === "read" ? WA.tick : WA.sub} style={{ flex: "none" }} />)}
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: c.unread > 0 ? WA.ink : WA.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{preview(c)}</span>
+                        {c.unread > 0 && <span style={{ flex: "none", background: "#25D366", color: "#fff", borderRadius: 999, minWidth: 20, textAlign: "center" as const, padding: "1px 6px", fontSize: 12, fontWeight: 700 }}>{c.unread}</span>}
+                      </span>
+                      <span style={{ display: "block", fontSize: 11.5, color: C.cyn, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.tenant_name}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column" as const, minWidth: 0 }}>
-            {!sel ? <div style={{ color: C.dim, fontSize: TYPE.sm, margin: "auto" }}>Pick a conversation.</div> : (
+
+          {/* ── one chat ── */}
+          <div className="wa-chat">
+            {!sel ? (
+              <div style={{ margin: "auto", textAlign: "center" as const, color: WA.sub, padding: 24 }}>
+                <MessageCircle size={40} color="#B5BFC6" />
+                <div style={{ fontSize: 15, marginTop: 8 }}>Pick a chat to read and reply.</div>
+                <div style={{ fontSize: 12.5, marginTop: 4 }}>New messages arrive here on their own.</div>
+              </div>
+            ) : (
               <>
-                <div style={{ fontSize: TYPE.sm, color: C.txt, fontWeight: 800, marginBottom: 6 }}>
-                  {sel.name || sel.number} <span style={{ color: C.dim, fontWeight: 400 }}>· {sel.number} · {sel.tenant_name}</span>
-                </div>
-                <div style={{ flex: 1, overflowY: "auto" as const, maxHeight: 400, display: "flex", flexDirection: "column" as const, gap: 6, padding: "4px 2px" }}>
-                  {!thread ? <Loading rows={2} label="Loading conversation" /> : (thread.messages || []).map((m: any) => (
-                    <div key={`${m.dir}-${m.id}`} style={{ alignSelf: m.dir === "in" ? "flex-start" : "flex-end", maxWidth: "80%",
-                      background: m.dir === "in" ? C.hi : C.glow + "22", border: `1px solid ${C.bord}`, borderRadius: 10, padding: "6px 10px" }}>
-                      <div style={{ fontSize: TYPE.sm, color: C.txt, whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const }}>{m.body}</div>
-                      <div style={{ fontSize: TYPE.xs, color: C.dim, marginTop: 2 }}>
-                        {time(m.at)}{m.dir === "out" ? ` · ${m.type}${m.status ? ` · ${m.status}` : ""}` : ""}
-                      </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: WA.head, borderBottom: `1px solid ${C.bord}` }}>
+                  <button className="wa-icon wa-back" onClick={() => setSel(null)} aria-label="Back to chats"><ArrowLeft size={20} /></button>
+                  {avatar(sel)}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15.5, color: WA.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{sel.name || pretty(sel.number)}</div>
+                    <div style={{ fontSize: 12, color: WA.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                      {sel.name ? `${pretty(sel.number)} · ` : ""}{sel.tenant_name}
                     </div>
-                  ))}
+                  </div>
+                  <button className="wa-icon" aria-label="Copy number" title={copied ? "Copied" : "Copy number"}
+                    onClick={() => navigator.clipboard?.writeText(`+91${sel.number}`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => 0)}>
+                    {copied ? <Check size={18} color="#00A884" /> : <Copy size={17} />}
+                  </button>
+                  <a className="wa-icon" href={`tel:+91${sel.number}`} aria-label={`Call ${pretty(sel.number)}`} title="Call"><Phone size={18} /></a>
                 </div>
-                {thread && (
-                  <div style={{ marginTop: SPACE.sm }}>
-                    {thread.window_open ? (
-                      <div style={{ display: "flex", gap: SPACE.sm }}>
-                        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") send(); }}
-                          placeholder={`Reply as ${sel.tenant_name}…`} style={{ flex: 1, padding: "8px 10px", borderRadius: 8,
-                          border: `1px solid ${C.bord}`, background: C.hi, color: C.txt, fontSize: TYPE.sm }} />
-                        <button onClick={send} disabled={sending || !text.trim()} style={{ padding: "8px 16px", borderRadius: 8, border: "none",
-                          background: C.grn, color: "#04120a", fontWeight: 800, cursor: "pointer", opacity: sending ? 0.6 : 1 }}>
-                          {sending ? "…" : "Send"}
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: TYPE.xs, color: C.gold }}>
-                        Their last message was over 24 hours ago, so WhatsApp only allows an approved template now — free replies reopen when they write again.
-                      </div>
-                    )}
-                    {thread.window_open && thread.window_closes_at && (
-                      <div style={{ fontSize: TYPE.xs, color: C.dim, marginTop: 4 }}>Free replies until {time(thread.window_closes_at)}.</div>
-                    )}
+
+                <div ref={endRef} aria-live="polite" style={{ flex: 1, overflowY: "auto" as const, display: "flex", flexDirection: "column" as const, gap: 3, padding: "10px 12px" }}>
+                  {!thread ? <div style={{ margin: "auto", color: WA.sub, fontSize: 13 }}>Loading…</div>
+                    : thread.error ? <div style={{ margin: "auto", color: C.red, fontSize: 13 }}>Could not load this chat. It will retry in a few seconds.</div>
+                    : (thread.messages || []).map((m: any, i: number, all: any[]) => {
+                      const mine = m.dir === "out";
+                      const newDay = i === 0 || dayKey(all[i - 1].at) !== dayKey(m.at);
+                      const turn = i === 0 || all[i - 1].dir !== m.dir || newDay;
+                      const label = mine && m.type && !["manual_reply", "custom"].includes(m.type) ? String(m.type).replace(/_/g, " ") : "";
+                      return (
+                        <div key={`${m.dir}-${m.id}`} style={{ display: "contents" }}>
+                          {newDay && <div className="wa-day">{dayLabel(m.at)}</div>}
+                          <div className="wa-bub" style={{ alignSelf: mine ? "flex-end" : "flex-start", background: mine ? WA.out : WA.in, marginTop: turn ? 6 : 0,
+                            borderTopRightRadius: mine && turn ? 0 : 8, borderTopLeftRadius: !mine && turn ? 0 : 8 }}>
+                            {label && <div style={{ fontSize: 11, fontWeight: 700, color: "#0A6B4F", textTransform: "uppercase" as const, letterSpacing: ".04em" }}>Automatic · {label}</div>}
+                            {m.media && <WaMedia token={token} id={m.id} media={m.media} />}
+                            {m.media
+                              ? (!/^\[[a-z ]+\]$/.test(m.body || "") && <div style={{ marginTop: 4 }}>{waText(m.body)}</div>)
+                              : !mine && m.type && !["text", "button", "interactive", "location", "contacts", "reaction"].includes(m.type)
+                                ? <span style={{ color: WA.sub, fontStyle: "italic" }}>{m.body || `[${m.type}]`} — received before files were kept; ask them to send it again.</span>
+                                : m.body ? waText(m.body) : <span style={{ color: WA.sub, fontStyle: "italic" }}>(empty message)</span>}
+                            <div className="wa-meta">
+                              {clock(m.at)}
+                              {mine && (m.status === "failed"
+                                ? <span style={{ color: C.red, fontWeight: 700 }}>not delivered</span>
+                                : !m.status || m.status === "sent" ? <Check size={14} aria-label="sent" />
+                                : <CheckCheck size={15} color={m.status === "read" ? WA.tick : WA.sub} aria-label={m.status || "delivered"} />)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {thread && !thread.error && !(thread.messages || []).length && !pending && (
+                    <div className="wa-day" style={{ margin: "auto" }}>No messages yet. Send a template to start.</div>
+                  )}
+                  {pending && pending.key === selKey && (
+                    <div className="wa-bub" style={{ alignSelf: "flex-end", background: WA.out, marginTop: 6, opacity: 0.75 }}>
+                      {pending.body}
+                      <div className="wa-meta">{clock(pending.at)} <Clock size={12} aria-label="sending" /></div>
+                    </div>
+                  )}
+                </div>
+
+                {thread && !thread.error && showTpl && (
+                  <div style={{ background: WA.head, padding: "10px 12px", borderTop: `1px solid ${C.bord}`, display: "grid", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center" }}>
+                      <strong style={{ fontSize: 13.5, color: WA.ink }}>Send a template</strong>
+                      <button onClick={() => setShowTpl(false)} aria-label="Close templates" style={{ marginLeft: "auto", border: 0, background: "transparent", cursor: "pointer", color: WA.sub, display: "grid" }}><X size={16} /></button>
+                    </div>
+                    {tplErr ? <div style={{ color: C.red, fontSize: 12.5 }}>{tplErr}</div>
+                      : !templates ? <div style={{ color: WA.sub, fontSize: 12.5 }}>Loading templates…</div>
+                      : templates.length === 0 ? <div style={{ color: WA.sub, fontSize: 12.5 }}>No approved templates on this WhatsApp account.</div> : (
+                        <>
+                          <select value={tpl} onChange={e => { setTpl(e.target.value); setTplVars({}); setSendErr(""); }} aria-label="Template"
+                            style={{ border: `1px solid ${C.bord}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "inherit", color: WA.ink, background: "#fff" }}>
+                            <option value="">Choose a template…</option>
+                            {templates.map(t => <option key={`${t.name}-${t.language}`} value={t.name}>{String(t.name).replace(/_/g, " ")} ({t.language})</option>)}
+                          </select>
+                          {tplSel && (tplSel.variables as string[]).map((label, i) => (
+                            <input key={i} value={tplVars[String(i + 1)] || ""} placeholder={label} aria-label={label}
+                              onChange={e => setTplVars(v => ({ ...v, [String(i + 1)]: e.target.value }))}
+                              style={{ border: `1px solid ${C.bord}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontFamily: "inherit", color: WA.ink }} />
+                          ))}
+                          {tplSel && <div className="wa-bub" style={{ background: WA.out, maxWidth: "100%", fontSize: 13.5 }}>{tplPreview}</div>}
+                          {sendErr && <div role="alert" style={{ color: C.red, fontSize: 12.5 }}>{sendErr}</div>}
+                          <button onClick={sendTemplate} disabled={!tplSel || sending || (tplSel.variables as string[]).some((_, i) => !(tplVars[String(i + 1)] || "").trim())}
+                            style={{ border: 0, borderRadius: 8, padding: "9px 12px", background: "#00A884", color: "#fff", fontWeight: 700, fontSize: 14, fontFamily: "inherit",
+                              cursor: "pointer", opacity: !tplSel || sending || (tplSel.variables as string[]).some((_, i) => !(tplVars[String(i + 1)] || "").trim()) ? 0.5 : 1 }}>
+                            {sending ? "Sending…" : `Send to ${pretty(sel.number)}`}
+                          </button>
+                        </>
+                      )}
                   </div>
                 )}
+
+                {thread && !thread.error && !showTpl && (thread.window_open ? (
+                  <div style={{ background: WA.head, padding: "8px 10px" }}>
+                    {sendErr && <div role="alert" style={{ color: C.red, fontSize: 12.5, marginBottom: 6 }}>{sendErr}</div>}
+                    {closes > 0 && hoursLeft < 3 && (
+                      <div style={{ color: C.gold, fontSize: 12, marginBottom: 6 }}>
+                        Replies close {hoursLeft < 1 ? "in under an hour" : `in about ${hoursLeft} h`} — WhatsApp allows them for 24 hours after their last message.
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                      <textarea ref={boxRef} className="wa-input" rows={1} value={text} placeholder={`Message as ${sel.tenant_name}`} aria-label="Message"
+                        onChange={e => { setText(e.target.value); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`; }}
+                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }} />
+                      <button onClick={send} disabled={sending || !text.trim()} aria-label="Send" style={{ flex: "none", width: 42, height: 42, borderRadius: "50%", border: 0,
+                        display: "grid", placeItems: "center", background: "#00A884", color: "#fff", cursor: sending || !text.trim() ? "default" : "pointer",
+                        opacity: sending || !text.trim() ? 0.5 : 1 }}>
+                        <Send size={18} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: "#FFF8E1", color: "#6B5200", fontSize: 13, padding: "10px 14px", lineHeight: 1.45 }}>
+                    Free typing is closed: WhatsApp allows it for 24 hours after their last message, and reopens it the moment they write again.
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" as const }}>
+                      <button onClick={() => { setShowTpl(true); loadTemplates(); }} style={{ border: 0, borderRadius: 8, padding: "8px 12px", background: "#00A884",
+                        color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit" }}>Send a template</button>
+                      <a href={`tel:+91${sel.number}`} style={{ borderRadius: 8, padding: "8px 12px", background: "#fff", color: "#0A6B4F", fontWeight: 700,
+                        fontSize: 13.5, textDecoration: "none", border: `1px solid ${C.bord}` }}>Call {pretty(sel.number)}</a>
+                    </div>
+                  </div>
+                ))}
               </>
             )}
           </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
