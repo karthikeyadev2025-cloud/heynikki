@@ -94,6 +94,12 @@ export default function ContentPage({
           <Link href="/ai-telecaller" style={{ color: C.teal }}>AI telecaller</Link>
           <Link href="/for/clinics" style={{ color: C.teal }}>For clinics</Link>
           <Link href="/for/real-estate" style={{ color: C.teal }}>For real estate</Link>
+          <Link href="/for/education" style={{ color: C.teal }}>For education</Link>
+          <Link href="/for/hospitals" style={{ color: C.teal }}>For hospitals</Link>
+          <Link href="/for/consultancy" style={{ color: C.teal }}>For consultancies</Link>
+          <Link href="/for/loan-recovery" style={{ color: C.teal }}>For loan recovery</Link>
+          <Link href="/for/industry" style={{ color: C.teal }}>For industry</Link>
+          <Link href="/for/insurance" style={{ color: C.teal }}>For insurance</Link>
           <Link href="/alternatives" style={{ color: C.teal }}>Compare options</Link>
           <Link href="/pricing" style={{ color: C.teal }}>Pricing</Link>
           <Link href="/about" style={{ color: C.teal }}>About</Link>

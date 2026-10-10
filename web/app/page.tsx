@@ -891,6 +891,12 @@ export default function Home() {
             ["/ai-telecaller", "AI telecaller"],
             ["/for/clinics", "For clinics"],
             ["/for/real-estate", "For real estate"],
+            ["/for/education", "For education"],
+            ["/for/hospitals", "For hospitals"],
+            ["/for/consultancy", "For consultancies"],
+            ["/for/loan-recovery", "For loan recovery"],
+            ["/for/industry", "For industry"],
+            ["/for/insurance", "For insurance"],
           ].map(([href, label]) => (
             <span key={href}>
               <a href={href} style={{ color: C.textMid, textDecoration: "underline", textUnderlineOffset: 3 }}>{label}</a>

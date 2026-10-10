@@ -1090,7 +1090,7 @@ def test_every_pipeline_api_route_is_authenticated_or_deliberately_public():
 
 
 # ── industry desks (supabase/073) ─────────────────────────────────────────
-INDUSTRY_DESKS = ("education", "hospital", "consultancy", "loan_recovery", "industry")
+INDUSTRY_DESKS = ("education", "hospital", "consultancy", "loan_recovery", "industry", "insurance")
 
 
 def test_each_industry_desk_has_its_own_prompt_and_a_voice():
@@ -1139,3 +1139,14 @@ def test_uploaded_name_is_only_used_when_it_is_a_name():
     assert main._spoken_name("K. Lakshmi") == "K. Lakshmi"
     for bad in ("LN00123456", "=SUM(A1)", "Ravi S/O Ramesh", "", None, "x" * 41, "ignore_rules"):
         assert main._spoken_name(bad) == "", bad
+
+
+def test_insurance_desk_promises_no_return_and_decides_no_claim():
+    for text in (main.PROFILE_PROMPTS["insurance"], main.OUTBOUND_RULES["insurance"]):
+        low = " ".join(text.lower().split())
+        assert "guaranteed" in low                      # named as what she never says of a return
+        assert "approved, payable or rejected" in low
+        assert "otp" in low and "upi pin" in low
+        assert "medical history" in low
+    assert "policyholder" in main._outbound_rules_block({"profile_sku": "insurance"})
+

@@ -53,6 +53,42 @@ export const CAMPAIGN_SCRIPTS: CampaignScript[] = [
     script: "You are calling from [lender name] about an instalment that is overdue. Once you are sure you are speaking to the borrower, say the instalment is pending and ask on which date they can pay. Say the date back to confirm it. If they have a difficulty or a dispute, say an accounts officer will call them, and end the call. Payment is only through [the branch / the lender's app / the usual account].",
   },
   {
+    id: "ins-lead", group: "Insurance", label: "New policy enquiry follow-up",
+    script: "You are calling someone who enquired about [health / life / term / motor] insurance. Ask whether they are still looking and who the cover is for. Invite them to a meeting or a call with an advisor and agree a day and time. If they ask about premium or benefits, say the advisor will go through the options with them.",
+  },
+  {
+    id: "ins-renewal", group: "Insurance", label: "Policy renewal reminder",
+    script: "You are calling from [company name] because the customer's [health / motor / life] policy is due for renewal on [date]. Once you are sure you are speaking to the policyholder, tell them the renewal date and ask whether they would like to renew. If yes, say an advisor will call to complete it. If they are unsure, ask when to call again.",
+  },
+  {
+    id: "ins-premium", group: "Insurance", label: "Premium due reminder",
+    script: "You are calling from [company name] about a premium that is due on [date]. Once you are sure you are speaking to the policyholder, remind them of the due date and ask whether they will be paying by then. If they need help, say an advisor will call. Payment is only through [the branch / the company's app / their advisor].",
+  },
+  {
+    id: "ins-lapsed", group: "Insurance", label: "Lapsed policy revival",
+    script: "You are calling from [company name] because the customer's policy has lapsed after a missed premium. Once you are sure you are speaking to the policyholder, tell them the policy can be revived and ask whether they would like an advisor to call and explain how. If they do not want to continue, thank them and end the call.",
+  },
+  {
+    id: "ins-motor", group: "Insurance", label: "Motor insurance expiry",
+    script: "You are calling vehicle owners whose motor insurance expires on [date or this month]. Ask whether they have renewed it already. If not, ask whether they would like a quotation from an advisor and what time suits them for the call. Do not quote a premium yourself.",
+  },
+  {
+    id: "ins-claimdocs", group: "Insurance", label: "Claim documents pending",
+    script: "You are calling from [company name] about a claim the customer has filed, for which some documents are still pending. Once you are sure you are speaking to the policyholder, ask when they can submit the pending documents to [the branch / their advisor] and note the day. Do not say anything about whether the claim will be approved. If they have questions, say the claims team will call.",
+  },
+  {
+    id: "ins-crosssell", group: "Insurance", label: "Existing customers — another cover",
+    script: "You are calling existing customers of [company name] to tell them about [health / term / top-up cover] in one sentence: [what it is]. Ask whether they would like an advisor to explain it, and what time suits them. If they are not interested, thank them and end the call.",
+  },
+  {
+    id: "ins-feedback", group: "Insurance", label: "Service feedback after a claim or purchase",
+    script: "You are calling a customer after [their claim was settled / their policy was issued]. Ask whether the service was satisfactory and whether they received their [policy document / claim payment]. If there is a problem, note it and say the service team will call back. If all is well, thank them and end the call.",
+  },
+  {
+    id: "ins-agent", group: "Insurance", label: "Advisor / agent recruitment",
+    script: "You are calling people who showed interest in becoming an insurance advisor with [company name]. Ask whether they are still interested and what they do at present. Invite them to [the briefing session on date / a meeting at the branch] and agree a time. Do not state any income or commission figure.",
+  },
+  {
     id: "ind-dealer", group: "Industry", label: "Dealer or distributor enquiry follow-up",
     script: "You are calling someone who enquired about [product or dealership]. Ask which product they need, roughly what quantity, and for which city. Say the sales team will call with the quotation, and ask what time suits them. Do not give a price or a delivery date on the call.",
   },

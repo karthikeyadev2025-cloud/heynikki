@@ -26,6 +26,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${BASE}/about`,       lastModified: now, changeFrequency: "weekly",  priority: 0.9 },
     { url: `${BASE}/for/clinics`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
     { url: `${BASE}/for/real-estate`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/education`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/hospitals`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/consultancy`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/loan-recovery`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/industry`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
+    { url: `${BASE}/for/insurance`,       lastModified: now, changeFrequency: "weekly",  priority: 0.8 },
     // The API reference. Public on purpose: a developer evaluating whether
     // Nikki can be driven from their own software should be able to read
     // the endpoints before they sign up.

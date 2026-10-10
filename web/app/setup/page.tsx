@@ -10,7 +10,7 @@ import { NIKKI } from "../../lib/brand";
 import AgentDraftBox from "../../components/AgentDraftBox";
 import BrochureUpload from "../../components/BrochureUpload";
 import ScriptAndMenu from "../../components/ScriptAndMenu";
-import { Building2, Hospital, HardHat, Star, GraduationCap, Briefcase, Factory, Landmark, Stethoscope, Pause, Play, Check, Phone, PhoneOff, Settings, ShoppingBag, Trash2 } from "lucide-react";
+import { Building2, Hospital, HardHat, Star, GraduationCap, Briefcase, Factory, Landmark, Stethoscope, ShieldCheck, Pause, Play, Check, Phone, PhoneOff, Settings, ShoppingBag, Trash2 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -29,6 +29,7 @@ const PROFILE_SKUS = [
   { id: "consultancy", name: "Nikki Telugu Receptionist — Consultancy", desc: "Visa, overseas study, jobs, tax: books consultations", icon: Briefcase, voice: "kavya" },
   { id: "loan_recovery", name: "Nikki Telugu Receptionist — Loan recovery", desc: "Repayment reminders; borrower only, calls 8 am to 7 pm", icon: Landmark, voice: "shreya" },
   { id: "industry",    name: "Nikki Telugu Receptionist — Industry",    desc: "Manufacturers, plants: sales, service, suppliers", icon: Factory, voice: "aditya" },
+  { id: "insurance",   name: "Nikki Telugu Receptionist — Insurance",   desc: "Insurers, agencies, brokers: enquiries, renewals, claims", icon: ShieldCheck, voice: "kavya" },
   { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: Star, voice: "kavya" },
 ];
 
