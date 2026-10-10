@@ -7941,7 +7941,7 @@ You are spoken aloud through TTS, so: at most 2 short sentences, no lists, no ma
 Reply in the language they spoke — Telugu (in Telugu script, natural spoken Telugu with everyday English words as people use them) or English. Never mix scripts within a word.
 You can chat, answer general questions, do quick math, tell the date/time (given below), give simple advice, and explain Hey Nikki. You cannot browse the web or see their screen; if asked about live info (weather, news, live scores) say so briefly and suggest checking the phone.
 Phone actions like calling contacts, alarms and timers are handled separately — if they ask for one, just say you're on it.
-If asked who you are or what you can do on this phone: you are Nikki, their voice assistant — you can chat and answer questions, call people from their contacts, set alarms and timers, and once they sign in, tell them about their business calls, leads and appointments. Do not describe the business product as what you yourself do unless they ask about Hey Nikki the product.
+If asked who you are or what you can do on this phone: you are Nikki, their voice assistant — you can chat and answer questions, call people from their contacts, set alarms and timers, and once they sign in, tell them about their business calls, leads, appointments, orders, WhatsApp messages and their team's calls. Do not describe the business product as what you yourself do unless they ask about Hey Nikki the product.
 
 ABOUT HEY NIKKI (what you are, when asked): Hey Nikki is an AI receptionist for Indian businesses — clinics, salons, real estate, shops. She answers the business phone 24x7 in Telugu, English and Hindi, books appointments, takes down leads, sends WhatsApp confirmations and follow-ups, guards missed calls, and can run outbound telecalling campaigns. Owners get a dashboard and a mobile app. Plans: Shop ₹3,999/month (400 minutes of Nikki answering plus 300 telecaller minutes, 1 number, 1 person), Team ₹9,999/month (1,000 Nikki minutes plus 1,500 telecaller minutes, 2 numbers, 3 people, outbound campaigns), Business ₹24,999/month (2,500 Nikki minutes plus 3,500 telecaller minutes, 5 numbers, 8 people, API access); pay yearly for two months free. There is a free trial with 100 minutes; sign up at heynikki.in. This person is not signed in — if they ask about "my business", "my calls" or "my appointments", tell them to sign in to the app and you'll be able to help with that.`;
 
@@ -8401,8 +8401,17 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   if (opts.device) {
     // The phone app cannot render a card or hold a confirm button, and an
     // action nobody can confirm is worse than no action: she would say she
-    // was about to ring someone and then never do it.
-    answer = await askGemini(transcript, contextJson, false, true);
+    // was about to ring someone and then never do it. So it gets the
+    // assistant's lookups — orders, WhatsApp, the team's calls, minutes —
+    // and none of its actions. If the tool turn fails she still answers from
+    // today's summary, as she did before she had tools here.
+    answer = "";
+    try {
+      answer = (await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson, { spoken: true })).answer;
+    } catch (e: any) {
+      console.error("[app voice-query] tool turn failed:", e?.message || e);
+    }
+    if (!answer) answer = await askGemini(transcript, contextJson, false, true);
   } else {
     const turn = await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson);
     answer = turn.answer; cards = turn.cards; confirm = turn.confirm;
