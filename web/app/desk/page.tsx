@@ -456,6 +456,27 @@ function Insights({ api }: { api: (p: string, b?: any) => Promise<any> }) {
           {list("Customers asked", dg.questions)}
           {list("What worked", dg.what_worked)}
           {list("For tomorrow", dg.tips)}
+          {list("When they say no — what worked", (dg.playbook || []).map((x: any) => `“${x.objection}” → ${x.reply}`))}
+          {list("Where Nikki slipped", (dg.nikki_slips || []).map((x: any) => `She said: ${x.said} — it should be: ${x.should}`))}
+          {dg.patterns && (dg.patterns.segments?.length > 0 || dg.patterns.hours?.length > 0 || dg.patterns.never_called_again > 0) && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Last {dg.patterns.days} days</div>
+              <div style={{ fontSize: 12.5, color: C.mid, lineHeight: 1.55 }}>
+                {dg.patterns.never_called_again > 0 && (
+                  <div style={{ color: C.gold, fontWeight: 600 }}>{dg.patterns.never_called_again} customers who showed interest were rung only once.</div>
+                )}
+                {dg.patterns.segments?.length > 0 && (
+                  <div><strong style={{ color: C.txt }}>Who says yes</strong>: {(dg.patterns.segments as any[]).map(x => `${x.name} ${x.positive}/${x.talked}`).join(" · ")}</div>
+                )}
+                {dg.patterns.hours?.length > 0 && (
+                  <div><strong style={{ color: C.txt }}>By hour</strong> (answered, interested): {(dg.patterns.hours as any[]).map(x => `${x.hour % 12 || 12}${x.hour < 12 ? "am" : "pm"} ${Math.round(100 * x.answered / x.calls)}%, ${x.positive}`).join(" · ")}</div>
+                )}
+                {dg.patterns.objections?.length > 0 && (
+                  <div><strong style={{ color: C.txt }}>Most heard</strong>: {(dg.patterns.objections as any[]).map(x => `${x.text} ×${x.count}`).join(" · ")}</div>
+                )}
+              </div>
+            </div>
+          )}
           {dg.per_seat && (
             <div style={{ fontSize: 12, color: C.mid }}>
               {Object.entries(dg.per_seat).map(([n, v]: any) => (

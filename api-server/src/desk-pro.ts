@@ -25,6 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { geminiGenerate } from "./gemini";
 import { phoneForms } from "./campaign-import";
 import { CONVERSATION_SECS } from "./attendance";
+import { cleanFacts, cleanTranscript, listenPrompt, decidedQuestions, freshSuggestions, patterns } from "./desk-learn";
 
 type Mw = (req: Request, res: Response, next: NextFunction) => any;
 type Deps = {
@@ -48,6 +49,8 @@ const last10 = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-10);
 // 8 kHz mono WAV is ~14 MB; past that the call is long enough that the
 // telecaller writes their own notes.
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+// How far back "which kind of business says yes" looks.
+const PATTERN_DAYS = 14;
 
 export function mountDeskProRoutes(app: Express, d: Deps) {
   const { sb, verifyJWT, apiLimiter, getTenantId, audit } = d;
@@ -211,56 +214,81 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
       return { status: 200, body: { summary: "", disposition: "no_answer", follow_up_at: null, short: true } };
     }
 
-    let audio: Buffer;
-    try {
-      const url = new URL(`${d.pipelineUrl}/api/v1/recording/fetch`);
-      url.searchParams.set("key", call.r2_object_key);
-      url.searchParams.set("tenant_id", tenantId);
-      url.searchParams.set("call_id", call.id);
-      const r = await fetch(url, { headers: { "X-Internal-Secret": d.internalSecret }, signal: AbortSignal.timeout(30_000) });
-      if (!r.ok) return { status: 409, body: { error: "not_ready" } };
-      audio = Buffer.from(await r.arrayBuffer());
-    } catch { return { status: 409, body: { error: "not_ready" } }; }
+    const audio = await fetchAudio(tenantId, call);
+    if (!audio) return { status: 409, body: { error: "not_ready" } };
     if (audio.length > MAX_AUDIO_BYTES) {
       return { status: 200, body: { summary: "", disposition: null, follow_up_at: null, too_long: true } };
     }
-
-    const nowIst = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
-    const g = await geminiGenerate({
-      contents: [{ parts: [
-        { text:
-          "This is a recording of a business telecaller's phone call with a customer in India " +
-          "(Telugu, Hindi or English, often mixed). Reply with JSON only:\n" +
-          '{"summary": "<two short sentences in English: what the customer wants and what was agreed>",\n' +
-          ' "disposition": "booked" | "interested" | "callback" | "not_interested" | "no_answer",\n' +
-          ' "follow_up_at": "<ISO 8601 with +05:30 if a callback time was agreed, else null>"}\n' +
-          `The time now is ${nowIst} IST. Choose the disposition from what the CUSTOMER did, not ` +
-          `from what the telecaller offered:\n` +
-          `- "booked": a specific appointment, meeting or visit was fixed.\n` +
-          `- "interested": the customer asked for details, a price, a demo or the brochure, or agreed ` +
-          `to a next step (details sent to them, a visit, a follow-up call).\n` +
-          `- "callback": the customer asked to be called later, or said they would call back.\n` +
-          `- "not_interested": the customer declined, said they have no need, or only listened and ` +
-          `neither asked for anything nor agreed to anything. Listening politely, "ok" or "hmm" is ` +
-          `NOT interest.\n` +
-          `- "no_answer": nobody really spoke (ringing, voicemail, a network message, silence).\n` +
-          `If you are unsure between "interested" and "not_interested", choose "not_interested". ` +
-          `Never invent a callback time.` },
-        { inline_data: { mime_type: "audio/wav", data: audio.toString("base64") } },
-      ] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
-    }, { timeoutMs: 45_000, attempts: 2 });
+    const g = await listen(audio);
     if (!g.ok) return { status: 502, body: { error: `Couldn't summarise this call (${g.detail})` } };
 
     const summary = String(g.data?.summary || "").slice(0, 600);
     const disposition = OUTCOMES.includes(g.data?.disposition) ? g.data.disposition : null;
     const fu = g.data?.follow_up_at ? new Date(g.data.follow_up_at) : null;
     const follow_up_at = fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now() ? fu.toISOString() : null;
-    await sb.from("click_to_call_log").update({
-      ai_summary: summary, ai_disposition: disposition, ai_follow_up_at: follow_up_at, ai_at: new Date().toISOString(),
-    }).eq("id", log.id).eq("tenant_id", tenantId);
+    const base = { ai_summary: summary, ai_disposition: disposition, ai_follow_up_at: follow_up_at, ai_at: new Date().toISOString() };
+    // The transcript and facts arrive with 071; without it the summary still saves.
+    const { error: learnErr } = await sb.from("click_to_call_log")
+      .update({ ...base, ai_transcript: cleanTranscript(g.data?.transcript), ai_facts: cleanFacts(g.data?.facts) })
+      .eq("id", log.id).eq("tenant_id", tenantId);
+    if (learnErr) await sb.from("click_to_call_log").update(base).eq("id", log.id).eq("tenant_id", tenantId);
     return { status: 200, body: { summary, disposition, follow_up_at } };
   }
+
+  async function fetchAudio(tenantId: string, call: { id: string; r2_object_key: string }): Promise<Buffer | null> {
+    try {
+      const url = new URL(`${d.pipelineUrl}/api/v1/recording/fetch`);
+      url.searchParams.set("key", call.r2_object_key);
+      url.searchParams.set("tenant_id", tenantId);
+      url.searchParams.set("call_id", call.id);
+      const r = await fetch(url, { headers: { "X-Internal-Secret": d.internalSecret }, signal: AbortSignal.timeout(30_000) });
+      return r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+    } catch { return null; }
+  }
+
+  // One listen per recording gives the summary, the suggested outcome, and
+  // what the Desk learns from: the call as spoken and the facts in it (071).
+  function listen(audio: Buffer) {
+    return geminiGenerate({
+      contents: [{ parts: [
+        { text: listenPrompt(Date.now()) },
+        { inline_data: { mime_type: "audio/wav", data: audio.toString("base64") } },
+      ] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+    }, { timeoutMs: 75_000, attempts: 2 });
+  }
+
+  // Calls summarised before 071 have a summary and nothing else. Two a
+  // minute are listened to again for their transcript and facts only — the
+  // saved summary and outcome are left alone. A recording that is gone or
+  // unreadable is marked skipped, so the sweep moves on.
+  async function learnBacklog() {
+    const { data: rows, error } = await sb.from("click_to_call_log")
+      .select("id, tenant_id, call_id")
+      .not("ai_summary", "is", null).neq("ai_summary", "").is("ai_facts", null)
+      .gt("created_at", new Date(Date.now() - 30 * 86400_000).toISOString())
+      .order("created_at", { ascending: false }).limit(2);
+    if (error || !rows?.length) return;            // no 071 yet, or nothing to do
+    for (const r of rows) {
+      const save = (ai_facts: object, ai_transcript?: object) =>
+        sb.from("click_to_call_log").update(ai_transcript ? { ai_facts, ai_transcript } : { ai_facts }).eq("id", r.id);
+      const { data: call } = r.call_id
+        ? await sb.from("calls").select("id, r2_object_key").eq("id", r.call_id).maybeSingle()
+        : { data: null as any };
+      const audio = call?.r2_object_key ? await fetchAudio(r.tenant_id, call) : null;
+      if (!audio) { await save({ skipped: "no recording" }); continue; }
+      if (audio.length > MAX_AUDIO_BYTES) { await save({ skipped: "too long" }); continue; }
+      const g = await listen(audio);
+      if (!g.ok) { await save({ skipped: String(g.detail).slice(0, 120) }); continue; }
+      await save(cleanFacts(g.data?.facts), cleanTranscript(g.data?.transcript));
+    }
+  }
+  let learning = false;
+  setInterval(() => {
+    if (learning) return;
+    learning = true;
+    learnBacklog().catch(e => console.error("[desk] learn backlog:", e?.message || e)).finally(() => { learning = false; });
+  }, 60_000);
 
   // ── Summary from the recording ─────────────────────────────────────
   // The Desk asks as soon as the call ends; the recording lands a few
@@ -429,7 +457,7 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
     const start = new Date(`${day}T00:00:00+05:30`).toISOString();
     const end   = new Date(new Date(start).getTime() + 86400_000).toISOString();
     const [{ data: calls }, { data: members }, { data: vp }] = await Promise.all([
-      sb.from("click_to_call_log").select("agent_user_id, duration_seconds, disposition, ai_summary, notes, customer_fail_cause")
+      sb.from("click_to_call_log").select("*")
         .eq("tenant_id", tenantId).gte("created_at", start).lt("created_at", end).limit(400),
       sb.from("tenant_users").select("user_id, display_name, phone").eq("tenant_id", tenantId),
       sb.from("voice_profiles").select("id, business_name, services, catalogue")
@@ -462,8 +490,34 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
       }
       name.set(m.user_id, n || (m.phone ? `…${String(m.phone).slice(-4)}` : "Seat"));
     }
+    // The facts each call established (071) ride along with its summary.
+    const factLine = (f: any) => !f ? "" : [
+      f.business_type && `business=${f.business_type}`, f.speaker && `spoke to ${f.speaker}`,
+      f.objection && `objection=${f.objection}`, f.price_quoted && `price said=${f.price_quoted}`,
+      f.questions?.length && `asked: ${f.questions.join(" / ")}`,
+    ].filter(Boolean).join("; ");
     const lines = talked.slice(0, 120).map((c: any, i: number) =>
-      `${i + 1}. [${name.get(c.agent_user_id) || "Seat"}] outcome=${c.disposition || "unsaved"} ${c.duration_seconds}s: ${c.ai_summary}`);
+      `${i + 1}. [${name.get(c.agent_user_id) || "Seat"}] outcome=${c.disposition || "unsaved"} ${c.duration_seconds}s: ${c.ai_summary}` +
+      (factLine(c.ai_facts) ? ` {${factLine(c.ai_facts)}}` : ""));
+    // What was actually said on the calls that went somewhere — the only
+    // honest source for "say this when they say that".
+    const said = (t: any[]) => t.map(x => `${x.who === "agent" ? "T" : "C"}: ${x.text}`).join("\n").slice(0, 1800);
+    const wins = talked.filter((c: any) => ["booked", "interested", "callback"].includes(c.disposition)
+        && Array.isArray(c.ai_transcript) && c.ai_transcript.length >= 4)
+      .sort((a: any, b: any) => (b.duration_seconds || 0) - (a.duration_seconds || 0)).slice(0, 8)
+      .map((c: any, i: number) => `--- call ${i + 1} (${c.disposition}) ---\n${said(c.ai_transcript)}`);
+    // Nikki's own calls today, so what she said can be checked against what is true.
+    const { data: own } = await sb.from("calls").select("transcript")
+      .eq("tenant_id", tenantId).gte("created_at", start).lt("created_at", end)
+      .neq("intent", "transfer").order("duration_seconds", { ascending: false }).limit(30);
+    const nikki = (own || []).map((c: any) => Array.isArray(c.transcript) ? c.transcript : [])
+      .filter((t: any[]) => t.length >= 4).slice(0, 8)
+      .map((t: any[], i: number) => `--- call ${i + 1} ---\n` +
+        t.map(x => `${x.role === "assistant" ? "N" : "C"}: ${x.content}`).join("\n").slice(0, 1800));
+    // Questions the owner has already taught or dismissed are not asked again:
+    // "Do you build websites?" came back on four days after it was approved.
+    const { data: earlier } = await sb.from("desk_insights").select("suggestions").eq("tenant_id", tenantId).limit(120);
+    const decided = decidedQuestions(earlier || [], ((facts || []) as any[]).map(f => String(f.content)));
     const perSeat: Record<string, any> = {};
     for (const c of all) {
       const k = name.get(c.agent_user_id) || "Seat";
@@ -484,15 +538,27 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
         ` "questions": ["<what customers asked, max 5>"],\n` +
         ` "what_worked": ["<what happened on the calls that went well, max 3>"],\n` +
         ` "tips": ["<concrete advice for tomorrow's calls, max 4, each one sentence>"],\n` +
-        ` "suggested_answers": [{"question": "<a question customers asked>", "answer": "<a short answer the AI receptionist could give, in simple English>"}]}\n` +
-        `Max 4 suggested answers. Base the digest only on these calls.\n` +
+        ` "suggested_answers": [{"question": "<a question customers asked>", "answer": "<a short answer the AI receptionist could give, in simple English>"}],\n` +
+        ` "playbook": [{"objection": "<something customers said to refuse or delay>", "reply": "<what the telecaller said next on a call that still ended well, in English>"}],\n` +
+        ` "nikki_slips": [{"said": "<what the AI receptionist said>", "should": "<what is true per BUSINESS FACTS, or how she should have handled it>"}]}\n` +
+        `Max 4 suggested answers. Base the digest only on these calls. Tips must name something specific ` +
+        `from today's calls — a kind of business, an objection, a price — never general advice like "keep pitches concise".\n` +
+        `Playbook: max 4, taken ONLY from CALLS THAT WENT WELL below, where "T" is the telecaller and "C" the customer; ` +
+        `leave it empty if no customer there pushed back.\n` +
+        `Nikki slips: max 4, from NIKKI'S CALLS below ("N" is the AI receptionist): a price or fact that contradicts ` +
+        `BUSINESS FACTS, denying a call the business made, repeating herself, or speaking an instruction aloud. ` +
+        `Leave it empty if there are none.\n` +
+        (decided.length ? `Do NOT suggest answers to these questions, the owner has already decided on them: ` +
+          `${decided.slice(0, 40).map(q => `"${q}"`).join(", ")}.\n` : "") +
         `Suggested answers must use ONLY the products, services, prices and facts in BUSINESS FACTS below — ` +
         `never a product a telecaller mentioned that is not listed there, never an invented price. ` +
         `The receptionist can send details on WhatsApp and nothing else: never offer email, SMS, a visit or a brochure by post. ` +
         `If a question cannot be answered from BUSINESS FACTS, leave it out.\n\n` +
-        `BUSINESS FACTS:\n${catalogue.join("\n") || "(none on file)"}\n\nCALLS:\n${lines.join("\n")}` }] }],
+        `BUSINESS FACTS:\n${catalogue.join("\n") || "(none on file)"}\n\nCALLS:\n${lines.join("\n")}` +
+        `\n\nCALLS THAT WENT WELL:\n${wins.join("\n") || "(no transcripts yet)"}` +
+        `\n\nNIKKI'S CALLS:\n${nikki.join("\n") || "(none today)"}` }] }],
       generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
-    }, { timeoutMs: 45_000, attempts: 2 });
+    }, { timeoutMs: 60_000, attempts: 2 });
     if (!g.ok) return { ok: false, detail: `The summary model failed (${g.detail}).` };
 
     const digest = {
@@ -502,13 +568,32 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
       what_worked: (g.data?.what_worked || []).slice(0, 3).map(String),
       tips: (g.data?.tips || []).slice(0, 4).map(String),
       per_seat: perSeat,
+      playbook: (Array.isArray(g.data?.playbook) ? g.data.playbook : []).filter((x: any) => x?.objection && x?.reply).slice(0, 4)
+        .map((x: any) => ({ objection: String(x.objection).slice(0, 200), reply: String(x.reply).slice(0, 400) })),
+      nikki_slips: (Array.isArray(g.data?.nikki_slips) ? g.data.nikki_slips : []).filter((x: any) => x?.said && x?.should).slice(0, 4)
+        .map((x: any) => ({ said: String(x.said).slice(0, 300), should: String(x.should).slice(0, 300) })),
+      // Two weeks, counted rather than asked of the model.
+      patterns: await (async () => {
+        const since = new Date(new Date(end).getTime() - PATTERN_DAYS * 86400_000).toISOString();
+        const cols = "created_at, duration_seconds, disposition, customer_answered_at, callee_number";
+        const span = (extra: string) => sb.from("click_to_call_log").select(cols + extra)
+          .eq("tenant_id", tenantId).gte("created_at", since).lt("created_at", end).limit(5000);
+        let r: any = await span(", ai_facts");
+        if (r.error) r = await span("");              // before 071: hours and repeat dials still count
+        return patterns((r.data || []) as any[], CONVERSATION_SECS, PATTERN_DAYS);
+      })(),
     };
-    const suggestions = (g.data?.suggested_answers || []).slice(0, 4)
+    // A re-run of the same day keeps what the owner already decided there.
+    const { data: prior } = await sb.from("desk_insights").select("suggestions")
+      .eq("tenant_id", tenantId).eq("day", day).maybeSingle();
+    const kept = ((prior?.suggestions || []) as any[]).filter(x => x?.status === "approved" || x?.status === "dismissed");
+    const fresh = freshSuggestions((Array.isArray(g.data?.suggested_answers) ? g.data.suggested_answers : [])
       .filter((x: any) => x?.question && x?.answer)
       // Belt and braces for the one channel she cannot use.
-      .filter((x: any) => !/\be-?mail\b|ఈమెయిల్|ఇమెయిల్/i.test(String(x.answer)))
-      .map((x: any, i: number) => ({ id: `${day}-${i}`, question: String(x.question).slice(0, 200),
+      .filter((x: any) => !/\be-?mail\b|ఈమెయిల్|ఇమెయిల్/i.test(String(x.answer))), decided).slice(0, 4)
+      .map((x: any, i: number) => ({ id: `${day}-n${Date.now().toString(36)}${i}`, question: String(x.question).slice(0, 200),
         answer: String(x.answer).slice(0, 400), status: "pending" }));
+    const suggestions = [...kept, ...fresh];
     const { data: row, error } = await sb.from("desk_insights")
       .upsert({ tenant_id: tenantId, day, calls: all.length, digest, suggestions }, { onConflict: "tenant_id,day" })
       .select().maybeSingle();

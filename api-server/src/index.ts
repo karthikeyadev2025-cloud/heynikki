@@ -5038,6 +5038,7 @@ import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
+import { followUpFor } from "./desk-learn";
 import { mountAppRoutes } from "./app";
 import { mountCampaignImport } from "./campaign-import";
 import { mountSearchExport } from "./search-export";
@@ -7550,21 +7551,25 @@ async function applyDisposition(o: {
   const newStage = OUTCOME_STAGE[disposition];
   if (log.lead_id && newStage) {
     // The call happened, so the lead was contacted and any callback that
-    // was due is kept. "Call back" with a time books the next one (the
-    // Desk's queue and reminders read these, 056/066); without a time it
-    // leaves the follow-up as it was.
+    // was due is kept.
     const now = new Date().toISOString();
     const patch: Record<string, any> = {
       stage: newStage, notes: notes || undefined, updated_at: now, last_contacted_at: now,
     };
-    const fu = o.followUpAt ? new Date(o.followUpAt) : null;
-    if (disposition === "callback" && fu && !isNaN(fu.getTime()) && fu.getTime() > Date.now()) {
-      Object.assign(patch, { follow_up_at: fu.toISOString(), follow_up_done_at: null,
+    // "Call back" and "interested" both book the next call (the Desk's queue
+    // and reminders read these, 056/066). Until 1 Oct only a callback with a
+    // spoken time did, and 34 of 46 customers who had shown interest were
+    // never rung again. A time the customer named is always kept; a default
+    // one never replaces a callback that is still ahead.
+    const { data: cur } = await sb.from("leads").select("follow_up_at, follow_up_done_at")
+      .eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
+    const pending = !!cur?.follow_up_at && !cur.follow_up_done_at;
+    const next = followUpFor(disposition, o.followUpAt, Date.now());
+    if (next && (next.explicit || !pending || new Date(cur!.follow_up_at).getTime() <= Date.now())) {
+      Object.assign(patch, { follow_up_at: next.at, follow_up_done_at: null,
         follow_up_notified_at: null, follow_up_note: notes ? String(notes).slice(0, 500) : null });
-    } else if (disposition !== "callback") {
-      const { data: cur } = await sb.from("leads").select("follow_up_at, follow_up_done_at")
-        .eq("id", log.lead_id).eq("tenant_id", tenantId).maybeSingle();
-      if (cur?.follow_up_at && !cur.follow_up_done_at) patch.follow_up_done_at = now;
+    } else if (!next && pending) {
+      patch.follow_up_done_at = now;
     }
     // An auto outcome never overwrites a stage a person moved further on.
     if (o.auto) {
