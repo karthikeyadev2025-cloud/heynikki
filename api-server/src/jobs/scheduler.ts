@@ -435,11 +435,22 @@ export async function runIncompleteBookings(): Promise<number> {
 
 /* ── 3. Daily summary to the business owner ─────────────────── */
 
+const EVENING_SUMMARY_ON = false;
+
 export async function runDailySummaries(): Promise<number> {
   // Only fire in the evening IST — a summary at 6am describes nothing.
   const istHour = Number(
     new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(11, 13)
   );
+  // Off. Every one of these has failed since the template gained its four
+  // slots: this path sends `daily_business_summary` with one parameter (the
+  // business name) and Meta refuses the count (132000) — yet /whatsapp/send
+  // answers 200, so the log below said "sent 1" each evening while
+  // wa_dispatch_log recorded "failed" (9 and 10 Oct). The template's own
+  // text is "నిన్నటి summary", yesterday's — it belongs to the morning
+  // briefing below, which fills all four slots. Turn this back on only with a template worded for
+  // the evening.
+  if (!EVENING_SUMMARY_ON) return 0;
   if (istHour < 19 || istHour > 21) return 0;
 
   const today = istDateString(0);
