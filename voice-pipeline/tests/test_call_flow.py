@@ -1166,3 +1166,22 @@ def test_a_whatsapp_she_promised_is_recognised():
     # Only what SHE said counts — a caller asking is not her promising.
     assert not main._promised_whatsapp([{"role": "user", "content": "WhatsApp కి details పంపిస్తారా, send చేయండి"}])
     assert not main._promised_whatsapp([])
+
+
+def test_the_brochure_goes_to_the_caller_not_the_business():
+    # The workflow sends to whatsapp_number when present. Passing the
+    # business's own WhatsApp number there sent every promised brochure to
+    # the owner's phone.
+    import inspect
+    src = inspect.getsource(main._score_and_log_lead)
+    assert '"whatsapp_number": digits' in src
+    assert 'prof.get("whatsapp_number") or digits' not in src
+
+
+def test_brochure_dedupe_fails_open():
+    class DB: url, headers = "http://127.0.0.1:9", {}
+    run = lambda *a: asyncio.run(main._brochure_sent_recently(DB, *a))
+    assert run(None, "8309712434") is False           # no tenant: nothing to check
+    assert run("t", "123") is False                   # not a mobile number
+    assert run("t", "8309712434") is False            # log unreachable: send anyway
+

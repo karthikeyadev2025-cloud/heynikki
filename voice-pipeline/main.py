@@ -8029,19 +8029,51 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
         # later to say so and was promised it a fourth time. What she said on
         # the call outranks what the scorer thought of it afterwards.
         promised = _promised_whatsapp(turns)
-        if (stage in ("qualified", "won") or promised) and not getattr(agent, "opted_out", False):
+        wanted = (stage in ("qualified", "won") or promised) and not getattr(agent, "opted_out", False)
+        # Once a day per number: he rang twice in two minutes and was
+        # promised it both times, which is one message, not two.
+        if wanted and await _brochure_sent_recently(agent.db, prof.get("tenant_id"), digits):
+            log.info(f"[FS] {fs_uuid}: brochure already sent to this number today — not repeated")
+            wanted = False
+        if wanted:
             cfg = await _read_platform_config()
             await _fire_automation_webhook("interested-lead", {
                 "caller_number":   digits,
                 "tenant_id":       prof.get("tenant_id"),
                 "call_id":         agent.call_id,
                 "business_name":   prof.get("business_name", "our team"),
-                "whatsapp_number": prof.get("whatsapp_number") or digits,
+                # The CALLER's number. The workflow sends to whatsapp_number
+                # when it is present, and this passed the business's own
+                # WhatsApp number there — so for any business that had filled
+                # that field in, every brochure a caller was promised went
+                # to the owner's phone instead (found 11 Oct).
+                "whatsapp_number": digits,
             }, cfg)
             log.info(f"[FS] {fs_uuid}: brochure fired — stage={stage} score={score}"
                      + (" (promised on the call)" if promised else ""))
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
+
+
+async def _brochure_sent_recently(db, tenant_id: str | None, digits: str, hours: int = 24) -> bool:
+    """A brochure already went to this number for this business lately.
+
+    Fails open: if the log cannot be read the brochure is sent, because a
+    second message is a smaller fault than a promised one that never comes.
+    """
+    if not tenant_id or len(digits) != 10:
+        return False
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as c:
+            r = await c.get(f"{db.url}/rest/v1/wa_dispatch_log", headers=db.headers,
+                            params={"select": "id", "tenant_id": f"eq.{tenant_id}",
+                                    "message_type": "eq.brochure", "to_number": f"like.*{digits}",
+                                    "status": "neq.failed", "sent_at": f"gte.{since}", "limit": "1"})
+        return r.status_code == 200 and bool(r.json())
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"brochure dedupe check skipped: {e}")
+        return False
 
 
 # "I'll send it on WhatsApp", said by her, in either script. The send word
