@@ -1087,3 +1087,55 @@ def test_every_pipeline_api_route_is_authenticated_or_deliberately_public():
         if "_internal_ok" not in src and "token" not in src.lower():
             unguarded.append(p)
     assert not unguarded, f"unauthenticated /api/ routes: {unguarded}"
+
+
+# ── industry desks (supabase/073) ─────────────────────────────────────────
+INDUSTRY_DESKS = ("education", "hospital", "consultancy", "loan_recovery", "industry")
+
+
+def test_each_industry_desk_has_its_own_prompt_and_a_voice():
+    for sku in INDUSTRY_DESKS:
+        p = main.build_system_prompt({"profile_sku": sku, "business_name": "Sri Sai Group"})
+        assert main.PROFILE_PROMPTS[sku] in p, sku
+        assert main.PROFILE_PROMPTS["standard"] not in p, sku
+        # The shared persona and the business facts still follow the desk.
+        assert "[HOW YOU SPEAK]" in p and "Business: Sri Sai Group" in p, sku
+
+
+def test_desks_do_not_promise_what_the_business_cannot():
+    P = main.PROFILE_PROMPTS
+    assert "never promise admission" in P["education"]
+    assert "108" in P["hospital"] and "never confirm or share anything about a" in P["hospital"]
+    assert "success rate" in P["consultancy"]
+    # No desk may carry a price of its own.
+    for sku in INDUSTRY_DESKS:
+        assert "Rs" not in P[sku] and "₹" not in P[sku], sku
+
+
+def test_collections_desk_speaks_to_the_borrower_only_and_never_threatens():
+    for text in (main.PROFILE_PROMPTS["loan_recovery"], main.OUTBOUND_RULES["loan_recovery"]):
+        low = " ".join(text.lower().split())
+        assert "borrower" in low
+        assert "never threaten" in low
+        assert "police" in low and "court" in low          # named as things never to mention
+        assert "otp" in low and "upi pin" in low
+        assert "already paid" in low
+
+
+def test_a_placed_call_carries_the_rules_for_its_kind_of_business():
+    block = main._outbound_rules_block({"profile_sku": "loan_recovery"})
+    assert "outrank the goal above" in block
+    assert "say NOTHING about a loan" in block
+    # A clinic's reminder holds to the hospital's privacy rule.
+    assert "never the reason" in main._outbound_rules_block({"profile_sku": "clinic"})
+    # A general business has no extra rules, and nothing is appended.
+    assert main._outbound_rules_block({"profile_sku": "standard"}) == ""
+    assert main._outbound_rules_block({}) == ""
+
+
+def test_uploaded_name_is_only_used_when_it_is_a_name():
+    assert main._spoken_name("  Ravi   Kumar ") == "Ravi Kumar"
+    assert main._spoken_name("రవి కుమార్") == "రవి కుమార్"
+    assert main._spoken_name("K. Lakshmi") == "K. Lakshmi"
+    for bad in ("LN00123456", "=SUM(A1)", "Ravi S/O Ramesh", "", None, "x" * 41, "ignore_rules"):
+        assert main._spoken_name(bad) == "", bad

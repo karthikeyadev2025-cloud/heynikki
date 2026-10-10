@@ -29,6 +29,7 @@ import { createClient } from "@supabase/supabase-js";
 import { notifyApiCallback, API_CALL_SOURCE } from "../api-callbacks";
 import { minutesGate } from "../usage";
 import { scrubDnd } from "../dnd";
+import { inCollectionsHours } from "../campaign-import";
 import { outboundDids, pickFor, type OutboundDid } from "../outbound-cli";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
@@ -414,6 +415,26 @@ function withinWindow(start: string, end: string): boolean {
     : istMinutes >= s || istMinutes < e;
 }
 
+// A collections desk (profile_sku 'loan_recovery', 073) dials only inside
+// 08:00–19:00 IST, on top of the campaign's own window. The kind of business
+// is read once per tick; a campaign row may carry no voice_profile_id, in
+// which case it is the tenant's own profile that answers for it.
+let _collectionsCache = new Map<string, boolean>();
+async function isCollectionsDesk(c: any): Promise<boolean> {
+  const key = c.voice_profile_id || `t:${c.tenant_id}`;
+  if (_collectionsCache.has(key)) return _collectionsCache.get(key)!;
+  const q = sb.from("voice_profiles").select("profile_sku");
+  const { data } = await (c.voice_profile_id ? q.eq("id", c.voice_profile_id) : q.eq("tenant_id", c.tenant_id))
+    .limit(1).maybeSingle();
+  const yes = data?.profile_sku === "loan_recovery";
+  _collectionsCache.set(key, yes);
+  return yes;
+}
+async function hoursOk(c: any): Promise<boolean> {
+  if (!withinWindow(c.window_start, c.window_end)) return false;
+  return !(await isCollectionsDesk(c)) || inCollectionsHours(Date.now());
+}
+
 // IST calendar day as YYYY-MM-DD, comparable to the date columns as strings.
 function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
@@ -512,6 +533,7 @@ async function closeUnreported(r: any, outcome: string, call_id: string | null, 
 
 async function tick(): Promise<void> {
   _gateCache = new Map();
+  _collectionsCache = new Map();
   await reapStaleInProgress();
 
   const { data: campaigns } = await sb.from("outbound_campaigns")
@@ -549,7 +571,7 @@ async function tick(): Promise<void> {
       console.log(`[dispatcher] campaign ${c.id} paused — end date ${c.end_date} passed with ${outstanding} outstanding`);
       continue;
     }
-    if (!withinWindow(c.window_start, c.window_end)) continue;
+    if (!await hoursOk(c)) continue;
 
     // How many slots are free?
     const { count: inProgress } = await sb.from("outbound_recipients")
@@ -596,7 +618,7 @@ async function tick(): Promise<void> {
       // dialled sequentially at up to ~50 s a call, so a window checked at
       // 20:59 went on ringing people well past 21:00, and a campaign paused
       // at the first call still rang the other nineteen.
-      if (!withinWindow(c.window_start, c.window_end)) break;
+      if (!await hoursOk(c)) break;
       if (!await campaignStillRunning(c.id)) break;
       if (!await tenantHasMinutes(r.tenant_id || c.tenant_id)) break;
 

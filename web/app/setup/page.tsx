@@ -10,7 +10,7 @@ import { NIKKI } from "../../lib/brand";
 import AgentDraftBox from "../../components/AgentDraftBox";
 import BrochureUpload from "../../components/BrochureUpload";
 import ScriptAndMenu from "../../components/ScriptAndMenu";
-import { Building2, Hospital, HardHat, Star, Pause, Play, Check, Phone, PhoneOff, Settings, ShoppingBag, Trash2 } from "lucide-react";
+import { Building2, Hospital, HardHat, Star, GraduationCap, Briefcase, Factory, Landmark, Stethoscope, Pause, Play, Check, Phone, PhoneOff, Settings, ShoppingBag, Trash2 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
 
@@ -22,8 +22,13 @@ const C = {
 
 const PROFILE_SKUS = [
   { id: "standard",    name: "Nikki Telugu Receptionist — Standard",    desc: "General business, retail, coaching",        icon: Building2, voice: "priya" },
-  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Hospitals, clinics, diagnostic labs",       icon: Hospital, voice: "shreya"   },
+  { id: "clinic",      name: "Nikki Telugu Receptionist — Clinic",      desc: "Doctors, dentists, diagnostic labs",        icon: Stethoscope, voice: "shreya" },
+  { id: "hospital",    name: "Nikki Telugu Receptionist — Hospital",    desc: "OP booking by department, 108 on an emergency", icon: Hospital, voice: "shreya" },
   { id: "real_estate", name: "Nikki Telugu Receptionist — Real Estate", desc: "Site visits, lead capture, property enquiries", icon: HardHat, voice: "aditya"   },
+  { id: "education",   name: "Nikki Telugu Receptionist — Education",   desc: "Schools, colleges, coaching: admissions, campus visits", icon: GraduationCap, voice: "simran" },
+  { id: "consultancy", name: "Nikki Telugu Receptionist — Consultancy", desc: "Visa, overseas study, jobs, tax: books consultations", icon: Briefcase, voice: "kavya" },
+  { id: "loan_recovery", name: "Nikki Telugu Receptionist — Loan recovery", desc: "Repayment reminders; borrower only, calls 8 am to 7 pm", icon: Landmark, voice: "shreya" },
+  { id: "industry",    name: "Nikki Telugu Receptionist — Industry",    desc: "Manufacturers, plants: sales, service, suppliers", icon: Factory, voice: "aditya" },
   { id: "premium",     name: "Nikki Telugu Receptionist — Premium",     desc: "High-value clients, luxury brands",         icon: Star, voice: "kavya" },
 ];
 

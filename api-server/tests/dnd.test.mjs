@@ -245,3 +245,14 @@ test("a different number is not blocked by someone else's opt-out", async () => 
   const a = await scrubDnd(sb, "+919000000001", { tenantId: "t", consented: true });
   assert.equal(a.blocked, false);
 });
+
+// ── Collections calls keep to 08:00–19:00 IST ────────────────────────────
+const { inCollectionsHours } = await import("../dist/campaign-import.js");
+test("a collections desk dials only between 8 am and 7 pm IST", () => {
+  const ist = (s) => Date.parse(`2026-10-12T${s}:00+05:30`);
+  assert.equal(inCollectionsHours(ist("07:59")), false);
+  assert.equal(inCollectionsHours(ist("08:00")), true);
+  assert.equal(inCollectionsHours(ist("18:59")), true);
+  assert.equal(inCollectionsHours(ist("19:00")), false);
+  assert.equal(inCollectionsHours(ist("23:30")), false);
+});

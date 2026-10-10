@@ -144,6 +144,15 @@ export function windowProblem(ws: string, we: string): string | null {
   return `Call-until (${we}) is before call-from (${ws}). For calls through the night, start after 12:00 and end by 12:00 the next day; for all day, use the same time for both.`;
 }
 
+// The one exception to "any hour": a lender or its agent may ring a borrower
+// only between 08:00 and 19:00 (RBI's recovery-agent rules). A collections
+// desk's campaign keeps to that band whatever window was typed.
+export function inCollectionsHours(nowMs: number): boolean {
+  const ist = new Date(nowMs + 330 * 60_000);
+  const m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return m >= 8 * 60 && m < 19 * 60;
+}
+
 // IST calendar day as YYYY-MM-DD — the same form the date columns come back in.
 function istToday(): string {
   return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);

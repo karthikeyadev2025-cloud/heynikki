@@ -28,6 +28,7 @@ import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { AlertTriangle, Megaphone } from "lucide-react";
+import { CAMPAIGN_SCRIPTS } from "../../lib/campaign-scripts";
 import RecipientImport from "../../components/RecipientImport";
 
 const C = {
@@ -452,6 +453,10 @@ export default function CampaignsPage() {
     if (!form.name.trim() || !form.script.trim()) {
       setError("Name and script are both required."); return;
     }
+    // A ready script still carrying a [placeholder] would have Nikki say
+    // "the open day on date" to a few hundred people.
+    const unfilled = form.script.match(/\[[^\]\n]{2,60}\]/);
+    if (unfilled) { setError(`Replace ${unfilled[0]} in the script with your own details first.`); return; }
     if (!tenantId) return;
     const badWindow = windowProblem(form.window_start, form.window_end);
     if (badWindow) { setError(badWindow); return; }
@@ -603,6 +608,21 @@ export default function CampaignsPage() {
             <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
               What should Nikki say?
             </label>
+            {/* A starting point per kind of business; whatever is picked lands in
+                the box below to be edited, and the campaign is not created
+                while a [bracket] is still in it. */}
+            <select style={{ ...inputStyle, marginBottom: 8 }} value=""
+              onChange={e => {
+                const t = CAMPAIGN_SCRIPTS.find(x => x.id === e.target.value);
+                if (t) setForm(f => ({ ...f, script: t.script }));
+              }}>
+              <option value="">Start from a ready script…</option>
+              {Array.from(new Set(CAMPAIGN_SCRIPTS.map(x => x.group))).map(g => (
+                <optgroup key={g} label={g}>
+                  {CAMPAIGN_SCRIPTS.filter(x => x.group === g).map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+                </optgroup>
+              ))}
+            </select>
             <textarea style={{ ...inputStyle, minHeight: 90, marginBottom: 14, resize: "vertical" }}
               value={form.script}
               placeholder="Introduce yourself, mention the Diwali offer of 20% off, and ask if they'd like to book an appointment this week."

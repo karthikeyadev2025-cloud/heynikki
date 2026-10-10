@@ -2307,13 +2307,17 @@ app.post("/api/agents/draft", verifyJWT, apiLimiter, async (req: any, res) => {
     const prompt = [
       "Turn this description of an Indian small business into a receptionist",
       "agent profile. Return ONLY minified JSON with exactly these keys:",
-      '{"business_name":"","display_name":"","profile_sku":"standard|clinic|real_estate|premium",',
+      '{"business_name":"","display_name":"","profile_sku":"standard|clinic|hospital|real_estate|education|consultancy|loan_recovery|industry|premium",',
       '"services":[],"appointment_types":[],"open_time":"HH:MM","close_time":"HH:MM",',
       '"open_days":["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],"fallback_message":""}',
       "",
       "display_name: what the agent calls itself, in TELUGU SCRIPT. Default నిక్కి.",
-      "profile_sku: clinic for doctors/dentists/hospitals, real_estate for",
-      "  property, premium for high-value services, otherwise standard.",
+      "profile_sku: clinic for a doctor, dentist or lab; hospital for a",
+      "  multi-department hospital; real_estate for property; education for a",
+      "  school, college or coaching institute; consultancy for visa, overseas",
+      "  education, job, tax or legal consultants; loan_recovery for a lender's",
+      "  or agency's collections desk; industry for a manufacturer, plant or",
+      "  large enterprise; premium for high-value services; otherwise standard.",
       "services: 3-6 short items the business actually offers.",
       "appointment_types: 2-4 things a caller can book.",
       "open_time/close_time: 24-hour. If unstated use 09:00 and 21:00.",
@@ -2350,7 +2354,8 @@ app.post("/api/agents/draft", verifyJWT, apiLimiter, async (req: any, res) => {
     // this output is destined for it — an unvalidated draft would be
     // rejected at INSERT, after the user had already approved it, which
     // reads as the save being broken rather than the draft.
-    const SKUS = ["standard", "clinic", "real_estate", "premium"];
+    const SKUS = ["standard", "clinic", "hospital", "real_estate", "education", "consultancy",
+      "loan_recovery", "industry", "premium"];
     const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const hhmm = (v: any, fb: string) =>
       /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v)) ? String(v) : fb;
