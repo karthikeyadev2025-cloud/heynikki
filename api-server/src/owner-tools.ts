@@ -21,6 +21,8 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import { tenantRole, OWNER_ROLES } from "./roles";
+import { minutesGate, planDeskMinutes } from "./usage";
+import { CONVERSATION_SECS } from "./attendance";
 
 export type Card =
   | { type: "summary"; title: string; stats: { label: string; value: string | number; tone?: string }[] }
@@ -107,6 +109,39 @@ export function makeOwnerAssistant(deps: {
       name: "missed_calls",
       description: "Calls nobody got to — rung out, or ended before a conversation. Use for 'did I miss anything', 'any missed calls today'.",
       parameters: { type: "object", properties: { day: { type: "string" } } },
+    },
+    {
+      name: "whatsapp_inbox",
+      description: "WhatsApp messages customers have sent the business. Use for 'any WhatsApp messages', 'did anyone reply on WhatsApp', 'what did Ravi send'. Default is the unread ones.",
+      parameters: { type: "object", properties: {
+        include_read: { type: "boolean", description: "True to list recent messages whether or not they were read." },
+        phone: { type: "string", description: "Only messages from this mobile number." },
+      } },
+    },
+    {
+      name: "minutes_left",
+      description: "The plan this business is on and how many calling minutes are used and left this month — Nikki's minutes and the team's telecaller minutes. Use for 'how many minutes are left', 'which plan am I on'.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "team_calls",
+      description: "What the telecallers did on the Desk: calls dialled, real conversations, bookings, interested customers and callbacks, per person. 'days' is 1 (today), 7 or 30. Use for 'how is the team doing', 'how many calls did Sita make today'.",
+      parameters: { type: "object", properties: { days: { type: "integer", enum: [1, 7, 30] } } },
+    },
+    {
+      name: "follow_ups_due",
+      description: "Customers who are owed a call back — follow-ups booked from calls that are due today or overdue. Use for 'who do we have to call back', 'any follow-ups pending'.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "list_campaigns",
+      description: "Outbound calling campaigns and how far each has got: status, numbers called, numbers left. Use for 'how is the campaign going', 'is anything running'.",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      name: "calls_learned",
+      description: "The latest daily digest of what the team's calls taught: how the day went, what customers objected to and asked, what worked, tips for tomorrow. Use for 'what did customers say', 'why are people saying no', 'any tips for the team'.",
+      parameters: { type: "object", properties: {} },
     },
     // ── Write. These only ever PROPOSE. ──
     {
@@ -324,6 +359,192 @@ export function makeOwnerAssistant(deps: {
     };
   }
 
+  async function whatsappInbox(tenantId: string, args: any) {
+    const digits = last10(args.phone);
+    let q = sb.from("wa_inbound")
+      .select("id, from_number, body, msg_type, received_at, read_at")
+      .eq("tenant_id", tenantId).order("received_at", { ascending: false }).limit(20);
+    if (args.include_read !== true) q = q.is("read_at", null);
+    if (digits.length === 10) q = q.like("from_number", `%${digits}`);
+    const [{ data, error }, { count: unread }] = await Promise.all([
+      q,
+      sb.from("wa_inbound").select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId).is("read_at", null),
+    ]);
+    if (error) throw new Error(error.message);
+    // A photo or voice note with no caption has no words to show or say.
+    const text = (m: any) => String(m.body || "").trim() || `[${m.msg_type || "message"}]`;
+    const when = (t: string) => new Date(t).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+    const rows = (data || []).map(m => ({
+      title: last10(m.from_number) || "unknown",
+      subtitle: text(m).slice(0, 80),
+      meta: when(m.received_at),
+      tone: m.read_at ? undefined : "warn",
+      href: "/whatsapp",
+    }));
+    return {
+      result: { unread_total: unread || 0, shown: rows.length, messages: (data || []).map(m => ({
+        from: last10(m.from_number), text: text(m).slice(0, 200), unread: !m.read_at, at: when(m.received_at) })) },
+      card: rows.length ? { type: "list" as const, title: args.include_read === true ? "WhatsApp messages" : "Unread on WhatsApp", rows } : null,
+    };
+  }
+
+  async function minutesLeft(tenantId: string) {
+    const { data: t } = await sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle();
+    const plan = String(t?.plan || "").toLowerCase() || "trial";
+    const ai = await minutesGate(sb, tenantId, "ai");
+    if (!ai.paid) {
+      return {
+        result: { plan: "free trial", free_minutes_left: ai.credits },
+        card: { type: "summary" as const, title: "Free trial",
+                stats: [{ label: "Minutes left", value: ai.credits, tone: ai.credits > 0 ? "good" : "bad" }] },
+      };
+    }
+    // The gate lets the call through when it cannot read the meter, and
+    // reports 0 of 0 — which must not be read out as "no minutes".
+    if (!ai.limitMinutes) return { result: { plan, error: "the minutes meter could not be read just now" }, card: null };
+    // Before 070 there is one pool; the team's calls come out of Nikki's minutes.
+    const separateDesk = (await planDeskMinutes(sb, plan).catch(() => null)) !== null;
+    const desk = separateDesk ? await minutesGate(sb, tenantId, "desk") : null;
+    const left = (g: { usedMinutes: number; limitMinutes: number }) => Math.max(0, g.limitMinutes - g.usedMinutes);
+    return {
+      result: {
+        plan,
+        nikki_minutes_used: ai.usedMinutes, nikki_minutes_included: ai.limitMinutes, nikki_minutes_left: left(ai),
+        ...(desk && desk.limitMinutes ? {
+          team_minutes_used: desk.usedMinutes, team_minutes_included: desk.limitMinutes, team_minutes_left: left(desk),
+        } : separateDesk ? {} : { team_minutes: "the team's calls share Nikki's minutes" }),
+        top_up_minutes: ai.credits,
+      },
+      card: {
+        type: "summary" as const, title: `Minutes this month — ${plan}`,
+        stats: [
+          { label: "Nikki", value: `${ai.usedMinutes} / ${ai.limitMinutes}`, tone: left(ai) ? undefined : "bad" },
+          ...(desk && desk.limitMinutes
+            ? [{ label: "Team", value: `${desk.usedMinutes} / ${desk.limitMinutes}`, tone: left(desk) ? undefined : "bad" }]
+            : []),
+          ...(ai.credits > 0 ? [{ label: "Top-up", value: ai.credits }] : []),
+        ],
+      },
+    };
+  }
+
+  async function teamCalls(tenantId: string, args: any) {
+    const days = [1, 7, 30].includes(Number(args.days)) ? Number(args.days) : 1;
+    const since = new Date(Date.parse(istDayRange(todayIST()).start) - (days - 1) * 86_400_000).toISOString();
+    const [{ data: rows, error }, { data: members }] = await Promise.all([
+      sb.from("click_to_call_log").select("agent_user_id, duration_seconds, disposition")
+        .eq("tenant_id", tenantId).gte("created_at", since).limit(5000),
+      sb.from("tenant_users").select("user_id, display_name, phone").eq("tenant_id", tenantId),
+    ]);
+    if (error) throw new Error(error.message);
+    const blank = () => ({ calls: 0, conversations: 0, talk_minutes: 0, booked: 0, interested: 0, callbacks: 0 });
+    const by = new Map<string, ReturnType<typeof blank>>();
+    const all = blank();
+    for (const r of rows || []) {
+      const k = r.agent_user_id || "unknown";
+      const s = by.get(k) || blank();
+      const secs = r.duration_seconds || 0;
+      for (const x of [s, all]) {
+        x.calls += 1;
+        // The Desk's own line for a real conversation, so this matches its page.
+        if (secs >= CONVERSATION_SECS) { x.conversations += 1; x.talk_minutes += secs / 60; }
+        if (r.disposition === "booked") x.booked += 1;
+        if (r.disposition === "interested") x.interested += 1;
+        if (r.disposition === "callback") x.callbacks += 1;
+      }
+      by.set(k, s);
+    }
+    const nameOf = new Map<string, string>((members || []).map((m: any): [string, string] =>
+      [m.user_id, m.display_name || (m.phone ? `…${String(m.phone).slice(-4)}` : "Seat")]));
+    const people = [...by].map(([id, s]) => ({ name: nameOf.get(id) || "Seat", ...s, talk_minutes: Math.round(s.talk_minutes) }))
+      .sort((a, b) => (b.booked - a.booked) || (b.conversations - a.conversations) || (b.calls - a.calls));
+    const period = days === 1 ? "today" : `last ${days} days`;
+    return {
+      result: { period, total: { ...all, talk_minutes: Math.round(all.talk_minutes) }, people },
+      card: people.length ? {
+        type: "list" as const, title: `Team calls — ${period}`,
+        rows: people.slice(0, 10).map(p => ({
+          title: p.name,
+          subtitle: `${p.calls} calls · ${p.conversations} conversations · ${p.talk_minutes} min`,
+          meta: `${p.booked} booked · ${p.interested} interested`,
+          tone: p.booked ? "good" : undefined, href: "/desk",
+        })),
+      } : null,
+    };
+  }
+
+  async function followUpsDue(tenantId: string) {
+    const now = Date.now();
+    const { data, error } = await sb.from("leads")
+      .select("id, name, phone, stage, follow_up_at, follow_up_note")
+      .eq("tenant_id", tenantId)
+      .not("follow_up_at", "is", null).is("follow_up_done_at", null)
+      .lt("follow_up_at", istDayRange(todayIST()).end)
+      .order("follow_up_at", { ascending: true }).limit(20);
+    if (error) throw new Error(error.message);
+    const when = (t: string) => new Date(t).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+    const late = (t: string) => new Date(t).getTime() < now;
+    const rows = (data || []).map(l => ({
+      title: l.name || last10(l.phone) || "—",
+      subtitle: l.follow_up_note ? String(l.follow_up_note).slice(0, 80) : undefined,
+      meta: when(l.follow_up_at), tone: late(l.follow_up_at) ? "bad" : "warn", href: "/desk",
+    }));
+    return {
+      result: { count: rows.length, overdue: (data || []).filter(l => late(l.follow_up_at)).length,
+        follow_ups: (data || []).map(l => ({ name: l.name, phone: last10(l.phone), due: when(l.follow_up_at),
+          overdue: late(l.follow_up_at), note: l.follow_up_note ? String(l.follow_up_note).slice(0, 160) : null })) },
+      card: rows.length ? { type: "list" as const, title: "Call-backs due", rows } : null,
+    };
+  }
+
+  async function listCampaigns(tenantId: string) {
+    const { data: camps, error } = await sb.from("outbound_campaigns")
+      .select("id, name, status, created_at")
+      .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(5);
+    if (error) throw new Error(error.message);
+    // Counted, not fetched: a campaign's list is thousands of rows and a
+    // select returns the first thousand.
+    const count = async (id: string, waitingOnly: boolean) => {
+      let q = sb.from("outbound_recipients").select("id", { count: "exact", head: true }).eq("campaign_id", id);
+      if (waitingOnly) q = q.in("status", ["pending", "queued", "in_progress"]);
+      return (await q).count || 0;
+    };
+    const list = await Promise.all((camps || []).map(async c => {
+      const [total, left] = await Promise.all([count(c.id, false), count(c.id, true)]);
+      return { name: c.name, status: c.status, numbers: total, called: total - left, left };
+    }));
+    return {
+      result: { count: list.length, campaigns: list },
+      card: list.length ? {
+        type: "list" as const, title: "Campaigns",
+        rows: list.map(c => ({
+          title: c.name || "Campaign", subtitle: `${c.called} of ${c.numbers} called`,
+          meta: c.status, tone: c.status === "running" ? "good" : c.status === "paused" ? "warn" : undefined,
+          href: "/campaigns",
+        })),
+      } : null,
+    };
+  }
+
+  async function callsLearned(tenantId: string) {
+    const { data, error } = await sb.from("desk_insights").select("day, calls, digest, suggestions")
+      .eq("tenant_id", tenantId).order("day", { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return { result: { available: false, note: "No daily digest has been written for this business yet." }, card: null };
+    const d: any = data.digest || {};
+    const top = (v: unknown, n: number) => (Array.isArray(v) ? v : []).slice(0, n).map(x => String(x).slice(0, 200));
+    const waiting = (Array.isArray(data.suggestions) ? data.suggestions : []).filter((x: any) => x?.status === "pending").length;
+    const tips = top(d.tips, 4);
+    return {
+      result: { day: data.day, calls: data.calls, headline: String(d.headline || ""),
+        objections: top(d.objections, 3), questions: top(d.questions, 3),
+        what_worked: top(d.what_worked, 2), tips: tips.slice(0, 3),
+        suggested_answers_waiting_for_owner: waiting },
+      card: tips.length ? { type: "list" as const, title: `What the calls taught — ${data.day}`,
+        rows: tips.map(t => ({ title: t, href: "/desk" })) } : null,
+    };
+  }
+
   // ── Write proposals ──────────────────────────────────────────
   function propose(tenantId: string, tool: string, args: any,
                    label: string, description: string, danger = false) {
@@ -420,7 +641,31 @@ about their own numbers, or wants something done.
   "REMEMBER: <the fact in one clean sentence>" on its own first line, then
   your spoken confirmation on the next.`;
 
-  async function runOwnerTurn(tenantId: string, question: string, contextJson: string): Promise<OwnerTurn> {
+  // The same lookups, heard instead of seen. The phone app's listener has no
+  // screen for a card and no button to confirm with, so it gets the read
+  // tools only and is told to say the rows that matter.
+  const SPOKEN = `You are Nikki, the voice assistant on this business owner's phone. They woke you
+by saying "Hey Nikki" and will HEAR your answer; there is no screen.
+
+- Questions about the business: use the tools, do not answer from the summary
+  alone when a tool would give the real rows. "How many calls today" means
+  day_calls, not missed_calls.
+- At most three short sentences, spoken plainly, in the language they used —
+  Telugu when you cannot tell. No lists, no markdown. Nobody can see the rows,
+  so say the two or three that matter most by name, time or amount.
+- Numbers as digits. Never invent one. If a tool returns nothing, say so.
+- From the phone you can look things up but not change anything. Ringing a
+  customer back, moving an order or cancelling a booking is done in the
+  dashboard — say that if they ask for one.
+- If it is not about the business at all — general knowledge, quick math, a
+  chat, the date or time — answer it helpfully instead of saying the data
+  lacks it. Calling a contact, alarms and timers are handled by the phone.`;
+
+  async function runOwnerTurn(tenantId: string, question: string, contextJson: string,
+                              opts: { spoken?: boolean } = {}): Promise<OwnerTurn> {
+    const declarations = opts.spoken ? DECLARATIONS.filter(t => !WRITE_TOOLS.has(t.name)) : DECLARATIONS;
+    const system = !opts.spoken ? SYSTEM
+      : `${SPOKEN}\n\nNOW: ${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date())} in India.`;
     const model = deps.resolveGeminiModel();
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const contents: any[] = [{ role: "user", parts: [{ text: question }] }];
@@ -433,9 +678,9 @@ about their own numbers, or wants something done.
         signal: AbortSignal.timeout(15_000),
         headers: { "Content-Type": "application/json", "x-goog-api-key": deps.geminiKey },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: `${SYSTEM}\n\nTODAY (${todayIST()}) SO FAR:\n${contextJson}` }] },
+          system_instruction: { parts: [{ text: `${system}\n\nTODAY (${todayIST()}) SO FAR:\n${contextJson}` }] },
           contents,
-          tools: [{ function_declarations: DECLARATIONS }],
+          tools: [{ function_declarations: declarations }],
           tool_config: { function_calling_config: { mode: "auto" } },
           generationConfig: { temperature: 0.2, maxOutputTokens: 300 },
         }),
@@ -457,7 +702,10 @@ about their own numbers, or wants something done.
         const args = call.args || {};
         let out: any;
         try {
-          if (WRITE_TOOLS.has(name)) {
+          if (WRITE_TOOLS.has(name) && opts.spoken) {
+            // Not offered by voice, and not honoured if asked for anyway.
+            out = { error: "that can only be done from the dashboard" };
+          } else if (WRITE_TOOLS.has(name)) {
             // Proposed, not performed. The model is told this, but the
             // guarantee lives here rather than in the prompt.
             if (name === "call_customer_back") {
@@ -485,6 +733,12 @@ about their own numbers, or wants something done.
                     : name === "list_leads"        ? await listLeads(tenantId)
                     : name === "find_customer"     ? await findCustomer(tenantId, args)
                     : name === "missed_calls"      ? await missedCalls(tenantId, args)
+                    : name === "whatsapp_inbox"    ? await whatsappInbox(tenantId, args)
+                    : name === "minutes_left"      ? await minutesLeft(tenantId)
+                    : name === "team_calls"        ? await teamCalls(tenantId, args)
+                    : name === "follow_ups_due"    ? await followUpsDue(tenantId)
+                    : name === "list_campaigns"    ? await listCampaigns(tenantId)
+                    : name === "calls_learned"     ? await callsLearned(tenantId)
                     : null;
             if (!r) { out = { error: `no such tool: ${name}` }; }
             else { out = r.result; if (r.card) cards.push(r.card); }
