@@ -85,7 +85,7 @@ export function listenPrompt(nowMs: number): string {
     '   "has_website": "yes" | "no" | "unknown",\n' +
     '   "pitched": ["<each product or service the telecaller offered>"],\n' +
     '   "price_quoted": "<any price the telecaller said, else null>",\n' +
-    '   "objection": "<the customer\'s main reason for saying no or not now, in a few English words, else null>",\n' +
+    '   "objection": "<how the customer said no or not now, in a few English words; null only if they never refused or put it off>",\n' +
     '   "questions": ["<each question the customer asked, in English>"],\n' +
     '   "next_step": "<what was agreed to happen next, else null>"},\n' +
     ' "transcript": [{"who": "agent" | "customer", "text": "<what was said, in the language and script it was said in>"}]}\n' +
@@ -95,6 +95,13 @@ export function listenPrompt(nowMs: number): string {
     "Devanagari and English words in Latin letters; never any other script.\n" +
     "Facts come only from the call: null or \"unknown\" when it was not said. \"questions\" are the " +
     "CUSTOMER's questions only, translated to English — never the telecaller's.\n" +
+    // A flat "akkarledu" was read as no reason at all: 13 calls ended in a
+    // refusal on 9 Oct and not one had an objection.
+    "\"objection\": a bare refusal IS the objection — \"akkarledu\", \"avasaram ledu\", \"nahi chahiye\", " +
+    "\"not needed\" are all \"no need\". Use one of these when it fits, so the same objection is always " +
+    "worded the same: \"no need\", \"already have one\", \"busy now\", \"too expensive\", " +
+    "\"not the decision maker\", \"will think about it\", \"will call if needed\", \"wrong number\"; " +
+    "otherwise a few words of your own. A customer who hung up or only listened without refusing has none.\n" +
     `The time now is ${nowIst} IST. Choose the disposition from what the CUSTOMER did, not ` +
     `from what the telecaller offered:\n` +
     `- "booked": a specific appointment, meeting or visit was fixed — including an executive ` +

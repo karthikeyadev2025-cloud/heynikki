@@ -84,6 +84,12 @@ test("a question already approved or dismissed is not suggested again", () => {
   assert.deepEqual(out.map(x => x.question), ["Do you do SEO?"]);
 });
 
+test("the listen prompt counts a bare refusal as an objection, worded one way", () => {
+  const p = L.listenPrompt(ist("2026-10-10T12:00:00"));
+  assert.match(p, /a bare refusal IS the objection/);
+  for (const w of ["akkarledu", "no need", "already have one", "busy now"]) assert.ok(p.includes(w), w);
+});
+
 test("patterns: segments, hours, objections and interest rung only once", () => {
   const row = (time, n, o = {}) => ({ created_at: new Date(ist(time)).toISOString(), callee_number: n,
     duration_seconds: 60, customer_answered_at: "x", disposition: "not_interested", ...o });
