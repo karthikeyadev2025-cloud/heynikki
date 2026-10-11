@@ -273,3 +273,83 @@ test("the optional columns are found by exact header only", () => {
   assert.deepEqual(detectExtras(["Name", "Phone", "Amount Paid", "Paid On"]), { amount: -1, due: -1 });
   assert.deepEqual(detectExtras(["phone"]), { amount: -1, due: -1 });
 });
+
+// ── Desk softphone: what a browser may send, tokens, ring groups ──────────
+import * as sp from "../dist/softphone.js";
+
+const SEAT = "u0123456789abcdef0123456789abcdef";
+const OTHER = "uffffffffffffffffffffffffffffffff";
+const sip = (first, from, to, extra = "") =>
+  `${first}\r\nVia: SIP/2.0/WS x.invalid;branch=z9hG4bK1\r\nFrom: <sip:${from}@heynikki.in>;tag=a\r\nTo: <sip:${to}@heynikki.in>${extra}\r\nCall-ID: 1\r\nCSeq: 1 X\r\n\r\n`;
+
+test("softphone: seat id comes from the user id", () => {
+  assert.equal(sp.seatId("01234567-89ab-cdef-0123-456789abcdef"), SEAT);
+  assert.throws(() => sp.seatId("nope"));
+  assert.throws(() => sp.seatId("0123456789abcdef0123456789abcdef; rm"));
+});
+
+test("softphone: a browser may register only its own seat", () => {
+  assert.equal(sp.refuseClientSip(sip("REGISTER sip:heynikki.in SIP/2.0", SEAT, SEAT), SEAT), "");
+  assert.notEqual(sp.refuseClientSip(sip("REGISTER sip:heynikki.in SIP/2.0", OTHER, OTHER), SEAT), "");
+  assert.notEqual(sp.refuseClientSip(sip("REGISTER sip:heynikki.in SIP/2.0", SEAT, OTHER), SEAT), "");
+});
+
+test("softphone: a browser may call only an issued token or the headset test", () => {
+  const tok = "ctc_" + "ab".repeat(16);
+  assert.equal(sp.refuseClientSip(sip(`INVITE sip:${tok}@heynikki.in SIP/2.0`, SEAT, tok), SEAT), "");
+  assert.equal(sp.refuseClientSip(sip("INVITE sip:selftest@heynikki.in SIP/2.0", SEAT, "selftest"), SEAT), "");
+  for (const target of ["919848012345", "out_9848012345", "ctc_agent_9848012345", "camp_9848012345", "ctc_short", "human_x"]) {
+    assert.notEqual(sp.refuseClientSip(sip(`INVITE sip:${target}@heynikki.in SIP/2.0`, SEAT, target), SEAT), "", target);
+  }
+  // someone else's identity on a new call
+  assert.notEqual(sp.refuseClientSip(sip(`INVITE sip:${tok}@heynikki.in SIP/2.0`, OTHER, tok), SEAT), "");
+});
+
+test("softphone: messages inside a call pass, others do not", () => {
+  // hanging up a call the switch rang us for: From is the dialled contact
+  assert.equal(sp.refuseClientSip(sip("BYE sip:mod_sofia@127.0.0.1:5067 SIP/2.0", "a92afmuj", "9848012345", ";tag=b"), SEAT), "");
+  assert.equal(sp.refuseClientSip(sip("INVITE sip:mod_sofia@127.0.0.1:5067 SIP/2.0", "a92afmuj", "x", ";tag=b"), SEAT), "", "re-INVITE (hold)");
+  assert.equal(sp.refuseClientSip("SIP/2.0 200 OK\r\nCSeq: 1 INVITE\r\n\r\n", SEAT), "");
+  assert.equal(sp.refuseClientSip("\r\n\r\n", SEAT), "", "keep-alive");
+  for (const m of ["MESSAGE", "SUBSCRIBE", "REFER", "NOTIFY", "PUBLISH"]) {
+    assert.notEqual(sp.refuseClientSip(sip(`${m} sip:x@heynikki.in SIP/2.0`, SEAT, "x"), SEAT), "", m);
+  }
+  assert.notEqual(sp.refuseClientSip("GET / HTTP/1.1\r\n\r\n", SEAT), "");
+  assert.notEqual(sp.refuseClientSip("x".repeat(20000), SEAT), "");
+});
+
+test("softphone: a token works once, for its own seat, for a minute", () => {
+  const call = { seat: SEAT, tenantId: "t", userId: "u", customer: "9848012345", maskedCli: "8633502032", callId: null, ctcLogId: null };
+  const t1 = sp.issueToken(call, 1000);
+  assert.match(t1, /^[0-9a-f]{32}$/);
+  assert.equal(sp.claimToken(t1, SEAT, 2000)?.customer, "9848012345");
+  assert.equal(sp.claimToken(t1, SEAT, 2000), null, "second use");
+  const t2 = sp.issueToken(call, 1000);
+  assert.equal(sp.claimToken(t2, OTHER, 2000), null, "another seat");
+  assert.equal(sp.claimToken(t2, SEAT, 2000), null, "and it is spent");
+  const t3 = sp.issueToken(call, 1000);
+  assert.equal(sp.claimToken(t3, SEAT, 1000 + sp.TOKEN_TTL_MS + 1), null, "expired");
+  assert.equal(sp.claimToken("", SEAT), null);
+  assert.equal(sp.claimToken("0".repeat(32), SEAT), null);
+});
+
+test("softphone: online browsers ring first, then the phones", () => {
+  const C = "sofia/webrtc/sip:a92afmuj@6prd7n3fj9tm.invalid;transport=ws;fs_nat=yes;fs_path=sip%3Aa92afmuj%40127.0.0.1%3A41484%3Btransport%3Dws";
+  const phone = "sofia/gateway/jio_primary/+919848012345";
+  const g = `webrtc_seat/${SEAT},webrtc_seat/${OTHER},${phone}`;
+  assert.equal(sp.resolveRingGroup(g, { [SEAT]: [C] }, "9876543210"),
+    `[leg_timeout=15,origination_caller_id_number=9876543210,origination_caller_id_name=9876543210]${C}|${phone}`);
+  // nobody online: exactly the phones, as before
+  assert.equal(sp.resolveRingGroup(g, {}, "9876543210"), phone);
+  assert.equal(sp.resolveRingGroup(g, { [SEAT]: ["error/user_not_registered"] }, ""), phone);
+  // the "own number rings them first" form survives
+  const own = `webrtc_seat/${SEAT},[leg_timeout=15]${phone}|sofia/gateway/jio_primary/+919000000000`;
+  assert.equal(sp.resolveRingGroup(own, {}, ""), `[leg_timeout=15]${phone}|sofia/gateway/jio_primary/+919000000000`);
+  // only browsers, and one is online
+  assert.equal(sp.resolveRingGroup(`webrtc_seat/${SEAT}`, { [SEAT]: [C] }, ""), `[leg_timeout=15]${C}`);
+  assert.equal(sp.resolveRingGroup(`webrtc_seat/${SEAT}`, {}, ""), "");
+  // a contact that is not exactly a browser contact is never dialled
+  assert.equal(sp.isBrowserContact("sofia/gateway/jio_primary/+919848012345"), false);
+  assert.equal(sp.isBrowserContact("sofia/webrtc/sip:a@b.invalid;transport=ws} &system(x)"), false);
+  assert.equal(sp.isBrowserContact(C), true);
+});

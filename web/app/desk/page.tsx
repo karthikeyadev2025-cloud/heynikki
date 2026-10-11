@@ -17,8 +17,11 @@
  */
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { askDialog } from "../../components/Confirm";
 import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
+import DeskPhone, { usePhone, type Phone } from "../../components/DeskPhone";
+import { softphone } from "../../lib/softphone";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import {
@@ -189,6 +192,15 @@ export default function DeskPage() {
     catch (e: any) { setErr(e.message); }
   }, [api]);
 
+  // Where this seat's calls happen: this computer, or their mobile.
+  const phone = usePhone(token, d ? !!d.you?.phone : null);
+  // An incoming call puts the caller's number in the dialer, so their
+  // history is on screen before the seat has said hello.
+  const ringing = phone.snap.call.state === "incoming" ? phone.snap.call.from : "";
+  useEffect(() => {
+    if (/^[6-9]\d{9}$/.test(ringing)) setPrefill(p => ({ n: ringing, k: p.k + 1 }));
+  }, [ringing]);
+
   // Live calls straight from the table under RLS, the way the Reception
   // page does — a call is "live" while its row is still `active`.
   const loadLive = useCallback(async () => {
@@ -233,7 +245,8 @@ export default function DeskPage() {
           <div style={{ display: "grid", gap: 16 }}>
             <Shift d={d} api={api} onChanged={load} tick={tick} />
             <NextCall api={api} onCall={callLead} reloadKey={queueKey} />
-            <Dialer d={d} api={api} onDone={afterCall} prefill={prefill} />
+            <DeskPhone phone={phone} mobile={d?.you?.phone || ""} />
+            <Dialer d={d} api={api} onDone={afterCall} prefill={prefill} phone={phone} />
             <LiveBoard calls={live} tick={tick} />
             <NeedsCallback d={d} onCallBack={callBack} />
             <TeamCalls d={d} onCallBack={callBack} />
@@ -317,7 +330,7 @@ function NextCall({ api, onCall, reloadKey }: {
                   border: `1px solid ${overdue(l) ? C.red + "66" : C.gold + "55"}` }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 700, color: C.txt }}>{l.name || prettyNum(digits10(l.phone))}</div>
-                    <div style={{ fontSize: 11.5, color: overdue(l) ? C.red : C.mid }}>
+                    <div style={{ fontSize: 12, color: overdue(l) ? C.red : C.mid }}>
                       {overdue(l) ? "overdue · " : ""}{l.follow_up_at ? fmtTime(l.follow_up_at) : ""}{l.follow_up_note ? ` · ${l.follow_up_note}` : ""}
                     </div>
                   </div>
@@ -331,9 +344,9 @@ function NextCall({ api, onCall, reloadKey }: {
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <strong style={{ color: C.txt, fontSize: 15 }}>{n.name || "Unnamed lead"}</strong>
                 <span style={{ fontSize: 12.5, color: C.mid, fontVariantNumeric: "tabular-nums" }}>{prettyNum(digits10(n.phone))}</span>
-                <span style={{ background: C.bg, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: C.glow }}>{n.stage}</span>
-                {n.score != null && <span style={{ fontSize: 11.5, color: n.score >= 60 ? C.grn : C.dim, fontWeight: 700 }}>score {n.score}</span>}
-                {!n.assigned_to && <span style={{ fontSize: 11, color: C.dim }}>· unassigned</span>}
+                <span style={{ background: C.bg, borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 700, color: C.glow }}>{n.stage}</span>
+                {n.score != null && <span style={{ fontSize: 12, color: n.score >= 60 ? C.grn : C.dim, fontWeight: 700 }}>score {n.score}</span>}
+                {!n.assigned_to && <span style={{ fontSize: 12, color: C.dim }}>· unassigned</span>}
               </div>
               <div style={{ fontSize: 12.5, color: C.mid, marginTop: 5, lineHeight: 1.5 }}>
                 {n.interest ? <>Wants: {n.interest}. </> : null}
@@ -527,10 +540,10 @@ function Stats({ d, api, reloadKey }: { d: Desk | null; api: (p: string, b?: any
   const rate = (a: number, b: number) => b ? `${Math.round((a / b) * 100)}%` : "—";
   const tile = (label: string, value: string, sub?: string) => (
     <div style={{ background: C.hi, borderRadius: 8, padding: "9px 10px" }}>
-      <div style={{ fontSize: 11, color: C.dim, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 12, color: C.dim, fontWeight: 700 }}>{label}</div>
       <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 22, fontWeight: 700, color: C.txt,
         letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: C.dim }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 12, color: C.dim }}>{sub}</div>}
     </div>
   );
   return (
@@ -539,7 +552,7 @@ function Stats({ d, api, reloadKey }: { d: Desk | null; api: (p: string, b?: any
         {[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([v, l]) => (
           <button key={v} onClick={() => setDays(v as number)} style={{ background: days === v ? C.glow + "22" : "none",
             border: `1px solid ${days === v ? C.glow : C.bord}`, color: days === v ? C.glow : C.mid, borderRadius: 999,
-            padding: "2px 9px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
+            padding: "2px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l}</button>
         ))}
       </div>}>
       {!y ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : (
@@ -555,7 +568,7 @@ function Stats({ d, api, reloadKey }: { d: Desk | null; api: (p: string, b?: any
           {d?.you_are_owner && s?.team?.length > 1 && (
             <div style={{ marginTop: 12, overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead><tr style={{ color: C.dim, fontSize: 10.5, textTransform: "uppercase" }}>
+                <thead><tr style={{ color: C.dim, fontSize: 11, textTransform: "uppercase" }}>
                   {["Team", "Calls", "Conv.", "Talk", "Booked"].map(h => <th key={h} style={{ textAlign: h === "Team" ? "left" : "right", padding: "5px 6px", borderBottom: `1px solid ${C.bord}` }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
@@ -586,8 +599,8 @@ type DialState =
   | { phase: "ended"; ctcId: string; seconds: number; fail?: string | null }
   | { phase: "failed"; reason: string };
 
-function Dialer({ d, api, onDone, prefill }: {
-  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: () => void; prefill: Prefill;
+function Dialer({ d, api, onDone, prefill, phone }: {
+  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: () => void; prefill: Prefill; phone: Phone;
 }) {
   const [num, setNum] = useState("");
   // A queue "Call" rings straight away, once the number is in the box.
@@ -611,7 +624,10 @@ function Dialer({ d, api, onDone, prefill }: {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const ok = /^[6-9]\d{9}$/.test(num);
-  const havePhone = !!d?.you?.phone;
+  // Through the browser when the seat chose it and it is connected;
+  // otherwise through their mobile, which then has to be on file.
+  const viaBrowser = phone.viaBrowser;
+  const havePhone = phone.mode === "browser" ? viaBrowser : !!d?.you?.phone;
 
   // Who is this? The lead row, if the number has one.
   useEffect(() => {
@@ -670,8 +686,12 @@ function Dialer({ d, api, onDone, prefill }: {
     if (!ok || !havePhone) return;
     setSt({ phase: "ringing_you" }); setAi({ state: "idle" }); setCbOpen(false); setCbAt("");
     try {
-      // The request returns once YOUR phone is answered — up to ~30 s.
-      const j = await api("/api/calls/click-to-call", { customer_number: num, lead_id: leadId || lead?.id || null });
+      // Mobile: the request returns once YOUR phone is answered — up to ~30 s.
+      // Browser: it returns at once with a one-time target, and this
+      // computer places the seat's leg itself.
+      const j = await api("/api/calls/click-to-call", {
+        customer_number: num, lead_id: leadId || lead?.id || null, ...(viaBrowser ? { via: "browser" } : {}) });
+      if (viaBrowser) await softphone().call(j.dial);
       const started = Date.now();
       setSt({ phase: "connected", ctcId: j.ctc_log_id, startedAt: started });
       pollRef.current = setInterval(async () => {
@@ -700,7 +720,8 @@ function Dialer({ d, api, onDone, prefill }: {
         : /USER_BUSY/i.test(m) ? "Your phone is busy on another call."
         : /no_outbound_cli|assigned DID/i.test(m) ? "No business number is assigned to this account yet."
         : m || "Call failed";
-      setSt({ phase: "failed", reason });
+      setSt({ phase: "failed", reason: viaBrowser && /phone network couldn't connect to your phone/.test(reason)
+        ? "The phone network couldn't place the call just now. Wait a few seconds and press Call again." : reason });
     }
   }
 
@@ -752,14 +773,16 @@ function Dialer({ d, api, onDone, prefill }: {
 
   return (
     <Card title="Dial a number" icon={<PhoneCall size={15} />}
-      right={d?.you?.phone
+      right={phone.mode === "browser"
+        ? <span style={{ fontSize: 12, color: C.dim }}>{viaBrowser ? "calls from this computer" : "phone is not connected yet"}</span>
+        : d?.you?.phone
         ? <span style={{ fontSize: 12, color: C.dim }}>rings <strong style={{ color: C.mid }}>{prettyNum(d.you.phone)}</strong> first</span>
         : null}>
-      {!havePhone && d && (
+      {!havePhone && d && phone.mode === "mobile" && (
         <div style={{ background: C.gold + "14", border: `1px solid ${C.gold}55`, borderRadius: 8, padding: 12, marginBottom: 12 }}>
           <div style={{ fontSize: 13, color: C.txt, fontWeight: 700, marginBottom: 6 }}>Add your mobile first</div>
           <div style={{ fontSize: 12.5, color: C.mid, marginBottom: 8 }}>
-            The desk works by ringing <em>your</em> phone, then joining the customer. We need a number to ring.
+            On &ldquo;My mobile&rdquo; the desk rings <em>your</em> phone, then joins the customer, so it needs a number to ring. Or choose &ldquo;This computer&rdquo; above and call from here.
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input style={{ ...inputStyle, maxWidth: 220 }} inputMode="numeric" placeholder="10-digit mobile"
@@ -779,9 +802,15 @@ function Dialer({ d, api, onDone, prefill }: {
           onKeyDown={e => { if (e.key === "Enter") dial(); }}
         />
         {busy ? (
-          <button style={btnStyle(C.red)} onClick={() => { /* hang up from your handset */ }} title="Hang up from your phone">
-            <PhoneOff size={15} /> {st.phase === "ringing_you" ? "Ringing you…" : "On call"}
-          </button>
+          viaBrowser || phone.snap.call.state !== "none" ? (
+            <button style={btnStyle(C.red)} onClick={() => softphone().hangup()}>
+              <PhoneOff size={15} /> Hang up
+            </button>
+          ) : (
+            <button style={btnStyle(C.red)} onClick={() => { /* hang up from your handset */ }} title="Hang up from your phone">
+              <PhoneOff size={15} /> {st.phase === "ringing_you" ? "Ringing you…" : "On call"}
+            </button>
+          )
         ) : (
           <button style={btnStyle(C.grn, ok && havePhone)} disabled={!ok || !havePhone} onClick={() => dial()}>
             <PhoneCall size={15} /> Call
@@ -795,7 +824,7 @@ function Dialer({ d, api, onDone, prefill }: {
           {lead ? (
             <>
               <strong style={{ color: C.txt }}>{lead.name || "Unnamed lead"}</strong>
-              <span style={{ background: C.hi, borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, color: C.glow }}>{lead.stage}</span>
+              <span style={{ background: C.hi, borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 700, color: C.glow }}>{lead.stage}</span>
               {lead.interest && <span>· {lead.interest}</span>}
               {lead.call_count > 0 && <span>· {lead.call_count} call{lead.call_count === 1 ? "" : "s"}</span>}
               {lead.id && <a href={`/leads?lead=${lead.id}`} style={{ color: C.glow }}>open lead →</a>}
@@ -809,10 +838,14 @@ function Dialer({ d, api, onDone, prefill }: {
 
       {/* call state */}
       {st.phase === "ringing_you" && (
-        <StateLine color={C.gold} text={`Ringing your phone ${prettyNum(d?.you?.phone || "")} — answer it and we'll connect ${prettyNum(num)}.`} />
+        <StateLine color={C.gold} text={viaBrowser
+          ? `Calling ${prettyNum(num)}…`
+          : `Ringing your phone ${prettyNum(d?.you?.phone || "")} — answer it and we'll connect ${prettyNum(num)}.`} />
       )}
       {st.phase === "connected" && (
-        <StateLine color={C.grn} text={`Connected to ${lead?.name || prettyNum(num)} · ${fmtDur(Math.round((Date.now() - st.startedAt) / 1000))} · hang up from your phone when done.`} live />
+        <StateLine color={C.grn} text={viaBrowser
+          ? `Calling ${lead?.name || prettyNum(num)} · ${fmtDur(Math.round((Date.now() - st.startedAt) / 1000))} · you'll hear it ring. Hang up here when done.`
+          : `Connected to ${lead?.name || prettyNum(num)} · ${fmtDur(Math.round((Date.now() - st.startedAt) / 1000))} · hang up from your phone when done.`} live />
       )}
       {st.phase === "failed" && (
         <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -881,13 +914,13 @@ function Dialer({ d, api, onDone, prefill }: {
               <button style={btnStyle(C.gold, !!cbAt && !saving)} disabled={!cbAt || !!saving} onClick={() => outcome("callback")}>
                 {saving === "callback" ? "Saving…" : "Save callback"}
               </button>
-              <span style={{ fontSize: 11.5, color: C.dim }}>You&apos;ll get a reminder 10 minutes before, and it tops your queue.</span>
+              <span style={{ fontSize: 12, color: C.dim }}>You&apos;ll get a reminder 10 minutes before, and it tops your queue.</span>
             </div>
           )}
           <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} placeholder="Notes (optional) — what they asked, what you promised"
             value={notes} onChange={e => setNotes(e.target.value)} />
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
-            <div style={{ fontSize: 11.5, color: C.dim }}>
+            <div style={{ fontSize: 12, color: C.dim }}>
               The outcome moves the lead's stage on the Leads page; Booked and Interested also send the brochure on WhatsApp.
             </div>
             <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}` }} disabled={waBusy} onClick={sendBrochure}>
@@ -924,7 +957,7 @@ function LiveBoard({ calls, tick }: { calls: LiveCall[]; tick: number }) {
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: C.grn, animation: "deskpulse 1.6s infinite" }} />
             <div>
               <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{prettyNum(c.caller_number)}</div>
-              <div style={{ color: C.dim, fontSize: 11.5 }}>{c.direction === "outbound" ? "Outbound" : "Incoming"} · {fmtDur(elapsed(c.created_at))}</div>
+              <div style={{ color: C.dim, fontSize: 12 }}>{c.direction === "outbound" ? "Outbound" : "Incoming"} · {fmtDur(elapsed(c.created_at))}</div>
             </div>
           </div>
           <a href={`/leads?phone=${digits10(c.caller_number)}`} style={{ color: C.glow, fontSize: 12.5, fontWeight: 600 }}>lead →</a>
@@ -973,13 +1006,13 @@ function Routing({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any
                   <span style={{ color: on ? C.glow : C.mid }}>{m.icon}</span>
                   {m.label}
                   {on && <Check size={14} color={C.glow} style={{ marginLeft: "auto" }} />}
-                  {busy === m.key && <span style={{ marginLeft: "auto", fontSize: 11, color: C.dim }}>Saving…</span>}
+                  {busy === m.key && <span style={{ marginLeft: "auto", fontSize: 12, color: C.dim }}>Saving…</span>}
                 </div>
                 <div style={{ fontSize: 12, color: C.mid, marginTop: 4, lineHeight: 1.5 }}>{m.desc}</div>
               </button>
             );
           })}
-          <div style={{ fontSize: 11.5, color: msg?.bad ? C.red : msg ? C.grn : C.dim, marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: msg?.bad ? C.red : msg ? C.grn : C.dim, marginTop: 2 }}>
             {msg?.text || (d.you_are_owner
               ? (d.ring_count === 0 ? "Add a phone to at least one seat before choosing your team." : `${d.ring_count} phone${d.ring_count === 1 ? "" : "s"} will ring.`)
               : "Only the owner can change this.")}
@@ -1017,7 +1050,7 @@ function Numbers({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any
             border: `1px solid ${C.bord}`, borderRadius: 10, padding: "10px 12px" }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{prettyNum(n.number)}</div>
-              <div style={{ fontSize: 11.5, color: C.mid, marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>
                 {n.use_for_outbound ? "Answers calls · makes outgoing calls" : "Answers calls only"}
               </div>
             </div>
@@ -1029,7 +1062,7 @@ function Numbers({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any
             </label>
           </div>
         ))}
-        <div style={{ fontSize: 11.5, color: msg?.bad ? C.red : msg ? C.grn : C.dim }}>
+        <div style={{ fontSize: 12, color: msg?.bad ? C.red : msg ? C.grn : C.dim }}>
           {msg?.text || (d.you_are_owner
             ? "Outgoing calls share the ticked numbers, and each customer always sees the same one."
             : "Only the owner can change this.")}
@@ -1077,7 +1110,7 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
                     <input style={inputStyle} placeholder="Name (shown on the Leads page)" value={name} onChange={e => setName(e.target.value)} />
                     <input style={inputStyle} inputMode="numeric" placeholder="10-digit mobile — leave blank to stop ringing" value={phone} onChange={e => setPhone(digits10(e.target.value))} />
                     {canAssign && (
-                      <label style={{ display: "grid", gap: 4, fontSize: 11.5, color: C.mid }}>
+                      <label style={{ display: "grid", gap: 4, fontSize: 12, color: C.mid }}>
                         Calls out as
                         <select style={inputStyle} value={callNum} onChange={e => setCallNum(e.target.value)}>
                           <option value="">Shared numbers (default)</option>
@@ -1100,7 +1133,7 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
                       <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {s.display_name || s.email || "Seat"}{s.is_you && <span style={{ color: C.dim, fontWeight: 500 }}> (you)</span>}
                       </div>
-                      <div style={{ color: C.dim, fontSize: 11.5, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ color: C.dim, fontSize: 12, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                         <span style={{ textTransform: "capitalize" }}>{s.role.replace("_", " ")}</span>
                         <span>·</span>
                         {s.phone
@@ -1113,7 +1146,7 @@ function Seats({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?: any) 
                       </div>
                     </div>
                     {canEdit && (
-                      <button onClick={() => start(s)} title="Edit" style={{ background: "none", border: "none", cursor: "pointer", color: C.mid, padding: 4 }}>
+                      <button onClick={() => start(s)} title="Edit" aria-label="Edit" style={{ background: "none", border: "none", cursor: "pointer", color: C.mid, padding: 4 }}>
                         <Pencil size={14} />
                       </button>
                     )}
@@ -1155,7 +1188,7 @@ function NeedsCallback({ d, onCallBack }: { d: Desk | null; onCallBack: (n: stri
 
   return (
     <Card title="Needs a callback" icon={<PhoneOutgoing size={15} />}
-      right={<span style={{ background: C.gold + "18", color: C.gold, borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>{due.length}</span>}>
+      right={<span style={{ background: C.gold + "18", color: C.gold, borderRadius: 999, padding: "2px 9px", fontSize: 12, fontWeight: 700 }}>{due.length}</span>}>
       <div style={{ display: "grid", gap: 8 }}>
         {due.map(r => (
           <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -1165,7 +1198,7 @@ function NeedsCallback({ d, onCallBack }: { d: Desk | null; onCallBack: (n: stri
               <div style={{ color: C.txt, fontSize: 13.5, fontWeight: 700 }}>
                 {r.lead_name || prettyNum(r.number)}
               </div>
-              <div style={{ color: C.dim, fontSize: 11.5 }}>
+              <div style={{ color: C.dim, fontSize: 12 }}>
                 {r.lead_name && <span style={{ fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)} · </span>}
                 asked for a callback {fmtTime(r.created_at)}
               </div>
@@ -1197,7 +1230,7 @@ function TeamCalls({ d, onCallBack }: { d: Desk | null; onCallBack: (n: string) 
   const missed = rows.filter(r => r.status === "missed").length;
   return (
     <Card title="Calls to the team" icon={<PhoneIncoming size={15} />}
-      right={missed ? <span style={{ background: C.red + "18", color: C.red, borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>{missed} missed</span> : null}>
+      right={missed ? <span style={{ background: C.red + "18", color: C.red, borderRadius: 999, padding: "2px 9px", fontSize: 12, fontWeight: 700 }}>{missed} missed</span> : null}>
       {!d ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : rows.length === 0 ? (
         <div style={{ fontSize: 13, color: C.dim, lineHeight: 1.6 }}>
           No calls have reached the team in the last 7 days.{" "}
@@ -1218,7 +1251,7 @@ function TeamCalls({ d, onCallBack }: { d: Desk | null; onCallBack: (n: string) 
                 <tr key={r.id} style={{ borderBottom: `1px solid ${C.bord}` }}>
                   <td style={{ padding: "9px 8px" }}>
                     <div style={{ color: C.txt, fontWeight: 700 }}>{r.lead_name || prettyNum(r.number)}</div>
-                    {r.lead_name && <div style={{ color: C.dim, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)}</div>}
+                    {r.lead_name && <div style={{ color: C.dim, fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)}</div>}
                   </td>
                   <td style={{ padding: "9px 8px" }}>
                     {r.status === "missed" ? (
@@ -1281,33 +1314,33 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
                   <tr style={{ borderBottom: `1px solid ${C.bord}` }}>
                     <td style={{ padding: "9px 8px" }}>
                       <div style={{ color: C.txt, fontWeight: 700 }}>{r.lead_name || prettyNum(r.number)}</div>
-                      {r.lead_name && <div style={{ color: C.dim, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)}</div>}
+                      {r.lead_name && <div style={{ color: C.dim, fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{prettyNum(r.number)}</div>}
                       {r.ai_summary && (
-                        <div title={r.ai_summary} style={{ color: C.mid, fontSize: 11.5, marginTop: 2, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <div title={r.ai_summary} style={{ color: C.mid, fontSize: 12, marginTop: 2, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           <Sparkles size={10} color={C.glow} /> {r.ai_summary}
                         </div>
                       )}
-                      {r.qa_note && <div style={{ color: C.gold, fontSize: 11.5, marginTop: 2 }}>Review: {r.qa_note}</div>}
+                      {r.qa_note && <div style={{ color: C.gold, fontSize: 12, marginTop: 2 }}>Review: {r.qa_note}</div>}
                     </td>
                     <td style={{ padding: "9px 8px", color: C.mid }}>{r.by || "—"}</td>
                     <td style={{ padding: "9px 8px" }}>
                       {r.disposition ? (
                         <>
                         <span style={{ background: OUTCOME_COLOR[r.disposition] + "22", color: OUTCOME_COLOR[r.disposition] || C.mid,
-                          borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 700 }}>{OUTCOME_LABEL[r.disposition] || r.disposition}</span>
+                          borderRadius: 999, padding: "2px 9px", fontSize: 12, fontWeight: 700 }}>{OUTCOME_LABEL[r.disposition] || r.disposition}</span>
                         {/* Written off against what the summary heard: worth a look. */}
                         {(r.disposition === "not_interested" || r.disposition === "no_answer")
                           && r.ai_disposition && ["booked", "interested", "callback"].includes(r.ai_disposition) && (
-                          <div title={r.ai_summary || ""} style={{ color: C.gold, fontSize: 11.5, fontWeight: 600, marginTop: 3, whiteSpace: "nowrap" }}>
+                          <div title={r.ai_summary || ""} style={{ color: C.gold, fontSize: 12, fontWeight: 600, marginTop: 3, whiteSpace: "nowrap" }}>
                             Summary says {OUTCOME_LABEL[r.ai_disposition]}
                           </div>
                         )}
                         </>
                       ) : r.live ? (
-                        <span style={{ color: C.grn, fontSize: 11.5, fontWeight: 700 }}>● live</span>
+                        <span style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>● live</span>
                       ) : (
                         <button onClick={() => { setOpen(open === r.id ? null : r.id); setNotes(r.notes || ""); }}
-                          style={{ background: "none", border: `1px dashed ${C.bord}`, borderRadius: 999, padding: "2px 9px", fontSize: 11.5, color: C.mid, cursor: "pointer", fontFamily: "inherit" }}>
+                          style={{ background: "none", border: `1px dashed ${C.bord}`, borderRadius: 999, padding: "2px 9px", fontSize: 12, color: C.mid, cursor: "pointer", fontFamily: "inherit" }}>
                           set outcome
                         </button>
                       )}
@@ -1331,7 +1364,7 @@ function RecentCalls({ d, api, onSaved }: { d: Desk | null; api: (p: string, b?:
                               {busy === o.key ? "Saving…" : o.label}
                             </button>
                           ))}
-                          <button style={btnStyle(C.hi)} onClick={() => setOpen(null)}><X size={13} color={C.mid} /></button>
+                          <button style={btnStyle(C.hi)} onClick={() => setOpen(null)} aria-label="Close"><X size={13} color={C.mid} /></button>
                         </div>
                         <input style={inputStyle} placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} />
                       </td>
@@ -1392,7 +1425,12 @@ function Review({ r, owner, api, onSaved }: { r: Recent; owner: boolean; api: (p
   if (!owner && !r.qa_score) return null;
   const score = r.qa_score || 0;
   async function set(n: number) {
-    const note = n <= 3 ? window.prompt("What should they do differently? (optional)", r.qa_note || "") : r.qa_note;
+    const note = n <= 3
+      ? await askDialog({ title: "What should they do differently?",
+          body: "Optional. The telecaller sees this note with the score.",
+          placeholder: "For example: ask for the callback time before ending",
+          initial: r.qa_note || "", confirmLabel: "Save score" })
+      : r.qa_note;
     if (note === null) return;
     try { await api(`/api/desk/calls/${r.id}/review`, { score: n, note: note || "" }); onSaved(); }
     catch (e: any) { toast.err(e.message); }
@@ -1435,7 +1473,7 @@ function Progress({ label, value, target }: { label: string; value: number; targ
           ? <div style={{ width: `${pct * 100}%`, height: "100%", background: color, borderRadius: 3, transition: "width .3s" }} />
           : <div style={{ height: "100%", background: `repeating-linear-gradient(90deg, ${C.bord} 0 6px, transparent 6px 12px)` }} />}
       </div>
-      {target === 0 && <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>No target set</div>}
+      {target === 0 && <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>No target set</div>}
     </div>
   );
 }

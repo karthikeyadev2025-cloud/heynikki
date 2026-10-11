@@ -1,0 +1,80 @@
+<!--
+  Browser calling (the Desk softphone).
+
+  A telecaller's browser speaks SIP over a WebSocket and WebRTC audio to
+  THIS profile, and nothing else does. It is separate from `heynikki` on
+  purpose: that profile is bound to the Jio circuit and trusts only the
+  carrier's SBC; this one faces browsers and trusts nobody.
+
+  HOW A BROWSER GETS HERE
+    Signalling never touches the internet directly. sip-ip is loopback, so
+    the WebSocket listens on 127.0.0.1:5066 only; the api-server proxies
+    wss://api.heynikki.in/softphone/ws to it AFTER checking the caller's
+    login. A request that did not come through that proxy cannot reach
+    this port at all.
+
+  WHAT A BROWSER MAY DO
+    Two things, and the api-server's proxy (src/softphone.ts) refuses
+    every SIP message that is not one of them before it gets here:
+      - REGISTER as its own seat, u<user id>, so an incoming call can
+        ring it. There is no directory and no SIP password: the login
+        the proxy checked IS the authentication, and the proxy lets a
+        browser register only the seat that login belongs to. That is
+        what accept-blind-reg below relies on — do not expose this port
+        to anything but that proxy.
+      - INVITE a one-time token the api-server issued seconds earlier
+        (dialplan context `webrtc`); the API then decides what that leg
+        is bridged to. An INVITE for anything else is hung up.
+
+  AUDIO
+    Audio is ordinary WebRTC (DTLS-SRTP) from rtp-ip, the broadband NIC.
+    Browsers offer G.711 as well as Opus, so the call is PCMU end to end
+    — the same codec the Jio leg uses, no transcoding, and no Opus module
+    needed in this build.
+-->
+<include>
+  <profile name="webrtc">
+    <settings>
+      <param name="context"                   value="webrtc"/>
+      <param name="dialplan"                  value="XML"/>
+      <param name="sip-ip"                    value="127.0.0.1"/>
+      <param name="sip-port"                  value="5067"/>
+      <param name="ws-binding"                value=":5066"/>
+      <param name="rtp-ip"                    value="$${local_ip_v4}"/>
+      <!-- This box is behind the office router, so a browser outside the
+           office has to be told the router's public address as well as the
+           LAN one. Asked of a STUN server rather than written down,
+           because the broadband address is not fixed; both are offered,
+           and a browser on the office network simply uses the LAN one. -->
+      <param name="ext-rtp-ip"                value="stun:stun.l.google.com:19302"/>
+
+      <param name="auth-calls"                value="false"/>
+      <param name="disable-register"          value="false"/>
+      <param name="accept-blind-reg"          value="true"/>
+      <param name="force-register-domain"     value="heynikki.in"/>
+      <param name="force-register-db-domain"  value="heynikki.in"/>
+      <param name="manage-presence"           value="false"/>
+      <param name="apply-inbound-acl"         value="loopback.auto"/>
+
+      <param name="codec-prefs"               value="PCMU,PCMA"/>
+      <param name="inbound-codec-negotiation" value="generous"/>
+      <param name="dtmf-type"                 value="rfc2833"/>
+      <param name="liberal-dtmf"              value="true"/>
+      <param name="rtcp-audio-interval-msec"  value="5000"/>
+
+      <!-- Which of the browser's ICE candidates FreeSWITCH will send to:
+           one on this LAN, or any public address (a relay included). -->
+      <param name="apply-candidate-acl"       value="localnet.auto"/>
+      <param name="apply-candidate-acl"       value="rfc1918.auto"/>
+      <param name="apply-candidate-acl"       value="wan_v4.auto"/>
+      <param name="apply-candidate-acl"       value="any_v4.auto"/>
+
+      <variables>
+        <!-- Milliseconds. A browser tab that dies without a BYE (laptop
+             lid, lost Wi-Fi) must not hold a trunk channel open. -->
+        <variable name="media_timeout"      value="20000"  direction="inbound"/>
+        <variable name="media_hold_timeout" value="600000" direction="inbound"/>
+      </variables>
+    </settings>
+  </profile>
+</include>

@@ -3,6 +3,7 @@
 // Connects via TCP to FreeSWITCH port 8021 (localhost only — never expose externally)
 // Uses Node.js built-in `net` module — no extra packages needed.
 
+import { SOFTPHONE_DOMAIN, isBrowserContact, resolveRingGroup } from "./softphone";
 import net from "net";
 
 const FS_HOST     = process.env.FREESWITCH_HOST         || "127.0.0.1";
@@ -195,6 +196,13 @@ function safeUuid(v: unknown): string {
 // [ ] = are for per-leg variables: a telecaller's own number rings them
 // first with "[leg_timeout=15]<leg>|<team>". Still no spaces, quotes or
 // braces, which are what could break out of the uuid_setvar argument.
+// A registered browser's contact carries ; and % (transport and path
+// parameters), which safeDialList strips. resolveRingGroup only ever emits
+// contacts that match isBrowserContact, so this wider set is applied to its
+// output alone — still no spaces, quotes or braces.
+function safeResolvedDialList(v: unknown): string {
+  return String(v ?? "").replace(/[^A-Za-z0-9_/+.,:@|=\[\];%-]/g, "");
+}
 function safeDialList(v: unknown): string {
   return String(v ?? "").replace(/[^A-Za-z0-9_/+.,:@|=\[\]-]/g, "");
 }
@@ -748,9 +756,95 @@ export class FreeSwitchESL {
     // setvar before transfer — the extension reads both immediately.
     // guard_seconds arrives as parseInt(req.body...) and was NaN for a bad
     // value; Math.max(5, NaN) is NaN, and "NaN" became the ring timeout.
-    await eslCommand(`api uuid_setvar ${uuid} ring_group ${group}`);
+    // Seats that may be at their browser are in the group as placeholders;
+    // ask the switch, now, which of them are actually online.
+    const seats = [...new Set([...group.matchAll(/webrtc_seat\/(u[0-9a-f]{32})/g)].map(m => m[1]))];
+    let dial = group;
+    if (seats.length) {
+      const contacts: Record<string, string[]> = {};
+      await Promise.all(seats.map(async (seat) => { contacts[seat] = await this.browserContacts(seat); }));
+      let caller = "";
+      try { caller = await this.getVar(uuid, "caller_ani"); } catch { /* shown without a number */ }
+      dial = safeResolvedDialList(resolveRingGroup(group, contacts, caller));
+      if (!dial) throw new Error("ring_group required for human transfer");
+    }
+    await eslCommand(`api uuid_setvar ${uuid} ring_group ${dial}`);
     await eslCommand(`api uuid_setvar ${uuid} guard_seconds ${Math.max(5, safeSeconds(guardSeconds, 20))}`);
     await eslCommand(`api uuid_transfer ${uuid} human_transfer XML heynikki`);
+  }
+
+  /**
+   * Where a seat's browser can be rung right now — one entry per open tab,
+   * none when the softphone is not online.
+   */
+  async browserContacts(seat: string): Promise<string[]> {
+    if (!/^u[0-9a-f]{32}$/.test(seat)) return [];
+    try {
+      const raw = await eslCommand(`api sofia_contact webrtc/${seat}@${SOFTPHONE_DOMAIN}`);
+      const body = raw.split("\n\n").slice(1).join("\n\n") || raw;
+      return body.split(/[,\s]+/).map(x => x.trim()).filter(isBrowserContact);
+    } catch { return []; }
+  }
+
+  /**
+   * The channel that dialled `dest`, if it exists yet. Used to find a
+   * browser leg by the one-time token it called.
+   */
+  async channelByDest(dest: string): Promise<string | null> {
+    if (!/^ctc_[0-9a-f]{32}$/.test(dest)) return null;
+    // The whole list, filtered here: `show channels like` did not match on
+    // the destination column when tried, and the trunk carries ten legs.
+    const raw = await eslCommand("api show channels");
+    for (const line of raw.split("\n")) {
+      const cols = line.split(",");
+      if (/^[a-f0-9-]{36}$/i.test(cols[0] || "") && cols.includes(dest)) return cols[0];
+    }
+    return null;
+  }
+
+  /**
+   * Connect a browser leg that has just arrived to the customer.
+   *
+   * The leg is already answered and parked in the `webrtc` context. This
+   * gives it the same variables a phone-bridged seat leg carries and sends
+   * it to the same extension (click_to_call_agent_leg), so the recording,
+   * the hangup report, the failure tone and the billing are one path for
+   * both kinds of seat. One trunk leg is admitted — the customer's; the
+   * seat's leg is not on the trunk at all.
+   */
+  async softphoneBridge(uuid: string, customerNumber: string, maskedCli: string): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/i.test(uuid)) throw new Error("Invalid channel uuid");
+    const clean = (n: string) => n.replace(/[^0-9+]/g, "");
+    const customer = clean(customerNumber), masked = clean(maskedCli);
+    const customer10 = customer.replace(/\D/g, "").slice(-10);
+    const did10      = masked.replace(/\D/g, "").slice(-10);
+    if (customer10.length !== 10 || did10.length !== 10) throw new Error("Click-to-Call needs a customer number and a caller ID");
+
+    const { counted, hold } = await trunkAdmit(1);
+    if (!hold) {
+      throw new Error(
+        `SWITCH_CONGESTION: trunk busy, ${counted}/${TRUNK_CHANNELS} channels in use or reserved ` +
+        `(outbound stops at ${TRUNK_OUTBOUND_CEILING} so inbound calls still fit)`);
+    }
+    try {
+      const vars: Record<string, string> = {
+        did_number: did10,
+        caller_ani: customer10,
+        outbound_cli: wireCli(masked),
+        ctc_customer_bridge: `sofia/gateway/jio_primary/${wireCallee(customer)}`,
+        // The leg is already answered, so `ringback` (early media) does not
+        // apply: this is what the seat hears while the customer's phone rings.
+        transfer_ringback: "%(400,200,400);%(400,2000,400)",
+      };
+      for (const [k, v] of Object.entries(vars)) {
+        await eslCommand(`api uuid_setvar ${uuid} ${k} ${v}`);
+      }
+      const res = await eslCommand(`api uuid_transfer ${uuid} ctc_agent_${customer10} XML heynikki`);
+      if (/-ERR/.test(res)) throw new Error("Click-to-Call failed: the call ended before it could be connected");
+    } finally {
+      // The customer's leg is visible to the switch within a moment.
+      setTimeout(() => hold.release(), BRIDGE_SEEN_MS).unref();
+    }
   }
 
   /**

@@ -6197,6 +6197,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 // ════════════════════════════════════════════════════════════════
 
 import { fsl, wireCallee, trunkAdmit, REMOTE_HOLD_MS } from "./esl";
+import * as softphone from "./softphone";
 import { isOpen as shiftOpen } from "./attendance";
 
 // ── Aggregate platform health check ──────────────────────────
@@ -6560,6 +6561,31 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
           ringGroup = `[leg_timeout=15]${mine}` + (rest.length ? `|${rest.join(",")}` : "");
           console.log(`[routing] ${didDigits} belongs to seat ${holder.user_id} — ringing them first`);
         }
+      }
+    }
+
+    // Seats with the Desk open in a browser ring THERE first (15 s), then
+    // the phones above. Only seats online right now go in: a group that was
+    // nothing but offline browsers would read as "someone to ring" and send
+    // a human-routed number to a transfer that reaches nobody.
+    if (!isOutbound) {
+      try {
+        const { data: seats } = await sb.from("tenant_users")
+          .select("user_id").eq("tenant_id", did.tenant_id);
+        const online: string[] = [];
+        await Promise.all((seats || []).map(async (r: any) => {
+          try {
+            if ((await fsl.browserContacts(softphone.seatId(r.user_id))).length) {
+              online.push(softphone.seatPlaceholder(r.user_id));
+            }
+          } catch { /* a malformed id is simply not a seat */ }
+        }));
+        if (online.length) {
+          ringGroup = online.join(",") + (ringGroup ? `,${ringGroup}` : "");
+          console.log(`[routing] ${online.length} seat(s) online in the browser — ringing them first`);
+        }
+      } catch (e: any) {
+        console.error("[routing] browser seat lookup failed:", e?.message || e);
       }
     }
 
@@ -6941,6 +6967,85 @@ app.post("/webhooks/whatsapp", async (req, res) => {
 // Posted by the click_to_call_agent_leg extension when its bridge fails,
 // with FreeSWITCH's originate_disposition. The Desk turns it into words
 // ("this number doesn't exist") instead of a call that just ends (068).
+// ── Desk softphone ────────────────────────────────────────────
+// What the browser needs to become a phone: where to connect, who it is,
+// and how to find a path for the audio.
+app.get("/api/desk/softphone/config", verifyJWT, async (req: any, res) => {
+  try {
+    const tenantId = await getTenantId(req.user.id);
+    if (!tenantId) return res.status(403).json({ error: "No tenant" });
+    const ice = await softphone.iceServers();
+    res.json({
+      enabled: true,
+      seat: softphone.seatId(req.user.id),
+      domain: softphone.SOFTPHONE_DOMAIN,
+      ws_path: softphone.SOFTPHONE_PATH,
+      ice_servers: ice.servers,
+      relay: ice.relay,
+    });
+  } catch (err: any) {
+    console.error("[softphone config]", err.message);
+    res.status(500).json({ error: "Could not load the phone settings" });
+  }
+});
+
+// A seat pressed Call from the browser and holds a one-time token. Watch
+// the switch for the leg that dials it, then decide what that leg is.
+//
+// The API looks for the leg rather than being told about it: the dialplan
+// reporting in meant a blocking `system curl` on the channel, which froze
+// the leg's audio set-up while it ran. A token that does not check out —
+// used, expired, or dialled by another seat — gets the leg hung up and
+// nothing else: no error a prober could learn from.
+function connectBrowserLeg(token: string): void {
+  (async () => {
+    const dest = `ctc_${token}`;
+    const deadline = Date.now() + softphone.TOKEN_TTL_MS;
+    let fs_uuid: string | null = null;
+    while (Date.now() < deadline && softphone.tokenPending(token)) {
+      try { fs_uuid = await fsl.channelByDest(dest); } catch { fs_uuid = null; }
+      if (fs_uuid) break;
+      await new Promise(r => setTimeout(r, 250));
+    }
+    if (!fs_uuid) return;                      // never dialled; the expiry timer closes the rows
+    let from = "";
+    try { from = await fsl.getVar(fs_uuid, "sip_from_user"); } catch { /* treated as a mismatch */ }
+    const call = softphone.claimToken(token, String(from || "").trim());
+    if (!call) {
+      console.warn(`[softphone] leg ${fs_uuid} from ${from || "?"} dialled a token that is not its own — hanging up`);
+      fsl.hangupChannel(fs_uuid).catch(() => {});
+      return;
+    }
+    try {
+      // The rows were written when the seat pressed Call; the leg's uuid is
+      // what the hangup hook will report, so it goes on both BEFORE the bridge.
+      if (call.callId) {
+        await sb.from("calls").update({ livekit_room_id: fs_uuid })
+          .eq("id", call.callId).eq("tenant_id", call.tenantId);
+      }
+      if (call.ctcLogId) {
+        await sb.from("click_to_call_log").update({ freeswitch_uuid: fs_uuid })
+          .eq("id", call.ctcLogId).eq("tenant_id", call.tenantId);
+      }
+      await fsl.softphoneBridge(fs_uuid, call.customer, call.maskedCli);
+      if (call.ctcLogId) watchDeskCall(call.ctcLogId, call.tenantId, fs_uuid);
+    } catch (e: any) {
+      console.error(`[softphone] could not connect leg ${fs_uuid}:`, e?.message || e);
+      fsl.hangupChannel(fs_uuid).catch(() => {});
+      // The seat sees why on the Desk: the same field a failed customer leg uses.
+      const busy = /^SWITCH_CONGESTION/.test(String(e?.message));
+      if (call.ctcLogId) {
+        await sb.from("click_to_call_log").update({ customer_fail_cause: busy ? "SWITCH_CONGESTION" : "NORMAL_TEMPORARY_FAILURE", duration_seconds: 0 })
+          .eq("id", call.ctcLogId).eq("tenant_id", call.tenantId).then(() => {}, () => {});
+      }
+      if (call.callId) {
+        await sb.from("calls").update({ status: "failed" })
+          .eq("id", call.callId).eq("tenant_id", call.tenantId).eq("status", "active").then(() => {}, () => {});
+      }
+    }
+  })().catch(e => console.error("[softphone] leg watcher:", e?.message || e));
+}
+
 app.post("/webhooks/freeswitch/ctc-failed", verifyInternal, async (req: any, res) => {
   const fsUuid = String(req.body?.fs_uuid || "");
   const cause  = String(req.body?.cause || "").replace(/[^A-Z_]/g, "").slice(0, 40) || "UNKNOWN";
@@ -7412,6 +7517,11 @@ app.get("/api/calls/click-to-call/:id", verifyJWT, async (req: any, res) => {
   let alive = false;
   if (!row.duration_seconds && row.freeswitch_uuid) {
     try { alive = await fsl.channelExists(row.freeswitch_uuid); } catch { alive = false; }
+  } else if (!row.duration_seconds && !row.freeswitch_uuid && !row.customer_fail_cause) {
+    // A browser call has no leg until the browser places it, a second or
+    // two after the row is written. Until the token could no longer be
+    // used, "no leg yet" is a call starting, not one that ended.
+    alive = Date.now() - new Date(row.created_at).getTime() < softphone.TOKEN_TTL_MS;
   }
   // The seat's leg is bridged the moment the customer picks up. The Desk
   // polls this every 3 s during a call, so that moment is known to within a
@@ -7441,6 +7551,10 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
     if (!tenantId) return res.status(403).json({ error: "No tenant" });
 
     const { customer_number, lead_id, agent_phone } = req.body;
+    // "browser": the seat's leg is their browser (src/softphone.ts), not
+    // their mobile. Everything about WHO may be called and as whom is the
+    // same; only how the seat is connected differs.
+    const viaBrowser = req.body?.via === "browser";
     if (!customer_number) return res.status(400).json({ error: "customer_number required" });
     // Both legs are dialled on our trunk under this tenant's DID, and neither
     // was validated: any member could bridge two premium-rate or international
@@ -7504,7 +7618,11 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
 
     let fsUuid = "";
     let agentNumberUsed = "";
-    if (engine === "freeswitch") {
+    if (engine === "freeswitch" && viaBrowser) {
+      // Nothing is dialled yet: the browser places its own leg with the
+      // token returned below, and connectBrowserLeg (watching the switch) bridges
+      // the customer when that leg arrives.
+    } else if (engine === "freeswitch") {
       // Use FreeSWITCH ESL for 2-leg bridge
       // auth.users.phone is empty for every account here — signup is by
       // email, and the owner's mobile is written to tenant_users.phone. So
@@ -7596,7 +7714,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       caller_number:   seatPhone || maskedCli,
       callee_number:   customer_number,
       masked_cli:      maskedCli,
-      freeswitch_uuid: fsUuid,
+      freeswitch_uuid: fsUuid || null,
     }).select().single();
 
     // Update lead last_contacted_at
@@ -7615,6 +7733,31 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       tenantId, actorId: user.id,
       metadata: { customer_number, lead_id, fs_uuid: fsUuid },
     });
+
+    if (viaBrowser) {
+      const token = softphone.issueToken({
+        seat: softphone.seatId(user.id), tenantId, userId: user.id,
+        customer: dialledDigits, maskedCli,
+        callId: callRow?.id || null, ctcLogId: ctcLog?.id || null,
+      });
+      connectBrowserLeg(token);
+      // A token nobody redeems (the tab closed, the microphone was refused,
+      // no route for the audio) leaves a call row that would sit "active"
+      // on the live board for good. Close it out when the token dies.
+      const logId = ctcLog?.id, callId = callRow?.id;
+      setTimeout(async () => {
+        if (!softphone.tokenPending(token)) return;        // it became a real leg
+        try {
+          if (logId) await sb.from("click_to_call_log")
+            .update({ customer_fail_cause: "ORIGINATOR_CANCEL", duration_seconds: 0 })
+            .eq("id", logId).eq("tenant_id", tenantId).is("freeswitch_uuid", null);
+          if (callId) await sb.from("calls").update({ status: "failed", duration_seconds: 0 })
+            .eq("id", callId).eq("tenant_id", tenantId).eq("status", "active");
+        } catch (e: any) { console.error("[softphone] could not close an unused call:", e?.message || e); }
+      }, softphone.TOKEN_TTL_MS + 2000).unref();
+      return res.json({ ok: true, ctc_log_id: ctcLog?.id, status: "dialing",
+                        via: "browser", dial: `ctc_${token}` });
+    }
 
     res.json({ ok: true, ctc_log_id: ctcLog?.id, fs_uuid: fsUuid, status: "dialing" });
   } catch (err: any) {
@@ -8541,8 +8684,15 @@ ownerAssistant.mountRoutes(app, verifyJWT, getTenantId);
 // cloudflared, which fronts it publicly and terminates TLS. Override with
 // BIND_HOST only if something genuinely off-box must reach it directly.
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
-app.listen(Number(PORT), BIND_HOST, () => {
+const server = app.listen(Number(PORT), BIND_HOST, () => {
   console.log(`Nikki API Server running on port ${PORT}`);
+});
+// The Desk softphone's signalling: wss://<api>/softphone/ws, checked against
+// the same login verifyJWT checks, then held to what a seat may send.
+softphone.attachSoftphoneProxy(server, async (accessToken) => {
+  if (!accessToken) return null;
+  const { data, error } = await sb.auth.getUser(accessToken);
+  return error || !data.user ? null : { id: data.user.id };
 });
 
 export default app;

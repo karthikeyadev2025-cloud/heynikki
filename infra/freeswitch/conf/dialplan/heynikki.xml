@@ -448,4 +448,51 @@
     </extension>
 
   </context>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       BROWSER LEGS (sip_profiles/webrtc.xml)
+
+       A leg arrives here from a telecaller's browser. The only thing it
+       may dial is a one-time token the api-server issued for exactly
+       one call. The leg is answered (so the browser gets audio and the
+       seat hears ringing) and parked. Nothing here calls the API: a
+       `system curl` at this point blocks the channel's thread, and with
+       it the DTLS handshake — the seat sat in silence for five seconds
+       the one time it was tried. The API is already watching for a leg
+       with this token (it issued it a moment ago); it checks the token
+       and moves the leg to where it belongs — for a
+       Desk call, the same click_to_call_agent_leg extension a phone
+       leg uses, so recording, billing and the hangup report are one
+       code path whichever way the seat is connected.
+
+       park_timeout is the backstop: a leg the API never claims (an
+       expired or invented token) hangs up by itself.
+       ══════════════════════════════════════════════════════════════ -->
+  <context name="webrtc">
+    <extension name="softphone_leg" continue="false">
+      <condition field="destination_number" expression="^ctc_([0-9a-f]{32})$">
+        <action application="set" data="park_timeout=15:NO_ANSWER"/>
+        <action application="set" data="softphone_leg=true"/>
+        <action application="answer"/>
+        <action application="park"/>
+      </condition>
+    </extension>
+
+    <!-- "Test my headset": the seat hears a tone, then their own voice.
+         Reaches no phone line and costs nothing. -->
+    <extension name="softphone_selftest" continue="false">
+      <condition field="destination_number" expression="^selftest$">
+        <action application="answer"/>
+        <action application="sched_hangup" data="+20 NORMAL_CLEARING"/>
+        <action application="playback" data="tone_stream://%(300,100,660);%(300,400,880)"/>
+        <action application="echo"/>
+      </condition>
+    </extension>
+
+    <extension name="softphone_reject">
+      <condition field="destination_number" expression="^.*$">
+        <action application="hangup" data="CALL_REJECTED"/>
+      </condition>
+    </extension>
+  </context>
 </include>
