@@ -21,6 +21,7 @@ import { askDialog } from "../../components/Confirm";
 import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
 import DeskPhone, { usePhone, type Phone } from "../../components/DeskPhone";
+import CallWorkspace from "../../components/CallWorkspace";
 import { softphone } from "../../lib/softphone";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
@@ -835,6 +836,17 @@ function Dialer({ d, api, onDone, prefill, phone }: {
         </div>
       )}
       {ok && st.phase !== "ended" && <CustomerCard api={api} phone={num} />}
+      {/* Remarks, a booking, a WhatsApp — while they are still talking. Shown
+          for any number in the box: a call placed, a call answered, or one
+          about to be made. What is written on the call lands in the notes
+          the outcome is saved with. */}
+      {ok && (
+        <CallWorkspace api={api} phone={num} leadName={lead?.name}
+          ctcId={st.phase === "connected" || st.phase === "ended" ? st.ctcId : null}
+          live={busy || phone.snap.call.state === "active"}
+          onRemark={t => setNotes(n => (n ? n + "\n" : "") + t)}
+          onBooked={t => setNotes(n => (n ? n + "\n" : "") + t)} />
+      )}
 
       {/* call state */}
       {st.phase === "ringing_you" && (

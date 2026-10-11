@@ -1871,9 +1871,15 @@ function timeWithRef(t: unknown, ref: string | null): string {
   return ref ? `${formatSlotTime(t)} · ${ref}` : formatSlotTime(t);
 }
 
-app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) => {
+// One confirmation, whoever made the booking: Nikki on a call (the route
+// below) or a telecaller from the Desk (desk-call.ts). Same words, same
+// template, same wa_confirmed badge.
+async function confirmAppointmentByWhatsApp(o: {
+  caller_number: string; business_name?: string | null; slot_date?: string | null; slot_time?: string | null;
+  service?: string | null; tenant_id: string; voice_profile_id?: string | null; call_id?: string; appointment_id?: string;
+}): Promise<boolean> {
   const { caller_number, business_name, slot_date, slot_time, service,
-    tenant_id, voice_profile_id, call_id, appointment_id } = req.body;
+    tenant_id, voice_profile_id, call_id, appointment_id } = o;
 
   const ref = await bookingRef(appointment_id);
   const message = `నమస్కారం! మీ appointment ${business_name} లో confirm అయింది.\n\n` +
@@ -1897,7 +1903,11 @@ app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) =
     await sb.from("appointments").update({ wa_confirmed: true }).eq("id", appointment_id)
       .then(r => r.error && console.error("[confirm] wa_confirmed:", r.error.message));
   }
-  res.json({ ok });
+  return !!ok;
+}
+
+app.post("/api/whatsapp/appointment-confirm", verifyInternal, async (req, res) => {
+  res.json({ ok: await confirmAppointmentByWhatsApp(req.body) });
 });
 
 // Order confirmation — the pipeline files the order after the call and
@@ -5138,6 +5148,7 @@ import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
+import { mountDeskCallRoutes } from "./desk-call";
 import { followUpFor } from "./desk-learn";
 import { inboundParts } from "./wa-inbound";
 import { mountAppRoutes } from "./app";
@@ -5164,6 +5175,11 @@ mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
 mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWhatsApp, pushToUsers,
   pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET, applyDisposition });
+// What a telecaller does while the customer is on the line (desk-call.ts).
+mountDeskCallRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit,
+  confirmAppointment: (o) => confirmAppointmentByWhatsApp({
+    caller_number: o.phone, business_name: o.businessName, slot_date: o.slotDate, slot_time: o.slotTime,
+    service: o.service, tenant_id: o.tenantId, voice_profile_id: o.voiceProfileId, appointment_id: o.appointmentId }) });
 // Search across calls and transcripts, CSV exports, lead follow-ups.
 mountSearchExport(app, { sb, verifyJWT, apiLimiter, getTenantId, audit });
 // The dashboard's "something is wrong" banner.

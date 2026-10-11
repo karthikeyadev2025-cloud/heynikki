@@ -353,3 +353,40 @@ test("softphone: online browsers ring first, then the phones", () => {
   assert.equal(sp.isBrowserContact("sofia/webrtc/sip:a@b.invalid;transport=ws} &system(x)"), false);
   assert.equal(sp.isBrowserContact(C), true);
 });
+
+// ── Desk call screen: slots and remarks ───────────────────────────────────
+import * as dc from "../dist/desk-call.js";
+
+test("desk call: a slot must be a real moment that has not passed", () => {
+  const now = Date.UTC(2026, 9, 12, 6, 0);              // 12 Oct 2026, 11:30 IST (a Monday)
+  const hours = { open_days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], open_time: "09:00", close_time: "21:00" };
+  assert.deepEqual(dc.checkSlot("2026-10-12", "16:00", hours, now), { ok: true, warning: null });
+  assert.equal(dc.checkSlot("2026-10-12", "11:00", hours, now).ok, false, "half an hour ago");
+  assert.equal(dc.checkSlot("2026-10-12", "11:28", hours, now).ok, true, "a couple of minutes' grace");
+  assert.equal(dc.checkSlot("2026-10-11", "16:00", hours, now).ok, false, "yesterday");
+  assert.equal(dc.checkSlot("2026-02-30", "10:00", hours, now).ok, false, "not a date");
+  assert.equal(dc.checkSlot("2026-10-13", "25:00", hours, now).ok, false);
+  assert.equal(dc.checkSlot("", "10:00", hours, now).ok, false);
+  assert.equal(dc.checkSlot("2026-10-13", "4pm", hours, now).ok, false);
+  assert.equal(dc.checkSlot("2028-10-13", "10:00", hours, now).ok, false, "a slipped year");
+});
+
+test("desk call: closed days and hours warn, they do not refuse", () => {
+  const now = Date.UTC(2026, 9, 12, 6, 0);
+  const hours = { open_days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], open_time: "09:00", close_time: "21:00" };
+  const sun = dc.checkSlot("2026-10-18", "10:00", hours, now);
+  assert.equal(sun.ok, true); assert.match(sun.warning, /closed on Sun/);
+  const late = dc.checkSlot("2026-10-13", "22:00", hours, now);
+  assert.equal(late.ok, true); assert.match(late.warning, /outside working hours/);
+  // hours nobody filled in properly are not used to second-guess a booking
+  assert.equal(dc.checkSlot("2026-10-13", "22:00", { open_time: "01:45", close_time: "01:00" }, now).warning, null);
+  assert.equal(dc.checkSlot("2026-10-13", "22:00", {}, now).warning, null);
+});
+
+test("desk call: remarks and names are cleaned, not rewritten", () => {
+  assert.equal(dc.cleanRemark("  wants a demo  \n\n\n\ncall after 5  "), "wants a demo\n\ncall after 5");
+  assert.equal(dc.cleanRemark(""), "");
+  assert.equal(dc.cleanRemark("x".repeat(5000)).length, 2000);
+  assert.equal(dc.cleanName("  రవి   తేజ <b> "), "రవి తేజ b");
+  assert.equal(dc.remarkAsNote("wants a demo\ncall after 5", "Sita", Date.UTC(2026, 9, 12, 6, 5)), "[12/10 11:35 Sita] wants a demo call after 5");
+});
