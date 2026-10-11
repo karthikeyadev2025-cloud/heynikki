@@ -10,6 +10,7 @@ import {
   MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X, LogOut } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import Toaster from "./Toast";
+import ConfirmHost from "./Confirm";
 import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
 
@@ -222,7 +223,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
             <div style={{ fontSize: 13, fontWeight: 650, color: C.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {who || tenant.name}
             </div>
-            <div style={{ fontSize: 11.5, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 12, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {tenant.status === "trial" && minsLeft !== null
                 ? <a href="/billing" style={{ color: C.gold, fontWeight: 650 }}>{minsLeft} free min left · upgrade</a>
                 : <>{tenant.name}{!staff && tenant.plan ? <> · <span>{planLabel(tenant.plan)}</span></> : null}</>}
@@ -262,6 +263,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       </div>
       <OwnerVoiceAssistant />
       <Toaster />
+      <ConfirmHost />
     </div>
   );
 }

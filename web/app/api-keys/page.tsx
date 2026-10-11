@@ -1,6 +1,7 @@
 "use client";
 
 import { planLabel } from "../../lib/plans";
+import { confirmDialog } from "../../components/Confirm";
 import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
@@ -163,7 +164,9 @@ export default function ApiKeysPage() {
   }
 
   async function revokeKey(id: string, label: string) {
-    if (!confirm(`Revoke "${label}"? Any integration using it will immediately stop working.`)) return;
+    if (!await confirmDialog({ title: `Revoke "${label}"?`,
+      body: "Any integration using it will immediately stop working.",
+      confirmLabel: "Revoke key", danger: true })) return;
     setRevokeError("");
     setRevoking(id);
     try {
@@ -327,7 +330,7 @@ export default function ApiKeysPage() {
                       cur.includes(s.id) ? cur.filter(x => x !== s.id) : [...cur, s.id]
                     )} />
                   <span style={{ color: J.chandra, fontWeight: 600 }}>{s.label}</span>
-                  {s.recommended && <span style={{ background: J.mercury + "14", color: J.mercury, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "1px 8px" }}>Recommended</span>}
+                  {s.recommended && <span style={{ background: J.mercury + "14", color: J.mercury, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "1px 8px" }}>Recommended</span>}
                   <code style={{ color: J.textDim, fontSize: 12, marginLeft: "auto", fontFamily: "var(--font-mono), monospace" }}>{s.id}</code>
                   <span style={{ color: J.textMid, fontSize: 12.5, flexBasis: "100%", paddingLeft: 24 }}>{s.hint}</span>
                 </label>
@@ -405,9 +408,9 @@ export default function ApiKeysPage() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 }}>
                     <div style={{ color: J.chandra, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {k.name}
-                      {k.revoked_at && <span style={{ background: J.red + "14", color: J.red, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Revoked</span>}
-                      {expired && !k.revoked_at && <span style={{ background: J.surya + "14", color: J.surya, fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Expired</span>}
-                      {!dead && <span style={{ background: "#10B98114", color: "#059669", fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Active</span>}
+                      {k.revoked_at && <span style={{ background: J.red + "14", color: J.red, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Revoked</span>}
+                      {expired && !k.revoked_at && <span style={{ background: J.surya + "14", color: J.surya, fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Expired</span>}
+                      {!dead && <span style={{ background: "#10B98114", color: "#059669", fontSize: 12, fontWeight: 600, borderRadius: 999, padding: "2px 9px" }}>Active</span>}
                     </div>
                     {!dead && (
                       <button onClick={() => revokeKey(k.id, k.name)} disabled={revoking === k.id}

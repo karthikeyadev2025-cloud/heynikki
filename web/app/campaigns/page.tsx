@@ -110,7 +110,7 @@ function StatusPill({ status }: { status: string }) {
   };
   const col = map[status] || C.mid;
   return <span style={{
-    background: col + "14", color: col, fontSize: 11.5, fontWeight: 600, padding: "3px 9px",
+    background: col + "14", color: col, fontSize: 12, fontWeight: 600, padding: "3px 9px",
     borderRadius: 999, textTransform: "capitalize", whiteSpace: "nowrap",
     display: "inline-flex", alignItems: "center", gap: 5,
   }}><span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />{status}</span>;
@@ -205,7 +205,7 @@ function RecipientList({ campaignId }: { campaignId: string }) {
                 <span style={{ color: C.txt, fontWeight: 600, minWidth: 104, fontFamily: "var(--font-mono), monospace" }}>{r.phone}</span>
                 <span style={{ color: C.mid, flex: 1 }}>{r.first_name || "—"}</span>
                 <span style={{ background: st.color + "14", color: st.color, borderRadius: 999, padding: "2px 9px",
-                  fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{st.label}</span>
+                  fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{st.label}</span>
                 {outcome && <span style={{ color: C.mid, fontSize: 12 }}>{outcome}</span>}
                 {r.attempts > 1 && <span style={{ color: C.dim, fontSize: 12 }}>{r.attempts} tries</span>}
               </div>

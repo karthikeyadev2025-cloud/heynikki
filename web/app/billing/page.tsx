@@ -1,6 +1,7 @@
 // app/billing/page.tsx
 "use client";
 import { planLabel } from "../../lib/plans";
+import { confirmDialog } from "../../components/Confirm";
 import { useState, useEffect } from "react";
 import Script from "next/script";
 import { toast } from "../../components/Toast";
@@ -272,11 +273,13 @@ export default function BillingPage() {
           } else {
             // Money may still have been captured -- Razorpay's webhook is the
             // backstop and will reconcile. Never silently swallow this.
-            alert(
-              "Payment went through but we couldn't confirm it automatically. " +
-              "Please contact support@heynikki.in with your payment ID: " +
-              response.razorpay_payment_id
-            );
+            setUpgrading(null);
+            await confirmDialog({
+              title: "Payment received, but not confirmed yet",
+              body: "Your payment went through but we couldn't confirm it automatically. " +
+                    "Please contact support@heynikki.in with your payment ID: " +
+                    response.razorpay_payment_id,
+              confirmLabel: "OK", cancelLabel: "Close" });
           }
         },
         modal: {
@@ -414,7 +417,7 @@ export default function BillingPage() {
               <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 19, fontWeight: 700, letterSpacing: "-0.01em" }}>Choose a plan</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ color: annual ? C.mid : C.txt, fontSize: 13, fontWeight: 600 }}>Monthly</span>
-                <button onClick={() => setAnnual(!annual)} style={{
+                <button onClick={() => setAnnual(!annual)} role="switch" aria-checked={annual} aria-label="Bill annually" style={{
                   width: 40, height: 22, borderRadius: 11, border: "none", cursor: "pointer",
                   background: annual ? C.glow : C.bord, position: "relative",
                 }}>
@@ -454,13 +457,13 @@ export default function BillingPage() {
                     {plan.popular && !isCurrent && (
                       <div style={{ position: "absolute", top: -10, left: "50%",
                         transform: "translateX(-50%)", background: C.glow, color: "#fff",
-                        fontSize: 11.5, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
+                        fontSize: 12, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
                         whiteSpace: "nowrap" }}>Most popular</div>
                     )}
                     {isCurrent && (
                       <div style={{ position: "absolute", top: -10, left: "50%",
                         transform: "translateX(-50%)", background: C.grn, color: "#fff",
-                        fontSize: 11.5, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
+                        fontSize: 12, fontWeight: 600, padding: "3px 12px", borderRadius: 999,
                         whiteSpace: "nowrap" }}>Your plan</div>
                     )}
                     <div style={{ color: C.txt, fontSize: 15, fontWeight: 700, marginBottom: 8 }}>

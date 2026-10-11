@@ -8,6 +8,8 @@ import OwnerAlerts from "../../components/OwnerAlerts";
 // and its own map only knew the second set.
 import IntentBadge from "../../components/IntentBadge";
 import { createClient } from "../../lib/supabase";
+import { fetchAll } from "../../lib/fetch-all";
+import { toast } from "../../components/Toast";
 import type { CallRecord, Appointment } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import {
@@ -121,8 +123,11 @@ export default function DashboardPage() {
       // is a counter no code path has ever incremented — this meter read
       // "0 minutes used" for every customer forever, including one with
       // 2,703 seconds of completed calls sitting in the same database.
-      sb.from("calls").select("duration_seconds")
-        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00"),
+      // fetchAll: one request stops at 1,000 rows, and a month of a busy
+      // line is more than that — the minutes meter would stop counting.
+      fetchAll(() => sb.from("calls").select("duration_seconds")
+        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00")
+        .order("created_at").order("id")),
       // The balance that actually gates a trial tenant's calls, and which
       // the customer app never showed them anywhere.
       sb.from("tenants").select("credit_minutes, plan").eq("id", tid).maybeSingle(),
@@ -133,14 +138,24 @@ export default function DashboardPage() {
         .eq("tenant_id", tid).not("stage", "in", '("won","lost")').gte("score", 50)
         .order("score", { ascending: false }).limit(5),
       // whole month, for the value banner
-      sb.from("calls").select("created_at, appointment_created")
-        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00"),
+      fetchAll(() => sb.from("calls").select("created_at, appointment_created")
+        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00")
+        .order("created_at").order("id")),
       // Plan allowances come from the plans table via the same catalogue
       // /billing renders, so the two pages cannot disagree. A hard-coded
       // starter/growth/scale map here lied the moment a plan row was edited.
       fetch(`${API_URL}/api/platform/pricing`)
         .then(r => (r.ok ? r.json() : null)).catch(() => null),
     ]);
+
+    // A failed load used to draw "0 calls today", which reads as a quiet
+    // day rather than a page that could not reach its data.
+    const failed = [active, recent, missed, appts, todayStats, minutes, monthCalls]
+      .find((r: any) => r?.error);
+    if (failed) {
+      console.error("[dashboard] load failed:", (failed as any).error?.message);
+      toast.err("Some of this page couldn't be loaded. Please refresh.");
+    }
 
     setActiveCalls(active.data || []);
     setRecentCalls(recent.data || []);
@@ -273,7 +288,7 @@ export default function DashboardPage() {
           `}</style>
 
           {updatedAt && (
-            <div style={{ color: C.dim, fontSize: 11.5, marginBottom: 10, textAlign: "right" }}>
+            <div style={{ color: C.dim, fontSize: 12, marginBottom: 10, textAlign: "right" }}>
               Updated {updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} · refreshes every 30s
             </div>
           )}
@@ -350,7 +365,7 @@ export default function DashboardPage() {
                   background: credits <= 20 ? C.gold : C.grn }} />
               </div>
               {credits <= 20 && (
-                <div style={{ color: C.dim, fontSize: 11.5, marginTop: 5 }}>
+                <div style={{ color: C.dim, fontSize: 12, marginTop: 5 }}>
                   Calls stop when this reaches zero — add a plan to keep Nikki answering.
                 </div>
               )}
@@ -438,7 +453,7 @@ export default function DashboardPage() {
                     }}>{l.phone}</a>
                     <a href="/leads" style={{ background: C.grn + "22", color: C.grn,
                       border: "1px solid " + C.grn + "44", borderRadius: 5,
-                      padding: "4px 10px", fontSize: 10, fontWeight: 700,
+                      padding: "4px 10px", fontSize: 12, fontWeight: 700,
                       textDecoration: "none", flexShrink: 0 }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Call</span>
                     </a>
@@ -467,7 +482,7 @@ export default function DashboardPage() {
                   border: "1px solid " + C.bord, borderRadius: 10,
                   textDecoration: "none", color: C.txt, textAlign: "left",
                 }}>
-                  <div style={{ color: C.glow, fontSize: 11, fontWeight: 800, marginBottom: 4 }}>STEP 1</div>
+                  <div style={{ color: C.glow, fontSize: 12, fontWeight: 800, marginBottom: 4 }}>STEP 1</div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>Pick a voice profile</div>
                   <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Choose Standard / Clinic / Real Estate / Premium →</div>
                 </a>
@@ -476,12 +491,12 @@ export default function DashboardPage() {
                   border: "1px solid " + C.bord, borderRadius: 10,
                   textDecoration: "none", color: C.txt, textAlign: "left",
                 }}>
-                  <div style={{ color: C.grn, fontSize: 11, fontWeight: 800, marginBottom: 4 }}>STEP 2</div>
+                  <div style={{ color: C.grn, fontSize: 12, fontWeight: 800, marginBottom: 4 }}>STEP 2</div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>Forward your number</div>
                   <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the Nikki DID to your business line →</div>
                 </a>
               </div>
-              <div style={{ color: C.dim, fontSize: 11, marginTop: 20 }}>
+              <div style={{ color: C.dim, fontSize: 12, marginTop: 20 }}>
                 Stuck? Email <a href="mailto:support@heynikki.in" style={{ color: C.grn }}>support@heynikki.in</a>
               </div>
             </Card>
@@ -507,14 +522,14 @@ export default function DashboardPage() {
                       <div style={{ color: C.txt, fontSize: 13, fontWeight: 700 }}>
                         {call.caller_number}
                       </div>
-                      <div style={{ color: C.dim, fontSize: 11 }}>
+                      <div style={{ color: C.dim, fontSize: 12 }}>
                         {call.direction} · {timeAgo(call.created_at)}
                       </div>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <IntentBadge intent={call.intent} />
-                    <span style={{ color: C.grn, fontSize: 11, fontWeight: 700 }}>IN PROGRESS</span>
+                    <span style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>IN PROGRESS</span>
                   </div>
                 </div>
               ))}
@@ -543,20 +558,20 @@ export default function DashboardPage() {
                         {a.booking_ref && <span style={{ color: C.cyn, fontFamily: "monospace", marginRight: 6 }}>{a.booking_ref}</span>}
                         {a.caller_name || a.caller_number}
                       </div>
-                      <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
+                      <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
                         {a.service || "General"} · {a.slot_time || "time not set"}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {a.wa_confirmed && (
-                        <span style={{ color: C.grn, fontSize: 10, display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> WA</span>
+                        <span style={{ color: C.grn, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> WA</span>
                       )}
                       {/* Derived from the row — this was hard-coded green, so a
                           cancelled or no-show booking wore a success chip. */}
                       {(() => {
                         const s = APPT_STATUS[a.status] || { label: a.status, color: C.dim };
                         return (
-                          <span style={{ background: s.color + "22", color: s.color, fontSize: 10,
+                          <span style={{ background: s.color + "22", color: s.color, fontSize: 12,
                             padding: "2px 6px", borderRadius: 4, fontWeight: 700, whiteSpace: "nowrap" }}>
                             {s.label}
                           </span>
@@ -584,18 +599,18 @@ export default function DashboardPage() {
                       <div style={{ color: C.txt, fontSize: 12, fontWeight: 700 }}>
                         {call.caller_number}
                       </div>
-                      <div style={{ color: C.dim, fontSize: 11 }}>{timeAgo(call.created_at)}</div>
+                      <div style={{ color: C.dim, fontSize: 12 }}>{timeAgo(call.created_at)}</div>
                     </div>
                     {/* Say what happened either way. A bare "WA ✓" on some
                         rows and nothing on the others left the owner to guess
                         whether silence meant "no follow-up" or "not shown". */}
                     <div style={{ display: "flex", gap: 6 }}>
                       {call.wa_sent ? (
-                        <span style={{ color: C.cyn, fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ color: C.cyn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>
                           WhatsApp sent <Check size={10} />
                         </span>
                       ) : (
-                        <span style={{ color: C.gold, fontSize: 10, fontWeight: 700 }}>No follow-up yet</span>
+                        <span style={{ color: C.gold, fontSize: 12, fontWeight: 700 }}>No follow-up yet</span>
                       )}
                     </div>
                   </div>
@@ -622,7 +637,7 @@ export default function DashboardPage() {
                       fit. /calls still shows it in full. */}
                   {["Caller", "Direction", "Duration", "Intent", "WA", "Time"].map(h => (
                     <th key={h} className={h === "Direction" ? "nk-hide-mobile" : undefined}
-                      style={{ color: C.dim, fontSize: 10, fontWeight: 700,
+                      style={{ color: C.dim, fontSize: 12, fontWeight: 700,
                       textTransform: "uppercase", letterSpacing: "0.08em",
                       padding: "6px 8px", textAlign: "left",
                       borderBottom: "1px solid " + C.bord }}>
@@ -641,7 +656,7 @@ export default function DashboardPage() {
                     </td>
                     <td className="nk-hide-mobile" style={{ padding: "8px 8px" }}>
                       <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
-                        fontSize: 11, fontWeight: 600 }}>
+                        fontSize: 12, fontWeight: 600 }}>
                         {call.direction === "inbound" ? "↙ In" : "↗ Out"}
                       </span>
                     </td>
@@ -655,7 +670,7 @@ export default function DashboardPage() {
                       fontSize: 12 }}>
                       {call.wa_sent ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}><Check size={10} /> Sent</span>) : "—"}
                     </td>
-                    <td style={{ padding: "8px 8px", color: C.dim, fontSize: 11 }}>
+                    <td style={{ padding: "8px 8px", color: C.dim, fontSize: 12 }}>
                       {timeAgo(call.created_at)}
                     </td>
                   </tr>

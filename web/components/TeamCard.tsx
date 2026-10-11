@@ -85,7 +85,7 @@ export default function TeamCard() {
   const prettyPhone = (n: string) => { const d = String(n).replace(/\D/g, "").slice(-10); return d.length === 10 ? `${d.slice(0, 5)} ${d.slice(5)}` : n; };
   const showsPhones = (d.members || []).some((m: any) => m.phone);
 
-  const label = { fontSize: 11.5, color: C.dim, marginBottom: 4 } as const;
+  const label = { fontSize: 12, color: C.dim, marginBottom: 4 } as const;
   const input = { padding: "8px 11px", borderRadius: 8, fontSize: 13.5,
     background: C.surf, color: C.txt, border: "1px solid #D8DFE8" } as const;
 
@@ -110,7 +110,7 @@ export default function TeamCard() {
           <span style={{ color: ["owner","super_admin"].includes(m.role) ? C.grn : C.dim, fontSize: 12 }}>
             {m.role === "super_admin" ? "owner" : m.role}
           </span>
-          {m.is_you && <span style={{ color: C.dim, fontSize: 11.5 }}>you</span>}
+          {m.is_you && <span style={{ color: C.dim, fontSize: 12 }}>you</span>}
           {m.phone && (
             <span style={{ color: C.dim, fontSize: 12, fontVariantNumeric: "tabular-nums" }} title="Rings on calls passed to the team">
               {prettyPhone(m.phone)}

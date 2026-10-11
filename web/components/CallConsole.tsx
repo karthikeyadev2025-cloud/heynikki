@@ -766,7 +766,7 @@ export default function CallConsole() {
                 fontFamily: "var(--font-telugu), var(--font-body), system-ui",
               }}>
                 <span style={{
-                  display: "block", marginBottom: 4, fontSize: 10, letterSpacing: "0.1em",
+                  display: "block", marginBottom: 4, fontSize: 12, letterSpacing: "0.1em",
                   textTransform: "uppercase", opacity: 0.5, fontFamily: "var(--font-mono), monospace",
                 }}>
                   {l.who === "nikki" ? "Nikki" : "You"}
@@ -829,7 +829,7 @@ export default function CallConsole() {
             </div>
 
             {turnsLeft !== null && turnsLeft <= 4 && (
-              <p style={{ margin: "9px 2px 0", color: K.dimmer, fontSize: 11.5, fontFamily: "var(--font-mono), monospace" }}>
+              <p style={{ margin: "9px 2px 0", color: K.dimmer, fontSize: 12, fontFamily: "var(--font-mono), monospace" }}>
                 {/* NOT "unlimited on a real number" — every plan is metered by
                     minutes (200 / 600 / 1,500), and the agent's own prompt
                     forbids the word for exactly that reason. The demo's cap is

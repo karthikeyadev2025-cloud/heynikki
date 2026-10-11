@@ -655,7 +655,7 @@ export default function OwnerVoiceAssistant() {
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ color: C.txt, fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>Nikki</div>
               <div style={{
-                color: stateColor, fontSize: 11.5, marginTop: 2, lineHeight: 1.3,
+                color: stateColor, fontSize: 12, marginTop: 2, lineHeight: 1.3,
                 display: "flex", alignItems: "center", gap: 6,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
@@ -678,7 +678,7 @@ export default function OwnerVoiceAssistant() {
                 title="Stop speaking"
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0,
-                  padding: "5px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700,
+                  padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700,
                   border: `1px solid ${C.bord}`, background: C.surf, color: C.mid, cursor: "pointer",
                 }}>
                 <VolumeX size={12} /> Stop
@@ -840,7 +840,7 @@ export default function OwnerVoiceAssistant() {
                 padding: "5px 10px", borderRadius: 999,
                 border: `1px solid ${wakeOn ? C.grn : C.bord}`,
                 background: wakeOn ? C.grn + "1F" : C.surf,
-                color: wakeOn ? C.grn : C.mid, fontSize: 11, fontWeight: 700,
+                color: wakeOn ? C.grn : C.mid, fontSize: 12, fontWeight: 700,
                 cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
               }}>
               <span style={{
@@ -850,7 +850,7 @@ export default function OwnerVoiceAssistant() {
               }} />
               {wakeOn ? (native ? "“Hey Nikki” always on" : "“Hey Nikki” on") : "“Hey Nikki” wake"}
             </button>
-            <span style={{ color: C.dim, fontSize: 10.5, textAlign: "right" }}>
+            <span style={{ color: C.dim, fontSize: 12, textAlign: "right" }}>
               {nativeMsg
                 ? <span style={{ color: C.red, fontWeight: 600 }}>{nativeMsg}</span>
                 : "This chat clears when you leave the page"}
@@ -872,7 +872,7 @@ export default function OwnerVoiceAssistant() {
             padding: "6px 12px", borderRadius: 999,
             border: `1px solid ${wakeOn ? C.grn : C.bord}`,
             background: wakeOn ? C.grn + "1F" : C.surf,
-            color: wakeOn ? C.grn : C.mid, fontSize: 11.5, fontWeight: 700,
+            color: wakeOn ? C.grn : C.mid, fontSize: 12, fontWeight: 700,
             cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
             boxShadow: "0 4px 14px rgba(15,23,42,0.10)",
           }}>
@@ -971,7 +971,7 @@ function TurnView({ turn, onConfirm, onCancel }: {
 
         {turn.confirm && <ConfirmView turn={turn} onConfirm={onConfirm} onCancel={onCancel} />}
       </div>
-      <div style={{ color: C.dim, fontSize: 10, padding: "0 4px" }}>
+      <div style={{ color: C.dim, fontSize: 12, padding: "0 4px" }}>
         {you ? "You" : "Nikki"} · {clockOf(turn.at)}
       </div>
     </div>
@@ -991,7 +991,7 @@ function CardView({ card }: { card: Card }) {
       {card.title && (
         <div style={{
           padding: "7px 10px", borderBottom: `1px solid ${C.bord}`,
-          color: C.dim, fontSize: 9.5, fontWeight: 800,
+          color: C.dim, fontSize: 12, fontWeight: 800,
           textTransform: "uppercase", letterSpacing: "0.08em",
         }}>
           {card.title}
@@ -1010,7 +1010,7 @@ function CardView({ card }: { card: Card }) {
                   lineHeight: 1.15, whiteSpace: "nowrap",
                 }}>{s.value}</div>
                 <div style={{
-                  color: C.mid, fontSize: 10.5, marginTop: 3, whiteSpace: "nowrap",
+                  color: C.mid, fontSize: 12, marginTop: 3, whiteSpace: "nowrap",
                   overflow: "hidden", textOverflow: "ellipsis",
                 }}>{s.label}</div>
               </div>
@@ -1043,14 +1043,14 @@ function ListRow({ row, first }: { row: Row; first: boolean }) {
         }}>{row.title}</span>
         {row.subtitle && (
           <span style={{
-            display: "block", color: C.mid, fontSize: 11, marginTop: 1, lineHeight: 1.35,
+            display: "block", color: C.mid, fontSize: 12, marginTop: 1, lineHeight: 1.35,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>{row.subtitle}</span>
         )}
       </span>
       {row.meta && (
         <span style={{
-          color: C.dim, fontSize: 10.5, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
+          color: C.dim, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0,
         }}>{row.meta}</span>
       )}
       {row.href && <ArrowRight size={13} color={C.acc} style={{ flexShrink: 0 }} />}
@@ -1090,7 +1090,7 @@ function ConfirmView({ turn, onConfirm, onCancel }: {
     return (
       <div style={{
         marginTop: 10, display: "flex", alignItems: "center", gap: 6,
-        color: meta.color, fontSize: 11.5, fontWeight: 700,
+        color: meta.color, fontSize: 12, fontWeight: 700,
       }}>
         {st === "done" ? <Check size={13} /> : <AlertCircle size={13} />}
         {meta.text}
@@ -1105,7 +1105,7 @@ function ConfirmView({ turn, onConfirm, onCancel }: {
       background: accent + "0F", padding: "10px 11px",
     }}>
       <div style={{
-        color: accent, fontSize: 9.5, fontWeight: 800,
+        color: accent, fontSize: 12, fontWeight: 800,
         textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4,
       }}>
         {danger ? "Needs your OK" : "Shall I?"}
@@ -1142,7 +1142,7 @@ function ConfirmView({ turn, onConfirm, onCancel }: {
       </div>
       {turn.confirmError && (
         <div style={{
-          marginTop: 8, color: C.red, fontSize: 11.5, lineHeight: 1.4,
+          marginTop: 8, color: C.red, fontSize: 12, lineHeight: 1.4,
           display: "flex", gap: 6, alignItems: "flex-start",
         }}>
           <AlertCircle size={12} style={{ flexShrink: 0, marginTop: 1 }} />

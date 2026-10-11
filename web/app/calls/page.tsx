@@ -1,6 +1,7 @@
 // app/calls/page.tsx — Call History, Recordings & Transcripts
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { confirmDialog } from "../../components/Confirm";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord } from "../../lib/supabase";
@@ -36,7 +37,7 @@ function StatusPill({ status }: { status: string | null | undefined }) {
   const meta = STATUS_META[status || ""] || { label: status || "—", color: C.dim };
   return (
     <span style={{ background: meta.color + "14", color: meta.color,
-      borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap",
+      borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
       display: "inline-flex", alignItems: "center", gap: 5 }}>
       {status === "active" && (
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: meta.color,
@@ -78,7 +79,7 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
           display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ color: C.txt, fontSize: 15, fontWeight: 800 }}>{call.caller_number}</div>
-            <div style={{ color: C.dim, fontSize: 11, marginTop: 2 }}>
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
               {formatTime(call.created_at)} · {formatDur(call.duration_seconds)}
             </div>
           </div>
@@ -86,17 +87,17 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
             <StatusPill status={call.status} />
             <IntentBadge intent={call.intent} />
             {call.wa_sent && (
-              <span style={{ color: C.cyn, fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>WA <Check size={11} /></span>
+              <span style={{ color: C.cyn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>WA <Check size={11} /></span>
             )}
             <button onClick={onClose} style={{ background: "none", border: "none",
-              color: C.dim, cursor: "pointer", padding: "0 4px", display: "flex" }}><X size={18} /></button>
+              color: C.dim, cursor: "pointer", padding: "0 4px", display: "flex" }} aria-label="Close"><X size={18} /></button>
           </div>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
           {/* Call Journey Audit Trail */}
           <div style={{ marginBottom: 16 }}>
-            <div style={{ color: C.gold, fontSize: 11, fontWeight: 800,
+            <div style={{ color: C.gold, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
               Call Journey
             </div>
@@ -114,10 +115,10 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
               ].filter(Boolean).map((step, i, arr) => (
                 <span key={step as string} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ background: C.glow + "22", color: C.gbr, border: "1px solid " + C.glow + "44",
-                    borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700 }}>
+                    borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>
                     {step}
                   </span>
-                  {i < arr.length - 1 && <span style={{ color: C.dim, fontSize: 10 }}>→</span>}
+                  {i < arr.length - 1 && <span style={{ color: C.dim, fontSize: 12 }}>→</span>}
                 </span>
               ))}
             </div>
@@ -144,13 +145,13 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
           ) : null}
           {(call.r2_object_key || call.recording_url) && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ color: C.mid, fontSize: 11, fontWeight: 800,
+              <div style={{ color: C.mid, fontSize: 12, fontWeight: 800,
                 textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
                 Recording
               </div>
               <RecordingPlayer callId={call.id} publicUrl={call.recording_url} />
               {!!recordingDays && (
-                <div style={{ color: C.dim, fontSize: 11.5, marginTop: 6 }}>
+                <div style={{ color: C.dim, fontSize: 12, marginTop: 6 }}>
                   Kept for {recordingDays} days after the call, then deleted automatically.
                 </div>
               )}
@@ -160,7 +161,7 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
 
           {/* Transcript */}
           <div>
-            <div style={{ color: C.mid, fontSize: 11, fontWeight: 800,
+            <div style={{ color: C.mid, fontSize: 12, fontWeight: 800,
               textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
               Transcript
             </div>
@@ -184,7 +185,7 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
                 }}>
                   <div style={{ color: C.txt, fontSize: 12, lineHeight: 1.5 }}>{turn.content}</div>
                   {turn.ts && (
-                    <div style={{ color: C.dim, fontSize: 9, marginTop: 2 }}>
+                    <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
                       {new Date(turn.ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                     </div>
                   )}
@@ -295,7 +296,9 @@ function DeleteRecording({ callId, onDeleted }: { callId: string; onDeleted: () 
         type="button"
         disabled={busy}
         onClick={async () => {
-          if (!confirm("Delete this recording? The audio is removed permanently. The transcript is kept.")) return;
+          if (!await confirmDialog({ title: "Delete this recording?",
+            body: "The audio is removed permanently. The transcript is kept.",
+            confirmLabel: "Delete recording", danger: true })) return;
           setBusy(true); setErr("");
           try {
             const sb = createClient();
@@ -314,7 +317,7 @@ function DeleteRecording({ callId, onDeleted }: { callId: string; onDeleted: () 
           } finally { setBusy(false); }
         }}
         style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.red}55`,
-          background: "transparent", color: C.red, fontSize: 11.5, fontWeight: 700,
+          background: "transparent", color: C.red, fontSize: 12, fontWeight: 700,
           cursor: busy ? "wait" : "pointer" }}>
         {busy ? "Deleting…" : "Delete recording"}
       </button>
@@ -638,7 +641,7 @@ export default function CallsPage() {
             <thead>
               <tr style={{ background: "#F8FAFC" }}>
                 {["Caller","Direction","Status","Duration","Reason","WhatsApp","Booked","Time",""].map(h => (
-                  <th key={h} style={{ color: C.mid, fontSize: 11.5, fontWeight: 600,
+                  <th key={h} style={{ color: C.mid, fontSize: 12, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap",
                     padding: "11px 14px", textAlign: "left", borderBottom: "1px solid #E4E9F0" }}>{h}</th>
                 ))}
@@ -665,7 +668,7 @@ export default function CallsPage() {
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
-                      fontSize: 11, fontWeight: 600 }}>
+                      fontSize: 12, fontWeight: 600 }}>
                       {call.direction === "inbound" ? "↙ Inbound" : "↗ Outbound"}
                     </span>
                   </td>

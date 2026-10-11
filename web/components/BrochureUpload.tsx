@@ -174,7 +174,7 @@ export default function BrochureUpload({ onApplied }: { onApplied?: () => void }
         <div style={{ color: busy ? C.gbr : C.txt, fontSize: 13.5, fontWeight: 700 }}>
           {busy ? (status || "Working…") : "Drop a file here, or click to choose"}
         </div>
-        <div style={{ color: C.dim, fontSize: 11.5, marginTop: 5 }}>
+        <div style={{ color: C.dim, fontSize: 12, marginTop: 5 }}>
           PDF or photo · up to {MAX_MB}MB
         </div>
       </div>

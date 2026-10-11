@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
+import { fetchAll } from "../../lib/fetch-all";
+import { toast } from "../../components/Toast";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid, ComposedChart } from "recharts";
@@ -122,28 +124,39 @@ export default function AnalyticsPage() {
       if (!tu) { setLoading(false); return; }
 
       const since = new Date(Date.now() - parseInt(range) * 86400000).toISOString();
+      // fetchAll, not a bare select: one request stops at 1,000 rows without
+      // saying so, and the 90-day view of a busy account is past that.
+      const tid = tu.tenant_id;
       const [c, l, ctc, wa, q, ap] = await Promise.all([
-        sb.from("calls").select("*").eq("tenant_id", tu.tenant_id)
-          .gte("created_at", since).order("created_at", { ascending: true }),
-        sb.from("leads").select("*").eq("tenant_id", tu.tenant_id)
-          .gte("created_at", since),
-        sb.from("click_to_call_log").select("*").eq("tenant_id", tu.tenant_id)
-          .gte("created_at", since),
-        sb.from("wa_dispatch_log").select("*").eq("tenant_id", tu.tenant_id)
-          .gte("sent_at", since),
+        fetchAll(() => sb.from("calls").select("*").eq("tenant_id", tid)
+          .gte("created_at", since).order("created_at", { ascending: true }).order("id")),
+        fetchAll(() => sb.from("leads").select("*").eq("tenant_id", tid)
+          .gte("created_at", since).order("created_at", { ascending: true }).order("id")),
+        fetchAll(() => sb.from("click_to_call_log").select("*").eq("tenant_id", tid)
+          .gte("created_at", since).order("created_at", { ascending: true }).order("id")),
+        fetchAll(() => sb.from("wa_dispatch_log").select("*").eq("tenant_id", tid)
+          .gte("sent_at", since).order("sent_at", { ascending: true }).order("id")),
         // Scored conversations. Joined to calls for the timestamp, because
         // analysed_at is when the JOB ran — batching a backlog would stack
         // every one of them on a single day and invent a cliff in the trend.
-        sb.from("call_quality")
+        fetchAll(() => sb.from("call_quality")
           .select("overall_score, resolution_score, next_step_captured, sentiment, calls!inner(created_at)")
-          .eq("tenant_id", tu.tenant_id)
-          .gte("calls.created_at", since),
+          .eq("tenant_id", tid)
+          .gte("calls.created_at", since).order("call_id")),
         // The bookings themselves. calls.appointment_created is never set by
         // the live pipeline, so counting that flag reported zero appointments
         // on accounts that had them.
-        sb.from("appointments").select("id, created_at, status")
-          .eq("tenant_id", tu.tenant_id).gte("created_at", since),
+        fetchAll(() => sb.from("appointments").select("id, created_at, status")
+          .eq("tenant_id", tid).gte("created_at", since)
+          .order("created_at", { ascending: true }).order("id")),
       ]);
+      // A failed load used to draw zeros, which reads as "no calls" rather
+      // than "could not load".
+      const failed = [c, l, ctc, wa, q, ap].find(r => r.error);
+      if (failed) {
+        console.error("[analytics] load failed:", failed.error?.message);
+        toast.err("Some numbers couldn't be loaded. Please refresh.");
+      }
       setAppts(ap.data || []);
       setCalls(c.data || []);
       setLeads(l.data || []);
@@ -424,8 +437,8 @@ export default function AnalyticsPage() {
                     <stop offset="95%" stopColor={C.grn} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="day" tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="day" tick={{ fill: C.dim, fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: C.dim, fontSize: 12 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<Tooltip2 />} cursor={{ fill: C.hi + "88" }} />
                 <Legend iconType="circle" iconSize={8}
                   wrapperStyle={{ fontSize: 12.5, color: C.mid, paddingTop: 8 }} />
@@ -568,8 +581,8 @@ export default function AnalyticsPage() {
           <Card title="Busiest hours" subtitle="When your customers call most (IST) — use to plan staff coverage">
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={hourWindow} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: C.dim, fontSize: 11 }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="hour" tick={{ fill: C.dim, fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: C.dim, fontSize: 12 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<Tooltip2 />} cursor={{ fill: C.hi + "88" }} />
                 <Bar dataKey="calls" name="Calls" fill={C.glow} radius={[4,4,0,0]} />
               </BarChart>

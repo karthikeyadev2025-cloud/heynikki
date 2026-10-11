@@ -247,16 +247,16 @@ export default function FollowUp({ lead, onSaved, compact }: {
 
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>DATE</div>
+                <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>DATE</div>
                 <input type="date" value={date} min={istToday()} onChange={e => setDate(e.target.value)} style={field} />
               </div>
               <div style={{ width: 120 }}>
-                <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>TIME</div>
+                <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>TIME</div>
                 <input type="time" value={time} onChange={e => setTime(e.target.value)} style={field} />
               </div>
             </div>
 
-            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>NOTE</div>
+            <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>NOTE</div>
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
               placeholder="e.g. quoted ₹8,000, wants to confirm with husband"
               style={{ ...field, resize: "vertical", marginBottom: 14 }} />
@@ -267,7 +267,7 @@ export default function FollowUp({ lead, onSaved, compact }: {
               {busy ? "Saving…" : pending ? "Update reminder" : "Set reminder"}
             </button>
 
-            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 6 }}>SNOOZE</div>
+            <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 6 }}>SNOOZE</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
               {SNOOZE.map(s => (
                 <button key={s.days} onClick={() => snooze(s.days)} disabled={busy}

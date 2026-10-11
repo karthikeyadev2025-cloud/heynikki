@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback } from "react";
+import { confirmDialog } from "../../components/Confirm";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { Phone, Users, RefreshCw, Check, X, AlertTriangle } from "lucide-react";
@@ -88,7 +89,9 @@ export default function AdminPage() {
   };
 
   const release = async (number: string) => {
-    if (!confirm(`Release ${number}? Calls to it will stop reaching that tenant.`)) return;
+    if (!await confirmDialog({ title: `Release ${number}?`,
+      body: "Calls to it will stop reaching that tenant.",
+      confirmLabel: "Release number", danger: true })) return;
     setBusy(number); setErr(""); setOk("");
     try {
       const r = await authed(`/api/admin/dids/${number}/release`, { method: "POST" });
@@ -143,7 +146,7 @@ export default function AdminPage() {
                 <Td><span style={{ fontFamily: "monospace" }}>{d.number}</span></Td>
                 <Td>
                   <span style={{
-                    fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                    fontSize: 12, padding: "2px 8px", borderRadius: 20,
                     background: d.status === "assigned" ? "#10B98122" : "#94A3B822",
                     color:      d.status === "assigned" ? "#10B981"   : "#94A3B8",
                   }}>{d.status}</span>
@@ -177,7 +180,7 @@ export default function AdminPage() {
         </table>
       </div>
 
-      <p style={{ color: "#64748B", fontSize: 11, marginTop: 12, maxWidth: "70ch" }}>
+      <p style={{ color: "#64748B", fontSize: 12, marginTop: 12, maxWidth: "70ch" }}>
         Assigning sets the DID to <code>assigned</code> and links it to that tenant&apos;s
         voice profile. Routing only matches numbers in that state, so a number left in
         any other status never reaches a caller.
@@ -203,7 +206,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
       <span style={{ color: "#38BDF8" }}>{icon}</span>
       <span>
         <span style={{ display: "block", fontSize: 18, fontWeight: 800, color: "#F1F5F9" }}>{value}</span>
-        <span style={{ fontSize: 11, color: "#94A3B8" }}>{label}</span>
+        <span style={{ fontSize: 12, color: "#94A3B8" }}>{label}</span>
       </span>
     </div>
   );

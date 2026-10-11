@@ -226,12 +226,12 @@ function AddLead({ tenantId, onDone, onCancel }: { tenantId: string | null; onDo
   return (
     <div style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 14, marginBottom: 14,
       display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, alignItems: "end" }}>
-      <div><div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>NAME</div>
+      <div><div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>NAME</div>
         <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Optional" style={{ ...f, width: "100%" }} /></div>
-      <div><div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>MOBILE</div>
+      <div><div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>MOBILE</div>
         <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel" placeholder="98765 43210" style={{ ...f, width: "100%", fontFamily: "var(--font-mono), monospace" }}
           onKeyDown={e => { if (e.key === "Enter") submit(); }} /></div>
-      <div><div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>WANTS</div>
+      <div><div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>WANTS</div>
         <input value={interest} onChange={e => setInterest(e.target.value)} placeholder="e.g. root canal, Saturday" style={{ ...f, width: "100%" }}
           onKeyDown={e => { if (e.key === "Enter") submit(); }} /></div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -628,7 +628,7 @@ export default function LeadsPage() {
                   <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <d.icon size={14} /> {dispSaving === d.value ? "Saving…" : d.label}
                   </span>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: C.dim }}>{d.hint}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.dim }}>{d.hint}</span>
                 </button>
               ))}
             </div>
@@ -739,12 +739,12 @@ export default function LeadsPage() {
         <div style={{ background: C.hi, border: `1px solid ${C.bord}`, borderRadius: 12, padding: 14, marginBottom: 12,
           display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, alignItems: "end" }}>
           <div>
-            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>TAG</div>
+            <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>TAG</div>
             <input value={tag} onChange={e => setTag(e.target.value)} placeholder="e.g. vip"
               style={{ ...inputStyle, width: "100%" }} />
           </div>
           <div>
-            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>SCORE</div>
+            <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>SCORE</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input value={scoreMin} onChange={e => setScoreMin(e.target.value.replace(/\D/g, ""))}
                 inputMode="numeric" placeholder="0" aria-label="Lowest score" style={{ ...inputStyle, width: "100%" }} />
@@ -754,7 +754,7 @@ export default function LeadsPage() {
             </div>
           </div>
           <div style={{ gridColumn: "span 2", minWidth: 0 }}>
-            <div style={{ fontSize: 11, color: C.mid, fontWeight: 700, marginBottom: 4 }}>LAST CONTACTED</div>
+            <div style={{ fontSize: 12, color: C.mid, fontWeight: 700, marginBottom: 4 }}>LAST CONTACTED</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input type="date" value={contactedFrom} max={contactedTo || undefined}
                 onChange={e => setContactedFrom(e.target.value)} aria-label="Contacted from"
@@ -855,14 +855,14 @@ export default function LeadsPage() {
                         {l.name || "Unknown caller"}
                       </span>
                       {l.call_count > 1 && (
-                        <span style={{ background: C.hi, color: C.mid, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 20, flexShrink: 0 }}>
+                        <span style={{ background: C.hi, color: C.mid, fontSize: 12, fontWeight: 700, padding: "1px 6px", borderRadius: 20, flexShrink: 0 }}>
                           {l.call_count} calls</span>
                       )}
                     </div>
                     <div style={{ fontSize: 12.5, color: C.mid, fontFamily: "var(--font-mono), monospace" }}>{l.phone}</div>
                     {(l.tags?.length || 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
-                        {l.tags!.slice(0, 3).map(t => <span key={t} style={{ fontSize: 10, color: C.teal, background: C.teal + "12", borderRadius: 4, padding: "1px 5px" }}>{t}</span>)}
+                        {l.tags!.slice(0, 3).map(t => <span key={t} style={{ fontSize: 12, color: C.teal, background: C.teal + "12", borderRadius: 4, padding: "1px 5px" }}>{t}</span>)}
                       </div>
                     )}
                   </div>
@@ -873,7 +873,7 @@ export default function LeadsPage() {
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any }}>
                     {l.interest || (l.intent ? intentLabel(l.intent) : <span style={{ color: C.dim }}>—</span>)}
                   </div>
-                  {l.notes && <div style={{ fontSize: 11.5, color: C.dim, fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.notes}</div>}
+                  {l.notes && <div style={{ fontSize: 12, color: C.dim, fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.notes}</div>}
                 </div>
 
                 {/* stage — inline, saves on change */}
@@ -891,7 +891,7 @@ export default function LeadsPage() {
                 <div className="nk-lead-when" style={{ fontSize: 12, color: C.dim, whiteSpace: "nowrap" }}>
                   {timeAgo(l.last_contacted_at || l.created_at)}
                   {followUps && l.follow_up_at && !l.follow_up_done_at && (
-                    <div style={{ color: isOverdue(l) ? C.red : C.gold, fontSize: 11, fontWeight: 700, marginTop: 3 }}
+                    <div style={{ color: isOverdue(l) ? C.red : C.gold, fontSize: 12, fontWeight: 700, marginTop: 3 }}
                       title={l.follow_up_note || "Follow-up reminder"}>
                       {isOverdue(l) ? "Overdue · " : "Due "}{followUpLabel(l.follow_up_at)}
                     </div>

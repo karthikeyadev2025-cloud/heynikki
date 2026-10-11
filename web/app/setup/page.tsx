@@ -818,7 +818,7 @@ export default function SetupPage() {
         <Card className="nk-form" style={{ marginBottom: 20 }}>
           <SectionHead icon={<Settings size={16} />}
             right={<span style={{ background: C.glow + "14", color: C.glow, fontFamily: "var(--font-body), sans-serif",
-              fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, letterSpacing: 0 }}>Beta</span>}>
+              fontSize: 12, fontWeight: 600, padding: "2px 9px", borderRadius: 999, letterSpacing: 0 }}>Beta</span>}>
             How Nikki decides</SectionHead>
           <div style={{ color: C.mid, fontSize: 13.5, marginTop: -8, marginBottom: 14, lineHeight: 1.55 }}>
             Normally Nikki works from the words a caller uses. Switched to <em>Checks
@@ -981,7 +981,7 @@ function MissedCallGuardCard({ profileId, tenantId }: { profileId: string; tenan
         <div style={{ color: C2.txt, fontSize: 14, fontWeight: 600, marginBottom: 2 }}>{label}</div>
         <div style={{ color: C2.mid, fontSize: 12.5 }}>{desc}</div>
       </div>
-      <button type="button" onClick={() => onChange(!on)} style={{
+      <button type="button" onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} style={{
         width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
         background: on ? C2.glow : "#CBD5E1", position: "relative", flexShrink: 0,
         transition: "background 0.2s",

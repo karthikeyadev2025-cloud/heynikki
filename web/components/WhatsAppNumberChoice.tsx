@@ -72,7 +72,7 @@ export default function WhatsAppNumberChoice() {
         </div>
         {s && (
           <span style={{ background: st.color + "14", color: st.color, borderRadius: 999, padding: "3px 9px",
-            fontSize: 11.5, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}>
             <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: st.color }} />{st.label}</span>
         )}
       </div>

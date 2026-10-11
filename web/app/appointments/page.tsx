@@ -382,7 +382,7 @@ export default function AppointmentsPage() {
                       </span>
                       <span style={{
                         background: col + "14", color: col, display: "inline-flex", alignItems: "center", gap: 5,
-                        fontSize: 11.5, fontWeight: 600, padding: "3px 9px 3px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                        fontSize: 12, fontWeight: 600, padding: "3px 9px 3px 7px", borderRadius: 999, whiteSpace: "nowrap",
                       }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />{STATUS_LABELS[a.status] || a.status}</span>
                     </div>
                     <div style={{ fontSize: 13, color: C.mid, fontFamily: "var(--font-mono), monospace" }}>

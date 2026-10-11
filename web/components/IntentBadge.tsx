@@ -21,7 +21,7 @@ export default function IntentBadge({ intent, title }: {
   return (
     <span title={title} style={{
       background: col + "14", color: col,
-      borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600,
+      borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600,
       whiteSpace: "nowrap", display: "inline-block", lineHeight: 1.4,
     }}>
       {label}

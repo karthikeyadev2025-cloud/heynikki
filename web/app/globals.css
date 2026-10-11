@@ -207,7 +207,7 @@ h1, h2, h3, .font-display {
 .nk-leadrow:first-child { border-top: 0; }
 .nk-leadrow:hover { background: #F6F8FB; }
 .nk-leadrow input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: #12457A; cursor: pointer; }
-.nk-leadhead { cursor: default; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #94A3B8; padding: 10px 14px; background: #F6F8FB; }
+.nk-leadhead { cursor: default; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #64748B; padding: 10px 14px; background: #F6F8FB; }
 .nk-leadhead:hover { background: #F6F8FB; }
 @media (max-width: 900px) {
   .nk-leadhead { display: none; }
@@ -228,3 +228,34 @@ h1, h2, h3, .font-display {
   padding: 9px 12px; font-size: 14px; color: #0F172A;
 }
 .nk-form input:focus, .nk-form textarea:focus, .nk-form select:focus { border-color: #1D6FA5; outline: none; box-shadow: 0 0 0 3px rgba(29,111,165,0.15); }
+
+/* Confirm / ask dialog — one for the whole dashboard (components/Confirm.tsx). */
+.nk-confirm-scrim {
+  position: fixed; inset: 0; z-index: 10005; background: rgba(15,23,42,0.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.nk-confirm {
+  width: min(420px, 100%); background: #fff; border-radius: 14px; padding: 20px;
+  box-shadow: 0 24px 60px rgba(15,23,42,0.35); animation: nkToastIn 160ms ease;
+}
+.nk-confirm-title { color: #0F172A; font-size: 16px; font-weight: 700; line-height: 1.35; }
+.nk-confirm-body  { color: #475569; font-size: 14px; line-height: 1.5; margin-top: 8px; }
+.nk-confirm textarea {
+  width: 100%; box-sizing: border-box; margin-top: 12px; resize: vertical;
+  background: #F6F8FB; border: 1px solid #E2E8F0; border-radius: 8px;
+  padding: 9px 12px; font-size: 14px; color: #0F172A; font-family: inherit;
+}
+.nk-confirm textarea:focus { border-color: #1D6FA5; outline: none; box-shadow: 0 0 0 3px rgba(29,111,165,0.15); }
+.nk-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.nk-confirm-actions button {
+  min-height: 40px; padding: 0 16px; border-radius: 9px; font-size: 14px; font-weight: 600;
+  cursor: pointer; border: 1px solid transparent;
+}
+.nk-confirm-actions .ghost   { background: #fff; border-color: #E2E8F0; color: #334155; }
+.nk-confirm-actions .primary { background: #12457A; color: #fff; }
+.nk-confirm-actions .danger  { background: #DC2626; color: #fff; }
+.nk-confirm-actions button:focus-visible { outline: 3px solid rgba(29,111,165,0.4); outline-offset: 2px; }
+@media (max-width: 520px) {
+  .nk-confirm-actions { flex-direction: column-reverse; }
+  .nk-confirm-actions button { width: 100%; min-height: 44px; }
+}

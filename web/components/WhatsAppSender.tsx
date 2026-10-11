@@ -295,7 +295,7 @@ export default function WhatsAppSender() {
 function Tag({ label, color }: { label: string; color: string }) {
   return (
     <span style={{ background: color + "14", color, borderRadius: 999, padding: "3px 9px",
-      fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
+      fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
       <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />{label}</span>
   );
 }

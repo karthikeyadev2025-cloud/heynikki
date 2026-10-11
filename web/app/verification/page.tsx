@@ -112,7 +112,7 @@ export default function VerificationPage() {
     };
     const [c, icon] = map[s] || map.pending;
     return <span style={{ color: c, background: `${c}14`, borderRadius: 999, padding: "3px 9px",
-                          fontSize: 11.5, fontWeight: 600,
+                          fontSize: 12, fontWeight: 600,
                           display: "inline-flex", gap: 4, alignItems: "center" }}>{icon}{s === "pending" ? "In review" : s.charAt(0).toUpperCase() + s.slice(1)}</span>;
   };
 

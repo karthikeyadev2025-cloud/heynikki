@@ -35,7 +35,7 @@ function Card({ children, title, style }: { children: React.ReactNode; title?: R
 function Pill({ label, color }: { label: string; color: string }) {
   return (
     <span style={{ background: color + "14", color, borderRadius: 999, padding: "3px 9px",
-      fontSize: 11.5, fontWeight: 600, textTransform: "capitalize" as const, whiteSpace: "nowrap",
+      fontSize: 12, fontWeight: 600, textTransform: "capitalize" as const, whiteSpace: "nowrap",
       display: "inline-flex", alignItems: "center", gap: 5 }}>
       <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
       {label}
@@ -508,15 +508,15 @@ export default function WhatsAppPage() {
                 <a href={`/leads?phone=${t.number}`} style={{ color: C.txt, fontWeight: 700, fontSize: 14, fontFamily: "var(--font-mono), monospace", textDecoration: "none" }}>
                   {t.number}
                 </a>
-                <div style={{ color: C.dim, fontSize: 11.5 }}>
+                <div style={{ color: C.dim, fontSize: 12 }}>
                   {t.msgs.length} message{t.msgs.length === 1 ? "" : "s"} · last {timeAgo(t.last)}
                 </div>
               </div>
-              <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+              <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
                 background: t.canReply ? C.grn + "14" : "#F1F4F8", color: t.canReply ? C.grn : C.mid }}>
                 {t.canReply ? `Open · ${Math.max(1, Math.round(24 - t.hours))}h left` : "Window closed"}
               </span>
-              {t.unread > 0 && <span style={{ background: C.grn, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 11.5, fontWeight: 600 }}>{t.unread} new</span>}
+              {t.unread > 0 && <span style={{ background: C.grn, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 600 }}>{t.unread} new</span>}
             </div>
 
             {/* the conversation */}
@@ -537,7 +537,7 @@ export default function WhatsAppPage() {
                     color: C.txt, border: `1px solid ${m.dir === "in" ? "#E4E9F0" : "#C5E8AE"}`,
                     whiteSpace: "pre-wrap", wordBreak: "break-word",
                   }}>{m.body}</div>
-                  <div style={{ color: C.dim, fontSize: 10.5, marginTop: 2, textAlign: m.dir === "in" ? "left" : "right" }}>
+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 2, textAlign: m.dir === "in" ? "left" : "right" }}>
                     {m.dir === "out" ? (m.label ? m.label + " · " : "you · ") : ""}
                     {new Date(m.at).toLocaleString("en-IN", {
                       day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
@@ -676,7 +676,7 @@ export default function WhatsAppPage() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#F8FAFC" }}>{["Time", "To", "Type", "Message", "Status", ""].map(h => (
-                    <th key={h} style={{ color: C.mid, fontSize: 11.5, fontWeight: 600,
+                    <th key={h} style={{ color: C.mid, fontSize: 12, fontWeight: 600,
                       padding: "10px 14px", textAlign: "left", whiteSpace: "nowrap",
                       borderBottom: "1px solid #E4E9F0" }}>{h}</th>
                   ))}</tr>

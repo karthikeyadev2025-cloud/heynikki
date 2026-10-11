@@ -323,7 +323,7 @@ export default function LeadDetail({
   }), [items]);
 
   const label: React.CSSProperties = {
-    display: "block", fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+    display: "block", fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
     color: C.mid, marginBottom: 6, textTransform: "uppercase",
   };
   const field: React.CSSProperties = {
@@ -366,7 +366,7 @@ export default function LeadDetail({
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
                 <span style={{ color: C.mid, fontSize: 13, fontFamily: "var(--font-mono), monospace" }}>{phone}</span>
                 <span style={{ background: scoreColor(lead.score) + "1A", color: scoreColor(lead.score), border: `1px solid ${scoreColor(lead.score)}44`,
-                  borderRadius: 20, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}>score {lead.score}</span>
+                  borderRadius: 20, padding: "1px 8px", fontSize: 12, fontWeight: 800 }}>score {lead.score}</span>
                 {lead.call_count > 0 && <span style={{ color: C.dim, fontSize: 12 }}>{lead.call_count} call{lead.call_count === 1 ? "" : "s"}</span>}
                 {lead.assigned_to && <span style={{ color: C.dim, fontSize: 12 }}>· {seatName(lead.assigned_to)}</span>}
               </div>
@@ -454,7 +454,7 @@ export default function LeadDetail({
               color: tab === id ? C.teal : C.mid, padding: "10px 12px", fontSize: 13, fontWeight: 700, marginBottom: -1,
             }}>{l}</button>
           ))}
-          <div style={{ marginLeft: "auto", alignSelf: "center", color: C.dim, fontSize: 11 }}>
+          <div style={{ marginLeft: "auto", alignSelf: "center", color: C.dim, fontSize: 12 }}>
             {counts.calls} call{counts.calls === 1 ? "" : "s"} · {counts.wa} message{counts.wa === 1 ? "" : "s"}
             {counts.appts ? ` · ${counts.appts} booking${counts.appts === 1 ? "" : "s"}` : ""}
           </div>
@@ -499,7 +499,7 @@ export default function LeadDetail({
                           <div style={{ minWidth: 0 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                               <span style={{ fontSize: 13, fontWeight: 700, color: C.txt }}>{it.title}</span>
-                              <span style={{ fontSize: 11, color: C.dim, whiteSpace: "nowrap" }}>{when(it.at)}</span>
+                              <span style={{ fontSize: 12, color: C.dim, whiteSpace: "nowrap" }}>{when(it.at)}</span>
                             </div>
                             {it.body && (
                               <div style={{
@@ -509,7 +509,7 @@ export default function LeadDetail({
                               }}>{it.body}</div>
                             )}
                             {(it.meta || it.href) && (
-                              <div style={{ fontSize: 11, color: C.dim, marginTop: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <div style={{ fontSize: 12, color: C.dim, marginTop: 4, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 {it.meta && <span>{it.meta}</span>}
                                 {it.href && <a href={it.href} style={{ color: C.teal, fontWeight: 700 }}>
                                   {it.kind === "call" ? "Open call →" : "Open →"}

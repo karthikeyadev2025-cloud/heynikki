@@ -25,7 +25,7 @@ export const NIKKI = {
   // Text
   text:       "#0F172A",  // Primary text (near-black)
   textMid:    "#475569",  // Secondary text
-  textDim:    "#94A3B8",  // Tertiary / placeholder text
+  textDim:    "#64748B",  // Tertiary text. Was #94A3B8: 2.6:1 on white, unreadable at 12px
 
   // Semantic
   red:        "#EF4444",  // Errors / destructive

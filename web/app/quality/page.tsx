@@ -124,7 +124,7 @@ export default function QualityPage() {
                 background: "#F1F4F8", color: C.txt, borderRadius: 999, padding: "4px 6px 4px 11px", fontSize: 12.5,
                 display: "inline-flex", alignItems: "center", gap: 7,
               }}>{t}<span style={{ background: (color || C.cyn) + "1A", color: color || C.cyn, borderRadius: 999,
-                padding: "0 7px", fontWeight: 700, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>{c}</span></span>
+                padding: "0 7px", fontWeight: 700, fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{c}</span></span>
             ))}
           </div>}
     </div>
@@ -195,7 +195,7 @@ export default function QualityPage() {
                     }}>
                       <div style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 24, fontWeight: 700, lineHeight: 1.1, color: scoreColor(r.overall_score),
                         fontVariantNumeric: "tabular-nums" }}>{r.overall_score}</div>
-                      <div style={{ fontSize: 11, color: C.mid }}>of 100</div>
+                      <div style={{ fontSize: 12, color: C.mid }}>of 100</div>
                     </div>
 
                     <div style={{ flex: "1 1 300px", minWidth: 0 }}>
@@ -210,12 +210,12 @@ export default function QualityPage() {
                         </span>
                         {r.sentiment === "negative" && (
                           <span style={{ background: C.red + "14", color: C.red, display: "inline-flex", alignItems: "center", gap: 5,
-                                         borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600 }}>
+                                         borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600 }}>
                             <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: C.red }} />Unhappy caller</span>
                         )}
                         {!r.next_step_captured && (
                           <span style={{ background: C.gold + "14", color: C.gold, display: "inline-flex", alignItems: "center", gap: 5,
-                                         borderRadius: 999, padding: "3px 9px", fontSize: 11.5, fontWeight: 600 }}>
+                                         borderRadius: 999, padding: "3px 9px", fontSize: 12, fontWeight: 600 }}>
                             <span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: C.gold }} />No next step</span>
                         )}
                       </div>

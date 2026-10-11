@@ -306,14 +306,14 @@ export default function OrdersPage() {
                   }}>{o.reference}</span>
                   <span style={{
                     background: col + "14", color: col,
-                    fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                    fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
                     display: "inline-flex", alignItems: "center", gap: 5,
                   }}><span aria-hidden style={{ width: 6, height: 6, borderRadius: "50%", background: col }} />
                     {STATUS_LABELS[o.status] || o.status}</span>
                   {o.wa_confirmed && (
                     <span title="Confirmation sent to the customer on WhatsApp" style={{
                       background: C.grn + "14", color: C.grn,
-                      fontSize: 11.5, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                      fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
                       display: "inline-flex", alignItems: "center", gap: 4,
                     }}><MessageCircle size={12} /> WhatsApp sent</span>
                   )}
