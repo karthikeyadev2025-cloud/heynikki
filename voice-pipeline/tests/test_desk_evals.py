@@ -114,7 +114,12 @@ OVERDUE = ("You are calling from Sri Lakshmi Finance about an instalment that is
     "రవి మా నాన్న. loan గురించా? ఎంత కట్టాలి చెప్పండి",
 ])
 def test_collections_call_tells_family_nothing(line):
+    # What the caller HEARS: the model's reply after the guard a real call
+    # runs it through. The model alone slipped about one time in nine.
+    who = main._collections_identity("unknown", line, "")
+    assert who == "other"
     for r in _ask(*_outbound(LENDER, OVERDUE, BORROWER, [line])):
+        r = main._collections_guard(r, who, BORROWER["name"], "te-IN")[0]
         assert not AMOUNT.search(r), f"amount told to someone else: {r}"
         assert not LOAN_WORDS.search(r), f"loan mentioned to someone else: {r}"
 

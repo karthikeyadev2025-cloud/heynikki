@@ -1,3 +1,4 @@
+import re
 """End-to-end call-flow checks that need no phone.
 
 WHY THIS EXISTS
@@ -1251,3 +1252,70 @@ def test_asked_what_she_is_no_automated_system():
     p = main.build_system_prompt({"profile_sku": "standard", "business_name": "X"})
     assert "AI అసిస్టెంట్‌నండి" in p
     assert "మేము automated system ద్వారా" not in p
+
+
+# ── collections: the guard that does not depend on the model ──────────────
+ASKED = "నేను Ravi గారితోనే మాట్లాడుతున్నానా అండి?"
+
+
+def test_collections_identity_family_is_never_the_borrower():
+    for said in ("నేను రవి గారి భార్యని. ఎంత కట్టాలో చెప్పండి నేను కడతాను",
+                 "ఆయన లేరు, నేను వాళ్ళ అబ్బాయిని. నేనే pay చేస్తా",
+                 "రవి మా నాన్న. loan గురించా?", "he is not here, I'm his wife",
+                 "वो घर पर नहीं हैं, मैं उनकी पत्नी हूँ"):
+        assert main._collections_identity("unknown", said, ASKED) == "other", said
+
+
+def test_collections_identity_borrower():
+    assert main._collections_identity("unknown", "అవును నేనే రవి", "") == "self"
+    assert main._collections_identity("unknown", "yes, speaking", "") == "self"
+    # a bare yes counts only as the answer to "am I speaking with…?"
+    assert main._collections_identity("unknown", "అవునండి", ASKED) == "self"
+    assert main._collections_identity("unknown", "అవును", "ఒక నిమిషం మాట్లాడవచ్చా?") == "unknown"
+    # the ways the model actually asks it
+    for q in ("రవి గారితోనేనా మాట్లాడుతున్నది?", "మీరు రవి గారేనా అండి?", "Am I speaking with Ravi?",
+              "क्या मैं रवि जी से बात कर रही हूँ?"):
+        assert main._collections_identity("unknown", "అవునండి", q) == "self", q
+    # "who is speaking?" is not "speaking"
+    assert main._collections_identity("unknown", "ఎవరు మాట్లాడుతున్నారు?", "") == "unknown"
+    # the phone is handed over: only an explicit "it is me" unlocks
+    assert main._collections_identity("other", "అవును", ASKED) == "other"
+    assert main._collections_identity("other", "హలో, నేనే రవి చెప్పండి", "") == "self"
+    # the borrower stays the borrower
+    assert main._collections_identity("self", "మా నాన్న hospital లో ఉన్నారు", "") == "self"
+
+
+def test_collections_guard_blocks_loan_talk_until_borrower():
+    leak = "అవునండి, లోన్ గురించే. పన్నెండు వేల ఐదు వందలు పెండింగ్ ఉంది."
+    out, held = main._collections_guard(leak, "unknown", "Ravi", "te-IN")
+    assert held and out == ASKED
+    out, held = main._collections_guard(leak, "other", "Ravi", "te-IN")
+    assert held and "Ravi గారితోనే" in out and not main._COLL_PRIVATE_RE.search(out)
+    # said once already: she closes instead of repeating it
+    out2, _ = main._collections_guard(leak, "other", "Ravi", "te-IN", prev_bot=out)
+    assert "మళ్ళీ కాల్ చేస్తాను" in out2
+    # the borrower hears his own figures
+    assert main._collections_guard(leak, "self", "Ravi", "te-IN") == (leak, False)
+    # a harmless line is left alone
+    ok = "సరేనండి, వారికి ఎప్పుడు కాల్ చేస్తే బాగుంటుంది?"
+    assert main._collections_guard(ok, "other", "Ravi", "te-IN") == (ok, False)
+    # other languages get their own line, never Telugu
+    en, held = main._collections_guard("It is about his loan of 12500 rupees.", "other", "Ravi", "en-IN")
+    assert held and "Ravi" in en and not re.search(r"[\u0C00-\u0C7F]", en)
+    assert not main._COLL_PRIVATE_RE.search(en)
+
+
+def test_collections_fixed_lines_never_leak():
+    for lang in ("te-IN", "hi-IN", "bn-IN", "en-IN"):
+        for state in ("unknown", "other"):
+            for name in ("Ravi", ""):
+                out, _ = main._collections_guard("loan 12500", state, name, lang)
+                assert not main._COLL_PRIVATE_RE.search(out), (lang, state, out)
+
+
+def test_collections_guard_lets_her_say_who_is_calling():
+    intro = "నేను శ్రీ లక్ష్మి ఫైనాన్స్ నుండి నిక్కిని మాట్లాడుతున్నాను అండి. రవి గారితో మాట్లాడవచ్చా?"
+    assert main._collections_guard(intro, "unknown", "Ravi", "te-IN") == (intro, False)
+    en = "This is Nikki from Quick Loans. May I speak with Ravi?"
+    assert main._collections_guard(en, "unknown", "Ravi", "en-IN", business="Quick Loans") == (en, False)
+    assert main._collections_guard(en, "unknown", "Ravi", "en-IN")[1], "without the name it is a leak"

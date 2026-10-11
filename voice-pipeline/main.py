@@ -661,8 +661,9 @@ TELUGU_PHONE_PERSONA = (
     # whole call sounded like a leaflet being read down a phone.
     "\n\n[A CONVERSATION, NOT A BROCHURE]"
     "\n- Two things in a reply, never three — services, prices, anything."
-    " Asked what the business does, or \'ఇంకా?\': do not recite the services."
-    " Name two in plain words, then ask about THEM — \'మీది ఏ బిజినెస్ అండి?\'."
+    " \'మీరేంటి\', \'ఏం చేస్తారు\', \'ఇంకా?\' ask about the BUSINESS, not about"
+    " you: do not recite the services. Name two in plain words and END that"
+    " reply with a question about THEM, every time — \'మీది ఏ బిజినెస్ అండి?\'."
     " A second \'ఇంకా?\' means the list is not helping: stop listing and ask"
     " what they need it for."
     "\n- Once you know their situation, recommend ONE thing and say in a few"
@@ -1080,6 +1081,95 @@ def _person_facts_block(person: dict | None) -> str:
               "they have answered.\n"
               "Say the amount in words, as money is spoken. These are the only figures you "
               "may state; never work out interest, a penalty or a total from them.\n")
+
+
+# ── Collections: a guarantee, not a tendency ──────────────────────────────
+# The prompt tells her to say nothing about a loan to anyone but the
+# borrower, twice, once beside the figures. Asked "రవి మా నాన్న, loan గురించా?"
+# she still answered "yes, about the loan" about one time in nine. Telling a
+# man's family he is behind on a loan is the one mistake a lender cannot
+# take back, so it is not left to the model: until the person on the line
+# has said they are the borrower, a reply that mentions a loan, a payment or
+# any money is not spoken. A fixed line is spoken instead.
+_COLL_OTHER_RE = re.compile(
+    r"భార్య|భర్త|అబ్బాయి|అమ్మాయి|కొడుకు|కూతురు|నాన్న|అమ్మ|అన్న(?:య్య)?ని|తమ్ముడ|చెల్లె|అక్క|"
+    r"ఫ్రెండ్|పక్కింటి|ఆయన\s*లేరు|ఆమె\s*లేరు|వారు\s*లేరు|ఇంట్లో\s*లేరు|లేరండి|బయటికి\s*వెళ్ళ|"
+    r"రాంగ్\s*నంబర్|"
+    r"\b(?:wife|husband|son|daughter|father|mother|dad|mom|brother|sister|friend|colleague|"
+    r"neighbou?r|not\s+(?:here|available|at\s+home|him|her|me)|wrong\s+number)\b|"
+    r"पत्नी|बीवी|पति|बेटा|बेटी|पिता|पापा|माँ|मां|भाई|बहन|दोस्त|नहीं\s*हैं|घर\s*पर\s*नहीं|गलत\s*नंबर|"
+    r"স্ত্রী|বউ|স্বামী|ছেলে|মেয়ে|বাবা|মা\b|ভাই|বোন|বন্ধু|নেই|ভুল\s*নম্বর", re.I)
+_COLL_SELF_RE = re.compile(
+    r"నేనే|నేను\s+\S+\s+మాట్లాడుతున్నా(?!ర)|అవును.{0,14}మాట్లాడుతున్నా(?!ర)|"
+    r"\b(?:speaking|this\s+is|i\s+am|i'm|it'?s\s+me|that'?s\s+me)\b|"
+    r"मैं\s*ही|बोल\s*रह[ाी]\s*हू|मैं\s+\S+\s+हू[ँं]|আমিই|আমি\s+\S+\s+বলছি", re.I)
+_COLL_YES_RE = re.compile(
+    r"^[\s,.!]*(అవును|అవునండి|ఔను|హా|ఆ|yes|yeah|yep|haan|ha|हाँ|हां|जी|हाँ\s*जी|জি|হ্যাঁ)"
+    r"(\s*(అండి|చెప్పండి|sir|madam|జీ|बोलिए|बताइए|বলুন))?[\s,.!]*$", re.I)
+_COLL_ASKED_RE = re.compile(
+    r"మాట్లాడుతున్న|గారేనా|తోనేనా|మీరేనా|గారా[\s?,]|speaking\s+(?:with|to)|is\s+this|are\s+you|"
+    r"बात\s*कर\s*रह|आप\s*ही|बोल\s*रहे|জী\s*हैं|বলছেন|কথা\s*বলছি", re.I)
+_COLL_PRIVATE_RE = re.compile(
+    r"loan|లోన్|ఋణ|రుణ|instal|ఇన్‌?స్టాల్|వాయిదా|EMI|ఈ\s*ఎం\s*ఐ|బాకీ|బకాయి|\bdues?\b|overdue|"
+    r"pending|పెండింగ్|అప్పు|payment|పేమెంట్|\bpay\b|కట్టా|కట్టడ|చెల్లిం|"
+    r"लोन|क़िस्त|किस्त|कर्ज|बकाया|भुगतान|ঋণ|কিস্তি|বকেয়া|লোন|"
+    r"\d{3,}|వేల|వేయి|వెయ్యి|వందల|లక్ష(?!్మ)|రూపాయ|rupees?|thousand|lakh|हज़ार|हजार|लाख|रुपय|रुपए|টাকা|হাজার",
+    re.I)
+
+
+def _collections_identity(state: str, user_text: str, prev_bot: str) -> str:
+    """Who is on the line: 'unknown', 'self' (the borrower) or 'other'.
+
+    Someone who names a relation, or says the borrower is out, is 'other'
+    even if the same breath has నేనే in it ("నేనే pay చేస్తా"). 'self' is
+    sticky: a borrower who later mentions his father is still the borrower.
+    A phone handed over mid-call moves 'other' to 'self' only on an explicit
+    "నేనే" / "speaking", never on a bare yes.
+    """
+    t = user_text or ""
+    if state == "self":
+        return state
+    if _COLL_OTHER_RE.search(t):
+        return "other"
+    if _COLL_SELF_RE.search(t):
+        return "self"
+    if state == "unknown" and _COLL_YES_RE.match(t) and _COLL_ASKED_RE.search(prev_bot or ""):
+        return "self"
+    return state
+
+
+def _collections_guard(response: str, state: str, name: str, lang: str,
+                       prev_bot: str = "", business: str = "") -> tuple[str, bool]:
+    """Replace a reply that would tell a non-borrower about the loan."""
+    # Her own introduction is not a leak: "Quick Loans నుంచి మాట్లాడుతున్నాను"
+    # has the word in the lender's name, which the opener has already said.
+    said = response or ""
+    if business:
+        said = re.sub(re.escape(business), " ", said, flags=re.I)
+    if state == "self" or not _COLL_PRIVATE_RE.search(said):
+        return response, False
+    n = _spoken_name(name)
+    ask = _say(lang,
+               f"నేను {n} గారితోనే మాట్లాడుతున్నానా అండి?" if n else "ఈ నంబర్ వాడే వారితోనే మాట్లాడుతున్నానా అండి?",
+               hi=f"क्या मैं {n} जी से ही बात कर रही हूँ?" if n else "क्या मैं इस नंबर के मालिक से ही बात कर रही हूँ?",
+               bn=f"আমি কি {n}-র সঙ্গেই কথা বলছি?" if n else "আমি কি এই নম্বরের মালিকের সঙ্গেই কথা বলছি?",
+               en=f"Am I speaking with {n}?" if n else "Am I speaking with the person this number belongs to?")
+    later = _say(lang,
+                 (f"ఇది {n} గారితోనే మాట్లాడాల్సిన విషయమండి. " if n else "ఇది వారితోనే మాట్లాడాల్సిన విషయమండి. ")
+                 + "వారికి ఎప్పుడు కాల్ చేస్తే బాగుంటుందో చెప్తారా?",
+                 hi=(f"यह बात {n} जी से ही करनी है। " if n else "यह बात उन्हीं से करनी है। ") + "उन्हें कब कॉल करना ठीक रहेगा?",
+                 bn=(f"এটা {n}-র সঙ্গেই বলার কথা। " if n else "এটা ওঁর সঙ্গেই বলার কথা। ") + "ওঁকে কখন ফোন করলে ভালো হয়?",
+                 en=(f"This is something I need to speak to {n} about directly. " if n
+                     else "This is something I need to speak to them about directly. ")
+                    + "When would be a good time to call?")
+    bye = _say(lang, "సరేనండి, నేను మళ్ళీ కాల్ చేస్తాను. థాంక్యూ అండి.",
+               hi="ठीक है, मैं फिर से कॉल करूँगी। धन्यवाद।",
+               bn="ঠিক আছে, আমি আবার ফোন করব। ধন্যবাদ।",
+               en="All right, I will call again. Thank you.")
+    prev = (prev_bot or "").strip()
+    if state == "unknown" and prev != ask:
+        return ask, True
+    return (bye if prev == later else later), True
 
 
 def _now_ist() -> datetime:
@@ -3351,6 +3441,11 @@ class NikkiAgent:
         self.booking_ref: str = ""
         # What this business already knows about the caller (get_caller_memory).
         self.caller_memory: dict = {}
+        # A collections campaign call: nothing about the loan is spoken until
+        # the borrower has said it is them (_collections_guard).
+        self.collections_private = False
+        self.collections_identity = "unknown"
+        self.collections_name = ""
         # Tool mode: which tools ran this call, and whether one of them asked
         # to hang up. The request is gated exactly like the END_CALL sentinel.
         self.tools_used: list = []
@@ -3817,6 +3912,12 @@ class NikkiAgent:
                 log.info(f"LLM (transfer): {msg}")
                 return msg if want_text else await self.tts.synthesize(msg, self.voice)
 
+            if self.collections_private:
+                _was = self.collections_identity
+                self.collections_identity = _collections_identity(_was, user_text, _prev_bot)
+                if self.collections_identity != _was:
+                    log.info(f"collections: on the line -> {self.collections_identity}")
+
             # The streamed opening clause is spoken before the reply is
             # finished, so it has to pass the same guards the reply does —
             # see _first_clause_hold_reason. A held clause is simply not
@@ -3828,6 +3929,8 @@ class NikkiAgent:
                 def first_clause_cb(prefix: str) -> None:  # noqa: F811
                     why = _first_clause_hold_reason(prefix, user_text, _prev_bot,
                                                     self.lang, _known)
+                    if not why and self.collections_private and self.collections_identity != "self":
+                        why = "collections"
                     if why:
                         log.info(f"[b2] first clause held ({why}) — speaking the full reply instead")
                         return
@@ -3933,6 +4036,15 @@ class NikkiAgent:
             if _reg_hits:
                 log.warning("register filter rewrote %d banned phrase(s): %s",
                             len(_reg_hits), _reg_hits)
+
+            if self.collections_private:
+                response, _held = _collections_guard(
+                    response, self.collections_identity, self.collections_name,
+                    self.lang, _prev_bot,
+                    str((self.profile or {}).get("business_name") or ""))
+                if _held:
+                    log.warning("collections guard: a reply about the loan was not "
+                                "spoken — the borrower has not confirmed it is them")
 
             response, _stripped = _strip_false_agreement(response)
             if _stripped:
@@ -9154,6 +9266,9 @@ async def freeswitch_ws(
                 # still free to book an appointment.
                 agent.system_prompt += _person_facts_block(person)
                 agent.system_prompt += _outbound_rules_block(profile)
+                if (profile or {}).get("profile_sku") == "loan_recovery":
+                    agent.collections_private = True
+                    agent.collections_name = str(person.get("name") or "")
                 agent.system_prompt += _business_context_block(profile, knowledge)
                 if agent.use_tools:
                     agent.system_prompt += _TOOLS_PROMPT
