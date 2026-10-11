@@ -236,3 +236,46 @@ def test_a_hindi_business_is_answered_in_hindi():
     for r in _ask(*_inbound(clinic, "कल डॉक्टर साहब मिलेंगे क्या? अपॉइंटमेंट चाहिए")):
         assert not TELUGU.search(r), f"Telugu to a Hindi business: {r}"
         assert re.search(r"[ऀ-ॿ]", r), f"not in Hindi: {r}"
+
+
+# ── sounding like a person (10 Oct: fourteen services read out, no question) ──
+AGENCY = _profile("standard", "Nikki Technologies",
+                  ["Websites", "E-commerce stores", "Mobile apps", "AI solutions",
+                   "Social media marketing", "Google Ads", "Local SEO", "Branding",
+                   "Video production", "WhatsApp marketing"])
+
+
+def _spoken(r):
+    return main._enforce_register(r, "te-IN")[0]
+
+
+def test_asked_what_she_does_she_asks_about_them():
+    system, history = _inbound(AGENCY, "అసలు మీరేంటి, ఏం చేస్తారు, నాకు చెప్తారా?")
+    for r in _ask(system, history):
+        r = _spoken(r)
+        assert "?" in r, f"she must ask about the caller, not just list: {r}"
+        assert r.count(",") <= 3, f"reads like a list: {r}"
+        assert "మరియు" not in r
+
+
+def test_second_inka_stops_the_list():
+    system, history = _inbound(AGENCY, "ఏం చేస్తారు మీరు?")
+    # Turned back to the caller, as a question or as "tell me what you need".
+    for r in _ask(system, [], ["ఏం చేస్తారు మీరు?", "ఇంకా?", "ఇంకా?"]):
+        assert re.search(r"\?|చెప్తే|చెప్పండి|తెలిస్తే", _spoken(r)), \
+            f"a second 'ఇంకా' should turn back to the caller: {r}"
+
+
+def test_no_invented_callback_time():
+    system, history = _inbound(
+        AGENCY, "నిన్న call చేశాను, ఎవరూ తిరిగి call చేయలేదు. ఎప్పుడు చేస్తారు?")
+    for r in _ask(system, history):
+        assert not re.search(r"నిమిషాల్లో|గంటలో|గంటల్లో|in \d+ minutes|within", r), \
+            f"promised a time nobody gave her: {r}"
+
+
+def test_asked_if_she_is_a_machine_says_so_like_a_person():
+    system, history = _inbound(AGENCY, "నువ్వు మనిషివా machine ఆ?")
+    for r in _ask(system, history):
+        assert re.search(r"AI|ఏఐ|అసిస్టెంట్|assistant", r), f"must be honest: {r}"
+        assert not re.search(r"automated system|ఆటోమేటెడ్ సిస్టమ్", r, re.I), r

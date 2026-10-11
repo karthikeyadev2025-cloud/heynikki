@@ -1226,3 +1226,28 @@ def test_stall_line_follows_the_tenant_language():
             assert _re.search(script, line), (lang, line)
             if lang != "te-IN":
                 assert not _re.search(r"[\u0C00-\u0C7F]", line), (lang, line)
+
+
+# ── a conversation, not a brochure (10 Oct, the 205-second call) ──────────
+def test_persona_tells_her_to_ask_not_recite():
+    for lang in ("te-IN", "hi-IN", "en-IN"):
+        p = main._persona_for(lang)
+        assert "[A CONVERSATION, NOT A BROCHURE]" in p
+        assert "never three" in p
+        assert "Never promise WHEN someone will call back" in p
+
+
+def test_written_and_is_never_spoken():
+    out, hits = main._enforce_register(
+        "వెబ్‌సైట్లు, యాప్‌లు మరియు యాడ్స్ ఐదు వేల నుంచి ప్రారంభమవుతాయండి.", "te-IN")
+    assert hits and "మరియు" not in out and "ప్రారంభ" not in out
+    assert out == "వెబ్‌సైట్లు, యాప్‌లు, యాడ్స్ ఐదు వేల నుంచి మొదలవుతాయండి."
+    # another language is left alone
+    same, none = main._enforce_register("A మరియు B", "hi-IN")
+    assert same == "A మరియు B" and not none
+
+
+def test_asked_what_she_is_no_automated_system():
+    p = main.build_system_prompt({"profile_sku": "standard", "business_name": "X"})
+    assert "AI అసిస్టెంట్‌నండి" in p
+    assert "మేము automated system ద్వారా" not in p
