@@ -63,6 +63,17 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   const [me, setMe]             = useState<{ role: string; name: string; email: string } | null>(null);
   const [pathname, setPathname] = useState("/dashboard");
   const [sideOpen, setSideOpen] = useState(false);
+  // Where this screen sits in the menu, for the top bar and the browser tab.
+  const here = (() => {
+    for (const g of NAV_GROUPS) for (const i of g.items) {
+      if (pathname === i.href || pathname.startsWith(i.href + "/")) return { group: g.title, label: i.label };
+    }
+    return null;
+  })();
+  useEffect(() => {
+    const name = here?.label || title;
+    if (name) document.title = `${name} · HeyNikki`;
+  }, [here?.label, title]);
 
   // Redeem a team invite as soon as there is a session to redeem it with.
 
@@ -265,7 +276,12 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
               style={{ background: "#fff", border: "1px solid #E4E9F0", borderRadius: 8, color: C.txt, padding: 6, alignItems: "center" }}>
               <Menu size={18} />
             </button>
-            <h1 className="nk-title">{title || "Dashboard"}</h1>
+            {/* A trail, not a second heading: the page below carries the <h1>.
+                Read from the menu, so the bar can never name a screen
+                differently from the link that opened it. */}
+            <div className="nk-title">
+              {here ? <><span className="nk-crumb">{here.group}</span><span className="nk-crumb-sep">›</span>{here.label}</> : (title || "Dashboard")}
+            </div>
           </div>
           <LineStatus />
         </div>

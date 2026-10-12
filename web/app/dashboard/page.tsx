@@ -2,6 +2,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import Shell from "../../components/Shell";
+import PageHeader from "../../components/PageHeader";
 import OwnerAlerts from "../../components/OwnerAlerts";
 // One badge for both intent vocabularies: this page shows a LEAD's intent
 // (book_appointment, pricing_enquiry) beside a CALL's (appointment, enquiry),
@@ -271,6 +272,7 @@ export default function DashboardPage() {
           must not wait on the reception log's queries to say so. Renders
           nothing at all when nothing is wrong. */}
       <OwnerAlerts />
+      <PageHeader title="Reception" sub="Today on your number: the calls Nikki took, what each caller wanted, and what she booked." />
       {loading ? (
         <div style={{ textAlign: "center", padding: 60, color: C.mid }}>
           <div style={{ fontSize: 24, animation: "spin 1s linear infinite", display: "inline-block" }}>◌</div>

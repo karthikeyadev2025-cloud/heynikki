@@ -133,8 +133,8 @@ export default function MyDayPage() {
 
   return (
     <Shell title="My Dashboard">
-      <h1 style={{ margin: 0, color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>
-        {m?.name ? `${m.name}'s dashboard` : "My dashboard"}
+      <h1 style={{ margin: 0, color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em" }}>
+        {m?.name ? `${m.name}'s Dashboard` : "My Dashboard"}
       </h1>
       <p style={{ margin: "4px 0 14px", color: C.mid, fontSize: 14 }}>Your own calls: today, this week against last, and the last fourteen days.</p>
 

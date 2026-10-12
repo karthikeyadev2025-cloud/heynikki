@@ -20,6 +20,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { askDialog } from "../../components/Confirm";
 import { toast } from "../../components/Toast";
 import Shell from "../../components/Shell";
+import PageHeader from "../../components/PageHeader";
 import DeskPhone, { usePhone, type Phone } from "../../components/DeskPhone";
 import CallWorkspace from "../../components/CallWorkspace";
 import { softphone } from "../../lib/softphone";
@@ -235,7 +236,8 @@ export default function DeskPage() {
   return (
     <Shell title="Human Desk">
       <div style={{ maxWidth: 1100 }}>
-        <p style={{ color: C.mid, fontSize: 13.5, margin: "0 0 18px", maxWidth: 680, lineHeight: 1.6 }}>
+        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Human Desk</h1>
+        <p style={{ color: C.mid, fontSize: 14, margin: "0 0 18px", maxWidth: 680, lineHeight: 1.6 }}>
           Your team on the same number as Nikki. Dial out from here — your phone rings first, then the
           customer, who sees {(() => {
             if (d?.you?.outbound_did) {

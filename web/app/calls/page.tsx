@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { confirmDialog } from "../../components/Confirm";
 import Shell from "../../components/Shell";
+import PageHeader from "../../components/PageHeader";
 import { createClient } from "../../lib/supabase";
 import type { CallRecord } from "../../lib/supabase";
 import { Check, X, Bot, User, Phone, Search } from "lucide-react";
@@ -536,6 +537,8 @@ export default function CallsPage() {
               ? { ...prev, r2_object_key: null, recording_url: null } : prev));
           }} />
       )}
+
+      <PageHeader title="All Calls" sub="Every call on your numbers, with its recording and what was said. Search by words or by phone number." />
 
       {/* Search + filters */}
       <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>

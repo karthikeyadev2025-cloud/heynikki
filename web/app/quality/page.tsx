@@ -133,7 +133,7 @@ export default function QualityPage() {
   return (
     <Shell title="Call Quality">
       <div>
-        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Call quality</h1>
+        <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Call Quality</h1>
         <p style={{ color: C.mid, fontSize: 14, margin: "0 0 20px" }}>
           Every call with a real conversation is scored from its transcript — not a sample.
         </p>

@@ -122,8 +122,8 @@ export default function TodayPage() {
     <Shell title="Today">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <div>
-          <h1 style={{ margin: 0, color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>
-            Today&apos;s board
+          <h1 style={{ margin: 0, color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em" }}>
+            Today&apos;s Board
           </h1>
           <p style={{ margin: "4px 0 0", color: C.mid, fontSize: 14 }}>
             {dateLine}{dateLine ? " · " : ""}everyone who needs something today, most urgent first.
