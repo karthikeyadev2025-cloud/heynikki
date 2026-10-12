@@ -7,7 +7,7 @@ import { forgetDevice } from "../lib/native";
 import type { Tenant } from "../lib/supabase";
 import {
   Radio, Phone, Users, Calendar, Megaphone, BarChart3,
-  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X, LogOut } from "lucide-react";
+  MessageCircle, Brain, Settings, CreditCard, ShieldCheck, Gauge, Headset, KeyRound, ShoppingBag, Menu, X, LogOut, ListTodo, Trophy } from "lucide-react";
 import OwnerVoiceAssistant from "./OwnerVoiceAssistant";
 import Toaster from "./Toast";
 import ConfirmHost from "./Confirm";
@@ -29,6 +29,8 @@ const NAV_GROUPS: { title: string; items: { href: string; icon: any; label: stri
   { title: "Front desk", items: [
     { href: "/dashboard",    icon: Radio,         label: "Reception" },
     { href: "/desk",         icon: Headset,       label: "Human Desk",   staff: true },
+    { href: "/today",        icon: ListTodo,      label: "Today's Board", staff: true },
+    { href: "/my-day",       icon: Trophy,        label: "My Dashboard",  staff: true },
   ]},
   { title: "Customers", items: [
     { href: "/calls",        icon: Phone,         label: "All Calls",    staff: true },

@@ -168,6 +168,18 @@ export default function DeskPage() {
   const callBack = (n: string) => { setPrefill(p => ({ n, k: p.k + 1 })); window.scrollTo({ top: 0, behavior: "smooth" }); };
   // From the queue: straight to ringing, with the lead attached.
   const callLead = (l: QLead) => { setPrefill(p => ({ n: digits10(l.phone), k: p.k + 1, leadId: l.id, auto: true })); };
+  // Arriving from Today's Board ("Call" on a card): /desk?call=<number>&lead=<id>
+  // puts that number in the dialer. Not auto-dialled — a link must never
+  // place a call by itself — and the query is cleared so a refresh does not
+  // bring it back.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const n = digits10(q.get("call") || "");
+    if (!/^[6-9]\d{9}$/.test(n)) return;
+    const leadId = q.get("lead") || "";
+    setPrefill(p => ({ n, k: p.k + 1, ...(/^[0-9a-f-]{36}$/i.test(leadId) ? { leadId } : {}) }));
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
   // Bumped after every saved outcome so the queue fetches the next lead.
   const [queueKey, setQueueKey] = useState(0);
   const afterCall = () => { load(); setQueueKey(k => k + 1); };

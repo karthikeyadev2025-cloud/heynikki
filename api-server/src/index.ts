@@ -5149,6 +5149,7 @@ import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
 import { mountDeskCallRoutes } from "./desk-call";
+import { mountDeskDayRoutes } from "./desk-day";
 import { followUpFor } from "./desk-learn";
 import { inboundParts } from "./wa-inbound";
 import { mountAppRoutes } from "./app";
@@ -5175,6 +5176,8 @@ mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
 mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWhatsApp, pushToUsers,
   pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET, applyDisposition });
+// The day as a board, and each telecaller's own dashboard (desk-day.ts).
+mountDeskDayRoutes(app, { sb, verifyJWT, getTenantId });
 // What a telecaller does while the customer is on the line (desk-call.ts).
 mountDeskCallRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit,
   confirmAppointment: (o) => confirmAppointmentByWhatsApp({

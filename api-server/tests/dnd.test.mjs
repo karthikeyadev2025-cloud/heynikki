@@ -390,3 +390,71 @@ test("desk call: remarks and names are cleaned, not rewritten", () => {
   assert.equal(dc.cleanName("  రవి   తేజ <b> "), "రవి తేజ b");
   assert.equal(dc.remarkAsNote("wants a demo\ncall after 5", "Sita", Date.UTC(2026, 9, 12, 6, 5)), "[12/10 11:35 Sita] wants a demo call after 5");
 });
+
+// ── Day board and the telecaller's own dashboard ──────────────────────────
+import * as dd from "../dist/desk-day.js";
+
+const NOW = Date.UTC(2026, 9, 12, 6, 0);                 // 12 Oct 2026, 11:30 IST
+const at = (d, hIst, m = 0) => new Date(Date.UTC(2026, 9, d, hIst, m) - 5.5 * 3600_000).toISOString();
+
+test("day: the last days are IST dates ending today", () => {
+  assert.deepEqual(dd.dayKeys(3, NOW), ["2026-10-10", "2026-10-11", "2026-10-12"]);
+  // 01:00 IST on the 12th is still the 11th in UTC — it must count as the 12th
+  assert.equal(dd.dayKeys(1, Date.parse(at(12, 1)))[0], "2026-10-12");
+});
+
+test("day: calls are counted on the IST day they happened, gaps kept", () => {
+  const rows = [
+    { created_at: at(12, 1), duration_seconds: 40, disposition: "booked" },
+    { created_at: at(12, 10), duration_seconds: 5, disposition: "no_answer" },
+    { created_at: at(10, 23, 30), duration_seconds: 90, disposition: "interested" },
+  ];
+  const s = dd.seriesByDay(rows, dd.dayKeys(3, NOW));
+  assert.deepEqual(s.map(d => d.calls), [1, 0, 2]);
+  assert.deepEqual(s[2], { date: "2026-10-12", calls: 2, connected: 1, talk_seconds: 40, booked: 1, interested: 0 });
+  assert.equal(s[0].interested, 1);
+});
+
+test("day: a streak survives an unfinished today, not a missed yesterday", () => {
+  const mk = (calls) => calls.map((c, i) => ({ date: String(i), calls: c, connected: 0, talk_seconds: 0, booked: 0, interested: 0 }));
+  assert.equal(dd.streak(mk([50, 50, 50, 10]), 40), 3, "today not done yet");
+  assert.equal(dd.streak(mk([50, 50, 50, 45]), 40), 4);
+  assert.equal(dd.streak(mk([50, 10, 50, 10]), 40), 1);
+  assert.equal(dd.streak(mk([50, 50]), 0), 0, "no target, no streak");
+});
+
+test("day: best hour needs enough calls to mean something", () => {
+  const rows = [];
+  for (let i = 0; i < 6; i++) rows.push({ created_at: at(12, 11, i), duration_seconds: i < 4 ? 60 : 3 });
+  for (let i = 0; i < 6; i++) rows.push({ created_at: at(12, 16, i), duration_seconds: i < 2 ? 60 : 3 });
+  rows.push({ created_at: at(12, 7), duration_seconds: 120 });      // one lucky call
+  const b = dd.bestHour(rows);
+  assert.equal(b.hour, 11); assert.equal(b.calls, 6); assert.ok(Math.abs(b.rate - 4 / 6) < 1e-9);
+  assert.equal(dd.bestHour(rows.slice(0, 3)), null);
+});
+
+test("day: a missed call is pending until someone rings back or they get through", () => {
+  const missed = [
+    { id: "m1", caller_number: "+919848012345", created_at: at(12, 9) },
+    { id: "m2", caller_number: "9848012345", created_at: at(12, 9, 30) },
+    { id: "m3", caller_number: "9000000001", created_at: at(12, 10) },
+    { id: "m4", caller_number: "9000000002", created_at: at(12, 10) },
+    { id: "m5", caller_number: "anonymous", created_at: at(12, 10) },
+  ];
+  const out = dd.unreturnedMissed(missed,
+    [{ callee_number: "9000000001", created_at: at(12, 10, 30) }],          // rung back
+    [{ caller_number: "+919000000002", created_at: at(12, 9) }]);            // answered BEFORE the miss: still pending
+  assert.deepEqual(out.map(o => [o.phone, o.times]).sort(), [["9000000002", 1], ["9848012345", 2]]);
+  assert.equal(out.find(o => o.phone === "9848012345").id, "m2", "the latest miss");
+  // rang back, then they called and were missed again: pending again, once
+  const again = dd.unreturnedMissed(
+    [{ id: "a", caller_number: "9000000003", created_at: at(12, 9) }, { id: "b", caller_number: "9000000003", created_at: at(12, 11) }],
+    [{ callee_number: "9000000003", created_at: at(12, 10) }], []);
+  assert.deepEqual(again.map(o => [o.id, o.times]), [["b", 1]]);
+});
+
+test("day: change against last week", () => {
+  assert.equal(dd.pctChange(60, 40), 50);
+  assert.equal(dd.pctChange(30, 40), -25);
+  assert.equal(dd.pctChange(10, 0), null);
+});
