@@ -46,7 +46,19 @@
            LAN one. Asked of a STUN server rather than written down,
            because the broadband address is not fixed; both are offered,
            and a browser on the office network simply uses the LAN one. -->
-      <param name="ext-rtp-ip"                value="stun:stun.l.google.com:19302"/>
+      <!-- stun.freeswitch.org, not Google's: FreeSWITCH asks in the old STUN
+           format, which Google's servers do not answer. With Google here the
+           lookup timed out at every start, the profile offered the LAN
+           address alone, and no browser outside the office Wi-Fi could
+           exchange audio with it. -->
+      <param name="ext-rtp-ip"                value="stun:stun.freeswitch.org"/>
+      <!-- The public address above is offered only to a peer the switch does
+           not take for a neighbour. That needs three things: an ext-sip-ip
+           (any; it is only tested for being set), no peer counted as local,
+           and a signalling connection that is not from 127.0.0.1 - which
+           the API's proxy now provides (switchSourceAddress in softphone.ts). -->
+      <param name="ext-sip-ip"                value="$${local_ip_v4}"/>
+      <param name="local-network-acl"         value="none"/>
 
       <param name="auth-calls"                value="false"/>
       <param name="disable-register"          value="false"/>
@@ -54,7 +66,10 @@
       <param name="force-register-domain"     value="heynikki.in"/>
       <param name="force-register-db-domain"  value="heynikki.in"/>
       <param name="manage-presence"           value="false"/>
-      <param name="apply-inbound-acl"         value="loopback.auto"/>
+      <!-- No apply-inbound-acl. It was loopback.auto, which now refuses the
+           proxy (403) because the proxy no longer connects from 127.0.0.1.
+           The listeners are still bound to 127.0.0.1 alone (sip-ip above),
+           so only a process on this machine can reach them at all. -->
 
       <param name="codec-prefs"               value="PCMU,PCMA"/>
       <param name="inbound-codec-negotiation" value="generous"/>

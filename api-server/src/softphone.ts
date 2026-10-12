@@ -23,6 +23,7 @@
  * on its own so tests cover it without a socket.
  */
 import crypto from "crypto";
+import os from "os";
 import type { IncomingMessage, Server } from "http";
 import type { Duplex } from "stream";
 import WebSocket, { WebSocketServer } from "ws";
@@ -30,6 +31,28 @@ import WebSocket, { WebSocketServer } from "ws";
 export const SOFTPHONE_PATH   = "/softphone/ws";
 export const SOFTPHONE_DOMAIN = "heynikki.in";
 const FS_WS_URL = process.env.SOFTPHONE_FS_WS || "ws://127.0.0.1:5066";
+
+/**
+ * The address this proxy connects to the switch FROM.
+ *
+ * FreeSWITCH offers its public media address only to a peer it does not
+ * take for a neighbour, and a connection from 127.0.0.1 is a neighbour
+ * whatever the profile says (the loopback test is compiled in). Every
+ * browser arrived that way, so each was offered the LAN address alone and
+ * a seat outside the office Wi-Fi could never exchange audio. Connecting
+ * from one of this machine's own network addresses reaches the same
+ * loopback listener and is not mistaken for a local phone.
+ */
+export function switchSourceAddress(
+  ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces(),
+  wanted = process.env.SOFTPHONE_FS_SRC || "",
+): string | undefined {
+  const v4 = Object.values(ifaces).flatMap(l => l || [])
+    .filter(i => !i.internal && (i.family === "IPv4" || (i.family as unknown) === 4))
+    .map(i => i.address);
+  if (wanted) return v4.includes(wanted) ? wanted : undefined;
+  return v4[0];
+}
 
 /* ── Seats ──────────────────────────────────────────────────── */
 
@@ -294,12 +317,15 @@ export function attachSoftphoneProxy(
     wss.handleUpgrade(req, socket, head, (client) => {
       const uid = user!.id;
       live.set(uid, (live.get(uid) || 0) + 1);
-      const upstream = new WebSocket(FS_WS_URL, "sip");
+      console.log(`[softphone] ${seat} connected`);
+      const localAddress = switchSourceAddress();
+      const upstream = new WebSocket(FS_WS_URL, "sip", localAddress ? { localAddress } : {});
       const queue: string[] = [];
       let closed = false;
       const close = (code = 1000) => {
         if (closed) return;
         closed = true;
+        console.log(`[softphone] ${seat} disconnected (${code})`);
         live.set(uid, Math.max(0, (live.get(uid) || 1) - 1));
         try { client.close(code); } catch { /* already gone */ }
         try { upstream.close(); } catch { /* already gone */ }

@@ -576,3 +576,23 @@ test("evening report: busiest first, targets said plainly, the idle left out", (
   ]);
   assert.deepEqual(fl.teamReportLines([r("Owner", 0)]), []);
 });
+
+test("softphone proxy reaches the switch from a network address, never loopback", async () => {
+  const sp = await import("../dist/softphone.js");
+  const ifaces = {
+    lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
+    eth0: [{ address: "fe80::1", family: "IPv6", internal: false }, { address: "192.168.1.12", family: "IPv4", internal: false }],
+    eth1: [{ address: "100.65.188.4", family: "IPv4", internal: false }],
+  };
+  assert.equal(sp.switchSourceAddress(ifaces, ""), "192.168.1.12");
+  assert.equal(sp.switchSourceAddress(ifaces, "100.65.188.4"), "100.65.188.4");
+  // A configured address this machine does not have is not used.
+  assert.equal(sp.switchSourceAddress(ifaces, "10.9.9.9"), undefined);
+  assert.equal(sp.switchSourceAddress({ lo: ifaces.lo }, ""), undefined);
+});
+
+test("a browser contact the switch marks as behind NAT can still be rung", async () => {
+  const sp = await import("../dist/softphone.js");
+  assert.ok(sp.isBrowserContact(
+    "sofia/webrtc/sip:l3hu0e9t@sah4d9v12eal.invalid;transport=ws;fs_nat=yes;fs_path=sip%3Al3hu0e9t%40100.65.188.4%3A41331%3Btransport%3Dws"));
+});

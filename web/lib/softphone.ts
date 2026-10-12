@@ -133,9 +133,12 @@ class Softphone {
   private async connect(): Promise<void> {
     if (!this.wanted || !this.getToken) return;
     await this.teardown();
+    // Which step failed is what tells a seat (and us) what to fix.
+    let step = "sign-in";
     try {
       const token = await this.getToken();
       if (!token) throw new Error("signed out");
+      step = "settings";
       const r = await fetch(`${API}/api/desk/softphone/config`, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) throw new Error(`settings ${r.status}`);
       const cfg: Config = await r.json();
@@ -165,7 +168,9 @@ class Softphone {
         },
       });
       this.ua = ua;
+      step = "connection";
       await ua.start();
+      step = "registration";
       const reg = new Registerer(ua, { expires: 300 });
       this.registerer = reg;
       reg.stateChange.addListener((s) => {
@@ -176,7 +181,9 @@ class Softphone {
       await reg.register();
     } catch (e: any) {
       if (!this.wanted) return;
-      this.set({ error: "Can't reach the phone service. Retrying…" });
+      console.warn(`[desk phone] ${step} failed:`, e?.message || e);
+      this.set({ error: step === "sign-in" ? "Your login has expired. Refresh the page and sign in again."
+        : `Can't reach the phone service (${step} failed). Retrying…` });
       this.scheduleReconnect();
     }
   }
