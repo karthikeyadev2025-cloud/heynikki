@@ -102,6 +102,22 @@ const TRUNK_CHANNELS = parseInt(process.env.TRUNK_MAX_CHANNELS || "10", 10);
 const TRUNK_OUTBOUND_CEILING = Math.max(
   1, parseInt(process.env.TRUNK_OUTBOUND_CEILING || String(TRUNK_CHANNELS - 2), 10));
 
+/**
+ * The value in an api/response, without its headers.
+ *
+ * eslCommand returns the whole reply: "Content-Type: api/response",
+ * "Content-Length: n", a blank line, then the answer. getVar handed that
+ * back whole, so the seat a browser leg came from read as
+ * "Content-Type: api/response…", never matched the seat its token was
+ * issued to, and every call placed from a computer was hung up as someone
+ * else's.
+ */
+export function eslBody(raw: string): string {
+  const sep = raw.indexOf("\n\n");
+  const body = (sep >= 0 && /^Content-Type:/i.test(raw) ? raw.slice(sep + 2) : raw).trim();
+  return !body || /^-ERR/i.test(body) || body === "_undef_" ? "" : body;
+}
+
 async function eslCommand(command: string, timeoutMs = 8000): Promise<string> {
   if (!FS_PASSWORD) {
     throw new Error("FREESWITCH_ESL_PASSWORD is not set — refusing to connect to ESL");
@@ -879,8 +895,7 @@ export class FreeSwitchESL {
   /** One channel variable, or "" when the channel or the variable is gone. */
   async getVar(uuid: string, name: string): Promise<string> {
     if (!/^[a-f0-9-]{36}$/i.test(uuid) || !/^[a-z_]+$/i.test(name)) return "";
-    const r = (await eslCommand(`api uuid_getvar ${uuid} ${name}`)).trim();
-    return !r || /^-ERR|_undef_/i.test(r) ? "" : r;
+    return eslBody(await eslCommand(`api uuid_getvar ${uuid} ${name}`));
   }
 
   async channelExists(uuid: string): Promise<boolean> {

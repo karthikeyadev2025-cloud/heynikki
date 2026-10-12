@@ -611,3 +611,11 @@ test("softphone: a browser's WSS Via is WS to the switch and WSS again on the re
   const inv = "INVITE sip:x@y.invalid SIP/2.0\r\nVia: SIP/2.0/WS 127.0.0.1;branch=z9hG4bKabc\r\n\r\n";
   assert.equal(sp.viaForBrowser(inv), inv);
 });
+
+test("a channel variable is read without the reply's headers", async () => {
+  const { eslBody } = await import("../dist/esl.js");
+  assert.equal(eslBody("Content-Type: api/response\nContent-Length: 34\n\nudd556bd3a32d4eccbbcab6ec315a071b"), "udd556bd3a32d4eccbbcab6ec315a071b");
+  assert.equal(eslBody("Content-Type: api/response\nContent-Length: 7\n\n_undef_"), "");
+  assert.equal(eslBody("Content-Type: api/response\nContent-Length: 21\n\n-ERR No such channel!\n"), "");
+  assert.equal(eslBody("Content-Type: api/response\nContent-Length: 0\n\n"), "");
+});
