@@ -155,21 +155,18 @@ export default function Pricing() {
             Nikki&apos;s minutes and your telecallers&apos; minutes are counted separately, so a busy
             calling day never uses up the minutes that keep Nikki answering. You are never
             billed automatically for going over: when either runs out, those calls stop until
-            you upgrade to the next plan, which you can do at any time from the billing page.
+            you buy extra minutes or upgrade to the next plan, either of which you can do at any
+            time from the billing page.
             Nothing is ever charged to you that you did not buy.
           </p>
           <p style={{ marginBottom: 0 }}>
-            {/* Do NOT advertise buyable add-on minutes here. The Razorpay webhook
-                can grant them (notes.type === "addon_minutes" → credit_ledger),
-                but NOTHING in the product creates such an order: there is no
-                endpoint and no button, so a customer cannot buy them today. The
-                dashboard's billing page quoted "Overage: ₹15/extra minute" for
-                the same unbuyable thing; that line is gone now and the page says
-                calls stop instead.
-                If a top-up flow ships, say so here and quote plan_overage_paise. */}
+            {/* Extra minutes are buyable now: /billing sells packs at
+                plan_overage_paise through /api/billing/create-topup. The rate
+                here is a mirror of that config value, like the plan prices. */}
             If you need extra minutes before your next billing date and do not want to move
-            up a plan, email <a href="mailto:billing@heynikki.in">billing@heynikki.in</a> and
-            we will add them to your account and invoice you for them.
+            up a plan, buy a pack from the billing page: ₹15 a minute, in packs from 100
+            minutes. They are used only after your plan&apos;s minutes run out and do not expire
+            at the end of the month.
           </p>
         </div>
 

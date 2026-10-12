@@ -186,3 +186,17 @@ export async function creditMinutesToSpend(
     return 0;
   }
 }
+
+/** The packs of extra minutes a paying account can buy from the billing page. */
+export const TOPUP_PACKS = [100, 250, 500, 1000];
+
+/**
+ * What a pack of extra minutes costs, or null when it is not a pack we sell.
+ * The rate is platform_config.plan_overage_paise — the per-minute price the
+ * plans were costed with — so the figure on the button is the one charged.
+ */
+export function topupAmountPaise(minutes: unknown, ratePaise: unknown): number | null {
+  const m = Number(minutes), r = Math.round(Number(ratePaise));
+  if (!TOPUP_PACKS.includes(m) || !Number.isFinite(r) || r <= 0) return null;
+  return m * r;
+}

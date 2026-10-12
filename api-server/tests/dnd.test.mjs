@@ -619,3 +619,14 @@ test("a channel variable is read without the reply's headers", async () => {
   assert.equal(eslBody("Content-Type: api/response\nContent-Length: 21\n\n-ERR No such channel!\n"), "");
   assert.equal(eslBody("Content-Type: api/response\nContent-Length: 0\n\n"), "");
 });
+
+test("extra minutes are sold only in the packs on the page, at the configured rate", async () => {
+  const { topupAmountPaise, TOPUP_PACKS } = await import("../dist/usage.js");
+  assert.equal(topupAmountPaise(100, 1500), 150000);
+  assert.equal(topupAmountPaise("250", "1500"), 375000);
+  for (const m of TOPUP_PACKS) assert.equal(topupAmountPaise(m, 1500), m * 1500);
+  // Not a pack: a body cannot ask for 1 minute, a negative or a fraction.
+  for (const m of [1, 0, -100, 99.5, 100000, "abc", null, undefined]) assert.equal(topupAmountPaise(m, 1500), null);
+  // No rate, no sale — never a free or negative order.
+  for (const r of [0, -5, NaN, undefined, "x"]) assert.equal(topupAmountPaise(100, r), null);
+});

@@ -122,6 +122,72 @@ export default function BillingPage() {
   const [annual, setAnnual]   = useState(false);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  // Extra minutes: the packs and their prices come from the server, so the
+  // figure on the button is the one the order is created for.
+  const [packs, setPacks] = useState<{ enabled: boolean; packs: { minutes: number; amount_paise: number }[] } | null>(null);
+  const [buying, setBuying] = useState<number | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session) return;
+      try {
+        const r = await fetch(`${API_URL}/api/billing/topup-packs`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+        if (r.ok) setPacks(await r.json());
+      } catch { /* the card simply does not show */ }
+    })();
+  }, []);
+
+  const handleTopup = async (minutes: number) => {
+    setBuying(minutes);
+    try {
+      if (typeof window === "undefined" || !(window as any).Razorpay) {
+        toast.err("Payment system is still loading — please try again in a moment.");
+        return;
+      }
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session) { window.location.href = "/login"; return; }
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` };
+      const createRes = await fetch(`${API_URL}/api/billing/create-topup`, { method: "POST", headers, body: JSON.stringify({ minutes }) });
+      if (!createRes.ok) {
+        const err = await createRes.json().catch(() => ({}));
+        toast.err(err.error || "Could not start checkout. Please try again.");
+        return;
+      }
+      const order = await createRes.json();
+      const rzp = new (window as any).Razorpay({
+        key: order.key_id, order_id: order.order_id, amount: order.amount, currency: order.currency,
+        name: "Hey Nikki", description: `${minutes} extra minutes`,
+        theme: { color: C.glow },
+        // The server grants the minutes only after checking the signature and
+        // the paid order; the webhook grants the same payment if this is lost.
+        handler: async (response: any) => {
+          const v = await fetch(`${API_URL}/api/billing/verify-topup`, {
+            method: "POST", headers,
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          });
+          if (v.ok) { window.location.reload(); return; }
+          setBuying(null);
+          await confirmDialog({
+            title: "Payment received, but not confirmed yet",
+            body: "Your payment went through but we couldn't confirm it automatically. The minutes are usually added within a few minutes. " +
+                  "If they are not, contact support@heynikki.in with your payment ID: " + response.razorpay_payment_id,
+            confirmLabel: "OK", cancelLabel: "Close" });
+        },
+        modal: { ondismiss: () => setBuying(null) },
+      });
+      rzp.open();
+    } catch (err) {
+      console.error("[billing] top-up failed", err);
+      toast.err("Something went wrong starting checkout. Please try again.");
+    } finally {
+      setBuying(null);
+    }
+  };
 
   // Pull the live catalogue so this page and the voice agent quote the same
   // numbers. Falls back silently to the literals above — a pricing page that
@@ -505,14 +571,32 @@ export default function BillingPage() {
             </div>
           </div>
 
-          {/* "Overage: Rs 15/extra minute" was a figure nobody is ever charged.
-              minutesGate() in api-server/src/usage.ts REFUSES further calls
-              once the plan's minutes are gone; there is no top-up purchase
-              flow in the product, so nothing can be billed for going over.
-              /pricing and /refund-policy already say this — this page was the
-              last one quoting a price that does not exist. Do not put a rate
-              back here unless a checkout that can actually sell minutes
-              ships with it. */}
+          {/* Extra minutes. Until this shipped a paying account that ran out
+              could only email us or move up a plan. minutesGate() still refuses
+              calls once the plan's minutes are gone UNLESS bought credit
+              remains — this is how that credit is bought. Nothing is charged
+              without a purchase, so the line below stays true. */}
+          {packs?.enabled && PAID_PLANS.includes(String(tenant?.plan || "")) && (
+            <div style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12, padding: 22, marginTop: 20, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
+              <div style={{ color: C.txt, fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Extra minutes</div>
+              <div style={{ color: C.mid, fontSize: 13.5, lineHeight: 1.55, marginBottom: 14 }}>
+                Used only after your plan&apos;s minutes run out, for Nikki or your telecallers, and they do not
+                expire at the end of the month. You have {Math.max(0, Math.round(Number(tenant?.credit_minutes ?? 0)))} extra
+                minutes now. Prices are exclusive of GST.
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {packs.packs.map(p => (
+                  <button key={p.minutes} onClick={() => handleTopup(p.minutes)} disabled={buying !== null}
+                    style={{ flex: "1 1 150px", background: "#fff", color: C.txt, border: "1px solid #D8DFE8", borderRadius: 8,
+                      padding: "12px 10px", fontSize: 14, fontWeight: 600, cursor: buying !== null ? "default" : "pointer",
+                      opacity: buying !== null ? 0.7 : 1 }}>
+                    {buying === p.minutes ? "Opening…" : <>{p.minutes.toLocaleString("en-IN")} minutes<br />
+                      <span style={{ color: C.mid, fontWeight: 500 }}>₹{(p.amount_paise / 100).toLocaleString("en-IN")}</span></>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ textAlign: "center", marginTop: 18, color: C.mid, fontSize: 13, lineHeight: 1.6 }}>
             New accounts start with 100 free minutes · You are never charged for going over ·
             Cancel anytime

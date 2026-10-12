@@ -70,7 +70,7 @@ async function razorpayCreds(): Promise<{ keyId: string; keySecret: string; webh
 // Read and validated in one place — see internal-secret.ts for what the
 // `!` that used to be here did when the variable was missing.
 import { INTERNAL_SECRET, internalSecretOk } from "./internal-secret";
-import { minutesGate, creditMinutesToSpend, istMonthKey, planMinutes, PAID_PLANS } from "./usage";
+import { minutesGate, creditMinutesToSpend, istMonthKey, planMinutes, PAID_PLANS, TOPUP_PACKS, topupAmountPaise } from "./usage";
 const WATI_KEY        = process.env.WATI_API_KEY || "";
 const WATI_URL        = process.env.WATI_API_URL || "";
 const PIPELINE_URL    = process.env.PIPELINE_URL || "http://localhost:8000";
@@ -560,19 +560,7 @@ app.post("/webhooks/razorpay", async (req, res) => {
         // checked first, so even with the invoice insert failing (no 018
         // index) a retry cannot grant twice.
         if (notes.type === "addon_minutes") {
-          const minutes = parseInt(notes.minutes || "0", 10);
-          const reason = `addon_minutes:${pmt.id}`;
-          const { data: granted } = await sb.from("credit_ledger")
-            .select("id").eq("tenant_id", tenantId).eq("reason", reason).limit(1).maybeSingle();
-          if (minutes > 0 && !granted) {
-            const { error: grantErr } = await sb.from("credit_ledger").insert({
-              tenant_id: tenantId, delta: minutes, reason,
-            });
-            // duplicate key = a concurrent delivery granted it (052's index).
-            if (grantErr && !/duplicate key/i.test(grantErr.message)) console.error(`[Razorpay] add-on credit grant failed for ${pmt.id}:`, grantErr.message);
-            else if (grantErr) { /* already granted */ }
-            else console.log(`[Razorpay] tenant ${tenantId} +${minutes} add-on min (${pmt.id})`);
-          }
+          await grantAddonMinutes(tenantId, parseInt(notes.minutes || "0", 10), pmt.id);
         }
 
         await sendEmail(tenantId, "payment_success", { amount: pmt.amount / 100 });
@@ -2239,6 +2227,112 @@ app.post("/api/billing/verify", verifyJWT, async (req, res) => {
   await sb.from("tenants").update({ plan: plan_id, status: "active" }).eq("id", tenantId);
   await updateMinuteLimit(tenantId, plan_id);
   res.json({ ok: true, plan: plan_id, current_period_end: periodEnd });
+});
+
+// ── Extra minutes ────────────────────────────────────────────────
+// A paying account that runs out mid-month could only email us and wait, or
+// move up a whole plan. These sell a pack of minutes at plan_overage_paise;
+// what is bought is credit (a credit_ledger row), which minutesGate spends
+// only once the plan's own minutes are gone and which does not expire with
+// the month. The grant is keyed on the Razorpay payment id, so the checkout
+// handler and the webhook can both arrive and the minutes land once.
+async function grantAddonMinutes(tenantId: string, minutes: number, paymentId: string): Promise<boolean> {
+  if (!(minutes > 0) || !paymentId) return false;
+  const reason = `addon_minutes:${paymentId}`;
+  const { data: granted } = await sb.from("credit_ledger")
+    .select("id").eq("tenant_id", tenantId).eq("reason", reason).limit(1).maybeSingle();
+  if (granted) return true;
+  const { error } = await sb.from("credit_ledger").insert({ tenant_id: tenantId, delta: minutes, reason });
+  // duplicate key = a concurrent delivery granted it (052's index).
+  if (error && /duplicate key/i.test(error.message)) return true;
+  if (error) { console.error(`[Razorpay] add-on credit grant failed for ${paymentId}:`, error.message); return false; }
+  console.log(`[Razorpay] tenant ${tenantId} +${minutes} add-on min (${paymentId})`);
+  return true;
+}
+
+async function topupRatePaise(): Promise<number> {
+  const cfg = await getPlatformConfig().catch(() => ({} as Record<string, string>));
+  const n = Math.round(Number(cfg.plan_overage_paise));
+  return Number.isFinite(n) && n > 0 ? n : 1500;
+}
+
+app.get("/api/billing/topup-packs", verifyJWT, async (_req, res) => {
+  const rate = await topupRatePaise();
+  res.json({
+    enabled: await paymentsConfigured(),
+    rate_paise: rate,
+    packs: TOPUP_PACKS.map(m => ({ minutes: m, amount_paise: topupAmountPaise(m, rate) })),
+  });
+});
+
+app.post("/api/billing/create-topup", verifyJWT, async (req, res) => {
+  if (!await paymentsConfigured()) {
+    return res.status(503).json({ error: "Online payment isn't switched on yet — message us and we'll add the minutes." });
+  }
+  const userId   = (req as any).user.id;
+  const tenantId = await getTenantId(userId);
+  if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
+  if (!(await requireOwner(sb, userId, tenantId, res, "Only the account owner can buy minutes."))) return;
+  // Extra minutes sit on top of a plan. A free account's next step is a plan.
+  const { data: t } = await sb.from("tenants").select("plan").eq("id", tenantId).maybeSingle();
+  if (!PAID_PLANS.includes(String(t?.plan || "").toLowerCase())) {
+    return res.status(400).json({ error: "Choose a plan first — extra minutes are added on top of a plan." });
+  }
+  const minutes = Number(req.body?.minutes);
+  const amount = topupAmountPaise(minutes, await topupRatePaise());
+  if (!amount) return res.status(400).json({ error: "Pick one of the packs on the billing page." });
+  try {
+    const { keyId, keySecret } = await razorpayCreds();
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    const resp = await fetch("https://api.razorpay.com/v1/orders", {
+      method:  "POST",
+      headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount, currency: "INR",
+        notes: { tenant_id: tenantId, type: "addon_minutes", minutes: String(minutes) },
+      }),
+    });
+    const order = await resp.json() as { id?: string; amount?: number };
+    if (!resp.ok || !order.id) {
+      console.error(`[billing] top-up order refused by Razorpay (${resp.status})`);
+      return res.status(503).json({ error: "Could not start the payment — try again in a minute." });
+    }
+    res.json({ order_id: order.id, amount: order.amount, currency: "INR", key_id: keyId, minutes });
+  } catch (err: any) {
+    console.error("[Razorpay create-topup]", err.message);
+    res.status(500).json({ error: "Payment initialization failed" });
+  }
+});
+
+app.post("/api/billing/verify-topup", verifyJWT, async (req, res) => {
+  if (!await paymentsConfigured()) return res.status(503).json({ error: "Online payment isn't switched on yet" });
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+  const tenantId = await getTenantId((req as any).user.id);
+  if (!tenantId) return res.status(400).json({ error: "Tenant not found" });
+  const { keyId, keySecret } = await razorpayCreds();
+  const expected = crypto.createHmac("sha256", keySecret)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
+  if (!safeHexEqual(razorpay_signature, expected)) return res.status(400).json({ error: "Invalid signature" });
+  try {
+    // The minutes come from the order Razorpay holds, never from the body.
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    const r = await fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(String(razorpay_order_id))}`,
+      { headers: { Authorization: `Basic ${auth}` } });
+    const order = await r.json() as { status?: string; notes?: Record<string, string> };
+    const minutes = parseInt(order.notes?.minutes || "0", 10);
+    if (!r.ok || order.status !== "paid" || order.notes?.tenant_id !== tenantId
+        || order.notes?.type !== "addon_minutes" || !TOPUP_PACKS.includes(minutes)) {
+      console.error(`[billing] top-up verify refused for tenant ${tenantId}: order ${razorpay_order_id} status=${order.status}`);
+      return res.status(400).json({ error: "Payment could not be verified" });
+    }
+    if (!await grantAddonMinutes(tenantId, minutes, String(razorpay_payment_id))) {
+      return res.status(502).json({ error: "Payment received — the minutes will appear shortly." });
+    }
+    res.json({ ok: true, minutes });
+  } catch (e: any) {
+    console.error("[billing] top-up order lookup failed:", e?.message);
+    res.status(502).json({ error: "Payment could not be verified — try again" });
+  }
 });
 
 // Calendar months, clamped: 31 Jan + 1 month is 28/29 Feb, not 3 Mar.

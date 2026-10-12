@@ -90,8 +90,8 @@ export default function Refund() {
             invites a customer to expect a bill that never arrives — or worse,
             to believe one might. */}
         You are never billed automatically for going over your plan. When your included
-        minutes run out, calls stop until you upgrade. If we add extra minutes to your
-        account at your request and invoice you for them, those minutes are prepaid and
+        minutes run out, calls stop until you upgrade or buy extra minutes from the billing
+        page. Extra minutes are prepaid and
         non-refundable once any part of the balance has been used, since the telephony
         and compute behind them are already paid for. An entirely unused batch can be
         refunded within 7 days.
