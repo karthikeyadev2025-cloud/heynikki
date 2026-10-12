@@ -5150,6 +5150,8 @@ import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
 import { mountDeskCallRoutes } from "./desk-call";
 import { mountDeskDayRoutes } from "./desk-day";
+import { mountWaChatRoutes } from "./wa-chat";
+import { mountLeadAssignRoutes } from "./lead-assign";
 import { followUpFor } from "./desk-learn";
 import { inboundParts } from "./wa-inbound";
 import { mountAppRoutes } from "./app";
@@ -5178,6 +5180,10 @@ mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWha
   pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET, applyDisposition });
 // The day as a board, and each telecaller's own dashboard (desk-day.ts).
 mountDeskDayRoutes(app, { sb, verifyJWT, getTenantId });
+// WhatsApp as conversations (wa-chat.ts), and lists shared out to the team
+// (lead-assign.ts).
+mountWaChatRoutes(app, { sb, verifyJWT, getTenantId });
+mountLeadAssignRoutes(app, { sb, verifyJWT, getTenantId });
 // What a telecaller does while the customer is on the line (desk-call.ts).
 mountDeskCallRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit,
   confirmAppointment: (o) => confirmAppointmentByWhatsApp({

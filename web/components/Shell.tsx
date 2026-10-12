@@ -13,6 +13,7 @@ import Toaster from "./Toast";
 import ConfirmHost from "./Confirm";
 import NikkiLogo from "./NikkiLogo";
 import { NIKKI } from "../lib/brand";
+import { useWaUnread } from "../lib/wa-notify";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
@@ -175,6 +176,8 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
     : null;
 
   const staff = me ? !["owner", "super_admin"].includes(me.role) : false;
+  // A WhatsApp reply rings and is counted on every page, not only its own.
+  const waUnread = useWaUnread(!!me);
   const who = me?.name || (me?.email ? me.email.split("@")[0] : "");
   const initials = (who || tenant?.name || "?").split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase();
   const signOut = async () => {
@@ -208,6 +211,12 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
                   <a key={item.href} href={item.href} className="nk-navitem" onClick={() => setSideOpen(false)}
                     aria-current={active ? "page" : undefined}>
                     <Icon size={16} /><span>{item.label}</span>
+                    {item.href === "/whatsapp" && waUnread > 0 && (
+                      <span aria-label={`${waUnread} unread`} style={{ marginLeft: "auto", background: "#16A34A", color: "#fff",
+                        borderRadius: 999, minWidth: 20, padding: "1px 6px", fontSize: 12, fontWeight: 700, textAlign: "center" }}>
+                        {waUnread > 99 ? "99+" : waUnread}
+                      </span>
+                    )}
                   </a>
                 );
               })}

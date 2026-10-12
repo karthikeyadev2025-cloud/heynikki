@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import WhatsAppSender from "../../components/WhatsAppSender";
+import WhatsAppChat from "../../components/WhatsAppChat";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
-import { Send, MessageCircle, ClipboardList, ScrollText, Inbox, ChevronDown, ChevronUp, UserRound } from "lucide-react";
+import { Send, MessageCircle, ClipboardList, ScrollText } from "lucide-react";
 
 function timeAgo(iso: string) {
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -178,10 +179,9 @@ export default function WhatsAppPage() {
   const [toNumber, setToNumber]   = useState("");
   const [vars, setVars]           = useState<Record<string, string>>({});
   const [inbox, setInbox]   = useState<any[]>([]);
-  const [unread, setUnread] = useState(0);
-  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
-  const [openThreads, setOpenThreads] = useState<Record<string, boolean>>({});
   const [toast, setToast]         = useState<string | null>(null);
+  // Bumped after a template is sent so the open chat shows it at once.
+  const [chatKey, setChatKey]     = useState(0);
   // The name Nikki says on the phone — what fills {{1}} in nearly every
   // template, and so what the previews below use as their example.
   const [business, setBusiness]   = useState("your business");
@@ -231,17 +231,6 @@ export default function WhatsAppPage() {
     if (r.ok) {
       const j = await r.json();
       setInbox(j.messages || []);
-      setUnread(j.unread || 0);
-      // Seen is seen. Without this the unread badge never cleared and every
-      // reply stayed "NEW" forever.
-      const fresh = (j.messages || []).filter((m: any) => !m.read_at).map((m: any) => m.id);
-      if (fresh.length) {
-        fetch(`${API}/api/whatsapp/inbox/read`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ ids: fresh }),
-        }).catch(() => {});
-      }
     }
   }, []);
 
@@ -259,63 +248,6 @@ export default function WhatsAppPage() {
       }
     } catch { /* no window */ }
   }, []);
-
-  // Free text only reaches a person inside Meta's 24-hour window; outside it
-  // Meta accepts the call and silently drops the message, which is worse
-  // than refusing. Say which one applies before the customer types.
-  const replyTo = async (number: string, text: string) => {
-    const sb = createClient();
-    const { data: { session } } = await sb.auth.getSession();
-    // /api/whatsapp/send is behind verifyInternal — a shared secret a browser
-    // can never hold — so this 401'd on every press.
-    const r = await fetch(`${API}/api/whatsapp/send-as-tenant`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session?.access_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ to_number: number, message: text }),
-    });
-    const rj = await r.json().catch(() => ({}));
-    setToast(r.ok ? "Reply sent!" : (rj.error || "Could not send the reply"));
-    setTimeout(() => setToast(""), 2500);
-    // Show it in the thread now rather than after a reload.
-    if (r.ok) setDispatch(d => [{ id: "tmp-" + Date.now(), message_type: "manual_reply", to_number: number,
-      message_body: text, status: "sent", sent_at: new Date().toISOString() }, ...d]);
-    loadInbox();
-  };
-
-  // One thread per person, newest first. Their messages come from the inbox;
-  // ours from the dispatch log (templates Nikki sent, plus manual replies) so
-  // the conversation reads in order instead of as a flat list of replies with
-  // a composer under every line. The 24-hour window is per person, from
-  // their last message, which is exactly what Meta counts.
-  const last10 = (n: unknown) => String(n || "").replace(/\D/g, "").slice(-10);
-  type Msg = { id: string; dir: "in" | "out"; body: string; at: string; status?: string; label?: string; read?: boolean };
-  const threads = (() => {
-    const map = new Map<string, Msg[]>();
-    for (const m of inbox) {
-      const n = last10(m.from_number); if (!n) continue;
-      (map.get(n) || map.set(n, []).get(n)!).push({
-        id: "in:" + m.id, dir: "in", body: m.body || (m.msg_type ? `[${m.msg_type}]` : ""), at: m.received_at, read: !!m.read_at });
-    }
-    for (const d of dispatch) {
-      const n = last10(d.to_number); if (!map.has(n)) continue;   // only people who have written back
-      map.get(n)!.push({
-        id: "out:" + d.id, dir: "out",
-        // A manual template send logs "template:<name>" as the body; the
-        // text itself lives with Meta. Show the template's written name,
-        // not the slug with its underscores opened up.
-        body: /^template:/.test(d.message_body || "")
-          ? "📋 " + templateTitle(d.message_body.slice(9))
-          : d.message_body || (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type),
-        at: d.sent_at, status: d.status, label: d.message_type === "manual_reply" ? "you" : (MESSAGE_TYPE_LABEL[d.message_type] || d.message_type) });
-    }
-    return Array.from(map.entries()).map(([number, msgs]) => {
-      msgs.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
-      const lastIn = [...msgs].reverse().find(m => m.dir === "in")!;
-      const hours = (Date.now() - new Date(lastIn.at).getTime()) / 3600000;
-      return { number, msgs, last: msgs[msgs.length - 1].at, hours, canReply: hours < 24,
-               unread: msgs.filter(m => m.dir === "in" && !m.read).length };
-    }).sort((a, b) => new Date(b.last).getTime() - new Date(a.last).getTime());
-  })();
 
   const sendMessage = async () => {
     if (!modal || !toNumber.trim()) return;
@@ -346,6 +278,7 @@ export default function WhatsAppPage() {
       }
 
       setToast("Message sent!");
+      setChatKey(k => k + 1);
       setModal(null);
       setToNumber("");
       setVars({});
@@ -474,122 +407,15 @@ export default function WhatsAppPage() {
         buttons to make it the business's own. */}
     <WhatsAppSender />
 
-    {/* THE INBOX. Replies used to arrive at the webhook, get printed to a
-        container log, and vanish — a business could send a follow-up and
-        never learn the customer said yes. */}
+    {/* Conversations, as on the phone app: everyone on the left, the open
+        chat on the right. Opening a chat is what marks it read. */}
     <div style={{ marginBottom: 24 }}>
-      <SectionTitle icon={<Inbox size={14} />}
-        right={unread > 0 && (
-          <span style={{ background: C.grn, color: "#fff", borderRadius: 999,
-            padding: "2px 9px", fontSize: 12, fontWeight: 600 }}>{unread} new</span>
-        )}>
-        Replies
-      </SectionTitle>
-      <Card style={{ padding: "4px 18px" }}>
-      {inbox.length === 0 ? (
-        <div style={{ color: C.mid, fontSize: 14, textAlign: "center", padding: "28px 16px", lineHeight: 1.6 }}>
-          No replies yet. When someone answers one of your WhatsApp messages, it appears here
-          and you can reply for 24 hours.
-        </div>
-      ) : threads.map((t, ti) => {
-        const open = !!openThreads[t.number];
-        const shown = open ? t.msgs : t.msgs.slice(-3);
-        const hidden = t.msgs.length - shown.length;
-        return (
-          <div key={t.number} style={{ padding: "16px 0",
-            borderBottom: ti === threads.length - 1 ? "none" : `1px solid ${C.bord}` }}>
-            {/* who */}
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-              <span style={{ width: 30, height: 30, borderRadius: "50%", background: C.grn + "14", color: C.grn,
-                display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <UserRound size={15} />
-              </span>
-              <div style={{ minWidth: 0 }}>
-                <a href={`/leads?phone=${t.number}`} style={{ color: C.txt, fontWeight: 700, fontSize: 14, fontFamily: "var(--font-mono), monospace", textDecoration: "none" }}>
-                  {t.number}
-                </a>
-                <div style={{ color: C.dim, fontSize: 12 }}>
-                  {t.msgs.length} message{t.msgs.length === 1 ? "" : "s"} · last {timeAgo(t.last)}
-                </div>
-              </div>
-              <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
-                background: t.canReply ? C.grn + "14" : "#F1F4F8", color: t.canReply ? C.grn : C.mid }}>
-                {t.canReply ? `Open · ${Math.max(1, Math.round(24 - t.hours))}h left` : "Window closed"}
-              </span>
-              {t.unread > 0 && <span style={{ background: C.grn, color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 600 }}>{t.unread} new</span>}
-            </div>
-
-            {/* the conversation */}
-            {hidden > 0 && (
-              <button type="button" onClick={() => setOpenThreads(o => ({ ...o, [t.number]: true }))}
-                style={{ background: "none", border: "none", color: C.glow, fontSize: 12, fontWeight: 700,
-                  padding: "2px 0 8px 40px", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <ChevronDown size={13} /> Show {hidden} earlier
-              </button>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 40 }}>
-              {shown.map(m => (
-                <div key={m.id} style={{ alignSelf: m.dir === "in" ? "flex-start" : "flex-end", maxWidth: "85%" }}>
-                  <div style={{
-                    padding: "8px 12px", borderRadius: 12, fontSize: 13.5, lineHeight: 1.5,
-                    borderBottomLeftRadius: m.dir === "in" ? 4 : 12, borderBottomRightRadius: m.dir === "in" ? 12 : 4,
-                    background: m.dir === "in" ? "#F1F4F8" : "#DCF8C6",
-                    color: C.txt, border: `1px solid ${m.dir === "in" ? "#E4E9F0" : "#C5E8AE"}`,
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
-                  }}>{m.body}</div>
-                  <div style={{ color: C.dim, fontSize: 12, marginTop: 2, textAlign: m.dir === "in" ? "left" : "right" }}>
-                    {m.dir === "out" ? (m.label ? m.label + " · " : "you · ") : ""}
-                    {new Date(m.at).toLocaleString("en-IN", {
-                      day: "numeric", month: "short", hour: "numeric", minute: "2-digit",
-                      timeZone: "Asia/Kolkata" })}
-                    {m.dir === "out" && m.status === "failed" && <span style={{ color: C.red, fontWeight: 800 }}> · failed</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {open && t.msgs.length > 3 && (
-              <button type="button" onClick={() => setOpenThreads(o => ({ ...o, [t.number]: false }))}
-                style={{ background: "none", border: "none", color: C.dim, fontSize: 12, fontWeight: 700,
-                  padding: "8px 0 0 40px", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <ChevronUp size={13} /> Collapse
-              </button>
-            )}
-
-            {/* one composer per person */}
-            <div style={{ paddingLeft: 40, marginTop: 10 }}>
-            {t.canReply ? (
-              <form style={{ display: "flex", gap: 7 }}
-                onSubmit={e => { e.preventDefault(); const txt = (replyDraft[t.number] || "").trim(); if (!txt) return;
-                  replyTo(t.number, txt); setReplyDraft(d => ({ ...d, [t.number]: "" })); }}>
-                <input
-                  value={replyDraft[t.number] || ""}
-                  onChange={e => setReplyDraft(d => ({ ...d, [t.number]: e.target.value }))}
-                  placeholder={`Reply to ${t.number}…`}
-                  style={{ flex: 1, minWidth: 0, padding: "9px 12px", borderRadius: 8, fontSize: 14,
-                    background: C.surf, color: C.txt, border: "1px solid #D8DFE8" }} />
-                <button type="submit"
-                  disabled={!(replyDraft[t.number] || "").trim()}
-                  style={{ padding: "9px 16px", borderRadius: 8, border: "none", fontSize: 13.5,
-                    fontWeight: 600, background: C.grn, color: "#fff", cursor: "pointer",
-                    opacity: (replyDraft[t.number] || "").trim() ? 1 : 0.5 }}>
-                  Send
-                </button>
-              </form>
-            ) : (
-              <div style={{ color: C.dim, fontSize: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span>Their last message is over 24 hours old — only a template reaches them now.</span>
-                <button type="button"
-                  onClick={() => { setToNumber(t.number); document.getElementById("wa-templates")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-                  style={{ background: "none", border: "none", color: C.glow, fontWeight: 600, fontSize: 12.5, padding: 0, cursor: "pointer" }}>
-                  Pick a template →
-                </button>
-              </div>
-            )}
-            </div>
-          </div>
-        );
-      })}
-      </Card>
+      <WhatsAppChat templates={templates} refreshKey={chatKey}
+        onTemplate={(number, t) => {
+          setToNumber(number); setVars({});
+          if (t) setModal({ template: t });
+          else document.getElementById("wa-templates")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }} />
     </div>
           {/* KPI Row */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>

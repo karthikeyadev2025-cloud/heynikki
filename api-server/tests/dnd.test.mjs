@@ -458,3 +458,60 @@ test("day: change against last week", () => {
   assert.equal(dd.pctChange(30, 40), -25);
   assert.equal(dd.pctChange(10, 0), null);
 });
+
+// ── WhatsApp as conversations (wa-chat.ts) ───────────────────────────
+import * as wc from "../dist/wa-chat.js";
+
+test("chats: one row per customer, newest first, whichever side spoke last", () => {
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const chats = wc.buildChats(
+    [{ id: "a", from_number: "919876543210", body: "Price?", msg_type: "text", received_at: "2026-10-12T09:00:00Z", read_at: null, lead_id: "L1" },
+     { id: "b", from_number: "9876543210", body: "Hello", msg_type: "text", received_at: "2026-10-12T08:00:00Z", read_at: "2026-10-12T08:01:00Z" },
+     { id: "c", from_number: "9000000001", body: null, msg_type: "image", received_at: "2026-10-10T08:00:00Z", read_at: null }],
+    [{ to_number: "+919876543210", message_type: "manual_reply", message_body: "₹500", status: "read", sent_at: "2026-10-12T10:00:00Z" },
+     { to_number: "9111111111", message_type: "confirmation", message_body: "Booked", status: "delivered", sent_at: "2026-10-12T11:00:00Z" }], now);
+  assert.deepEqual(chats.map(c => c.number), ["9111111111", "9876543210", "9000000001"]);
+  const [auto, replied, old] = chats;
+  assert.equal(auto.window_open, false);          // they never wrote
+  assert.equal(auto.waiting, false);
+  assert.deepEqual([replied.last, replied.last_dir, replied.last_status, replied.unread, replied.lead_id],
+    ["₹500", "out", "read", 1, "L1"]);
+  assert.equal(replied.window_open, true);
+  assert.equal(replied.window_closes_at, "2026-10-13T09:00:00.000Z");
+  assert.deepEqual([old.last, old.waiting, old.window_open, old.unread], ["[image]", true, false, 1]);
+});
+
+test("chats: an automatic message is labelled, a person's reply is not", () => {
+  assert.equal(wc.outLabel("manual_reply"), null);
+  assert.equal(wc.outLabel("confirmation"), "Booking confirmation");
+  assert.equal(wc.outLabel("desk_brochure"), "Desk brochure");
+  // What the platform sends the owner is not a customer conversation.
+  assert.deepEqual(wc.buildChats([], [
+    { to_number: "9000000002", message_type: "daily_summary", message_body: "12 calls", status: "sent", sent_at: "2026-10-12T02:00:00Z" },
+    { to_number: "9000000002", message_type: "onboarding_welcome", message_body: "Welcome", status: "sent", sent_at: "2026-10-01T02:00:00Z" }]), []);
+});
+
+// ── Lists shared out to the team (lead-assign.ts) ────────────────────
+import * as la from "../dist/lead-assign.js";
+
+test("import: every shape Excel gives a mobile number becomes ten digits", () => {
+  for (const v of ["9876543210", 9876543210, "+91 98765 43210", "09876543210", "919876543210", "9876543210.0", "9.87654321E9", " 98765-43210 "]) {
+    assert.equal(la.cleanPhone(v), v === "9.87654321E9" ? "9876543210" : "9876543210", String(v));
+  }
+  for (const v of ["", "12345", "5876543210", "98765432101", "name", null]) assert.equal(la.cleanPhone(v), null, String(v));
+});
+
+test("import: bad and repeated rows are counted, not kept", () => {
+  const r = la.cleanRows([{ phone: "9876543210", name: " Ravi ", note: "" }, { phone: "+919876543210" },
+    { phone: "abc" }, { phone: 9000000001 }, {}]);
+  assert.deepEqual(r.rows, [{ phone: "9876543210", name: "Ravi", note: null }, { phone: "9000000001", name: null, note: null }]);
+  assert.deepEqual([r.invalid, r.repeated], [2, 1]);
+});
+
+test("sharing: dealt evenly, and whoever holds least gets the next one", () => {
+  const even = la.dealOut([1, 2, 3, 4, 5], ["a", "b"]);
+  assert.deepEqual([even.get("a"), even.get("b")], [[1, 3, 5], [2, 4]]);
+  const fair = la.dealOut([1, 2, 3, 4], ["a", "b"], { a: 10, b: 8 });
+  assert.deepEqual([fair.get("a").length, fair.get("b").length], [1, 3]);
+  assert.equal(la.dealOut([1], []).size, 0);
+});

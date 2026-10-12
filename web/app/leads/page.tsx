@@ -27,6 +27,8 @@ import { Check, X, Calendar, RefreshCw, PhoneOff, Users, Phone, ClipboardList, P
 import LeadDetail, { type Stage } from "../../components/LeadDetail";
 import { toast } from "../../components/Toast";
 import ExportButton from "../../components/ExportButton";
+import { UploadList, TeamLoadPanel, useTeamLoad } from "../../components/TeamLists";
+import { deskApi } from "../../lib/desk-api";
 import FollowUp, {
   followUpSupported, followUpLabel, isDue, isOverdue, istToday,
   type FollowUpFields,
@@ -290,6 +292,10 @@ export default function LeadsPage() {
   const [ready, setReady] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Owner only: who is on the team and what each is holding. null for a
+  // telecaller, and every assigning control below is drawn only when set.
+  const { load: team, reload: reloadTeam } = useTeamLoad();
+  const [ownerFilter, setOwnerFilter] = useState("all");   // all | none | <user id>
   // Click-to-Call + Disposition state
   const [ctcActive, setCtcActive] = useState<{ lead: Lead; ctcLogId: string; startedAt: number; seconds: number } | null>(null);
   const [dispModal, setDispModal] = useState<{ lead: Lead; ctcLogId: string; seconds?: number } | null>(null);
@@ -421,6 +427,8 @@ export default function LeadsPage() {
     let q = sb.from("leads").select("*");
     if (stageFilter !== "all") q = q.eq("stage", stageFilter);
     if (hotOnly) q = q.gte("score", 70);
+    if (ownerFilter === "none") q = q.is("assigned_to", null);
+    else if (ownerFilter !== "all") q = q.eq("assigned_to", ownerFilter);
     if (tag.trim()) q = q.contains("tags", [tag.trim()]);
     const lo = Number(scoreMin), hi = Number(scoreMax);
     if (scoreMin !== "" && Number.isFinite(lo)) q = q.gte("score", lo);
@@ -450,7 +458,7 @@ export default function LeadsPage() {
     // is the difference between a list and a list that lies.
     setTruncated((data?.length || 0) >= PAGE_SIZE);
     setLoading(false);
-  }, [stageFilter, hotOnly, dueOnly, tag, scoreMin, scoreMax, contactedFrom, contactedTo, query, sort]);
+  }, [stageFilter, hotOnly, ownerFilter, dueOnly, tag, scoreMin, scoreMax, contactedFrom, contactedTo, query, sort]);
 
   /**
    * Chip counts, over every lead rather than the page on screen.
@@ -572,16 +580,32 @@ export default function LeadsPage() {
     setSelected(new Set());
   };
 
+  // Hand the ticked leads to one person, share them between everyone, or
+  // put them back in the pool.
+  const bulkAssign = async (choice: string) => {
+    if (!selected.size || !choice || !team) return;
+    setBulkBusy(true);
+    try {
+      const to = choice === "none" ? [] : choice === "everyone" ? team.members.map(m => m.user_id) : [choice];
+      const r = await deskApi("/api/leads/assign", { ids: Array.from(selected), to });
+      toast.ok(`${r.moved} lead${r.moved === 1 ? "" : "s"} assigned: ${r.shared.map((x: any) => `${x.name} ${x.count}`).join(", ")}`);
+      setSelected(new Set());
+      fetchLeads(followUps); reloadTeam();
+    } catch (e: any) { toast.err(e.message); }
+    setBulkBusy(false);
+  };
+  const ownerName = (id: string | null) => !id || !team ? null : team.members.find(m => m.user_id === id)?.name || null;
+
   // Postgres has already applied every filter and the sort (see fetchLeads),
   // and a tag is matched against the whole tag rather than a fragment of it,
   // which is what `tags @> {vip}` means.
   const shown = leads;
   const allShownSelected = shown.length > 0 && shown.every(l => selected.has(l.id));
 
-  const filtersOn = stageFilter !== "all" || hotOnly || dueOnly || !!query
+  const filtersOn = stageFilter !== "all" || ownerFilter !== "all" || hotOnly || dueOnly || !!query
     || !!tag || scoreMin !== "" || scoreMax !== "" || !!contactedFrom || !!contactedTo;
   const clearFilters = () => {
-    setStageFilter("all"); setHotOnly(false); setDueOnly(false);
+    setStageFilter("all"); setOwnerFilter("all"); setHotOnly(false); setDueOnly(false);
     setSearch(""); setQuery(""); setTag("");
     setScoreMin(""); setScoreMax(""); setContactedFrom(""); setContactedTo("");
   };
@@ -672,7 +696,9 @@ export default function LeadsPage() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <ImportLeads tenantId={tenantId} onDone={(n: number) => { toast.ok(`${n} lead${n === 1 ? "" : "s"} imported`); load(); }} />
+          {team
+            ? <UploadList load={team} onDone={() => { load(); reloadTeam(); }} />
+            : <ImportLeads tenantId={tenantId} onDone={(n: number) => { toast.ok(`${n} lead${n === 1 ? "" : "s"} imported`); load(); }} />}
           <button onClick={() => setAdding(v => !v)} style={{
             background: C.teal, color: "#fff", border: 0, borderRadius: 9, padding: "9px 14px",
             fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -682,6 +708,8 @@ export default function LeadsPage() {
       </div>
 
       {adding && <AddLead tenantId={tenantId} onDone={() => { setAdding(false); load(); }} onCancel={() => setAdding(false)} />}
+
+      {team && <TeamLoadPanel load={team} onChanged={() => { load(); reloadTeam(); }} />}
 
       {error && (
         <div style={{ background: C.red + "0D", border: `1px solid ${C.red}55`,
@@ -726,6 +754,13 @@ export default function LeadsPage() {
         <select value={sort} onChange={e => setSort(e.target.value as SortKey)} style={{ ...inputStyle, flex: "0 0 auto" }} aria-label="Sort">
           {SORTS.map(s => <option key={s.id} value={s.id}>Sort: {s.label}</option>)}
         </select>
+        {team && (
+          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} style={{ ...inputStyle, flex: "0 0 auto" }} aria-label="Assigned to">
+            <option value="all">Assigned to: anyone</option>
+            <option value="none">Unassigned</option>
+            {team.members.map(m => <option key={m.user_id} value={m.user_id}>{m.name}{m.is_you ? " (you)" : ""}</option>)}
+          </select>
+        )}
         <button onClick={() => setMoreFilters(v => !v)} style={{ ...inputStyle, fontWeight: 700,
           color: moreFilters ? C.teal : C.mid, borderColor: moreFilters ? C.teal + "88" : C.bord }}>
           <SlidersHorizontal size={13} style={{ verticalAlign: "-2px", marginRight: 6 }} />
@@ -792,6 +827,15 @@ export default function LeadsPage() {
               background: s.color + "33", color: "#fff", border: `1px solid ${s.color}88`, borderRadius: 20,
               padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>{s.label}</button>
           ))}
+          {team && (
+            <select value="" disabled={bulkBusy} onChange={e => bulkAssign(e.target.value)} aria-label="Assign selected leads"
+              style={{ background: "#fff", color: C.txt, border: 0, borderRadius: 8, padding: "5px 8px", fontSize: 12.5, fontWeight: 700 }}>
+              <option value="">Assign to…</option>
+              {team.members.map(m => <option key={m.user_id} value={m.user_id}>{m.name}{m.is_you ? " (you)" : ""}</option>)}
+              {team.members.length > 1 && <option value="everyone">Share equally between everyone</option>}
+              <option value="none">Nobody (unassigned)</option>
+            </select>
+          )}
           <button onClick={() => setSelected(new Set())} style={{ marginLeft: "auto", background: "none", border: 0, color: "#fff", opacity: 0.8, fontSize: 12 }}>Clear</button>
         </div>
       )}
@@ -859,7 +903,10 @@ export default function LeadsPage() {
                           {l.call_count} calls</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12.5, color: C.mid, fontFamily: "var(--font-mono), monospace" }}>{l.phone}</div>
+                    <div style={{ fontSize: 12.5, color: C.mid, fontFamily: "var(--font-mono), monospace" }}>{l.phone}
+                      {team && <span style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif", color: l.assigned_to ? C.teal : C.dim, marginLeft: 8 }}>
+                        {ownerName(l.assigned_to) ? `→ ${ownerName(l.assigned_to)}` : "unassigned"}</span>}
+                    </div>
                     {(l.tags?.length || 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
                         {l.tags!.slice(0, 3).map(t => <span key={t} style={{ fontSize: 12, color: C.teal, background: C.teal + "12", borderRadius: 4, padding: "1px 5px" }}>{t}</span>)}
