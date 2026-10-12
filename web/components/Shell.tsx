@@ -289,6 +289,33 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
           {children}
         </div>
       </div>
+      {/* On a phone the four screens a person lives in are one thumb away;
+          everything else is behind More, which opens the full menu. */}
+      {me && (
+        <nav className="nk-tabbar" aria-label="Main screens">
+          {(staff
+            ? [{ href: "/desk", icon: Headset, label: "Desk" }, { href: "/today", icon: ListTodo, label: "Today" },
+               { href: "/leads", icon: Users, label: "Leads" }, { href: "/whatsapp", icon: MessageCircle, label: "WhatsApp" }]
+            : [{ href: "/dashboard", icon: Radio, label: "Reception" }, { href: "/calls", icon: Phone, label: "Calls" },
+               { href: "/leads", icon: Users, label: "Leads" }, { href: "/whatsapp", icon: MessageCircle, label: "WhatsApp" }]
+          ).map(t => {
+            const on = pathname === t.href || pathname.startsWith(t.href + "/");
+            const Icon = t.icon;
+            return (
+              <a key={t.href} href={t.href} className="nk-tab" aria-current={on ? "page" : undefined}>
+                <span style={{ position: "relative", lineHeight: 0 }}>
+                  <Icon size={21} />
+                  {t.href === "/whatsapp" && waUnread > 0 && <span className="nk-tab-dot" aria-label={`${waUnread} unread`}>{waUnread > 9 ? "9+" : waUnread}</span>}
+                </span>
+                <span>{t.label}</span>
+              </a>
+            );
+          })}
+          <button type="button" className="nk-tab" aria-label="More screens" onClick={() => setSideOpen(true)}>
+            <Menu size={21} /><span>More</span>
+          </button>
+        </nav>
+      )}
       <OwnerVoiceAssistant />
       <Toaster />
       <ConfirmHost />

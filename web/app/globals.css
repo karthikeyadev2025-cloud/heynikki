@@ -169,11 +169,25 @@ h1, h2, h3, .font-display {
 @media (prefers-reduced-motion: reduce) { .nk-status .dot::after { animation: none; } .fade-in { animation: none; } .nk-side { transition: none; } }
 .nk-burger { display: none; }
 .nk-scrim { display: none; }
+/* Phone tab bar: hidden on a desktop, where the sidebar is always there. */
+.nk-tabbar { display: none; }
 @media (max-width: 900px) {
+  :root { --nk-tab-h: calc(58px + env(safe-area-inset-bottom, 0px)); }
+  .nk-tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    background: rgba(255,255,255,0.96); backdrop-filter: saturate(1.4) blur(8px); border-top: 1px solid #E4E9F0;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px)); }
+  .nk-tab { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 2px;
+    background: none; border: 0; border-radius: 10px; color: #64748B; font: inherit; font-size: 11px; font-weight: 600;
+    text-decoration: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .nk-tab[aria-current=page] { color: #12457A; }
+  .nk-tab:active { background: #F1F4F8; }
+  .nk-tab-dot { position: absolute; top: -5px; right: -9px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: #16A34A; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+  .nk-toasts { bottom: calc(24px + var(--nk-tab-h, 0px)) !important; }
   .nk-side { transform: translateX(-100%); box-shadow: none; }
   .nk-side.open { transform: none; box-shadow: 0 0 40px rgba(15,23,42,0.25); }
   .nk-main { margin-left: 0; }
-  .nk-page { padding: 18px 14px 64px; }
+  .nk-page { padding: 18px 14px calc(72px + var(--nk-tab-h, 0px)); }
   .nk-burger { display: inline-flex; }
   .nk-scrim { display: block; position: fixed; inset: 0; background: rgba(15,23,42,0.4); z-index: 55; }
   .nk-topbar { padding: 0 14px !important; }

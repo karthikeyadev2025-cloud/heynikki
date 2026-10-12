@@ -58,6 +58,19 @@ export default function LoginPage() {
   // the OTP is only meaningful for the number just entered, and a separate
   // route invites a refresh that loses it.
   const [mode, setMode]       = useState<"email" | "phone">("email");
+  // Phone sign-in is a provider switch in the auth project. While it is off
+  // the Mobile tab led every person who chose it to "not enabled on this
+  // project yet" — a dead end offered on the first screen of the app. Ask
+  // the project and show the tab only when it can work.
+  const [phoneOn, setPhoneOn] = useState(false);
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) return;
+    fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => setPhoneOn(!!j?.external?.phone))
+      .catch(() => {});
+  }, []);
   const [phone, setPhone]     = useState("");
   const [otp, setOtp]         = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -192,7 +205,7 @@ export default function LoginPage() {
           {/* Email or phone. A toggle rather than two pages: the OTP only
               means anything for the number just typed, and a second route
               invites a refresh that throws it away. */}
-          <div role="tablist" aria-label="Sign-in method"
+          {phoneOn && <div role="tablist" aria-label="Sign-in method"
                style={{ display: "flex", gap: 4, marginBottom: 22,
                         background: "#F1F4F8", borderRadius: 10, padding: 4 }}>
             {(["email", "phone"] as const).map(m => (
@@ -208,7 +221,7 @@ export default function LoginPage() {
                 {m === "email" ? "Email" : "Mobile"}
               </button>
             ))}
-          </div>
+          </div>}
 
           <form onSubmit={mode === "phone" ? (otpSent ? verifyOtp : sendOtp) : handleLogin}>
             {error && (
