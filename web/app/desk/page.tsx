@@ -725,6 +725,7 @@ function Dialer({ d, api, onDone, prefill, phone }: {
         try {
           const j = await api(`/api/desk/calls/${st.ctcId}/summary`, {});
           if (cancelled) return;
+          if (j.pending) { await new Promise(r => setTimeout(r, 5000)); continue; }
           if (j.summary || j.disposition) {
             setAi({ state: "done", summary: j.summary, disposition: j.disposition, follow_up_at: j.follow_up_at });
             if (j.summary) setNotes(n => n || j.summary);

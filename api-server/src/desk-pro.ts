@@ -297,6 +297,9 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
   app.post("/api/desk/calls/:id/summary", verifyJWT, apiLimiter, async (req: any, res) => {
     const who = await me(req, res); if (!who) return;
     const r = await summarize(who.tenantId, req.params.id);
+    // "Not ready" is the usual first answer, not a failure: 202 keeps it out
+    // of the browser's error log while the Desk asks again.
+    if (r.status === 409 && r.body?.error === "not_ready") return res.status(202).json({ pending: true });
     res.status(r.status).json(r.body);
   });
 
