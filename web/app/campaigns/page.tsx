@@ -318,6 +318,7 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
   onSave: (patch: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [f, setF] = useState({
+    name: c.name, script: c.script,
     start_date: c.start_date || "", end_date: c.end_date || "",
     window_start: c.window_start.slice(0, 5), window_end: c.window_end.slice(0, 5),
     max_concurrent: c.max_concurrent,
@@ -331,6 +332,19 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
   );
   return (
     <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #EEF2F6" }}>
+      <div style={{ display:"grid", gap: 12, marginBottom: 12 }}>
+        {field("Campaign name",
+          <input style={inputStyle} value={f.name} maxLength={120}
+            onChange={e => setF(v => ({ ...v, name: e.target.value }))} />)}
+        {field("What Nikki says on the call",
+          <textarea style={{ ...inputStyle, minHeight: 130, resize: "vertical", lineHeight: 1.55 }} value={f.script} maxLength={5000}
+            onChange={e => setF(v => ({ ...v, script: e.target.value }))} />)}
+        {c.status === "running" && f.script.trim() !== c.script.trim() && (
+          <p style={{ fontSize: 12, color: C.gold, margin: 0 }}>
+            This campaign is running. Calls already made keep the old script; every call from now on uses the new one.
+          </p>
+        )}
+      </div>
       <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
         {field("First calling day",
           <input type="date" style={inputStyle} value={f.start_date}
@@ -352,9 +366,10 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
         {windowProblem(f.window_start, f.window_end) || windowNote(f.window_start, f.window_end)}
       </p>
       <div style={{ display:"flex", gap: 10, alignItems:"center", flexWrap:"wrap" }}>
-        <button disabled={saving || !!windowProblem(f.window_start, f.window_end)} onClick={async () => {
+        <button disabled={saving || !!windowProblem(f.window_start, f.window_end) || !f.name.trim() || !f.script.trim()} onClick={async () => {
           setSaving(true);
           await onSave({
+            name: f.name.trim(), script: f.script.trim(),
             start_date: f.start_date || null, end_date: f.end_date || null,
             window_start: f.window_start, window_end: f.window_end,
             max_concurrent: Math.min(Math.max(f.max_concurrent || 1, 1), 25),
@@ -363,7 +378,7 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
         }} style={{
           background: C.glow, color: "#fff", border: "none", borderRadius: 8,
           padding: "9px 18px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", opacity: saving ? 0.7 : 1,
-        }}>{saving ? "Saving…" : "Save schedule"}</button>
+        }}>{saving ? "Saving…" : "Save changes"}</button>
         <span style={{ fontSize: 12, color: C.dim }}>
           Times are IST. Changes apply from the dispatcher&apos;s next check, within a minute.
         </span>
@@ -515,7 +530,7 @@ export default function CampaignsPage() {
     }
   }
 
-  // Dates and hours are editable after creation — the old page had no way
+  // Name, script, dates and hours are editable after creation — the old page had no way
   // to change a window short of making a new campaign and re-uploading.
   async function saveSchedule(id: string, patch: Record<string, unknown>) {
     setError(""); setNotice("");
@@ -527,8 +542,8 @@ export default function CampaignsPage() {
       body: JSON.stringify(patch),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { setError(j.error || "Could not save the schedule"); return false; }
-    setNotice("Schedule saved."); setEditing(null); load();
+    if (!r.ok) { setError(j.error || "Could not save the campaign"); return false; }
+    setNotice("Campaign saved."); setEditing(null); load();
     return true;
   }
 
@@ -711,7 +726,7 @@ export default function CampaignsPage() {
                       <button onClick={() => setEditing(editing === c.id ? null : c.id)} style={{
                         background: "none", border: "none", color: C.glow, cursor: "pointer",
                         fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "inherit",
-                      }}>{editing === c.id ? "Close" : "Change schedule"}</button>
+                      }}>{editing === c.id ? "Close" : "Edit campaign"}</button>
                     )}
                   </div>
                   {c.status === "running" && c.start_date && c.start_date > istToday() && (

@@ -541,10 +541,24 @@ export function mountCampaignImport(
     const c = await ownCampaignAsOwner(req, res);
     if (!c) return;
     if (c.status === "completed" || c.status === "cancelled") {
-      return res.status(400).json({ error: `Cannot reschedule a ${c.status} campaign` });
+      return res.status(400).json({ error: `Cannot change a ${c.status} campaign` });
     }
     const b = req.body || {};
     const upd: Record<string, unknown> = {};
+    // Name and script too: a wrong word in the script used to mean a new
+    // campaign and the whole list uploaded again.
+    if ("name" in b) {
+      const name = String(b.name ?? "").trim();
+      if (!name || name.length > 120) return res.status(400).json({ error: "Give the campaign a name of up to 120 characters" });
+      upd.name = name;
+    }
+    if ("script" in b) {
+      const script = String(b.script ?? "").trim();
+      if (!script || script.length > 5000) return res.status(400).json({ error: "The script is required, up to 5,000 characters" });
+      const unfilled = script.match(/\[[^\]\n]{2,60}\]/);
+      if (unfilled) return res.status(400).json({ error: `Replace ${unfilled[0]} in the script with your own details first` });
+      upd.script = script;
+    }
     const DATE = /^\d{4}-\d{2}-\d{2}$/;
     for (const k of ["start_date", "end_date"]) {
       if (!(k in b)) continue;
@@ -576,8 +590,10 @@ export function mountCampaignImport(
     const { data, error } = await sb.from("outbound_campaigns")
       .update(upd).eq("id", c.id).select().single();
     if (error) return res.status(500).json({ error: error.message });
+    // The audit row records that the script changed, not its whole text.
+    const { script: newScript, ...logged } = upd;
     await audit("campaign_reschedule", { tenantId: c.tenant_id, actorId: req.user.id,
-                                         metadata: { campaign_id: c.id, ...upd } });
+                                         metadata: { campaign_id: c.id, ...logged, ...(newScript ? { script_changed: true } : {}) } });
     res.json({ ok: true, campaign: data });
   });
 
