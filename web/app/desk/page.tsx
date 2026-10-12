@@ -687,7 +687,7 @@ function Dialer({ d, api, onDone, prefill, phone }: {
   // Through the browser when the seat chose it and it is connected;
   // otherwise through their mobile, which then has to be on file.
   const viaBrowser = phone.viaBrowser;
-  const havePhone = phone.mode === "browser" ? viaBrowser : !!d?.you?.phone;
+  const havePhone = phone.mode === "browser" ? viaBrowser : phone.mode === "mobile" && !!d?.you?.phone;
 
   // Who is this? The lead row, if the number has one.
   useEffect(() => {
@@ -835,7 +835,9 @@ function Dialer({ d, api, onDone, prefill, phone }: {
     <Card title="Dial a number" icon={<PhoneCall size={15} />}
       right={phone.mode === "browser"
         ? <span style={{ fontSize: 12, color: C.dim }}>{viaBrowser ? "calls from this computer" : "phone is not connected yet"}</span>
-        : d?.you?.phone
+        : phone.needsChoice
+        ? <span style={{ fontSize: 12, color: C.gold, fontWeight: 600 }}>choose your phone first</span>
+        : phone.mode === "mobile" && d?.you?.phone
         ? <span style={{ fontSize: 12, color: C.dim }}>rings <strong style={{ color: C.mid }}>{prettyNum(d.you.phone)}</strong> first</span>
         : null}>
       {!havePhone && d && phone.mode === "mobile" && (

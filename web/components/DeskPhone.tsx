@@ -44,11 +44,14 @@ export function usePhone(getToken: () => Promise<string>, hasMobile: boolean | n
   const [mode, setModeState] = useState<PhoneMode | null>(null);
 
   // First visit: a seat with no mobile on file can only work from here, so
-  // that is the default; one with a mobile keeps what they had until they
-  // choose otherwise.
+  // that is chosen for them. One with a mobile is asked once — it used to
+  // be put on "My mobile" silently, and nobody found the other option.
+  const [asked, setAsked] = useState(false);
   useEffect(() => {
     if (mode !== null || hasMobile === null) return;
-    setModeState(savedPhoneMode() || (hasMobile ? "mobile" : "browser"));
+    const saved = savedPhoneMode();
+    if (saved || !hasMobile) setModeState(saved || "browser");
+    else setAsked(true);
   }, [mode, hasMobile]);
 
   // Come back to the Desk on "this computer" and the phone turns itself on.
@@ -65,6 +68,8 @@ export function usePhone(getToken: () => Promise<string>, hasMobile: boolean | n
 
   return {
     mode, setMode, snap,
+    /** Nothing chosen on this computer yet; no call is placed until it is. */
+    needsChoice: mode === null && asked,
     /** Calls go through the browser right now. */
     viaBrowser: mode === "browser" && snap.status === "ready",
     /** The seat chose the browser but it is not usable yet. */
@@ -90,7 +95,7 @@ function useTick(on: boolean) {
 }
 
 export default function DeskPhone({ phone, mobile }: { phone: Phone; mobile: string }) {
-  const { mode, setMode, snap } = phone;
+  const { mode, setMode, snap, needsChoice } = phone;
   const [pad, setPad] = useState(false);
   const sp = softphone();
   const call = snap.call;
@@ -122,6 +127,11 @@ export default function DeskPhone({ phone, mobile }: { phone: Phone; mobile: str
   );
 
   const status = (() => {
+    if (mode === null) {
+      return needsChoice
+        ? { color: C.gold, text: "Choose where your calls happen. This computer needs a headset; My mobile rings your phone first. You can switch at any time." }
+        : { color: C.dim, text: "Checking your phone…" };
+    }
     if (mode === "mobile") {
       return mobile
         ? { color: C.grn, text: `Calls ring ${pretty(mobile)} first, then connect the customer.` }
@@ -138,7 +148,7 @@ export default function DeskPhone({ phone, mobile }: { phone: Phone; mobile: str
 
   return (
     <>
-      <section aria-label="Your phone" style={{ background: C.surf, border: "1px solid #E4E9F0", borderRadius: 12,
+      <section aria-label="Your phone" style={{ background: C.surf, border: `1px solid ${needsChoice ? C.gold : "#E4E9F0"}`, borderRadius: 12,
         padding: 18, minWidth: 0, boxShadow: "0 1px 2px rgba(15,23,42,0.04)" }}>
         <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 15.5, fontWeight: 700,
           letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>

@@ -317,6 +317,16 @@ export default function LeadsPage() {
   // ringing, or long after a quick no-answer.
   const handleClickToCall = async (lead: Lead) => {
     if (ctcActive) { toast.err(`You're already on a call with ${ctcActive.lead.name || ctcActive.lead.phone}.`); return; }
+    // A seat that calls from its computer has its headset on the Desk. This
+    // button used to ring their mobile regardless of that choice.
+    // Same key as lib/softphone, read here so this page does not load the phone itself.
+    let onComputer = false;
+    try { onComputer = localStorage.getItem("nikki_desk_phone") === "browser"; } catch { /* private window */ }
+    if (onComputer) {
+      const n = String(lead.phone || "").replace(/\D/g, "").slice(-10);
+      window.location.href = `/desk?call=${n}&lead=${lead.id}`;
+      return;
+    }
     setCtcLoading(lead.id);
     const sb = createClient();
     const { data: { session } } = await sb.auth.getSession();
@@ -956,7 +966,7 @@ export default function LeadsPage() {
                         loadCounts(true);
                       }} />
                   )}
-                  <button onClick={() => handleClickToCall(l)} disabled={ctcLoading === l.id || onCall} title="Call from your phone via Nikki's number" style={{
+                  <button onClick={() => handleClickToCall(l)} disabled={ctcLoading === l.id || onCall} title="Call through Nikki's number, on the phone you chose on the Desk" style={{
                     background: onCall ? C.grn : C.grn + "1A", color: onCall ? "#fff" : C.grn, border: `1px solid ${C.grn}44`,
                     borderRadius: 8, padding: "7px 10px", fontSize: 12, fontWeight: 700,
                     display: "inline-flex", alignItems: "center", gap: 5, opacity: ctcLoading === l.id ? 0.7 : 1 }}>
