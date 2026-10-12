@@ -630,3 +630,61 @@ test("extra minutes are sold only in the packs on the page, at the configured ra
   // No rate, no sale — never a free or negative order.
   for (const r of [0, -5, NaN, undefined, "x"]) assert.equal(topupAmountPaise(100, r), null);
 });
+
+test("an admin report counts each call once, in IST days, split between Nikki and the team", async () => {
+  const { buildReport, reportRange, REPORT_MAX_DAYS } = await import("../dist/admin-reports.js");
+  const r = reportRange("2026-10-01", "2026-10-02");
+  assert.deepEqual(r.days, ["2026-10-01", "2026-10-02"]);
+  assert.equal(r.startIso, "2026-10-01T00:00:00+05:30");
+  const rep = buildReport({
+    days: r.days,
+    calls: [
+      // 23:30 IST on the 1st is 18:00 UTC: it belongs to the 1st.
+      { tenant_id: "a", created_at: "2026-10-01T18:00:00Z", direction: "inbound", intent: "enquiry", status: "completed", duration_seconds: 61 },
+      // 00:30 IST on the 2nd is 19:00 UTC on the 1st: it belongs to the 2nd.
+      { tenant_id: "a", created_at: "2026-10-01T19:00:00Z", direction: "outbound", intent: "transfer", status: "completed", duration_seconds: 120 },
+      { tenant_id: "b", created_at: "2026-10-02T05:00:00Z", direction: "inbound", intent: null, status: "missed", duration_seconds: 0 },
+      // Outside the period: counted nowhere.
+      { tenant_id: "a", created_at: "2026-10-03T05:00:00Z", direction: "inbound", intent: null, status: "completed", duration_seconds: 500 },
+    ],
+    appointments: [{ tenant_id: "a", created_at: "2026-10-02T06:00:00Z" }],
+    leads: [{ tenant_id: "b", created_at: "2026-10-01T06:00:00Z" }],
+    invoices: [
+      { tenant_id: "a", created_at: "2026-10-01T06:00:00Z", amount_paise: 999900, status: "paid" },
+      { tenant_id: "a", created_at: "2026-10-01T06:00:00Z", amount_paise: 500000, status: "refunded" },
+    ],
+    tenants: [
+      { id: "a", name: "Alpha", plan: "growth", status: "active", created_at: "2026-10-01T06:00:00Z" },
+      { id: "b", name: "Beta", plan: "trial", status: "trial", created_at: "2026-09-01T06:00:00Z" },
+      { id: "c", name: "Quiet", plan: "scale", status: "active", created_at: "2026-08-01T06:00:00Z" },
+    ],
+    planNames: { growth: "Team" },
+  });
+  assert.equal(rep.totals.calls, 3);
+  assert.equal(rep.totals.connected, 2);
+  // A few seconds of ringing is not a conversation.
+  const ring = buildReport({ days: r.days, appointments: [], leads: [], invoices: [], tenants: [],
+    calls: [{ tenant_id: "a", created_at: "2026-10-01T06:00:00Z", direction: "outbound", intent: "transfer", status: "completed", duration_seconds: 3 }] });
+  assert.equal(ring.totals.calls, 1); assert.equal(ring.totals.connected, 0);
+  assert.equal(rep.totals.missed, 1);
+  assert.equal(rep.totals.ai_minutes, 2);      // 61 s rounds up, as the meter does
+  assert.equal(rep.totals.desk_minutes, 2);
+  assert.equal(rep.totals.revenue_paise, 999900);
+  assert.equal(rep.totals.signups, 1);
+  assert.equal(rep.totals.paying, 2);
+  assert.equal(rep.totals.quiet_paying, 1);
+  assert.equal(rep.daily[0].calls, 1);
+  assert.equal(rep.daily[1].calls, 2);
+  const a = rep.tenants.find(t => t.tenant_id === "a");
+  assert.equal(a.plan_name, "Team");
+  assert.equal(a.calls, 2); assert.equal(a.appointments, 1);
+  // A paying business with no calls is still a row.
+  assert.equal(rep.tenants.find(t => t.tenant_id === "c").calls, 0);
+
+  // Reversed dates are swapped; a huge span is cut to the maximum.
+  assert.equal(reportRange("2026-10-05", "2026-10-01").from, "2026-10-01");
+  assert.equal(reportRange("2020-01-01", "2026-10-01").days.length, REPORT_MAX_DAYS);
+  // Junk falls back to the last 30 days ending today (IST).
+  const d = reportRange("x", "'; drop", Date.parse("2026-10-12T20:00:00Z"));
+  assert.equal(d.to, "2026-10-13"); assert.equal(d.days.length, 30);
+});

@@ -5283,6 +5283,7 @@ import { mountOwnerAlerts, sendOwnerEmail } from "./owner-alerts";
 import { outboundCli, outboundDids, pickFor } from "./outbound-cli";
 import { mountAdminExtras } from "./admin-extras";
 import { mountAdminOps } from "./admin-ops";
+import { mountAdminReports } from "./admin-reports";
 import { purgeRecordings, RECORDING_COLUMNS_CLEARED } from "./recordings";
 import { notifyApiCallback, publicOutboundCall, API_CALL_SOURCE } from "./api-callbacks";
 import { makeOwnerAssistant } from "./owner-tools";
@@ -5325,6 +5326,7 @@ mountOwnerAlerts(app, { sb, verifyJWT, getTenantId });
 mountAdminExtras(app, { sb, verifySuperAdmin });
 // Command center, telecaller performance, usage vs plan limits (admin-ops.ts).
 mountAdminOps(app, { sb, verifySuperAdmin });
+mountAdminReports(app, { sb, verifySuperAdmin });
 
 // Generate a new API key: jvk_live_<32 random url-safe chars>.
 // Returned ONLY at issue — never recoverable afterwards.

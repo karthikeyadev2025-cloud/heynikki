@@ -163,16 +163,18 @@ function KPI({ value, label, color, icon: IconComp }: { value: any; label: strin
 // here about a CUSTOMER, a CALL, or the PLATFORM, and only then which screen.
 // Order within each group runs in the order the work actually happens.
 const NAV_GROUPS: { title: string; labels: string[] }[] = [
-  { title: "Overview",  labels: ["Dashboard"] },
-  { title: "Customers", labels: ["Tenants", "Demo Tenants", "KYC Review", "Billing", "Usage & Limits", "CRM", "Revenue"] },
+  { title: "Overview",  labels: ["Dashboard", "Reports"] },
+  // Customers was seven screens long and mixed who they are with what they
+  // pay. People first; money has its own group.
+  { title: "Customers", labels: ["Tenants", "Demo Tenants", "KYC Review", "CRM"] },
+  { title: "Money",     labels: ["Billing", "Revenue", "Usage & Limits", "Pricing Engine"] },
   { title: "Telephony", labels: ["Live Calls", "Telecallers", "Numbers", "WhatsApp", "FreeSWITCH"] },
   { title: "Quality",   labels: ["Call Quality", "Agent Versions", "Voice Lab"] },
   { title: "Outreach",  labels: ["Campaigns", "Broadcast"] },
   // Platform Health leads the group because it is the screen an operator
   // opens first: it is the only one that answers "is anything stuck, and
   // since when" without knowing which subsystem to suspect.
-  { title: "Platform",  labels: ["Platform Health", "Operations", "API Health", "Platform Config",
-                                 "Pricing Engine", "Audit Log"] },
+  { title: "Platform",  labels: ["Platform Health", "Operations", "API Health", "Platform Config", "Audit Log"] },
 ];
 
 const TABS = [
@@ -203,6 +205,7 @@ const TABS = [
   { label: "Platform Health", icon: HeartPulse },
   { label: "Telecallers",     icon: Headphones },
   { label: "Usage & Limits",  icon: Hourglass },
+  { label: "Reports",         icon: TrendingUp },
 ];
 
 
@@ -264,7 +267,7 @@ export default function SuperAdminPage() {
   if (!authed) return <AdminLogin onSuccess={(t) => { setToken(t); setAuthed(true); }} />;
 
   const panels = [
-    <PlatformDashboard key="dash" token={token} />,
+    <PlatformDashboard key="dash" token={token} onOpen={(label) => go(TABS.findIndex(t => t.label === label))} />,
     <TenantsPanel      key="ten"  token={token} />,
     <LiveCallsPanel    key="live" token={token} />,
     <CrmPanel          key="crm"  token={token} />,
@@ -288,6 +291,7 @@ export default function SuperAdminPage() {
     <PlatformHealthPanel key="hlth"  token={token} />,
     <TelecallersPanel    key="tele"  token={token} />,
     <UsagePanel          key="use"   token={token} />,
+    <ReportsPanel        key="rep"   token={token} />,
   ];
 
 
@@ -448,6 +452,7 @@ const CR_CSS = `
   .nk-table tr:hover td{background:#F9FAFC}
   .nk-table thead th{position:sticky;top:0;z-index:1}
   .nk-table tbody tr:last-child td{border-bottom:none}
+  .nk-table tfoot td{background:${C.hi};border-top:1px solid ${C.bord};border-bottom:none}
   .nk-num{text-align:right;font-variant-numeric:tabular-nums}
   button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible,textarea:focus-visible{
     outline:2px solid ${C.glow};outline-offset:2px;border-radius:6px}
@@ -689,7 +694,7 @@ function AdminLogin({ onSuccess }: { onSuccess: (token: string) => void }) {
 }
 
 // ── PLATFORM DASHBOARD ────────────────────────────────────
-function PlatformDashboard({ token }: { token: string }) {
+function PlatformDashboard({ token, onOpen }: { token: string; onOpen: (label: string) => void }) {
   const [stats, setStats]   = useState<any>(null);
   const [calls, setCalls]   = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -768,6 +773,8 @@ function PlatformDashboard({ token }: { token: string }) {
         <KPI value={stats?.active_calls || 0}   label="Live Calls Now"  color={C.red}  icon={Phone} />
         <KPI value={stats?.calls_today || 0}    label="Calls Today"     color={C.gold} icon={BarChart3} />
       </div>
+
+      <MonthStrip token={token} onOpen={onOpen} />
 
       <div className="nk-2col" style={{ marginBottom: 16 }}>
         <Card>
@@ -5178,6 +5185,270 @@ function UsagePanel({ token }: { token: string }) {
           </table>
         </div>
       </Card>
+    </div>
+  );
+}
+
+// ── REPORTS ───────────────────────────────────────────────
+// One period, the whole platform and each business. Days are IST days, the
+// same day every customer and every bill is counted in.
+const istToday = (offsetDays = 0) => new Date(Date.now() + 5.5 * 3600_000 + offsetDays * 86_400_000).toISOString().slice(0, 10);
+const rupees = (paise: number) => "₹" + Math.round((paise || 0) / 100).toLocaleString("en-IN");
+const num = (n: number) => Number(n || 0).toLocaleString("en-IN");
+
+const REPORT_PRESETS: { id: string; label: string; range: () => [string, string] }[] = [
+  { id: "today", label: "Today",        range: () => [istToday(), istToday()] },
+  { id: "yday",  label: "Yesterday",    range: () => [istToday(-1), istToday(-1)] },
+  { id: "7d",    label: "Last 7 days",  range: () => [istToday(-6), istToday()] },
+  { id: "30d",   label: "Last 30 days", range: () => [istToday(-29), istToday()] },
+  { id: "month", label: "This month",   range: () => [istToday().slice(0, 8) + "01", istToday()] },
+  { id: "last",  label: "Last month",   range: () => {
+      const first = new Date(istToday().slice(0, 8) + "01T00:00:00Z");
+      const end = new Date(first.getTime() - 86_400_000);
+      return [end.toISOString().slice(0, 8) + "01", end.toISOString().slice(0, 10)];
+    } },
+];
+
+function downloadCsv(name: string, header: string[], rows: (string | number | null)[][]) {
+  // Quoted, and a leading = + - @ is defused: a business name is typed by a
+  // customer and this file is opened in a spreadsheet.
+  const cell = (v: string | number | null) => {
+    let t = v === null || v === undefined ? "" : String(v);
+    if (/^[=+\-@]/.test(t)) t = "'" + t;
+    return '"' + t.replace(/"/g, '""') + '"';
+  };
+  const csv = [header, ...rows].map(r => r.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** This month so far, on the dashboard: the four numbers the business runs on. */
+function MonthStrip({ token, onOpen }: { token: string; onOpen: (label: string) => void }) {
+  const [from, to] = [istToday().slice(0, 8) + "01", istToday()];
+  const { data } = useAdminJson<any>(token, `/api/admin/reports?from=${from}&to=${to}`, 300000);
+  const t = data?.totals;
+  if (!t) return null;
+  const tiles: [string, string, string][] = [
+    ["Revenue", rupees(t.revenue_paise), `${num(t.paying)} paying of ${num(t.tenants)} businesses`],
+    ["Nikki minutes", num(t.ai_minutes), `${num(t.desk_minutes)} telecaller minutes`],
+    ["Calls", num(t.calls), t.connect_rate === null ? "none yet" : `${pctText(t.connect_rate)} became a conversation`],
+    ["New sign-ups", num(t.signups), t.quiet_paying > 0 ? `${num(t.quiet_paying)} paying with no calls` : `${num(t.active_tenants)} businesses made calls`],
+  ];
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" as const }}>
+        <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800 }}>This month so far</div>
+        <button onClick={() => onOpen("Reports")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none",
+          border: 0, color: C.glow, fontSize: TYPE.sm, fontWeight: 600, cursor: "pointer" }}>
+          Open reports <ChevronRight size={14} />
+        </button>
+      </div>
+      <div className="nk-kpis">
+        {tiles.map(([label, value, sub]) => (
+          <div key={label}>
+            <div style={{ color: C.dim, fontSize: TYPE.xs, textTransform: "uppercase" as const, letterSpacing: "0.08em", fontWeight: 600 }}>{label}</div>
+            <div style={{ color: C.txt, fontFamily: F.cond, fontSize: 28, fontWeight: 600, lineHeight: 1.2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+            <div style={{ color: C.mid, fontSize: TYPE.xs, marginTop: 2 }}>{sub}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ReportsPanel({ token }: { token: string }) {
+  const [preset, setPreset] = useState("30d");
+  const [[from, to], setRange] = useState<[string, string]>(() => REPORT_PRESETS[3].range());
+  const { data, error, loading, reload } = useAdminJson<any>(token, `/api/admin/reports?from=${from}&to=${to}`);
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "minutes", dir: -1 });
+  const [hideQuiet, setHideQuiet] = useState(false);
+
+  const t = data?.totals;
+  const daily: any[] = data?.daily || [];
+  const val = (r: any, k: string) => k === "minutes" ? r.ai_minutes + r.desk_minutes : k === "name" ? String(r.name || "").toLowerCase() : (r[k] ?? -1);
+  const rows: any[] = [...(data?.tenants || [])]
+    .filter(r => !hideQuiet || r.calls > 0 || r.revenue_paise > 0)
+    .sort((a, b) => { const x = val(a, sort.key), y = val(b, sort.key); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+  const th = (key: string, label: string, numeric = true) => (
+    <th className={numeric ? "nk-num" : undefined} style={{ cursor: "pointer", userSelect: "none" as const }}
+      aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : undefined}
+      onClick={() => setSort(s => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : (numeric ? -1 : 1) }))}>
+      {label}{sort.key === key ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+    </th>
+  );
+  const dayLabel = (d: string) => new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
+  const chip = (on: boolean): React.CSSProperties => ({
+    background: on ? C.glow : C.surf, color: on ? "#fff" : C.mid, border: "1px solid " + (on ? C.glow : C.bord),
+    borderRadius: 8, padding: "6px 11px", fontSize: TYPE.sm, fontWeight: 600, cursor: "pointer" });
+  const tool: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6, background: C.surf,
+    border: "1px solid " + C.bord, color: C.mid, borderRadius: 8, padding: "7px 11px", fontSize: TYPE.sm, cursor: "pointer" };
+  const dateBox: React.CSSProperties = { border: "1px solid " + C.bord, borderRadius: 8, padding: "6px 8px", fontSize: TYPE.sm, background: C.surf };
+
+  const exportBusinesses = () => downloadCsv(`heynikki-businesses-${from}-to-${to}.csv`,
+    ["Business", "Plan", "Status", "Calls", "Inbound", "Outbound", "Conversations", "Missed", "Nikki minutes", "Telecaller minutes", "Appointments", "Leads", "Revenue (INR)"],
+    rows.map(r => [r.name, r.plan_name, r.status, r.calls, r.inbound, r.outbound, r.connected, r.missed, r.ai_minutes, r.desk_minutes, r.appointments, r.leads, Math.round(r.revenue_paise / 100)]));
+  const exportDaily = () => downloadCsv(`heynikki-daily-${from}-to-${to}.csv`,
+    ["Day", "Calls", "Inbound", "Outbound", "Conversations", "Missed", "Nikki minutes", "Telecaller minutes", "Appointments", "Leads", "Revenue (INR)"],
+    daily.map(d => [d.day, d.calls, d.inbound, d.outbound, d.connected, d.missed, d.ai_minutes, d.desk_minutes, d.appointments, d.leads, Math.round(d.revenue_paise / 100)]));
+
+  return (
+    <div>
+      <PanelIntro icon={TrendingUp}>
+        Pick a period to see the whole platform and each business in it. Days are counted in Indian time. Nikki minutes are
+        calls she handled; telecaller minutes are calls people handled. One report covers up to {data?.max_days || 92} days.
+      </PanelIntro>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const, margin: "14px 0 16px" }}>
+        {REPORT_PRESETS.map(p => (
+          <button key={p.id} style={chip(preset === p.id)} onClick={() => { setPreset(p.id); setRange(p.range()); }}>{p.label}</button>
+        ))}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 4 }}>
+          <input type="date" aria-label="From" value={from} max={to} style={dateBox}
+            onChange={e => { if (e.target.value) { setPreset("custom"); setRange([e.target.value, to]); } }} />
+          <span style={{ color: C.dim, fontSize: TYPE.xs }}>to</span>
+          <input type="date" aria-label="To" value={to} min={from} max={istToday()} style={dateBox}
+            onChange={e => { if (e.target.value) { setPreset("custom"); setRange([from, e.target.value]); } }} />
+        </span>
+        <span style={{ flex: 1 }} />
+        <button style={tool} onClick={reload}><RefreshCw size={13} /> Refresh</button>
+        <button style={tool} onClick={exportDaily} disabled={!daily.length}><Download size={13} /> Daily CSV</button>
+        <button style={tool} onClick={exportBusinesses} disabled={!rows.length}><Download size={13} /> Businesses CSV</button>
+      </div>
+
+      {error && <ErrorNote msg={`Couldn't build the report: ${error}`} onRetry={reload} />}
+      {loading && !data && <Loading rows={5} label="Building the report" />}
+
+      {t && (
+        <>
+          {data.from !== from && (
+            <Card style={{ borderColor: C.gold + "55", background: C.gold + "0D", marginBottom: 14, padding: "10px 14px" }}>
+              <span style={{ color: C.txt, fontSize: TYPE.sm }}>
+                That period is longer than one report covers, so this shows {dayLabel(data.from)} to {dayLabel(data.to)}.
+              </span>
+            </Card>
+          )}
+          <div className="nk-kpis" style={{ marginBottom: 14 }}>
+            <KPI value={t.calls} label={t.connect_rate === null ? "Calls" : `Calls · ${pctText(t.connect_rate)} became a conversation`} color={C.gbr} icon={Phone} />
+            <KPI value={t.ai_minutes} label="Nikki minutes" color={C.glow} icon={Bot} />
+            <KPI value={t.desk_minutes} label="Telecaller minutes" color={C.gold} icon={Headphones} />
+            <KPI value={rupees(t.revenue_paise)} label="Revenue received" color={C.grn} icon={IndianRupee} />
+          </div>
+          <div className="nk-kpis" style={{ marginBottom: 18 }}>
+            <KPI value={t.appointments} label="Appointments booked" color={C.grn} icon={Check} />
+            <KPI value={t.leads} label="New leads" color={C.gbr} icon={Users} />
+            <KPI value={t.signups} label="New sign-ups" color={C.gold} icon={UserPlus} />
+            <KPI value={`${num(t.active_tenants)} / ${num(t.tenants)}`} label={t.quiet_paying > 0
+              ? `Businesses with calls · ${num(t.quiet_paying)} paying made none` : "Businesses with calls"} color={t.quiet_paying > 0 ? C.red : C.glow} icon={Building2} />
+          </div>
+
+          <div className="nk-2col" style={{ marginBottom: 18 }}>
+            <Card>
+              <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 14 }}>Calls each day</div>
+              <ResponsiveContainer width="100%" height={190}>
+                <BarChart data={daily.map(d => ({ ...d, label: dayLabel(d.day), other: d.calls - d.connected }))} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="label" tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false} minTickGap={16} />
+                  <YAxis tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: C.hi, border: "1px solid " + C.bord, borderRadius: 8, fontSize: TYPE.sm }} />
+                  <Bar dataKey="connected" name="Conversations" stackId="c" fill={C.glow} />
+                  <Bar dataKey="other" name="Not connected" stackId="c" fill={C.bord} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+            <Card>
+              <div style={{ color: C.txt, fontSize: TYPE.sm, fontWeight: 800, marginBottom: 14 }}>Minutes each day</div>
+              <ResponsiveContainer width="100%" height={190}>
+                <BarChart data={daily.map(d => ({ ...d, label: dayLabel(d.day) }))} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="label" tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false} minTickGap={16} />
+                  <YAxis tick={{ fill: C.mid, fontSize: TYPE.xs }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: C.hi, border: "1px solid " + C.bord, borderRadius: 8, fontSize: TYPE.sm }} />
+                  <Bar dataKey="ai_minutes" name="Nikki" stackId="m" fill={C.glow} />
+                  <Bar dataKey="desk_minutes" name="Telecallers" stackId="m" fill={C.gold} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" as const }}>
+            <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 700 }}>By business</div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.mid, fontSize: TYPE.sm, cursor: "pointer" }}>
+              <input type="checkbox" checked={hideQuiet} onChange={e => setHideQuiet(e.target.checked)} /> Hide businesses with nothing in this period
+            </label>
+            <span style={{ color: C.dim, fontSize: TYPE.xs }}>Click a column to sort</span>
+          </div>
+          <Card style={{ padding: 0, marginBottom: 18 }}>
+            <div className="nk-scroll">
+              <table className="nk-table">
+                <thead><tr>
+                  {th("name", "Business", false)}<th>Plan</th>
+                  {th("calls", "Calls")}{th("connect_rate", "Conversations")}{th("missed", "Missed")}
+                  {th("ai_minutes", "Nikki min")}{th("desk_minutes", "Telecaller min")}
+                  {th("appointments", "Appts")}{th("leads", "Leads")}{th("revenue_paise", "Revenue")}
+                </tr></thead>
+                <tbody>
+                  {rows.length === 0 && <tr><td colSpan={10} style={{ color: C.dim }}>Nothing in this period.</td></tr>}
+                  {rows.map(r => (
+                    <tr key={r.tenant_id}>
+                      <td>
+                        <div style={{ color: C.txt, fontWeight: 700 }}>{r.name}</div>
+                        {r.status && r.status !== "active" && <div style={{ color: C.dim, fontSize: TYPE.xs }}>{r.status}</div>}
+                      </td>
+                      <td><Pill label={r.plan_name} color={!r.plan || r.plan === "trial" ? C.dim : C.gbr} /></td>
+                      <td className="nk-num">{num(r.calls)}</td>
+                      <td className="nk-num">{r.connect_rate === null ? "—" : pctText(r.connect_rate)}</td>
+                      <td className="nk-num" style={{ color: r.missed > 0 ? C.red : undefined }}>{num(r.missed)}</td>
+                      <td className="nk-num">{num(r.ai_minutes)}</td>
+                      <td className="nk-num">{num(r.desk_minutes)}</td>
+                      <td className="nk-num">{num(r.appointments)}</td>
+                      <td className="nk-num">{num(r.leads)}</td>
+                      <td className="nk-num">{r.revenue_paise > 0 ? rupees(r.revenue_paise) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                {rows.length > 1 && (
+                  <tfoot><tr>
+                    <td style={{ fontWeight: 700 }}>Total</td><td />
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.calls)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{t.connect_rate === null ? "—" : pctText(t.connect_rate)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.missed)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.ai_minutes)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.desk_minutes)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.appointments)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{num(t.leads)}</td>
+                    <td className="nk-num" style={{ fontWeight: 700 }}>{rupees(t.revenue_paise)}</td>
+                  </tr></tfoot>
+                )}
+              </table>
+            </div>
+          </Card>
+
+          <div style={{ color: C.txt, fontSize: TYPE.base, fontWeight: 700, marginBottom: 10 }}>Day by day</div>
+          <Card style={{ padding: 0 }}>
+            <div className="nk-scroll" style={{ maxHeight: 420, overflowY: "auto" }}>
+              <table className="nk-table">
+                <thead><tr>
+                  <th>Day</th><th className="nk-num">Calls</th><th className="nk-num">In</th><th className="nk-num">Out</th>
+                  <th className="nk-num">Conversations</th><th className="nk-num">Nikki min</th><th className="nk-num">Telecaller min</th>
+                  <th className="nk-num">Appts</th><th className="nk-num">Leads</th><th className="nk-num">Revenue</th>
+                </tr></thead>
+                <tbody>
+                  {[...daily].reverse().map(d => (
+                    <tr key={d.day} style={{ opacity: d.calls === 0 && d.revenue_paise === 0 ? 0.55 : 1 }}>
+                      <td>{new Date(d.day + "T00:00:00Z").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}</td>
+                      <td className="nk-num">{num(d.calls)}</td><td className="nk-num">{num(d.inbound)}</td><td className="nk-num">{num(d.outbound)}</td>
+                      <td className="nk-num">{d.connect_rate === null ? "—" : pctText(d.connect_rate)}</td>
+                      <td className="nk-num">{num(d.ai_minutes)}</td><td className="nk-num">{num(d.desk_minutes)}</td>
+                      <td className="nk-num">{num(d.appointments)}</td><td className="nk-num">{num(d.leads)}</td>
+                      <td className="nk-num">{d.revenue_paise > 0 ? rupees(d.revenue_paise) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
