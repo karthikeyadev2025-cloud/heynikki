@@ -123,6 +123,29 @@ export function refuseClientSip(msg: string, seat: string): string {
   return `${method} is not allowed`;
 }
 
+/**
+ * A browser on https names its transport WSS in the Via of everything it
+ * sends. The switch hears it on a plain WS socket (TLS ends at Cloudflare,
+ * and this proxy speaks ws:// to loopback), finds no WSS transport to
+ * answer on, and answers nothing at all: every REGISTER from a real
+ * browser went unanswered and the phone never came up. Tests from a
+ * ws:// page said WS and worked, which is how this hid.
+ *
+ * So the Via is told the truth on the way in, and put back on the way out
+ * for a browser that checks its own Via on the reply.
+ */
+const VIA_WSS = /^((?:Via|v)[ \t]*:[ \t]*SIP\/2\.0\/)WSS(?=[ \t])/im;
+const VIA_WS  = /^((?:Via|v)[ \t]*:[ \t]*SIP\/2\.0\/)WS(?=[ \t])/im;
+export function viaForSwitch(msg: string): { msg: string; changed: boolean } {
+  if (!VIA_WSS.test(msg)) return { msg, changed: false };
+  return { msg: msg.replace(VIA_WSS, "$1WS"), changed: true };
+}
+export function viaForBrowser(msg: string): string {
+  // Only replies carry the browser's own Via back; a request from the
+  // switch has the switch's.
+  return /^SIP\/2\.0 \d{3}\b/.test(msg) ? msg.replace(VIA_WS, "$1WSS") : msg;
+}
+
 /* ── One-time call tokens ───────────────────────────────────── */
 
 export type PendingCall = {
@@ -334,6 +357,7 @@ export function attachSoftphoneProxy(
       // The first line of each SIP message, both ways, for the first few of
       // a connection: enough to see where a phone that will not connect
       // stops, without logging a call's whole signalling.
+      let secure = false;     // this browser says WSS in its Via
       let traced = 0;
       const trace = (dir: string, text: string) => {
         const first = text.slice(0, 200).split("\r\n")[0].replace(/sip:[^@\s]+@/g, "sip:…@");
@@ -347,14 +371,18 @@ export function attachSoftphoneProxy(
           console.warn(`[softphone] refused a message from ${seat}: ${why}`);
           return close(1008);
         }
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(msg);
-        else if (queue.length < 20) queue.push(msg);
+        const out = viaForSwitch(msg);
+        if (out.changed) secure = true;
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(out.msg);
+        else if (queue.length < 20) queue.push(out.msg);
         else close(1013);
       });
       upstream.on("open", () => { for (const m of queue.splice(0)) upstream.send(m); });
       upstream.on("message", (data, isBinary) => {
         trace("<", data.toString("utf8"));
-        if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
+        if (client.readyState !== WebSocket.OPEN) return;
+        if (secure && !isBinary) client.send(viaForBrowser(data.toString("utf8")));
+        else client.send(data, { binary: isBinary });
       });
       upstream.on("error", (e) => { console.error("[softphone] switch socket:", e.message); close(1011); });
       upstream.on("close", () => close(1011));

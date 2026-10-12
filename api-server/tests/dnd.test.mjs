@@ -596,3 +596,18 @@ test("a browser contact the switch marks as behind NAT can still be rung", async
   assert.ok(sp.isBrowserContact(
     "sofia/webrtc/sip:l3hu0e9t@sah4d9v12eal.invalid;transport=ws;fs_nat=yes;fs_path=sip%3Al3hu0e9t%40100.65.188.4%3A41331%3Btransport%3Dws"));
 });
+
+test("softphone: a browser's WSS Via is WS to the switch and WSS again on the reply", async () => {
+  const sp = await import("../dist/softphone.js");
+  const reg = "REGISTER sip:heynikki.in SIP/2.0\r\nVia: SIP/2.0/WSS ki89q238t4lo.invalid;branch=z9hG4bK6472606\r\nTo: <sip:u1@heynikki.in>\r\n\r\n";
+  const up = sp.viaForSwitch(reg);
+  assert.equal(up.changed, true);
+  assert.match(up.msg, /\r\nVia: SIP\/2\.0\/WS ki89q238t4lo\.invalid;branch=z9hG4bK6472606\r\n/);
+  // Already WS (a test page on ws://): untouched.
+  assert.equal(sp.viaForSwitch(up.msg).changed, false);
+  const ok = "SIP/2.0 200 OK\r\nVia: SIP/2.0/WS ki89q238t4lo.invalid;branch=z9hG4bK6472606\r\n\r\n";
+  assert.match(sp.viaForBrowser(ok), /Via: SIP\/2\.0\/WSS ki89q238t4lo/);
+  // A request from the switch carries the switch's own Via: left alone.
+  const inv = "INVITE sip:x@y.invalid SIP/2.0\r\nVia: SIP/2.0/WS 127.0.0.1;branch=z9hG4bKabc\r\n\r\n";
+  assert.equal(sp.viaForBrowser(inv), inv);
+});
