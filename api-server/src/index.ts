@@ -7745,7 +7745,7 @@ app.post("/api/calls/click-to-call", verifyJWT, apiLimiter, async (req: any, res
       direction:        "outbound",
       status:           "active",
       intent:           "transfer",
-      livekit_room_id:  fsUuid,
+      livekit_room_id:  fsUuid || null,   // a browser call has no leg yet; "" collided on the unique index
     }).select("id").maybeSingle();
     if (callErr) console.error("[ctc] calls insert failed:", callErr.message);
 
