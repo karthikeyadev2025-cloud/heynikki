@@ -173,7 +173,29 @@ const webhookLimiter = rateLimit({
   // the webhook rate limit for every unauthenticated request on earth.
   skip: (req) => internalSecretOk(req.headers["x-internal-secret"]),
 });
-const apiLimiter     = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+// Counted per signed-in person, not per IP. It was 300 per 15 minutes per
+// IP, and one Desk tab alone polls about 700 times in that window during
+// calls, while a whole office shares one address: on 12 Oct the Desk
+// started answering 429 to its own queue, stats and unread checks in the
+// middle of a calling session. The id is read from the token without
+// checking it (verifyJWT does that on the route); a made-up token only
+// earns a bucket of its own, and ipCeiling below still bounds the address.
+export function limiterKey(authorization: string | undefined, ip: string): string {
+  const m = /^Bearer\s+[\w-]+\.([\w-]+)\.[\w-]+$/.exec(authorization || "");
+  if (m) {
+    try {
+      const sub = JSON.parse(Buffer.from(m[1], "base64url").toString("utf8"))?.sub;
+      if (typeof sub === "string" && /^[0-9a-f-]{36}$/i.test(sub)) return `u:${sub}`;
+    } catch { /* not a token we issued; fall through to the address */ }
+  }
+  return `ip:${ip}`;
+}
+const apiLimiter     = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 4000, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => limiterKey(req.headers.authorization, req.ip || ""),
+});
+// What one address may send in total, whoever it claims to be.
+const ipCeiling      = rateLimit({ windowMs: 15 * 60 * 1000, max: 30000, standardHeaders: true, legacyHeaders: false });
 // Fully unauthenticated (public landing page, no login) AND each
 // request costs real Sarvam API money — kept deliberately tight.
 // ~20 lines covers a full demo run-through; not generous enough for
@@ -190,7 +212,7 @@ const publicTtsLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standard
 // already filter junk, but burst-cap protects against billing surprises).
 app.use("/webhooks", webhookLimiter);
 // Apply generic limiter to API paths.
-app.use("/api",      apiLimiter);
+app.use("/api",      ipCeiling, apiLimiter);
 
 // Raw body for webhook HMAC verification.
 //
