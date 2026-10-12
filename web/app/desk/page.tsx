@@ -299,8 +299,10 @@ function NextCall({ api, onCall, reloadKey }: {
   const [err, setErr] = useState("");
   const [skip, setSkip] = useState<string[]>([]);
   const seen = useRef<Set<string>>(new Set());
-  const [notif, setNotif] = useState<string>(() =>
-    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported");
+  // Read after mount: the server cannot know the permission, and a first
+  // render that differs from its HTML breaks hydration.
+  const [notif, setNotif] = useState<string>("unsupported");
+  useEffect(() => { if ("Notification" in window) setNotif(Notification.permission); }, []);
 
   // Auto-dial: once an outcome is saved, the next number rings after a
   // short count the telecaller can stop. It never starts by itself on
