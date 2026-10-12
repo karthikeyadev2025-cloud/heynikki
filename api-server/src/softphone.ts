@@ -294,6 +294,7 @@ export async function iceServers(now = Date.now()): Promise<{ servers: IceServer
 
 /* ── The proxy ──────────────────────────────────────────────── */
 
+const SEAT_GONE_MS = 20_000;
 const MAX_PER_USER = 3;                      // tabs
 const live = new Map<string, number>();      // userId -> open sockets
 
@@ -318,6 +319,8 @@ function reject(socket: Duplex, code: number, text: string) {
 export function attachSoftphoneProxy(
   server: Server,
   userFor: (accessToken: string) => Promise<{ id: string } | null>,
+  /** The seat's last browser connection has been gone for a while. */
+  onSeatGone: (seat: string) => void = () => {},
 ): void {
   const wss = new WebSocketServer({
     noServer: true,
@@ -350,6 +353,9 @@ export function attachSoftphoneProxy(
         closed = true;
         console.log(`[softphone] ${seat} disconnected (${code})`);
         live.set(uid, Math.max(0, (live.get(uid) || 1) - 1));
+        // A reload or a Wi-Fi blip reconnects within seconds and the call
+        // keeps its audio meanwhile; a browser still absent after that is gone.
+        setTimeout(() => { if (!seatOnline(uid)) onSeatGone(seat); }, SEAT_GONE_MS).unref();
         try { client.close(code); } catch { /* already gone */ }
         try { upstream.close(); } catch { /* already gone */ }
       };

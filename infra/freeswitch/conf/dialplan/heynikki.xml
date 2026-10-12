@@ -334,6 +334,10 @@
              still ends at hangup_after_bridge. The cause goes to the API
              (068) and the seat hears a short busy tone before hangup. -->
         <action application="set" data="continue_on_fail=true"/>
+        <!-- A customer's phone is rung for 50 s at most. Nothing bounded it,
+             and the same 12 Oct call sat "ringing" on the trunk for 26
+             minutes. -->
+        <action application="set" data="call_timeout=50"/>
         <action application="bridge" data="${ctc_customer_bridge}"/>
         <action application="system" data="curl -s -m 5 -X POST http://127.0.0.1:4000/webhooks/freeswitch/ctc-failed -H 'Content-Type: application/json' -H &quot;X-Internal-Secret: $INTERNAL_SECRET&quot; -d '{&quot;fs_uuid&quot;:&quot;${uuid}&quot;,&quot;cause&quot;:&quot;${originate_disposition}&quot;}'"/>
         <action application="playback" data="tone_stream://%(500,500,480,620);loops=3"/>
@@ -473,6 +477,12 @@
       <condition field="destination_number" expression="^ctc_([0-9a-f]{32})$">
         <action application="set" data="park_timeout=15:NO_ANSWER"/>
         <action application="set" data="softphone_leg=true"/>
+        <!-- Milliseconds, and set here because the copy in the profile's
+             <variables> block is never applied: on 12 Oct a seat's leg and
+             the trunk channel it had rung stayed up 26 minutes after the
+             browser had gone. No audio from the browser for 20 s ends it. -->
+        <action application="set" data="media_timeout=20000"/>
+        <action application="set" data="media_hold_timeout=600000"/>
         <action application="answer"/>
         <action application="park"/>
       </condition>

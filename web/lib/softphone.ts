@@ -319,6 +319,12 @@ class Softphone {
       else if (s instanceof Inviter && (s.state === SessionState.Initial || s.state === SessionState.Establishing)) await s.cancel();
       else if (s instanceof Invitation && s.state === SessionState.Initial) await s.reject({ statusCode: 486 });
     } catch { /* already over */ }
+    // Tell the server as well: a leg that outlives the BYE keeps ringing
+    // the customer, and the Desk goes on showing a call that was cut.
+    try {
+      const token = await this.getToken?.();
+      if (token) await fetch(`${API}/api/desk/softphone/hangup`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    } catch { /* the server ends an abandoned leg by itself */ }
   }
 
   setMuted(muted: boolean) {

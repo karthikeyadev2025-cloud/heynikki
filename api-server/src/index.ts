@@ -7057,6 +7057,18 @@ app.get("/api/desk/softphone/config", verifyJWT, async (req: any, res) => {
   }
 });
 
+// The seat pressed Hang up. Its browser sends a BYE as well; this makes the
+// end certain, because a leg that outlives the BYE keeps a trunk channel up.
+app.post("/api/desk/softphone/hangup", verifyJWT, async (req: any, res) => {
+  try {
+    const ended = await fsl.hangupSeat(softphone.seatId(req.user.id));
+    res.json({ ok: true, ended });
+  } catch (err: any) {
+    console.error("[softphone hangup]", err.message);
+    res.status(500).json({ error: "Could not end the call" });
+  }
+});
+
 // A seat pressed Call from the browser and holds a one-time token. Watch
 // the switch for the leg that dials it, then decide what that leg is.
 //
@@ -8761,6 +8773,9 @@ softphone.attachSoftphoneProxy(server, async (accessToken) => {
   if (!accessToken) return null;
   const { data, error } = await sb.auth.getUser(accessToken);
   return error || !data.user ? null : { id: data.user.id };
+}, (seat) => {
+  fsl.hangupSeat(seat).then(n => { if (n) console.log(`[softphone] ${seat} gone: ended ${n} leg(s) it left up`); })
+    .catch(() => {});
 });
 
 export default app;

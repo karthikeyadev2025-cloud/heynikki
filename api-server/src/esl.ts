@@ -882,6 +882,23 @@ export class FreeSwitchESL {
   /**
    * Hang up a specific channel by UUID.
    */
+  /**
+   * End every leg a seat's browser has up. Used when the seat hangs up and
+   * when its browser has gone: the BYE alone has been seen not to end the
+   * call, and a leg left up keeps ringing the customer on a trunk channel.
+   */
+  async hangupSeat(seat: string): Promise<number> {
+    if (!/^u[0-9a-f]{32}$/.test(seat)) return 0;
+    let rows: any[] = [];
+    try {
+      const raw = await eslCommand("api show channels as json");
+      rows = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}").rows || [];
+    } catch { return 0; }
+    const mine = rows.filter(r => String(r.name || "").startsWith(`sofia/webrtc/${seat}@`) && /^[a-f0-9-]{36}$/i.test(r.uuid));
+    for (const r of mine) { try { await eslCommand(`api uuid_kill ${r.uuid}`); } catch { /* already gone */ } }
+    return mine.length;
+  }
+
   async hangupChannel(uuid: string): Promise<void> {
     await eslCommand(`api uuid_kill ${uuid}`);
   }
