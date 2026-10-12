@@ -249,7 +249,7 @@ app.use((req, res, next) => {
     // arrives here as ~11MB and express would refuse it before the endpoint's
     // own, much friendlier, size check ever ran. Raised for that route only;
     // everything else keeps the 2mb ceiling.
-    const limit = req.path === "/api/assets" ? "12mb" : "2mb";
+    const limit = ["/api/assets", "/api/whatsapp/send-media"].includes(req.path) ? "12mb" : "2mb";
     express.json({ limit })(req, res, next);
   }
 });
@@ -5152,6 +5152,7 @@ import { mountDeskCallRoutes } from "./desk-call";
 import { mountDeskDayRoutes } from "./desk-day";
 import { mountWaChatRoutes } from "./wa-chat";
 import { mountLeadAssignRoutes } from "./lead-assign";
+import { mountDeskFloorRoutes } from "./desk-floor";
 import { followUpFor } from "./desk-learn";
 import { inboundParts } from "./wa-inbound";
 import { mountAppRoutes } from "./app";
@@ -5182,8 +5183,14 @@ mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWha
 mountDeskDayRoutes(app, { sb, verifyJWT, getTenantId });
 // WhatsApp as conversations (wa-chat.ts), and lists shared out to the team
 // (lead-assign.ts).
-mountWaChatRoutes(app, { sb, verifyJWT, getTenantId });
+mountWaChatRoutes(app, { sb, verifyJWT, getTenantId, resolveWaSender, sendApprovedTemplate });
 mountLeadAssignRoutes(app, { sb, verifyJWT, getTenantId });
+// Who is on a call right now, listening in, and the automatic rules (desk-floor.ts).
+mountDeskFloorRoutes(app, { sb, verifyJWT, getTenantId, audit,
+  liveUuids: async () => new Set((await fsl.getActiveChannels()).map(c => c.uuid)),
+  // Lambdas, not references: softphone is imported further down this file.
+  seatOnline: (userId) => softphone.seatOnline(userId),
+  listenIn: (userId, uuid) => fsl.listenIn(softphone.seatId(userId), uuid) });
 // What a telecaller does while the customer is on the line (desk-call.ts).
 mountDeskCallRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit,
   confirmAppointment: (o) => confirmAppointmentByWhatsApp({
@@ -6944,6 +6951,20 @@ app.post("/webhooks/whatsapp", async (req, res) => {
           // A duplicate is Meta redelivering, which is expected and fine.
           if (inErr && !/duplicate key/i.test(inErr.message)) {
             console.error("[WhatsApp] inbound store failed:", inErr.message);
+          }
+
+          // Tell a person. The dashboard rings only while it is open; this
+          // reaches the phone app. The telecaller who holds the lead hears
+          // first, and a customer nobody holds is everyone's.
+          if (!inErr && tenantId !== PLATFORM_TENANT_ID) {
+            (async () => {
+              const { data: l } = lead?.id
+                ? await sb.from("leads").select("name, assigned_to").eq("id", lead.id).maybeSingle()
+                : { data: null as any };
+              const msg = { title: `WhatsApp · ${l?.name || from}`, body: String(text).slice(0, 140),
+                data: { type: "whatsapp", number: String(from) } };
+              if (l?.assigned_to) await pushToUsers([l.assigned_to], msg); else await pushToTenant(tenantId, msg);
+            })().catch(e => console.error("[WhatsApp] push failed:", e?.message || e));
           }
 
           // A reply is a live lead. Nudge the lead's recency so it surfaces

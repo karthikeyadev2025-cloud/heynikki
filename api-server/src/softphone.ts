@@ -251,6 +251,9 @@ export async function iceServers(now = Date.now()): Promise<{ servers: IceServer
 const MAX_PER_USER = 3;                      // tabs
 const live = new Map<string, number>();      // userId -> open sockets
 
+/** Is this person's browser phone connected right now? */
+export function seatOnline(userId: string): boolean { return (live.get(userId) || 0) > 0; }
+
 function reject(socket: Duplex, code: number, text: string) {
   socket.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   socket.destroy();

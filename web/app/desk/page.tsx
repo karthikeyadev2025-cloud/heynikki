@@ -302,10 +302,41 @@ function NextCall({ api, onCall, reloadKey }: {
   const [notif, setNotif] = useState<string>(() =>
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported");
 
+  // Auto-dial: once an outcome is saved, the next number rings after a
+  // short count the telecaller can stop. It never starts by itself on
+  // opening the page — only after a call this person has just finished.
+  const [auto, setAuto] = useState(false);
+  const autoRef = useRef(false); autoRef.current = auto;
+  const [count, setCount] = useState<{ lead: QLead; left: number } | null>(null);
+  const armed = useRef(false);
+  // The parent hands a new function every render; the count must not restart for it.
+  const onCallRef = useRef(onCall); onCallRef.current = onCall;
+  const firstKey = useRef(reloadKey);
+  useEffect(() => { try { setAuto(localStorage.getItem("nk_desk_autodial") === "1"); } catch { /* private mode */ } }, []);
+  const toggleAuto = () => setAuto(v => {
+    try { localStorage.setItem("nk_desk_autodial", v ? "0" : "1"); } catch { /* private mode */ }
+    if (v) setCount(null);
+    return !v;
+  });
+  useEffect(() => { if (reloadKey !== firstKey.current) armed.current = true; }, [reloadKey]);
+  useEffect(() => {
+    if (!count) return;
+    if (count.left <= 0) { const l = count.lead; setCount(null); onCallRef.current(l); return; }
+    const t = setTimeout(() => setCount(c => c && { ...c, left: c.left - 1 }), 1000);
+    return () => clearTimeout(t);
+  }, [count]);
+
   const load = useCallback(async () => {
     try {
       const j = await api(`/api/desk/queue${skip.length ? `?skip=${skip.join(",")}` : ""}`);
       setQ(j); setErr("");
+      if (armed.current) {
+        armed.current = false;
+        // A promised callback that is already late comes before a fresh lead.
+        const late = (j.due as QLead[]).find(l => !!l.follow_up_at && new Date(l.follow_up_at).getTime() < Date.now());
+        const target = late || (j.next as QLead | null);
+        if (autoRef.current && target) setCount({ lead: target, left: 5 });
+      }
       // Notify once per callback as it comes due.
       for (const l of j.due as QLead[]) {
         if (seen.current.has(l.id)) continue;
@@ -333,6 +364,20 @@ function NextCall({ api, onCall, reloadKey }: {
         : q ? <span style={{ fontSize: 12, color: C.dim }}>{q.mine_open} yours · {q.pool_open} unassigned</span> : null}>
       {err ? <div style={{ fontSize: 13, color: C.red }}>{err}</div> : !q ? <div style={{ fontSize: 13, color: C.dim }}>Loading…</div> : (
         <div style={{ display: "grid", gap: 10 }}>
+          {count && (
+            <div role="status" style={{ display: "flex", alignItems: "center", gap: 10, background: C.grn + "14", border: `1px solid ${C.grn}66`,
+              borderRadius: 10, padding: "10px 12px" }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: C.txt }}>
+                Calling <strong>{count.lead.name || prettyNum(digits10(count.lead.phone))}</strong> in {count.left}…
+              </div>
+              <button style={btnStyle(C.grn)} onClick={() => { const l = count.lead; setCount(null); onCall(l); }}><PhoneCall size={13} /> Call now</button>
+              <button style={{ ...btnStyle(C.hi), border: `1px solid ${C.bord}` }} onClick={() => setCount(null)}><span style={{ color: C.mid }}>Stop</span></button>
+            </div>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.mid, cursor: "pointer" }}>
+            <input type="checkbox" checked={auto} onChange={toggleAuto} />
+            Auto-dial: ring the next number 5 seconds after I save an outcome
+          </label>
           {q.due.length > 0 && (
             <div style={{ display: "grid", gap: 6 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.gold, textTransform: "uppercase", letterSpacing: "0.05em" }}>

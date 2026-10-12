@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import WhatsAppSender from "../../components/WhatsAppSender";
 import WhatsAppChat from "../../components/WhatsAppChat";
+import BulkWhatsApp from "../../components/BulkWhatsApp";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import { Send, MessageCircle, ClipboardList, ScrollText } from "lucide-react";
@@ -417,6 +418,8 @@ export default function WhatsAppPage() {
           else document.getElementById("wa-templates")?.scrollIntoView({ behavior: "smooth", block: "start" });
         }} />
     </div>
+          <BulkWhatsApp templates={templates} business={business} />
+
           {/* KPI Row */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
             {[

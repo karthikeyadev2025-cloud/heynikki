@@ -515,3 +515,64 @@ test("sharing: dealt evenly, and whoever holds least gets the next one", () => {
   assert.deepEqual([fair.get("a").length, fair.get("b").length], [1, 3]);
   assert.equal(la.dealOut([1], []).size, 0);
 });
+
+test("chats: a telecaller sees their own customers and unowned ones; the owner sees all", () => {
+  const tele = { userId: "t1", owner: false };
+  assert.equal(wc.mayOpen(tele, "t1"), true);
+  assert.equal(wc.mayOpen(tele, null), true);
+  assert.equal(wc.mayOpen(tele, undefined), true);
+  assert.equal(wc.mayOpen(tele, "t2"), false);
+  assert.equal(wc.mayOpen({ userId: "o", owner: true }, "t2"), true);
+});
+
+test("chats: only what WhatsApp will carry is sent as a file", () => {
+  assert.deepEqual(wc.mediaKind("image/jpeg", 1_000_000), { kind: "image" });
+  assert.deepEqual(wc.mediaKind("application/pdf; charset=binary", 2_000_000), { kind: "document" });
+  assert.ok("error" in wc.mediaKind("image/jpeg", 6 * 1048576));
+  assert.ok("error" in wc.mediaKind("image/webp", 1000));
+  assert.ok("error" in wc.mediaKind("application/x-msdownload", 1000));
+  // The owner's morning briefing is not a customer chat either.
+  assert.equal(wc.toOwner("morning_briefing"), true);
+  assert.equal(wc.toOwner("manual_reply"), false);
+});
+
+// ── The floor, the rules and the evening report (desk-floor.ts) ──────
+import * as fl from "../dist/desk-floor.js";
+
+test("rules: anything posted becomes something safe to act on", () => {
+  assert.deepEqual(fl.cleanRules({ stale_days: "3", stale_to: "team", team_report: false }), { stale_days: 3, stale_to: "team", team_report: false });
+  assert.deepEqual(fl.cleanRules({ stale_days: -1, stale_to: "everyone" }), { stale_days: 0, stale_to: "pool", team_report: true });
+  assert.deepEqual(fl.cleanRules(null), fl.DEFAULT_RULES);
+  assert.equal(fl.cleanRules({ stale_days: 500 }).stale_days, 0);
+});
+
+test("rules: a lead moves on only when it has truly sat", () => {
+  const now = Date.parse("2026-10-12T06:00:00Z"), d = (n) => new Date(now - n * 86400000).toISOString();
+  const base = { assigned_to: "a", last_contacted_at: null, follow_up_at: null, follow_up_done_at: null };
+  const rows = [
+    { id: "sat", ...base, updated_at: d(5), created_at: d(9) },
+    { id: "handed-over-today", ...base, updated_at: d(0.2), created_at: d(9) },
+    { id: "rung-yesterday", ...base, last_contacted_at: d(1), updated_at: d(5), created_at: d(9) },
+    { id: "callback-to-come", ...base, updated_at: d(5), created_at: d(9), follow_up_at: new Date(now + 86400000).toISOString() },
+    { id: "callback-missed", ...base, updated_at: d(5), created_at: d(9), follow_up_at: d(4) },
+    { id: "nobodys", ...base, assigned_to: null, updated_at: d(5), created_at: d(9) },
+  ];
+  assert.deepEqual(fl.staleLeads(rows, 2, now).map(l => l.id), ["sat", "callback-missed"]);
+  assert.deepEqual(fl.staleLeads(rows, 0, now), []);
+});
+
+test("floor: one word for where each person is", () => {
+  assert.equal(fl.presence({ on_call: true, checked_in: false, phone_online: false }), "on_call");
+  assert.equal(fl.presence({ on_call: false, checked_in: true, phone_online: true }), "free");
+  assert.equal(fl.presence({ on_call: false, checked_in: true, phone_online: false }), "away");
+  assert.equal(fl.presence({ on_call: false, checked_in: false, phone_online: true }), "out");
+});
+
+test("evening report: busiest first, targets said plainly, the idle left out", () => {
+  const r = (name, calls, target_calls = 0, extra = {}) => ({ name, calls, conversations: 0, booked: 0, interested: 0, no_outcome: 0, target_calls, ...extra });
+  assert.deepEqual(fl.teamReportLines([r("Ravi", 12, 40), r("Sita", 45, 40, { conversations: 20, booked: 3, no_outcome: 2 }), r("Owner", 0)]), [
+    "Sita: 45 calls, 20 conversations, 3 booked, 2 with no outcome saved — target met",
+    "Ravi: 12 calls, 0 conversations — 28 short of 40",
+  ]);
+  assert.deepEqual(fl.teamReportLines([r("Owner", 0)]), []);
+});

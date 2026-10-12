@@ -787,6 +787,22 @@ export class FreeSwitchESL {
   }
 
   /**
+   * Ring a seat's browser and, when it answers, let it hear a live call.
+   * Listen only: the keys that would let the listener speak are off. The
+   * leg goes to the browser, not the trunk, so no line is used.
+   */
+  async listenIn(seat: string, uuid: string): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/i.test(uuid)) throw new Error("bad_uuid");
+    const contacts = await this.browserContacts(seat);
+    if (!contacts.length) throw new Error("browser_offline");
+    if (!(await this.channelExists(uuid))) throw new Error("call_ended");
+    const vars = "origination_caller_id_name=Listening,origination_caller_id_number=listen," +
+      "originate_timeout=25,eavesdrop_enable_dtmf=false,ignore_early_media=true";
+    const r = await eslCommand(`api originate {${vars}}${contacts[0]} &eavesdrop(${uuid})`, 30000);
+    if (!/\+OK/.test(r)) throw new Error(r.match(/-ERR\s+([A-Z_]+)/)?.[1] || "not_answered");
+  }
+
+  /**
    * The channel that dialled `dest`, if it exists yet. Used to find a
    * browser leg by the one-time token it called.
    */

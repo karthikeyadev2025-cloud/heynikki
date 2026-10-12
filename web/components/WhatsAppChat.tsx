@@ -5,7 +5,7 @@
 // not been read. It replaces a list of replies with a box under each.
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, CircleAlert, Clock, FileText, MessageCirclePlus, Phone, Search, Send, UserRound, Zap } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, CircleAlert, Clock, FileText, MessageCirclePlus, Paperclip, Phone, Search, Send, UserRound, Zap } from "lucide-react";
 import { NIKKI } from "../lib/brand";
 import { deskApi } from "../lib/desk-api";
 import { createClient } from "../lib/supabase";
@@ -120,7 +120,11 @@ export default function WhatsAppChat({ templates, refreshKey, onTemplate }: {
         return t;
       });
       setChats(cs => cs && cs.map(c => c.number === number ? { ...c, unread: 0 } : c));
-    } catch (e: any) { if (!quiet) toast.err(e.message); }
+    } catch (e: any) {
+      if (!quiet) toast.err(e.message);
+      // Handled by a colleague, or gone: do not leave it saying "Opening…".
+      if (!quiet && openRef.current === number) setOpen("");
+    }
   }, []);
 
   useEffect(() => {
@@ -176,6 +180,26 @@ export default function WhatsAppChat({ templates, refreshKey, onTemplate }: {
       setDraft(body);
       toast.err(e.message);
     }
+    setSending(false);
+  };
+
+  // A photo, a PDF, a price list. The words in the box go along as its caption.
+  const sendFile = async (f: File) => {
+    if (!thread || sending) return;
+    if (f.size > 8 * 1048576) { toast.err("That file is too big to send here. Keep it under 8 MB (5 MB for photos)."); return; }
+    setSending(true);
+    try {
+      const data = await new Promise<string>((ok, bad) => {
+        const r = new FileReader();
+        r.onload = () => ok(String(r.result).split(",")[1] || "");
+        r.onerror = () => bad(new Error("Could not read that file"));
+        r.readAsDataURL(f);
+      });
+      await deskApi("/api/whatsapp/send-media", { to_number: thread.number, mime: f.type, name: f.name, data, caption: draft.trim() });
+      setDraft("");
+      await loadThread(thread.number, true);
+      loadChats();
+    } catch (e: any) { toast.err(e.message); }
     setSending(false);
   };
 
@@ -370,7 +394,13 @@ export default function WhatsAppChat({ templates, refreshKey, onTemplate }: {
                 <form onSubmit={e => { e.preventDefault(); send(draft); }} style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                   <button type="button" onClick={() => setShowQuick(v => !v)} aria-label="Quick replies" aria-pressed={showQuick} title="Quick replies"
                     style={{ border: 0, background: showQuick ? "#E8F7EE" : "none", borderRadius: 8, padding: 9, color: showQuick ? C.grn : C.mid, lineHeight: 0 }}><Zap size={18} /></button>
-                  <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={1} placeholder="Type a message" aria-label="Message"
+                  <label title="Send a photo or file" aria-label="Send a photo or file" style={{ borderRadius: 8, padding: 9, color: C.mid, lineHeight: 0, cursor: sending ? "wait" : "pointer" }}>
+                    <Paperclip size={18} />
+                    <input type="file" disabled={sending} style={{ display: "none" }}
+                      accept="image/jpeg,image/png,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,audio/mpeg,audio/ogg,video/mp4"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) sendFile(f); e.target.value = ""; }} />
+                  </label>
+                  <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={1} placeholder={sending ? "Sending…" : "Type a message"} aria-label="Message"
                     onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(draft); } }}
                     style={{ flex: 1, minWidth: 0, resize: "none", border: `1px solid ${C.bord}`, borderRadius: 18, padding: "9px 14px",
                       fontSize: 14, lineHeight: 1.4, maxHeight: 120, fontFamily: "inherit", color: C.txt, background: "#fff" }} />

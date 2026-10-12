@@ -60,6 +60,8 @@ import { sendOwnerEmail, sendOwnerTemplate, templateApproved } from "../owner-al
 import { minutesGate } from "../usage";
 import { runWatchdog } from "../watchdog";
 import { runBackup } from "../backup";
+import { runStaleLeadRule, runTeamReports } from "../desk-floor";
+import { makePush } from "../push";
 
 const SUPABASE_URL  = process.env.SUPABASE_URL!;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY!;
@@ -1008,6 +1010,11 @@ export async function runScheduler() {
   await step("daily summaries",      runDailySummaries);
   await step("call quality",         runCallQuality);
   await step("close abandoned calls", runCloseAbandonedCalls);
+  // The desk's automatic rules: a lead nobody has rung moves on, and the
+  // owner gets the day per telecaller each evening (desk-floor.ts).
+  const { pushToUsers } = makePush(sb);
+  await step("stale leads",          () => runStaleLeadRule(sb, pushToUsers));
+  await step("team reports",         () => runTeamReports(sb, { email: sendOwnerEmail, ownerEmail, push: pushToUsers }));
 
   // Onboarding messages from HeyNikki itself. Send-once is enforced by a
   // unique index, so running this every cycle is safe.
