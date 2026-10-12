@@ -124,6 +124,11 @@ async function audit(
 // already set.
 app.use(cors({ origin: "*", exposedHeaders: ["Content-Disposition"] }));
 
+// Do not name the framework, and do not let a browser guess a type for a
+// response (a recording or an upload served as something it is not).
+app.disable("x-powered-by");
+app.use((_req, res, next) => { res.setHeader("X-Content-Type-Options", "nosniff"); next(); });
+
 // Never let a 502 or 504 leave this process. The API sits behind a
 // Cloudflare tunnel, and Cloudflare replaces an origin 502/504 with its own
 // "error code: 502" page — no JSON body, no Access-Control-Allow-Origin. So

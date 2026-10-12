@@ -8,6 +8,18 @@ const nextConfig = {
   // Vercel ignores the setting, so this is safe to keep during the move.
   output: "standalone",
   reactStrictMode: true,
+  // Nothing frames these pages, so nobody else may either: a framed
+  // dashboard can be clicked through by a page the visitor is looking at.
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      ],
+    }];
+  },
   typescript: {
     // Was `ignoreBuildErrors: true` — that suppression is exactly how two
     // real bugs (undefined `C.acc` in calls/page.tsx and Shell.tsx) shipped
