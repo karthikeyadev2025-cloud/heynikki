@@ -67,6 +67,11 @@ class Softphone {
   private wanted = false;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private retryMs = 2000;
+  // Bumped by every connect(). A socket or registration from an earlier
+  // attempt must not be able to schedule or cancel anything: each one that
+  // did left a second connection open, until the server refused the fourth.
+  private gen = 0;
+  private connecting = false;
   private audio: HTMLAudioElement | null = null;
   private ring: { ctx: AudioContext; timer: ReturnType<typeof setInterval> } | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -131,7 +136,9 @@ class Softphone {
   }
 
   private async connect(): Promise<void> {
-    if (!this.wanted || !this.getToken) return;
+    if (!this.wanted || !this.getToken || this.connecting) return;
+    this.connecting = true;
+    const gen = ++this.gen;
     await this.teardown();
     // Which step failed is what tells a seat (and us) what to fix.
     let step = "sign-in";
@@ -163,7 +170,7 @@ class Softphone {
             // The socket dropped (Wi-Fi, laptop lid, an hour-old login). A
             // call in progress keeps its audio — media does not ride this
             // socket — so only the signalling is rebuilt.
-            if (this.wanted) this.scheduleReconnect();
+            if (this.wanted && gen === this.gen) this.scheduleReconnect();
           },
         },
       });
@@ -174,13 +181,21 @@ class Softphone {
       const reg = new Registerer(ua, { expires: 300 });
       this.registerer = reg;
       reg.stateChange.addListener((s) => {
-        if (this.registerer !== reg) return;
+        if (this.registerer !== reg || gen !== this.gen) return;
         if (s === RegistererState.Registered) { this.retryMs = 2000; this.set({ status: "ready", relay: cfg.relay, error: "" }); }
         if (s === RegistererState.Unregistered && this.wanted && this.snap.status === "ready") this.scheduleReconnect();
       });
-      await reg.register();
+      // An unanswered REGISTER used to leave the phone "connecting" for good.
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("no answer in 10 seconds")), 10_000);
+        reg.stateChange.addListener((s) => { if (s === RegistererState.Registered) { clearTimeout(t); resolve(); } });
+        reg.register({ requestDelegate: { onReject: (r) => { clearTimeout(t); reject(new Error(`refused ${r.message.statusCode}`)); } } })
+          .catch((e) => { clearTimeout(t); reject(e); });
+      });
+      this.connecting = false;
     } catch (e: any) {
-      if (!this.wanted) return;
+      this.connecting = false;
+      if (!this.wanted || gen !== this.gen) return;
       console.warn(`[desk phone] ${step} failed:`, e?.message || e);
       this.set({ error: step === "sign-in" ? "Your login has expired. Refresh the page and sign in again."
         : `Can't reach the phone service (${step} failed). Retrying…` });

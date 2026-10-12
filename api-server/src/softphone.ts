@@ -331,8 +331,17 @@ export function attachSoftphoneProxy(
         try { upstream.close(); } catch { /* already gone */ }
       };
 
+      // The first line of each SIP message, both ways, for the first few of
+      // a connection: enough to see where a phone that will not connect
+      // stops, without logging a call's whole signalling.
+      let traced = 0;
+      const trace = (dir: string, text: string) => {
+        const first = text.slice(0, 200).split("\r\n")[0].replace(/sip:[^@\s]+@/g, "sip:…@");
+        if (first.trim() && traced++ < 12) console.log(`[softphone] ${seat} ${dir} ${first}`);
+      };
       client.on("message", (data, isBinary) => {
         const msg = isBinary ? "" : data.toString("utf8");
+        trace(">", msg);
         const why = isBinary ? "binary frame" : refuseClientSip(msg, seat);
         if (why) {
           console.warn(`[softphone] refused a message from ${seat}: ${why}`);
@@ -344,6 +353,7 @@ export function attachSoftphoneProxy(
       });
       upstream.on("open", () => { for (const m of queue.splice(0)) upstream.send(m); });
       upstream.on("message", (data, isBinary) => {
+        trace("<", data.toString("utf8"));
         if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
       });
       upstream.on("error", (e) => { console.error("[softphone] switch socket:", e.message); close(1011); });
