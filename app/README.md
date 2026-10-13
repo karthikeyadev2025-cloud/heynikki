@@ -17,8 +17,14 @@ mic → sherpa-onnx keyword spotter ─("Hey Nikki")→ chime + "చెప్ప
   (`start/stop/status/requestPermission/forget`), used by `web/lib/native.ts`.
 * `HeyNikkiService.java` — microphone foreground service that owns the loop.
 * `assets/kws/` — 3.3 M-param zipformer KWS model (int8) + `keywords.txt`
-  with the BPE spellings of "Hey Nikki" we accept. Add a line per new
-  pronunciation; tokenise with `bpe.model` from the sherpa-onnx model dir.
+  with the BPE spellings we accept: "Hey Nikki", "Hello Nikki", "Hi Nikki",
+  "OK Nikki" and a bare "Nikki". Add a line per new pronunciation; tokenise
+  with `bpe.model` from the sherpa-onnx model dir. Measured on 51 spoken
+  clips (4 synthetic voices, English and Telugu) plus 13 clips of ordinary
+  speech: 42 woke her, and 3 of the 13 woke her by mistake — "Hello Nikhil"
+  and two on the bare "Nikki". A longer list or lower threshold gained one
+  clip. The bare name is the main source of false wakes; drop the `@Nikki`
+  lines if that matters more than the convenience.
 * `res/raw/cheppandi.wav` — Sarvam TTS (priya) "చెప్పండి"; `chime.wav`.
 * Auth to the API is a per-device token (`POST /api/app/device-token`,
   table `app_device_tokens`), minted by the web layer on first "Hey Nikki"

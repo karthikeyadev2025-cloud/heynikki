@@ -85,7 +85,7 @@ public class HeyNikkiService extends Service {
     static final int MAX_FOLLOW_UPS = 6;
     /** "Hey Nikki" said again inside the conversation: not a question. */
     private static final Pattern JUST_WAKE = Pattern.compile(
-        "^[\\s\\p{Punct}]*(hey|hai|hi|హే|హాయ్|हे|हाय)?[\\s\\p{Punct}]*(nikki|nicky|niki|nikky|నిక్కీ|నిక్కి|निक्की|निकी)[\\s\\p{Punct}]*$",
+        "^[\\s\\p{Punct}]*(hey|hai|hi|hello|hallo|halo|ok|okay|హే|హాయ్|హలో|ఓకే|हे|हाय|हेलो|हैलो|ओके)?[\\s\\p{Punct}]*(nikki|nicky|niki|nikky|నిక్కీ|నిక్కి|निक्की|निकी)[\\s\\p{Punct}]*$",
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     // Debug builds keep the last 12 s of mic audio so the wake word can be
@@ -599,7 +599,7 @@ public class HeyNikkiService extends Service {
 
     private String idleText() {
         boolean signedIn = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE).getString("token", null) != null;
-        return signedIn ? "Listening for “Hey Nikki” / “Nikki”" : "Listening for “Hey Nikki” · sign in to ask about your business";
+        return signedIn ? "Say “Hey Nikki”, “Hello Nikki” or just “Nikki”" : "Say “Hey Nikki” or “Hello Nikki” · sign in to ask about your business";
     }
 
     private AudioRecord openMic() {

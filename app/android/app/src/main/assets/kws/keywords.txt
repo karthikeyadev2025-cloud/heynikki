@@ -15,3 +15,20 @@
 ▁NE K I :1.5 #0.4 @Nikki
 ▁ N I K I :1.5 #0.4 @Nikki
 ▁ N E K I :1.5 #0.4 @Nikki
+▁HE LL O ▁ N I K K I :2.0 #0.3 @HelloNikki
+▁HE LL O ▁ N I K I :2.0 #0.3 @HelloNikki
+▁HE LL O ▁ N IC K Y :2.0 #0.3 @HelloNikki
+▁HA LL O ▁ N I K K I :2.0 #0.3 @HelloNikki
+▁HA LO ▁ N I K K I :2.0 #0.3 @HelloNikki
+▁HA LO ▁ N I K I :2.0 #0.3 @HelloNikki
+▁HE LO ▁ N I K I :2.0 #0.3 @HelloNikki
+▁HE LL O ▁NE K I :2.0 #0.3 @HelloNikki
+▁HI ▁ N I K K I :2.0 #0.3 @HiNikki
+▁HI ▁ N I K I :2.0 #0.3 @HiNikki
+▁HI ▁ N IC K Y :2.0 #0.3 @HiNikki
+▁HI ▁NE K I :2.0 #0.3 @HiNikki
+▁HIGH ▁ N I K K I :2.0 #0.3 @HiNikki
+▁OKAY ▁ N I K K I :2.0 #0.3 @OkNikki
+▁OKAY ▁ N I K I :2.0 #0.3 @OkNikki
+▁OKAY ▁ N IC K Y :2.0 #0.3 @OkNikki
+▁O K ▁ N I K K I :2.0 #0.3 @OkNikki
