@@ -25,7 +25,7 @@ type Deps = {
   apiLimiter:       any;
   getTenantId:      (userId: string) => Promise<string | null>;
   audit:            (action: string, ctx: any) => Promise<void>;
-  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string, opts?: { device?: boolean; stream?: Response }) => Promise<VoiceResult | null>;
+  tenantVoiceQuery: (tenantId: string, audioBase64: string, mimeType: string, opts?: { device?: boolean; deviceId?: string; stream?: Response }) => Promise<VoiceResult | null>;
   synthesize:       (text: string) => Promise<string>;   // base64 wav
 };
 
@@ -111,7 +111,7 @@ export function mountAppRoutes(app: Express, d: Deps) {
     try {
       // stream:true → newline-delimited JSON, one audio clip per sentence,
       // so the phone starts speaking before the whole answer is synthesised.
-      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav", { device: true, stream: stream === true ? res : undefined });
+      const out = await d.tenantVoiceQuery(req.device.tenant_id, audio_base64, mime_type || "audio/wav", { device: true, deviceId: req.device.id, stream: stream === true ? res : undefined });
       if (out) res.json(out);
     } catch (e: any) {
       const msg = e?.message || "Voice query failed";

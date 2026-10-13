@@ -126,7 +126,11 @@ export function makeOwnerAssistant(deps: {
     {
       name: "team_calls",
       description: "What the telecallers did on the Desk: calls dialled, real conversations, bookings, interested customers and callbacks, per person. 'days' is 1 (today), 7 or 30. Use for 'how is the team doing', 'how many calls did Sita make today'.",
-      parameters: { type: "object", properties: { days: { type: "integer", enum: [1, 7, 30] } } },
+      // No enum here: Gemini accepts enum only on strings and rejects the
+      // WHOLE request for a numeric one — which took every assistant turn
+      // down with "Gemini 400", not just this tool. teamCalls() falls back
+      // to 1 for anything that is not 1, 7 or 30.
+      parameters: { type: "object", properties: { days: { type: "integer", description: "1, 7 or 30" } } },
     },
     {
       name: "follow_ups_due",
@@ -659,7 +663,18 @@ by saying "Hey Nikki" and will HEAR your answer; there is no screen.
   dashboard — say that if they ask for one.
 - If it is not about the business at all — general knowledge, quick math, a
   chat, the date or time — answer it helpfully instead of saying the data
-  lacks it. Calling a contact, alarms and timers are handled by the phone.`;
+  lacks it. Calling a contact, alarms and timers are handled by the phone.
+- TEACHING. If they TELL you a lasting fact about the business rather than
+  asking something — "we are shut next Monday", "root canal is now 4000",
+  "delivery is free within 5 km", "tell callers the doctor comes at 10" —
+  reply with exactly one line: "REMEMBER: <the fact as one clean sentence, in
+  the language they spoke, worded the way a customer should hear it>" and
+  nothing else. Never for a question, a one-off remark or an instruction to
+  you. If a price, date or time in it was unclear, ask them to repeat it
+  instead of guessing.
+- If they ask you to forget, undo or remove what they just taught you, reply
+  with exactly "FORGET_LAST" and nothing else.
+- "What have I taught you" is answered from taught_by_voice in the summary.`;
 
   async function runOwnerTurn(tenantId: string, question: string, contextJson: string,
                               opts: { spoken?: boolean } = {}): Promise<OwnerTurn> {

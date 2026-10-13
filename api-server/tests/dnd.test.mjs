@@ -688,3 +688,51 @@ test("an admin report counts each call once, in IST days, split between Nikki an
   const d = reportRange("x", "'; drop", Date.parse("2026-10-12T20:00:00Z"));
   assert.equal(d.to, "2026-10-13"); assert.equal(d.days.length, 30);
 });
+
+// ── Teaching Nikki by voice ──────────────────────────────────────────
+{
+  const { parseYesNo, extractTeach, PendingFacts, PENDING_TTL_MS, replyLang, teachSay } = await import("../dist/voice-teach.js");
+
+  test("a spoken yes or no is understood in English, Telugu and Hindi", () => {
+    for (const y of ["Yes.", "yeah save it", "Okay", "అవును", "సరే సేవ్ చెయ్యి", "हाँ", "ठीक है"]) assert.equal(parseYesNo(y), "yes", y);
+    for (const n of ["No.", "don't save", "cancel", "వద్దు", "సేవ్ చేయవద్దు", "కాదు", "नहीं", "that's wrong"]) assert.equal(parseYesNo(n), "no", n);
+  });
+
+  test("a new question is not mistaken for an answer", () => {
+    assert.equal(parseYesNo("how many calls today"), null);
+    assert.equal(parseYesNo("okay so how many calls did we get today and yesterday"), null);
+    assert.equal(parseYesNo(""), null);
+  });
+
+  test("the model's REMEMBER and FORGET_LAST lines are pulled out", () => {
+    assert.deepEqual(extractTeach("REMEMBER: We are closed next Monday."), { fact: "We are closed next Monday.", rest: "" });
+    assert.equal(extractTeach("REMEMBER: ok").fact, undefined);
+    assert.equal(extractTeach("FORGET_LAST").forget, true);
+    assert.deepEqual(extractTeach("You had 12 calls today."), { rest: "You had 12 calls today." });
+  });
+
+  test("a waiting fact is handed out once, per phone, and expires", () => {
+    const p = new PendingFacts();
+    p.set("a", "fact one", 1000);
+    assert.equal(p.take("b", 1000), null);
+    assert.equal(p.take("a", 2000), "fact one");
+    assert.equal(p.take("a", 2000), null);
+    p.set("a", "fact two", 1000);
+    assert.equal(p.take("a", 1000 + PENDING_TTL_MS + 1), null);
+  });
+
+  test("she reads the fact back in the language it was spoken in", () => {
+    assert.equal(replyLang("రేపు సెలవు"), "te");
+    assert.equal(replyLang("कल छुट्टी है"), "hi");
+    assert.equal(replyLang("closed tomorrow"), "en");
+    assert.match(teachSay.confirm("We are closed next Monday", "en"), /closed next Monday\. Shall I save it/);
+  });
+}
+
+// ── The assistant's tool list must be one Gemini accepts ─────────────
+test("no assistant tool declares an enum on anything but a string", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../src/owner-tools.ts", import.meta.url), "utf8");
+  const bad = src.split("\n").filter(l => /enum:\s*\[/.test(l) && !/type:\s*"string"/.test(l));
+  assert.deepEqual(bad, [], "Gemini rejects the whole request for a non-string enum");
+});

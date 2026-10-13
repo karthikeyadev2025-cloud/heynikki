@@ -5265,6 +5265,7 @@ async function sendEmail(tenantId: string, template: string, data: Record<string
 import bcrypt from "bcryptjs";
 import { mountOutboundRoutes } from "./outbound";
 import { geminiGenerate, resolveGeminiModel } from "./gemini.js";
+import { PendingFacts, parseYesNo, extractTeach, replyLang, teachSay } from "./voice-teach.js";
 import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
@@ -8653,7 +8654,39 @@ function beginStream(res: express.Response) {
   res.flushHeaders();
 }
 
-async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean; stream?: express.Response } = {}) {
+// ── Teaching her from the phone ──────────────────────────────────────
+// See voice-teach.ts for why a spoken fact is read back before it is kept.
+const pendingFacts = new PendingFacts();
+
+async function saveVoiceFact(tenantId: string, fact: string): Promise<boolean> {
+  const { data: vp } = await sb.from("voice_profiles")
+    .select("id").eq("tenant_id", tenantId).order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (!vp) return false;
+  const { error } = await sb.from("knowledge_base").insert({
+    tenant_id: tenantId,
+    voice_profile_id: vp.id,      // NULL here would make it unreadable on calls
+    content: fact,
+    source_type: "manual",
+    source_name: "owner_voice",   // so the Knowledge page can show where it came from
+  });
+  if (error) { console.error("[teach] insert failed:", error.message); return false; }
+  console.log(`[teach] tenant ${tenantId.slice(0, 8)} saved: ${fact.slice(0, 80)}`);
+  return true;
+}
+
+/** Drops the newest fact taught by voice and returns it, or null if none. */
+async function forgetLastVoiceFact(tenantId: string): Promise<string | null> {
+  const { data: row } = await sb.from("knowledge_base").select("id, content")
+    .eq("tenant_id", tenantId).eq("source_name", "owner_voice")
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!row) return null;
+  const { error } = await sb.from("knowledge_base").delete().eq("id", row.id).eq("tenant_id", tenantId);
+  if (error) { console.error("[teach] delete failed:", error.message); return null; }
+  console.log(`[teach] tenant ${tenantId.slice(0, 8)} forgot: ${String(row.content).slice(0, 80)}`);
+  return String(row.content);
+}
+
+async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean; deviceId?: string; stream?: express.Response } = {}) {
   const SARVAM_KEY = process.env.SARVAM_API_KEY!;
   const t0 = Date.now();
   // The business summary does not depend on what was said, so it is fetched
@@ -8714,8 +8747,34 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   // question there is — used to wait out a whole extra model round trip
   // before the real answer was even started. The phone's turn only looks
   // things up, so an answer thrown away because it was a command costs nothing.
+  // A fact she read back a moment ago is waiting on this phone for a yes
+  // or a no. Anything else is a new question and the fact is let go.
+  const pendingKey = opts.deviceId || `tenant:${tenantId}`;
+  const lang = replyLang(transcript);
+  const waiting = opts.device ? pendingFacts.take(pendingKey) : null;
+  const verdict = waiting ? parseYesNo(transcript) : null;
+  if (waiting && verdict) {
+    const say = verdict === "no" ? teachSay.dropped(lang)
+      : await saveVoiceFact(tenantId, waiting) ? teachSay.saved(lang) : teachSay.failed(lang);
+    if (opts.stream) {
+      await new ReplyStreamer(opts.stream, { transcript, audio_mime: "audio/mpeg" }).finish(say);
+      return null;
+    }
+    return { transcript, answer: say, audio_base64: await synthesizeTelugu(say), audio_mime: "audio/wav" };
+  }
+
   const spokenP: Promise<string> | null = !opts.device ? null : (async () => {
-    const { contextJson } = await ctxP;
+    // What she was taught by voice rides along, so "what have I taught you"
+    // has an answer and a correction can be told from a new fact.
+    const [{ contextJson: baseJson }, taughtR] = await Promise.all([
+      ctxP,
+      sb.from("knowledge_base").select("content").eq("tenant_id", tenantId).eq("source_name", "owner_voice")
+        .order("created_at", { ascending: false }).limit(10),
+    ]);
+    let contextJson = baseJson;
+    try {
+      contextJson = JSON.stringify({ ...JSON.parse(baseJson), taught_by_voice: (taughtR.data || []).map((r: any) => r.content) }, null, 2);
+    } catch { /* the summary alone is still an answer */ }
     // The phone app cannot render a card or hold a confirm button, and an
     // action nobody can confirm is worse than no action: she would say she
     // was about to ring someone and then never do it. So it gets the
@@ -8751,6 +8810,16 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   let answer: string;
   if (spokenP) {
     answer = await spokenP;
+    const teach = extractTeach(answer);
+    if (teach.forget) {
+      const gone = await forgetLastVoiceFact(tenantId);
+      answer = gone ? teachSay.forgot(gone, lang) : teachSay.nothingToForget(lang);
+    } else if (teach.fact) {
+      pendingFacts.set(pendingKey, teach.fact);
+      answer = teachSay.confirm(teach.fact, replyLang(teach.fact) === "en" ? lang : replyLang(teach.fact));
+    } else {
+      answer = teach.rest || answer;
+    }
   } else {
     const { contextJson } = await ctxP;
     const turn = await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson);
