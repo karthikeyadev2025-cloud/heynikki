@@ -79,6 +79,24 @@ public class HeyNikkiPlugin extends Plugin {
         call.resolve(r);
     }
 
+    /** Sign-in: hand over this phone's token without touching the listener.
+     *  start() did both, so a dashboard that loaded behind the splash, before
+     *  the service was up, saw "not running", skipped it, and she stayed the
+     *  product guide for a signed-in owner. */
+    @PluginMethod
+    public void link(PluginCall call) {
+        String token = call.getString("token");
+        if (token == null || token.isEmpty()) { call.reject("No token"); return; }
+        Context ctx = getContext();
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("token", token)
+            .putString("apiBase", call.getString("apiBase", "https://api.heynikki.in"))
+            .apply();
+        JSObject r = new JSObject();
+        r.put("running", HeyNikkiService.isRunning());
+        call.resolve(r);
+    }
+
     @PluginMethod
     public void stop(PluginCall call) {
         Context ctx = getContext();

@@ -32,7 +32,7 @@
 "use client";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createClient } from "../lib/supabase";
-import { isNativeApp, startHeyNikki, stopHeyNikki, heyNikkiRunning } from "../lib/native";
+import { isNativeApp, startHeyNikki, stopHeyNikki, heyNikkiRunning, linkDevice } from "../lib/native";
 import { NIKKI } from "../lib/brand";
 import {
   Mic, Loader2, X, Square, Volume2, VolumeX, Send, Trash2,
@@ -282,9 +282,17 @@ export default function OwnerVoiceAssistant() {
   // owner's own business rather than the product guide.
   useEffect(() => {
     if (!native) return;
-    heyNikkiRunning().then(async r => {
-      if (r) { const s = await startHeyNikki(); setWakeOn(s.ok || r); } else setWakeOn(false);
-    });
+    // The token goes over whether or not she is up yet; the listener starts
+    // when the splash lifts, which can be after this page has loaded, so the
+    // pill's state is read again a few seconds in.
+    let linked = false;
+    const sync = async () => {
+      if (!linked) linked = await linkDevice();
+      setWakeOn(await heyNikkiRunning());
+    };
+    sync();
+    const t1 = setTimeout(sync, 4000), t2 = setTimeout(sync, 12000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [native]);
 
   const toggleWake = useCallback(() => {

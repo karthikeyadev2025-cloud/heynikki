@@ -16,6 +16,7 @@ type Plugin = {
   stop(): Promise<{ running: boolean }>;
   status(): Promise<{ running: boolean; available: boolean; permission: "granted" | "denied" | "prompt" }>;
   requestPermission(): Promise<{ permission: "granted" | "denied" }>;
+  link(o: { token: string; apiBase: string }): Promise<{ running: boolean }>;
   forget(): Promise<void>;
 };
 
@@ -72,6 +73,24 @@ export async function startHeyNikki(): Promise<{ ok: boolean; reason?: string }>
   try { token = await deviceToken(); } catch (e) { console.warn("[hey-nikki] no device token:", e); }
   const { running } = await p.start({ token, apiBase: API });
   return running ? { ok: true } : { ok: false, reason: "The listener did not start" };
+}
+
+/** Signed in, in the app: give the listener this phone's token so she answers
+ *  about this business. Separate from starting her — the dashboard can load
+ *  behind the splash, before the listener is up, and waiting for "running"
+ *  left a signed-in owner talking to the product guide. */
+export async function linkDevice(): Promise<boolean> {
+  const p = plugin();
+  if (!p) return false;
+  let token = "";
+  try { token = await deviceToken(); } catch { return false; }   // not signed in
+  try { await p.link({ token, apiBase: API }); return true; }
+  catch {
+    // An app build from before link() existed: start() also stores the token,
+    // but only hand it over if she is already on — never switch her on here.
+    try { if ((await p.status()).running) { await p.start({ token, apiBase: API }); return true; } } catch { /* fine */ }
+    return false;
+  }
 }
 
 export async function stopHeyNikki(): Promise<void> {
