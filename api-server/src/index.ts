@@ -8876,7 +8876,17 @@ function speechLangOf(text: string): string {
   return "en-IN";
 }
 
-async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Promise<string> {
+// Her voice as the owner's assistant — in the app and on the dashboard. The
+// owner's first words to her on the phone were "speak smoothly" and "I want
+// the voice cute": priya at full pace measured 204 Hz and came across as
+// brisk. ishita is lighter (237 Hz on the same line) and a little slower.
+// The clips bundled in the app (res/raw: intro, greetings, చెప్పండి) are
+// recorded with the same two values — change them together, or she greets
+// in one voice and answers in another. Calls keep their own voice (main.py).
+const ASSISTANT_VOICE = (process.env.NIKKI_ASSISTANT_VOICE || "ishita").trim();
+const ASSISTANT_PACE  = 0.97;
+
+async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav", speaker = ASSISTANT_VOICE): Promise<string> {
   const ttsResp = await fetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     // node's fetch waits indefinitely by default. A hung Sarvam request
@@ -8889,10 +8899,10 @@ async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Pro
       inputs: [text],
       // The reply's OWN language, not Telugu by default — see speechLangOf.
       target_language_code: speechLangOf(text),
-      speaker: "priya",
+      speaker,
       model: "bulbul:v3",
       // No pitch/loudness — Bulbul V3 400s on both.
-      pace: 1.0,
+      pace: ASSISTANT_PACE,
       speech_sample_rate: 22050,
       enable_preprocessing: true,
       // mp3 is a third of the bytes at the same sample rate; the phone app
@@ -8900,6 +8910,12 @@ async function synthesizeTelugu(text: string, codec: "wav" | "mp3" = "wav"): Pro
       ...(codec === "mp3" ? { output_audio_codec: "mp3" } : {}),
     }),
   });
+  // bulbul:v3 answers 400 to a speaker it does not carry. A mistyped
+  // NIKKI_ASSISTANT_VOICE must cost her the new voice, not her voice.
+  if (ttsResp.status === 400 && speaker !== "priya") {
+    console.warn(`[tts] speaker "${speaker}" rejected — falling back to priya`);
+    return synthesizeTelugu(text, codec, "priya");
+  }
   if (!ttsResp.ok) throw new Error(`Sarvam TTS error: ${ttsResp.status}`);
   const ttsData = await ttsResp.json() as any;
   return ttsData.audios?.[0] || "";

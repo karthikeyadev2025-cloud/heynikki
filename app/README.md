@@ -29,8 +29,8 @@ mic → sherpa-onnx keyword spotter ─("Hey Nikki")→ chime + "చెప్ప
   first launch, her four-screen spoken introduction (English / Telugu). The
   permission dialogs wait until it is done.
 * `res/raw/intro_*.mp3`, `greet_*.mp3` — her introduction and her
-  time-of-day greeting (first wake after 3 hours), Sarvam TTS (priya).
-* `res/raw/cheppandi.wav` — Sarvam TTS (priya) "చెప్పండి"; `chime.wav`.
+  time-of-day greeting (first wake after 3 hours), Sarvam TTS (ishita, pace 0.97).
+* `res/raw/cheppandi.mp3` — Sarvam TTS (ishita, pace 0.97 — the same as `ASSISTANT_VOICE` in the API) "చెప్పండి"; `chime.wav`.
 * Auth to the API is a per-device token (`POST /api/app/device-token`,
   table `app_device_tokens`), minted by the web layer on first "Hey Nikki"
   toggle and revoked on sign-out.
