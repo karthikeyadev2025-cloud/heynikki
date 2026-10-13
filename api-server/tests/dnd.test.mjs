@@ -282,6 +282,32 @@ const OTHER = "uffffffffffffffffffffffffffffffff";
 const sip = (first, from, to, extra = "") =>
   `${first}\r\nVia: SIP/2.0/WS x.invalid;branch=z9hG4bK1\r\nFrom: <sip:${from}@heynikki.in>;tag=a\r\nTo: <sip:${to}@heynikki.in>${extra}\r\nCall-ID: 1\r\nCSeq: 1 X\r\n\r\n`;
 
+test("softphone: a browser in the office is offered the switch's LAN address too", () => {
+  const sdp = [
+    "v=0", "o=FreeSWITCH 1 2 IN IP4 106.222.230.22", "s=FreeSWITCH", "c=IN IP4 106.222.230.22", "t=0 0",
+    "m=audio 23456 UDP/TLS/RTP/SAVPF 0", "a=ice-ufrag:abcd", "a=ice-pwd:efgh",
+    "a=candidate:111 1 udp 2130706431 106.222.230.22 23456 typ host generation 0",
+    "a=candidate:222 1 udp 1694498815 106.222.230.22 23456 typ srflx raddr 192.168.1.12 rport 23456 generation 0",
+    "a=end-of-candidates", "",
+  ].join("\r\n");
+  const msg = `SIP/2.0 200 OK\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\nContent-Length: ${Buffer.byteLength(sdp)}\r\n\r\n${sdp}`;
+  const out = sp.offerLanCandidate(msg);
+  assert.match(out, /a=candidate:\S+ 1 udp \d+ 192\.168\.1\.12 23456 typ host generation 0\r\n/);
+  assert.match(out, /106\.222\.230\.22 23456 typ host/, "the public address is still offered");
+  const body = out.slice(out.indexOf("\r\n\r\n") + 4);
+  assert.equal(Number(out.match(/Content-Length: (\d+)/)[1]), Buffer.byteLength(body), "length matches the longer body");
+  assert.equal(sp.offerLanCandidate(out), out, "not added twice");
+  // Nothing to add: no SDP, or a switch already offering its LAN address.
+  assert.equal(sp.offerLanCandidate("SIP/2.0 100 Trying\r\nCSeq: 1 INVITE\r\nContent-Length: 0\r\n\r\n"), "SIP/2.0 100 Trying\r\nCSeq: 1 INVITE\r\nContent-Length: 0\r\n\r\n");
+  const lan = msg.replaceAll("106.222.230.22", "192.168.1.12").replace(/a=candidate:222[^\r]*\r\n/, "");
+  assert.equal(sp.offerLanCandidate(lan, ["192.168.1.12"]), lan);
+  // A switch that offers its public address with no srflx line: same port, this machine's LAN address.
+  const bare = msg.replace(/a=candidate:222[^\r]*\r\n/, "");
+  const fixed = sp.offerLanCandidate(bare, ["192.168.1.12"]);
+  assert.match(fixed, /a=candidate:\S+ 1 udp \d+ 192\.168\.1\.12 23456 typ host generation 0\r\n/);
+  assert.equal(sp.offerLanCandidate(fixed, ["192.168.1.12"]), fixed);
+});
+
 test("softphone: seat id comes from the user id", () => {
   assert.equal(sp.seatId("01234567-89ab-cdef-0123-456789abcdef"), SEAT);
   assert.throws(() => sp.seatId("nope"));

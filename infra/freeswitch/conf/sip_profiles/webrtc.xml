@@ -44,8 +44,10 @@
       <!-- This box is behind the office router, so a browser outside the
            office has to be told the router's public address as well as the
            LAN one. Asked of a STUN server rather than written down,
-           because the broadband address is not fixed; both are offered,
-           and a browser on the office network simply uses the LAN one. -->
+           because the broadband address is not fixed. The switch then
+           offers the public address ONLY; the LAN one is added on the way
+           to the browser by the API's relay (offerLanCandidate in
+           softphone.ts), so a browser on the office network can use it. -->
       <!-- stun.freeswitch.org, not Google's: FreeSWITCH asks in the old STUN
            format, which Google's servers do not answer. With Google here the
            lookup timed out at every start, the profile offered the LAN

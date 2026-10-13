@@ -138,7 +138,8 @@ export default function DeskPhone({ phone, mobile }: { phone: Phone; mobile: str
         : { color: C.gold, text: "No mobile on file. Add one below, or use this computer." };
     }
     switch (snap.status) {
-      case "ready":      return { color: C.grn,  text: "Ready. You call and answer from this computer — use a headset." };
+      case "ready":      return snap.error ? { color: C.red, text: snap.error }
+                              : { color: C.grn,  text: "Ready. You call and answer from this computer — use a headset." };
       case "connecting": return { color: C.gold, text: "Connecting the phone…" };
       case "offline":    return { color: C.gold, text: snap.error || "Connection lost. Reconnecting…" };
       case "no_mic":     return { color: C.red,  text: snap.error };

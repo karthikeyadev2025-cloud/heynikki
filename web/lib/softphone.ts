@@ -212,8 +212,9 @@ class Softphone {
       if (s === SessionState.Established) {
         this.stopRing();
         this.playRemote(session);
-        this.set({ call: { state: "active", dir, since: Date.now(), from }, muted: false, held: false });
+        this.set({ call: { state: "active", dir, since: Date.now(), from }, muted: false, held: false, error: "" });
         this.watchQuality(session);
+        this.watchAudioPath(session);
       }
       if (s === SessionState.Terminated) {
         this.stopRing();
@@ -240,6 +241,28 @@ class Softphone {
     pc.getReceivers().forEach(r => { if (r.track) stream.addTrack(r.track); });
     this.audio.srcObject = stream;
     this.audio.play().catch(() => { /* resumed by the next click */ });
+  }
+
+  /** Ends a call whose audio never connects. Signalling and audio take
+   *  different routes, so a call can be "answered" with no sound either way:
+   *  on 13 Oct four customers were rung and picked up to silence while the
+   *  Desk showed a normal call. Seven seconds is before most people answer. */
+  private watchAudioPath(session: Session) {
+    const pc = this.pc(session);
+    if (!pc) return;
+    const fail = () => {
+      if (this.session !== session) return;
+      console.warn("[desk phone] no audio path:", pc.connectionState, pc.iceConnectionState);
+      this.hangup().catch(() => {}).finally(() => this.set({
+        error: "Call ended: this computer and the phone service could not exchange audio. Try again, or switch to \"My mobile\".",
+      }));
+    };
+    const t = setTimeout(() => { if (pc.connectionState !== "connected") fail(); }, 7000);
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc.connectionState === "connected") clearTimeout(t);
+      if (pc.connectionState === "failed") { clearTimeout(t); fail(); }
+    });
+    if (pc.connectionState === "connected") clearTimeout(t);
   }
 
   /** A rough line-quality reading from packet loss and jitter, every 3 s. */

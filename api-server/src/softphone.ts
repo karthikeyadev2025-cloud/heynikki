@@ -54,6 +54,69 @@ export function switchSourceAddress(
   return v4[0];
 }
 
+/* ── The audio address a browser is offered ─────────────────── */
+
+const PRIVATE_V4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+/**
+ * Adds the switch's own LAN address to the audio candidates it offers.
+ *
+ * Once the switch knows its public address it offers ONLY that one: its
+ * "host" and "srflx" candidate lines both carry the public address, and the
+ * LAN address survives only as the srflx line's raddr/rport. A browser in
+ * the same office is then told to reach a machine three metres away through
+ * the router's public side, which the router does not loop back — measured
+ * on 12–13 Oct: 16 of 16 calls from other PCs on the office Wi-Fi never
+ * finished the DTLS handshake (silence both ways), while every call from
+ * the server PC itself did. The raddr/rport pair is the real socket, so it
+ * is offered as a candidate too; a browser outside the office cannot reach
+ * it and simply uses the other one.
+ */
+export function offerLanCandidate(msg: string, lanAddrs: string[] = ownLanAddresses()): string {
+  const cut = msg.indexOf("\r\n\r\n");
+  if (cut < 0) return msg;
+  const body = msg.slice(cut + 4);
+  if (!body.includes("a=candidate:")) return msg;
+  let added = false;
+  if (!body.includes("typ srflx")) {
+    // No srflx line to read the LAN socket from. The switch uses the same
+    // port number on both sides of the router, so a public host candidate
+    // is repeated for each LAN address this machine has.
+    const lines = body.split("\r\n").flatMap(line => {
+      const m = line.match(/^a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ host/);
+      if (!m || PRIVATE_V4.test(m[5]) || !/^\d+\.\d+\.\d+\.\d+$/.test(m[5])) return [line];
+      const extra = lanAddrs.filter(a => !body.includes(` ${a} ${m[6]} typ host`))
+        .map((a, i) => `a=candidate:${m[1]}${i + 1} ${m[2]} ${m[3]} ${Number(m[4]) - 1 - i} ${a} ${m[6]} typ host generation 0`);
+      if (extra.length) added = true;
+      return [line, ...extra];
+    });
+    return added ? withBody(msg, cut, lines.join("\r\n")) : msg;
+  }
+  const lines = body.split("\r\n").flatMap(line => {
+    const m = line.match(/^a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ srflx raddr (\S+) rport (\d+)/);
+    if (!m) return [line];
+    const [, foundation, comp, transport, , addr, , raddr, rport] = m;
+    if (!PRIVATE_V4.test(raddr) || raddr === addr || rport === "0") return [line];
+    if (body.includes(` ${raddr} ${rport} typ host`)) return [line];
+    added = true;
+    return [`a=candidate:${foundation}1 ${comp} ${transport} ${2130706431 - Number(comp)} ${raddr} ${rport} typ host generation 0`, line];
+  });
+  return added ? withBody(msg, cut, lines.join("\r\n")) : msg;
+}
+
+function withBody(msg: string, cut: number, newBody: string): string {
+  const head = msg.slice(0, cut).replace(/^(Content-Length|l)(\s*:\s*)\d+/im, (_, k, sep) => `${k}${sep}${Buffer.byteLength(newBody, "utf8")}`);
+  return head + "\r\n\r\n" + newBody;
+}
+
+function ownLanAddresses(): string[] {
+  return Object.values(os.networkInterfaces()).flatMap(l => l || [])
+    .filter(i => !i.internal && (i.family === "IPv4" || (i.family as unknown) === 4) && /^192\.168\.|^10\./.test(i.address))
+    .map(i => i.address)
+    // Docker's own bridges are 10.0.x / 172.x on this box and are nobody's LAN.
+    .filter(a => !/^10\.0\.[01]\./.test(a));
+}
+
 /* ── Seats ──────────────────────────────────────────────────── */
 
 /** The SIP user a login registers as: "u" + the user id without dashes. */
@@ -387,8 +450,16 @@ export function attachSoftphoneProxy(
       upstream.on("message", (data, isBinary) => {
         trace("<", data.toString("utf8"));
         if (client.readyState !== WebSocket.OPEN) return;
-        if (secure && !isBinary) client.send(viaForBrowser(data.toString("utf8")));
-        else client.send(data, { binary: isBinary });
+        if (isBinary) return client.send(data, { binary: true });
+        const raw = data.toString("utf8");
+        const text = offerLanCandidate(raw);
+        // Which addresses this browser was told to send audio to — the one
+        // line that says why a call connected and carried no sound.
+        if (text.includes("a=candidate:")) {
+          const cands = [...text.matchAll(/^a=candidate:\S+ 1 \S+ \d+ (\S+) (\d+) typ (\S+)/gm)].map(c => `${c[1]}:${c[2]} ${c[3]}`);
+          console.log(`[softphone] ${seat} offered audio at ${cands.join(", ")}`);
+        }
+        client.send(secure ? viaForBrowser(text) : text);
       });
       upstream.on("error", (e) => { console.error("[softphone] switch socket:", e.message); close(1011); });
       upstream.on("close", () => close(1011));
