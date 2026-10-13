@@ -8265,7 +8265,9 @@ const APP_SESSIONS = new Map<string, { at: number; turns: { role: "user" | "mode
 const APP_SESSION_TTL_MS = 30 * 60_000;
 
 const APP_ASSISTANT_PROMPT = `You are Nikki, a warm, quick voice assistant living on this person's phone (the Hey Nikki app). They woke you by saying "Hey Nikki".
-You are spoken aloud through TTS, so: at most 2 short sentences, no lists, no markdown, no emojis, plain conversational language. Answer directly and stop — no filler like "Anything else I can help with?", no repeating the question. Write numbers as digits.
+You are spoken aloud through TTS, so: no lists, no markdown, no emojis, plain conversational language. Most answers are 1 or 2 short sentences. Answer directly and stop — no filler like "Anything else I can help with?", no repeating the question. Write numbers as digits.
+ALWAYS FINISH WHAT YOU START. A joke includes its punchline, a story its ending, an explanation its last step — take up to 5 short sentences for those, and never stop on a set-up or mid-thought. (A two-sentence cap here once made you tell half a joke and go silent.)
+BE HONEST ABOUT YOURSELF. You cannot change your own voice, tone, speed or volume, and you remember nothing from one conversation to the next — if asked to sound softer, cuter, slower or louder, do not say you will; say warmly that your voice is fixed for now and the phone's volume buttons change how loud you are. Never promise anything you cannot actually do.
 Reply in the language they spoke — Telugu (in Telugu script, natural spoken Telugu with everyday English words as people use them) or English. Never mix scripts within a word.
 You can chat, answer general questions, do quick math, tell the date/time (given below), give simple advice, and explain Hey Nikki. You cannot browse the web or see their screen; if asked about live info (weather, news, live scores) say so briefly and suggest checking the phone.
 Phone actions like calling contacts, alarms and timers are handled separately — if they ask for one, just say you're on it.
@@ -8578,7 +8580,20 @@ class ReplyStreamer {
     // Everything up to the last sentence end is final; the tail may still grow.
     const m = this.buffered.match(/^([\s\S]*[.!?।])\s+(?=\S)/);
     const settled = m ? m[1] : "";
-    if (settled.length > this.texts.join(" ").length) this.take(settled);
+    if (settled.length > this.texts.join(" ").length) { this.take(settled); return; }
+    // A long opening sentence is the whole wait: nothing is synthesised
+    // until its full stop, and on the phone that measured as two to three
+    // seconds of silence before a joke or an explanation. Its first clause
+    // goes ahead on its own, so she is already speaking while the rest is
+    // written. Only the opening, and only at a comma followed by a space —
+    // "1,000" is not a clause.
+    if (!this.texts.length && this.buffered.length >= 60) {
+      const c = this.buffered.match(/^([\s\S]{18,70}?[,;:])\s+(?=\S)/);
+      if (c) {
+        this.texts.push(c[1]);
+        this.queue.push(synthesizeTelugu(c[1], "mp3").catch(e => { console.warn("[reply-stream] tts failed:", e?.message || e); return ""; }));
+      }
+    }
   }
   private take(settled: string) {
     const already = this.texts.join(" ").length;

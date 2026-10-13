@@ -456,7 +456,7 @@ public class HeyNikkiService extends Service {
     }
 
     /** Energy-gated capture: waits up to waitMs for speech, then stops after
-     *  1.2 s of silence or 12 s total. Returns a 16 kHz mono WAV, or null. */
+     *  0.75 s of silence or 12 s total. Returns a 16 kHz mono WAV, or null. */
     private byte[] recordQuestion(int waitMs) {
         AudioRecord rec = openMic();
         ByteArrayOutputStream pcm = new ByteArrayOutputStream();
@@ -478,7 +478,7 @@ public class HeyNikkiService extends Service {
                 hud.level((float) Math.min(1.0, rms / 3000.0));
                 for (int i = 0; i < n; i++) { pcm.write(buf[i] & 0xff); pcm.write((buf[i] >> 8) & 0xff); }
                 if (rms > thr) { speaking = true; silentMs = 0; }
-                else if (speaking) { silentMs += 50; if (silentMs >= 900) break; }
+                else if (speaking) { silentMs += 50; if (silentMs >= 750) break; }
                 else if (totalMs >= waitMs) return null; // nobody said anything
             }
             if (!speaking) return null;
