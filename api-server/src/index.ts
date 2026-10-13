@@ -8172,34 +8172,31 @@ async function buildBusinessContext(targetTenantId: string | null) {
   const monthStart = `${todayStr.slice(0, 7)}-01T00:00:00+05:30`;
   const queries: Record<string, any> = {};
 
-  const { data: todayCalls } = await (targetTenantId
-    ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
-        .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
-    : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
-        .gte("created_at", dayStart).limit(200));
-  queries.today_calls = todayCalls || [];
-
-  const { data: todayAppts } = await (targetTenantId
-    ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
-        .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
-    : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", dayStart).limit(100));
-  queries.today_appointments = todayAppts || [];
-
-  const { data: hotLeads } = await (targetTenantId
-    ? sb.from("leads").select("name,phone,score,stage,intent,created_at")
-        .eq("tenant_id", targetTenantId).gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10)
-    : sb.from("leads").select("name,score,stage,intent").gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10));
-  queries.hot_leads = hotLeads || [];
-
-  const { data: monthCalls } = await (targetTenantId
-    ? sb.from("calls").select("id,status,intent,appointment_created").eq("tenant_id", targetTenantId).gte("created_at", monthStart)
-    : sb.from("calls").select("id,status,intent,appointment_created").gte("created_at", monthStart).limit(1000));
-  queries.month_calls = monthCalls || [];
-
-  let activeChannels: any[] = [];
-  try {
-    activeChannels = (await fsl.getActiveChannels()) || [];
-  } catch (_) {}
+  // All five at once. They were awaited one after another, and a person
+  // holding a phone waited for the sum of them before the model was even asked.
+  const [callsR, apptsR, leadsR, monthR, activeChannels] = await Promise.all([
+    targetTenantId
+      ? sb.from("calls").select("id,caller_number,status,duration_seconds,intent,appointment_created,created_at")
+          .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
+      : sb.from("calls").select("id,status,duration_seconds,intent,appointment_created,tenant_id,created_at")
+          .gte("created_at", dayStart).limit(200),
+    targetTenantId
+      ? sb.from("appointments").select("id,caller_number,status,notes,created_at")
+          .eq("tenant_id", targetTenantId).gte("created_at", dayStart)
+      : sb.from("appointments").select("id,status,notes,created_at").gte("created_at", dayStart).limit(100),
+    targetTenantId
+      ? sb.from("leads").select("name,phone,score,stage,intent,created_at")
+          .eq("tenant_id", targetTenantId).gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10)
+      : sb.from("leads").select("name,score,stage,intent").gte("score", 70).not("stage", "in", '("won","lost")').order("score", { ascending: false }).limit(10),
+    targetTenantId
+      ? sb.from("calls").select("id,status,intent,appointment_created").eq("tenant_id", targetTenantId).gte("created_at", monthStart)
+      : sb.from("calls").select("id,status,intent,appointment_created").gte("created_at", monthStart).limit(1000),
+    fsl.getActiveChannels().then((c: any) => (c || []) as any[], () => [] as any[]),
+  ]);
+  queries.today_calls = callsR.data || [];
+  queries.today_appointments = apptsR.data || [];
+  queries.hot_leads = leadsR.data || [];
+  queries.month_calls = monthR.data || [];
   queries.active_calls_now = activeChannels;
 
   const contextJson = JSON.stringify({
@@ -8659,6 +8656,11 @@ function beginStream(res: express.Response) {
 async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_type: string, opts: { device?: boolean; stream?: express.Response } = {}) {
   const SARVAM_KEY = process.env.SARVAM_API_KEY!;
   const t0 = Date.now();
+  // The business summary does not depend on what was said, so it is fetched
+  // while the speech is being transcribed rather than after. If transcription
+  // fails this is never awaited — hence the catch, so it cannot go unhandled.
+  const ctxP = buildBusinessContext(tenantId);
+  ctxP.catch(() => {});
 
   // ── 1. Transcribe what the owner said (Sarvam Saaras v3) ──
   const audioBuffer = Buffer.from(audio_base64, "base64");
@@ -8707,9 +8709,29 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   // ── 1b. From the phone: "call amma" / "wake me at six" never reach the
   //        business brain — the phone does it and she just confirms.
   const tStt = Date.now();
-  // The business context and the action detector both start now; the
-  // detector is a no-op unless the words look like a phone command.
-  const ctxP = buildBusinessContext(tenantId);
+  // From the phone the answer and the action detector run side by side. The
+  // detector's gate matches "call", so "how many calls today" — the commonest
+  // question there is — used to wait out a whole extra model round trip
+  // before the real answer was even started. The phone's turn only looks
+  // things up, so an answer thrown away because it was a command costs nothing.
+  const spokenP: Promise<string> | null = !opts.device ? null : (async () => {
+    const { contextJson } = await ctxP;
+    // The phone app cannot render a card or hold a confirm button, and an
+    // action nobody can confirm is worse than no action: she would say she
+    // was about to ring someone and then never do it. So it gets the
+    // assistant's lookups — orders, WhatsApp, the team's calls, minutes —
+    // and none of its actions. If the tool turn fails she still answers from
+    // today's summary, as she did before she had tools here.
+    let a = "";
+    try {
+      a = (await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson, { spoken: true })).answer;
+    } catch (e: any) {
+      console.error("[app voice-query] tool turn failed:", e?.message || e);
+    }
+    return a || await askGemini(transcript, contextJson, false, true);
+  })();
+  spokenP?.catch(() => {});
+
   const act = opts.device ? await detectDeviceAction(transcript) : null;
   if (act) {
     console.log(`[device-action] ${act.action.type}: ${transcript.slice(0, 60)}`);
@@ -8725,24 +8747,12 @@ async function tenantVoiceQuery(tenantId: string, audio_base64: string, mime_typ
   streamer?.open();
 
   // ── 2. Ask Gemini, scoped to this tenant's own business data ──
-  const { contextJson } = await ctxP;
   let cards, confirm;
   let answer: string;
-  if (opts.device) {
-    // The phone app cannot render a card or hold a confirm button, and an
-    // action nobody can confirm is worse than no action: she would say she
-    // was about to ring someone and then never do it. So it gets the
-    // assistant's lookups — orders, WhatsApp, the team's calls, minutes —
-    // and none of its actions. If the tool turn fails she still answers from
-    // today's summary, as she did before she had tools here.
-    answer = "";
-    try {
-      answer = (await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson, { spoken: true })).answer;
-    } catch (e: any) {
-      console.error("[app voice-query] tool turn failed:", e?.message || e);
-    }
-    if (!answer) answer = await askGemini(transcript, contextJson, false, true);
+  if (spokenP) {
+    answer = await spokenP;
   } else {
+    const { contextJson } = await ctxP;
     const turn = await ownerAssistant.runOwnerTurn(tenantId, transcript, contextJson);
     answer = turn.answer; cards = turn.cards; confirm = turn.confirm;
     answer = await rememberSpokenFact(tenantId, answer);

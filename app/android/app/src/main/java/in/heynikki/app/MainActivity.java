@@ -39,12 +39,73 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         visible = this;
-        if (!micGranted()) askPermissionsOnce();
-        else if (!askPermissionsOnce2()) { HeyNikkiService.startIfEnabled(this); askBatteryOnce(); }
+        setUp();
     }
 
-    /** One system dialog per resume, so they arrive one after another rather
-     *  than stacked: mic → overlay (on grant) → battery (next resume). */
+    private static final int REQ_FIRST_RUN = 7001;
+    /** The runtime dialog goes up at most once per launch of the app. */
+    private boolean askedThisLaunch = false;
+    private boolean dialogUp = false;
+
+    /** Everything she needs, asked for on the very first open, one screen
+     *  after another: the system dialog (microphone, notifications, contacts,
+     *  phone) → the “display over other apps” switch → the battery exemption.
+     *  Android grants none of these at install time, so the first open is the
+     *  earliest they can be asked for.
+     *
+     *  Each call does the next step that is still outstanding and stops; the
+     *  person coming back from a dialog or a Settings screen resumes the
+     *  activity, which calls this again. A refusal does not end the chain —
+     *  it used to, so saying no to the microphone also meant never being
+     *  offered the other two, and nothing was ever asked a second time. */
+    private void setUp() {
+        if (dialogUp) return;
+        List<String> missing = missingPermissions();
+        if (!missing.isEmpty() && !askedThisLaunch) {
+            // Asked again on a later launch while something is still missing.
+            // After a second refusal Android answers for the user without
+            // showing anything, so this cannot turn into nagging.
+            askedThisLaunch = true;
+            dialogUp = true;
+            ActivityCompat.requestPermissions(this, missing.toArray(new String[0]), REQ_FIRST_RUN);
+            return;
+        }
+        if (micGranted()) HeyNikkiService.startIfEnabled(this);
+        if (askOverlayOnce()) return;
+        askBatteryOnce();
+    }
+
+    private List<String> missingPermissions() {
+        List<String> want = new ArrayList<>();
+        want.add(Manifest.permission.RECORD_AUDIO);
+        if (Build.VERSION.SDK_INT >= 33) want.add(Manifest.permission.POST_NOTIFICATIONS);
+        // "Hey Nikki, call amma" — contacts to find her, phone to ring her.
+        want.add(Manifest.permission.READ_CONTACTS);
+        want.add(Manifest.permission.CALL_PHONE);
+        List<String> missing = new ArrayList<>();
+        for (String perm : want) if (!DeviceActions.has(this, perm)) missing.add(perm);
+        return missing;
+    }
+
+    private boolean micGranted() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** The glow bar over other apps needs its own switch in Settings.
+     *  Returns true when that screen was opened. */
+    private boolean askOverlayOnce() {
+        if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) return false;
+        SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
+        if (p.getBoolean("askedOverlay", false)) return false;
+        p.edit().putBoolean("askedOverlay", true).apply();
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
+            return true;
+        } catch (Exception ignored) { return false; }
+    }
+
+    /** Without this the phone puts the listener to sleep after a while. */
     private void askBatteryOnce() {
         if (Build.VERSION.SDK_INT < 23) return;
         SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
@@ -58,51 +119,13 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
     }
 
-    private static final int REQ_FIRST_RUN = 7001;
-
-    /** Phones that granted the mic before phone actions existed: one more
-     *  dialog for contacts + calling. Returns true when a dialog is up. */
-    private boolean askPermissionsOnce2() {
-        SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        if (p.getBoolean("askedFirstRun2", false)) return false;
-        p.edit().putBoolean("askedFirstRun2", true).apply();
-        if (DeviceActions.has(this, Manifest.permission.CALL_PHONE) && DeviceActions.has(this, Manifest.permission.READ_CONTACTS)) return false;
-        ActivityCompat.requestPermissions(this,
-            new String[]{ Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE }, REQ_FIRST_RUN);
-        return true;
-    }
-
-    private boolean micGranted() {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    /** First open: ask for the mic (and notifications on 13+) straight away so
-     *  “Hey Nikki” works before anyone signs in. Asked once; the dashboard
-     *  pill can re-ask if it was refused. */
-    private void askPermissionsOnce() {
-        SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
-        if (p.getBoolean("askedFirstRun2", false)) return;
-        p.edit().putBoolean("askedFirstRun2", true).apply();
-        List<String> want = new ArrayList<>();
-        want.add(Manifest.permission.RECORD_AUDIO);
-        if (Build.VERSION.SDK_INT >= 33) want.add(Manifest.permission.POST_NOTIFICATIONS);
-        // "Hey Nikki, call amma" — contacts to find her, phone to ring her.
-        want.add(Manifest.permission.READ_CONTACTS);
-        want.add(Manifest.permission.CALL_PHONE);
-        ActivityCompat.requestPermissions(this, want.toArray(new String[0]), REQ_FIRST_RUN);
-    }
-
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != REQ_FIRST_RUN || !micGranted()) return;
-        HeyNikkiService.startIfEnabled(this);
-        // The glow bar over other apps needs its own switch in Settings.
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
-            try {
-                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())));
-            } catch (Exception ignored) {}
-        }
+        if (requestCode != REQ_FIRST_RUN) return;
+        dialogUp = false;
+        // When Android answers without showing a dialog the activity never
+        // paused, so no resume is coming to carry the chain on.
+        if (visible == this) setUp();
     }
 }
