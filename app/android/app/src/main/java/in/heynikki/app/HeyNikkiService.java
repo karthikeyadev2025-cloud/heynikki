@@ -216,6 +216,8 @@ public class HeyNikkiService extends Service {
                 if (r.getKeyword() != null && !r.getKeyword().isEmpty()) {
                     Log.i(TAG, "wake word: " + r.getKeyword());
                     spotter.reset(stream);
+                    // Her own introduction says “Hey Nikki” out loud.
+                    if (NikkiWelcome.speaking) { Log.i(TAG, "ignored: she is introducing herself"); continue; }
                     rec.stop();
                     buzz();
                     handleWake();
@@ -281,7 +283,8 @@ public class HeyNikkiService extends Service {
         // second on every wake. The TLS handshake to the API happens now, in
         // the background, so the question does not pay for it later.
         prewarm();
-        play(R.raw.chime);
+        int hello = greeting();
+        if (hello != 0) play(hello); else play(R.raw.chime);
 
         boolean first = true;
         for (int turn = 0; turn <= MAX_FOLLOW_UPS && !stopRequested; turn++) {
@@ -341,6 +344,28 @@ public class HeyNikkiService extends Service {
             first = false;
         }
         hud.hide(0);
+    }
+
+    /** She greets by the time of day — "Good morning! How can I help?" — the
+     *  first time she is woken after a few hours, in the language chosen in
+     *  her introduction. Every wake in between gets the short chime instead:
+     *  a spoken greeting costs two seconds, which is charming once and a
+     *  delay the tenth time in a row. Returns 0 for "just the chime". */
+    static final long GREET_AGAIN_AFTER_MS = 3 * 60 * 60_000L;
+    private int greeting() {
+        SharedPreferences p = getSharedPreferences(HeyNikkiPlugin.PREFS, Context.MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        if (now - p.getLong("greetedAt", 0) < GREET_AGAIN_AFTER_MS) return 0;
+        p.edit().putLong("greetedAt", now).apply();
+        boolean te = "te".equals(NikkiWelcome.language(this));
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        String shown;
+        int clip;
+        if (hour >= 4 && hour < 12)       { clip = te ? R.raw.greet_te_morning   : R.raw.greet_en_morning;   shown = te ? "శుభోదయం!" : "Good morning!"; }
+        else if (hour >= 12 && hour < 17) { clip = te ? R.raw.greet_te_afternoon : R.raw.greet_en_afternoon; shown = te ? "నమస్కారం!" : "Good afternoon!"; }
+        else                              { clip = te ? R.raw.greet_te_evening   : R.raw.greet_en_evening;   shown = te ? "శుభ సాయంత్రం!" : "Good evening!"; }
+        hud.show("prompt", shown);
+        return clip;
     }
 
     /** "Call amma" / "wake me at six": confirm in her voice, then do it. For

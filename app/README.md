@@ -25,6 +25,11 @@ mic → sherpa-onnx keyword spotter ─("Hey Nikki")→ chime + "చెప్ప
   and two on the bare "Nikki". A longer list or lower threshold gained one
   clip. The bare name is the main source of false wakes; drop the `@Nikki`
   lines if that matters more than the convenience.
+* `NikkiWelcome.java` — the animated splash on every launch and, on the
+  first launch, her four-screen spoken introduction (English / Telugu). The
+  permission dialogs wait until it is done.
+* `res/raw/intro_*.mp3`, `greet_*.mp3` — her introduction and her
+  time-of-day greeting (first wake after 3 hours), Sarvam TTS (priya).
 * `res/raw/cheppandi.wav` — Sarvam TTS (priya) "చెప్పండి"; `chime.wav`.
 * Auth to the API is a per-device token (`POST /api/app/device-token`,
   table `app_device_tokens`), minted by the web layer on first "Hey Nikki"

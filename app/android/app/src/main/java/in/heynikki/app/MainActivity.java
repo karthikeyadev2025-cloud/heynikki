@@ -26,14 +26,31 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(HeyNikkiPlugin.class);
         super.onCreate(savedInstanceState);
+        // Her mark over the loading dashboard; on the very first open, her
+        // introduction too. Permissions wait until it is gone — see setUp().
+        try {
+            welcome = new NikkiWelcome(this,
+                () -> getBridge() == null || getBridge().getWebView() == null || getBridge().getWebView().getProgress() >= 100,
+                () -> { welcome = null; if (visible == this) setUp(); });
+        } catch (Throwable t) {
+            // A splash is never worth a crash on launch.
+            android.util.Log.w("HeyNikki", "welcome failed", t);
+            welcome = null;
+        }
     }
+
+    private NikkiWelcome welcome;
 
     /** The owner switched “Hey Nikki” on once; every time the app comes to the
      *  front we make sure the listener is actually up (after a reboot, after
      *  the OS killed it, after a swipe-away). Android lets a mic service start
      *  from a visible activity, which is exactly this moment. */
     @Override
-    public void onPause() { if (visible == this) visible = null; super.onPause(); }
+    public void onPause() {
+        if (visible == this) visible = null;
+        if (welcome != null) welcome.silence();
+        super.onPause();
+    }
 
     @Override
     public void onResume() {
@@ -59,6 +76,8 @@ public class MainActivity extends BridgeActivity {
      *  it used to, so saying no to the microphone also meant never being
      *  offered the other two, and nothing was ever asked a second time. */
     private void setUp() {
+        // She explains herself first; the dialogs follow when she is done.
+        if (welcome != null && welcome.active()) return;
         if (dialogUp) return;
         List<String> missing = missingPermissions();
         if (!missing.isEmpty() && !askedThisLaunch) {
