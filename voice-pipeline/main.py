@@ -10461,6 +10461,13 @@ async def _upload_leftover_recording(fs_uuid: str, call_id: str, tenant_id: str)
         if not wav_bytes:
             log.info(f"[FS REST] {fs_uuid}: no leftover recording to upload")
             return
+        # A browser seat whose audio never connected leaves a header and a
+        # few frames (684 bytes on four calls on 13 Oct). Storing that made
+        # the Desk say "recorded" and play nothing. Under a second of 8 kHz
+        # mono is not a recording.
+        if len(wav_bytes) < 44 + 16000:
+            log.warning(f"[FS REST] {fs_uuid}: recording is empty ({len(wav_bytes)}B) — no audio reached the call; not stored")
+            return
         r2_url = await _upload_to_r2(wav_bytes, call_id, tenant_id)
         if not r2_url:
             return
