@@ -70,8 +70,9 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
   // ── Queue ──────────────────────────────────────────────────────────
   // Callbacks first — a promise to ring someone at four is the one thing a
   // telecaller must not miss — then the next lead nobody has rung lately.
-  // Theirs before the shared pool; within each, the hottest first. A lead
-  // with a callback still in the future waits for that callback instead.
+  // Theirs before the shared pool; within each, numbers never rung in list
+  // order, then retries hottest first. A lead with a callback still in the
+  // future waits for that callback instead.
   app.get("/api/desk/queue", verifyJWT, async (req: any, res) => {
     const who = await me(req, res); if (!who) return;
     const { tenantId, userId } = who;
@@ -101,21 +102,39 @@ export function mountDeskProRoutes(app: Express, d: Deps) {
       return new Set((data || []).map((r: any) => last10(r.phone)));
     };
 
-    const fresh = async (assigned: "mine" | "pool") => {
-      let q = sb.from("leads").select(LEAD_COLS).eq("tenant_id", tenantId)
-        .in("stage", OPEN_STAGES).not("phone", "is", null)
-        // One or= holding an and(): not rung lately, and no callback pending.
-        // (The timestamp is quoted — "." and ":" are PostgREST syntax.)
-        .or(`and(or(last_contacted_at.is.null,last_contacted_at.lt."${stale}"),or(follow_up_at.is.null,follow_up_done_at.not.is.null))`)
-        .order("score", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: true }).limit(25);
-      q = assigned === "mine" ? q.eq("assigned_to", userId) : q.is("assigned_to", null);
-      if (skip.length) q = q.not("id", "in", `(${skip.join(",")})`);
-      const { data } = await q;
+    // Numbers never rung come first, in the order of the list they were
+    // uploaded in (076) — a telecaller works a list top to bottom. Only when
+    // those run out do the retries come up, hottest first.
+    const fresh = async (assigned: "mine" | "pool", untried: boolean) => {
+      const build = (bySeq: boolean) => {
+        let q = sb.from("leads").select(LEAD_COLS).eq("tenant_id", tenantId)
+          .in("stage", OPEN_STAGES).not("phone", "is", null)
+          .or("follow_up_at.is.null,follow_up_done_at.not.is.null");
+        if (untried) {
+          q = q.is("last_contacted_at", null);
+          if (bySeq) q = q.order("list_seq", { ascending: true, nullsFirst: false });
+          q = q.order("created_at", { ascending: true }).order("id", { ascending: true });
+        } else {
+          // Rung, but not lately. (The timestamp is quoted — "." and ":" are PostgREST syntax.)
+          q = q.lt("last_contacted_at", stale)
+            .order("score", { ascending: false, nullsFirst: false })
+            .order("created_at", { ascending: true });
+        }
+        q = q.limit(25);
+        q = assigned === "mine" ? q.eq("assigned_to", userId) : q.is("assigned_to", null);
+        if (skip.length) q = q.not("id", "in", `(${skip.join(",")})`);
+        return q;
+      };
+      let { data, error } = await build(untried);
+      // Before 076 there is no list_seq to sort by.
+      if (error && untried && /list_seq/.test(error.message)) ({ data } = await build(false));
       return data || [];
     };
-    let candidates = await fresh("mine");
-    if (!candidates.length) candidates = await fresh("pool");
+    let candidates: any[] = [];
+    for (const [side, untried] of [["mine", true], ["mine", false], ["pool", true], ["pool", false]] as const) {
+      candidates = await fresh(side, untried);
+      if (candidates.length) break;
+    }
     const blocked = await optedOut([...candidates, ...(due || [])].map((l: any) => l.phone));
     const next = candidates.find((l: any) => !blocked.has(last10(l.phone))) || null;
 

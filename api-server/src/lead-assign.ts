@@ -173,16 +173,27 @@ export function mountLeadAssignRoutes(app: Express, deps: Deps) {
       const deal = dealOut(fresh, to, to.length ? await holding(tenantId) : {});
       const ownerOf = new Map<string, string>();
       for (const [u, list] of deal) for (const r of list) ownerOf.set(r.phone, u);
-      const insert = fresh.map(r => ({
+      // Each row's place in the file (076), so the Desk queue rings the list
+      // top to bottom: a batch of 500 shares one created_at and came out in
+      // no order. A later upload sorts after this one.
+      const seq0 = Math.floor(Date.now() / 1000) * 100000;
+      const insert = fresh.map((r, i) => ({
         tenant_id: tenantId, phone: r.phone, name: r.name, interest: r.note, stage: "new", source: "import",
         assigned_to: ownerOf.get(r.phone) || null, tags: listName ? [listName] : [],
         // The column defaults to now() and 1, which would mark a number
         // nobody has rung as already contacted.
-        last_contacted_at: null, call_count: 0,
+        last_contacted_at: null, call_count: 0, list_seq: seq0 + i,
       }));
-      let added = 0;
+      let added = 0, withSeq = true;
       for (let i = 0; i < insert.length; i += 500) {
-        const { error } = await sb.from("leads").insert(insert.slice(i, i + 500));
+        let batch: Record<string, any>[] = insert.slice(i, i + 500);
+        if (!withSeq) batch = batch.map(({ list_seq, ...r }) => r);
+        let { error } = await sb.from("leads").insert(batch);
+        // Before 076 the column is missing; the list still goes in.
+        if (error && withSeq && /list_seq/.test(error.message)) {
+          withSeq = false;
+          ({ error } = await sb.from("leads").insert(batch.map(({ list_seq, ...r }) => r)));
+        }
         if (error) {
           console.error("[lead import]", error.message);
           return res.status(500).json({ error: added

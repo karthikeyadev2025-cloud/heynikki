@@ -181,9 +181,11 @@ export default function DeskPage() {
     setPrefill(p => ({ n, k: p.k + 1, ...(/^[0-9a-f-]{36}$/i.test(leadId) ? { leadId } : {}) }));
     window.history.replaceState({}, "", window.location.pathname);
   }, []);
-  // Bumped after every saved outcome so the queue fetches the next lead.
+  // Bumped after every call and saved outcome so the queue fetches the next
+  // lead; armKey only when a call hangs up, which is what auto-dial waits for.
   const [queueKey, setQueueKey] = useState(0);
-  const afterCall = () => { load(); setQueueKey(k => k + 1); };
+  const [armKey, setArmKey] = useState(0);
+  const afterCall = (hungUp?: boolean) => { load(); setQueueKey(k => k + 1); if (hungUp) setArmKey(k => k + 1); };
 
   const token = useCallback(async () => {
     const { data: { session } } = await createClient().auth.getSession();
@@ -259,7 +261,7 @@ export default function DeskPage() {
         <div className="desk-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)", gap: 16, alignItems: "start" }}>
           <div style={{ display: "grid", gap: 16 }}>
             <Shift d={d} api={api} onChanged={load} tick={tick} />
-            <NextCall api={api} onCall={callLead} reloadKey={queueKey} />
+            <NextCall api={api} onCall={callLead} reloadKey={queueKey} armKey={armKey} />
             <DeskPhone phone={phone} mobile={d?.you?.phone || ""} />
             <Dialer d={d} api={api} onDone={afterCall} prefill={prefill} phone={phone} />
             <LiveBoard calls={live} tick={tick} />
@@ -294,8 +296,8 @@ export default function DeskPage() {
 // leads first, then the shared pool, hottest first. "Call" rings straight
 // away; "Skip" moves on for this session only. A callback coming due also
 // raises a browser notification while the Desk is open.
-function NextCall({ api, onCall, reloadKey }: {
-  api: (p: string, b?: any) => Promise<any>; onCall: (l: QLead) => void; reloadKey: number;
+function NextCall({ api, onCall, reloadKey, armKey }: {
+  api: (p: string, b?: any) => Promise<any>; onCall: (l: QLead) => void; reloadKey: number; armKey: number;
 }) {
   const [q, setQ] = useState<{ due: QLead[]; next: QLead | null; mine_open: number; pool_open: number } | null>(null);
   const [err, setErr] = useState("");
@@ -306,23 +308,25 @@ function NextCall({ api, onCall, reloadKey }: {
   const [notif, setNotif] = useState<string>("unsupported");
   useEffect(() => { if ("Notification" in window) setNotif(Notification.permission); }, []);
 
-  // Auto-dial: once an outcome is saved, the next number rings after a
-  // short count the telecaller can stop. It never starts by itself on
-  // opening the page — only after a call this person has just finished.
-  const [auto, setAuto] = useState(false);
+  // Auto-dial: when a call hangs up, the next number rings after a short
+  // count the telecaller can stop. It never starts by itself on opening the
+  // page — only after a call this person has just finished. On unless the
+  // telecaller turned it off: on 15 Oct both seats dialled 100 numbers by
+  // hand, and the outcome it used to wait for is now saved for them.
+  const [auto, setAuto] = useState(true);
   const autoRef = useRef(false); autoRef.current = auto;
   const [count, setCount] = useState<{ lead: QLead; left: number } | null>(null);
   const armed = useRef(false);
   // The parent hands a new function every render; the count must not restart for it.
   const onCallRef = useRef(onCall); onCallRef.current = onCall;
-  const firstKey = useRef(reloadKey);
-  useEffect(() => { try { setAuto(localStorage.getItem("nk_desk_autodial") === "1"); } catch { /* private mode */ } }, []);
+  const firstKey = useRef(armKey);
+  useEffect(() => { try { setAuto(localStorage.getItem("nk_desk_autodial") !== "0"); } catch { /* private mode */ } }, []);
   const toggleAuto = () => setAuto(v => {
     try { localStorage.setItem("nk_desk_autodial", v ? "0" : "1"); } catch { /* private mode */ }
     if (v) setCount(null);
     return !v;
   });
-  useEffect(() => { if (reloadKey !== firstKey.current) armed.current = true; }, [reloadKey]);
+  useEffect(() => { if (armKey !== firstKey.current) armed.current = true; }, [armKey]);
   useEffect(() => {
     if (!count) return;
     if (count.left <= 0) { const l = count.lead; setCount(null); onCallRef.current(l); return; }
@@ -380,7 +384,7 @@ function NextCall({ api, onCall, reloadKey }: {
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.mid, cursor: "pointer" }}>
             <input type="checkbox" checked={auto} onChange={toggleAuto} />
-            Auto-dial: ring the next number 5 seconds after I save an outcome
+            Auto-dial: ring the next number 5 seconds after a call ends
           </label>
           {q.due.length > 0 && (
             <div style={{ display: "grid", gap: 6 }}>
@@ -662,7 +666,7 @@ type DialState =
   | { phase: "failed"; reason: string };
 
 function Dialer({ d, api, onDone, prefill, phone }: {
-  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: () => void; prefill: Prefill; phone: Phone;
+  d: Desk | null; api: (p: string, b?: any) => Promise<any>; onDone: (hungUp?: boolean) => void; prefill: Prefill; phone: Phone;
 }) {
   const [num, setNum] = useState("");
   // A queue "Call" rings straight away, once the number is in the box.
@@ -679,6 +683,7 @@ function Dialer({ d, api, onDone, prefill, phone }: {
   const [waBusy, setWaBusy] = useState(false);
   const [lead, setLead] = useState<LeadLite | null | undefined>(undefined);
   const [st, setSt] = useState<DialState>({ phase: "idle" });
+  const stRef = useRef(st); stRef.current = st;
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState("");
   const [myPhone, setMyPhone] = useState("");
@@ -708,7 +713,7 @@ function Dialer({ d, api, onDone, prefill, phone }: {
     // "Call now" from the queue used to fill the number and then do nothing
     // until one was picked — telecallers read it as the second call not going.
     if (!autoLead || !ok || !havePhone || !["idle", "ended", "failed"].includes(st.phase)) return;
-    if (st.phase === "ended") toast("Last call's outcome isn't saved — set it under “Calls from the desk”.");
+    if (st.phase === "ended") toast("Last call's outcome is saved from its summary — change it under “Calls from the desk” if it's wrong.");
     const id = autoLead.id;
     setAutoLead(null);
     dial(id);
@@ -768,7 +773,7 @@ function Dialer({ d, api, onDone, prefill, phone }: {
             if (!fail) { try { fail = (await api(`/api/calls/click-to-call/${j.ctc_log_id}`)).customer_fail_cause || null; } catch {} }
             setSt({ phase: "ended", ctcId: j.ctc_log_id, fail,
                     seconds: fail ? 0 : (s.duration_seconds || Math.round((Date.now() - started) / 1000)) });
-            onDone();
+            onDone(true);
           }
         } catch { /* keep polling */ }
       }, 3000);
@@ -809,12 +814,17 @@ function Dialer({ d, api, onDone, prefill, phone }: {
       return;
     }
     setSaving(key);
+    const ctcId = st.ctcId;
     try {
-      const body: any = { ctc_log_id: st.ctcId, disposition: key, notes };
+      const body: any = { ctc_log_id: ctcId, disposition: key, notes };
       if (key === "callback" && cbAt) body.follow_up_at = new Date(cbAt).toISOString();
       await api("/api/calls/disposition", body);
       if (key === "callback" && cbAt) toast.ok(`Callback set for ${fmtTime(new Date(cbAt).toISOString())}`);
-      setSt({ phase: "idle" }); setNotes(""); setNum(""); setCbOpen(false); setCbAt(""); setAi({ state: "idle" }); setSecond(""); onDone();
+      // Auto-dial may have rung the next number while this saved; leave that call alone.
+      if (stRef.current.phase === "ended" && stRef.current.ctcId === ctcId) {
+        setSt({ phase: "idle" }); setNotes(""); setNum(""); setCbOpen(false); setCbAt(""); setAi({ state: "idle" }); setSecond("");
+      }
+      onDone();
     } catch (e: any) { toast.err(e.message); }
     setSaving("");
   }
