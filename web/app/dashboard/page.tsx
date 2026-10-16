@@ -15,7 +15,7 @@ import type { CallRecord, Appointment } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
 import {
   Phone, Calendar, PhoneOff, Moon, Flame, Sparkles, PartyPopper,
-  Smartphone, Check,
+  Smartphone, Check, Brain, UserPlus,
 } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.heynikki.in";
@@ -93,14 +93,26 @@ export default function DashboardPage() {
   const [loading, setLoading]               = useState(true);
   const [tenantId, setTenantId]             = useState<string | null>(null);
   const [updatedAt, setUpdatedAt]           = useState<Date | null>(null);
+  // Questions callers asked that Nikki could not answer (077). The fastest
+  // way she gets better, so it sits on the first screen, not only on Teach.
+  const [gaps, setGaps]                     = useState<{ count: number; top: { id: string; question: string; times_asked: number }[] }>({ count: 0, top: [] });
+  // A shop with no appointment types is walk-in: "Appointments booked" is
+  // always 0 there, and "today's appointments" is always empty.
+  const [walkIn, setWalkIn]                 = useState(false);
+  const [leadsToday, setLeadsToday]         = useState(0);
+  // Who a number is, when Nikki caught a name or a lead was filed for it.
+  const [people, setPeople]                 = useState<Record<string, { name?: string; interest?: string }>>({});
 
   const fetchData = useCallback(async (tid: string) => {
     const sb = createClient();
-    const today = new Date().toISOString().split("T")[0];
-    const monthStart = today.slice(0, 8) + "01";
     // slot_date is a business-local date, so "today" for the diary is the
     // IST calendar day, not the UTC one (they differ from 05:30 to midnight).
     const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    // The business's day for the counts too. From UTC midnight, "Calls
+    // today" left out everything between 00:00 and 05:30 IST and showed
+    // yesterday's count until half past five in the morning.
+    const dayStart = `${todayIst}T00:00:00+05:30`;
+    const monthStart = `${todayIst.slice(0, 8)}01T00:00:00+05:30`;
 
     const [active, recent, missed, appts, todayStats,
            profile, minutes, tenantRow, leadsRes, monthCalls, pricing] = await Promise.all([
@@ -116,9 +128,9 @@ export default function DashboardPage() {
         .eq("slot_date", todayIst)
         .order("slot_time", { ascending: true, nullsFirst: false }).limit(10),
       sb.from("calls").select("id, status, created_at, appointment_created")
-        .eq("tenant_id", tid).gte("created_at", today + "T00:00:00"),
+        .eq("tenant_id", tid).gte("created_at", dayStart),
       // business hours — needed to work out which calls came in while closed
-      sb.from("voice_profiles").select("open_time, close_time")
+      sb.from("voice_profiles").select("open_time, close_time, appointment_types, profile_sku, business_name")
         .eq("tenant_id", tid).limit(1).maybeSingle(),
       // Usage is DERIVED from the calls themselves. call_minutes.used_seconds
       // is a counter no code path has ever incremented — this meter read
@@ -127,7 +139,7 @@ export default function DashboardPage() {
       // fetchAll: one request stops at 1,000 rows, and a month of a busy
       // line is more than that — the minutes meter would stop counting.
       fetchAll(() => sb.from("calls").select("duration_seconds")
-        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00")
+        .eq("tenant_id", tid).gte("created_at", monthStart)
         .order("created_at").order("id")),
       // The balance that actually gates a trial tenant's calls, and which
       // the customer app never showed them anywhere.
@@ -140,7 +152,7 @@ export default function DashboardPage() {
         .order("score", { ascending: false }).limit(5),
       // whole month, for the value banner
       fetchAll(() => sb.from("calls").select("created_at, appointment_created")
-        .eq("tenant_id", tid).gte("created_at", monthStart + "T00:00:00")
+        .eq("tenant_id", tid).gte("created_at", monthStart)
         .order("created_at").order("id")),
       // Plan allowances come from the plans table via the same catalogue
       // /billing renders, so the two pages cannot disagree. A hard-coded
@@ -157,6 +169,29 @@ export default function DashboardPage() {
       console.error("[dashboard] load failed:", (failed as any).error?.message);
       toast.err("Some of this page couldn't be loaded. Please refresh.");
     }
+
+    // Not in the Promise.all: before 077 the gaps table is missing, and a
+    // missing table must not show the "couldn't be loaded" toast.
+    const [gapRes, newLeads, named] = await Promise.all([
+      sb.from("knowledge_gaps").select("id, question, times_asked", { count: "exact" })
+        .eq("tenant_id", tid).eq("status", "open")
+        .order("times_asked", { ascending: false }).order("last_asked_at", { ascending: false }).limit(3),
+      sb.from("leads").select("id", { count: "exact", head: true })
+        .eq("tenant_id", tid).gte("created_at", dayStart),
+      sb.from("leads").select("phone, name, interest").eq("tenant_id", tid)
+        .order("last_contacted_at", { ascending: false, nullsFirst: false }).limit(200),
+    ]);
+    setGaps(gapRes.error ? { count: 0, top: [] } : { count: gapRes.count || 0, top: (gapRes.data || []) as any[] });
+    setLeadsToday(newLeads.count || 0);
+    const who: Record<string, { name?: string; interest?: string }> = {};
+    for (const l of (named.data || []) as any[]) {
+      const k = String(l.phone || "").replace(/\D/g, "").slice(-10);
+      if (k && !who[k]) who[k] = { name: l.name || undefined, interest: l.interest || undefined };
+    }
+    setPeople(who);
+    const vp: any = profile.data || {};
+    setWalkIn(!(vp.appointment_types || []).length && (vp.profile_sku || "standard") === "standard"
+      && !/clinic|hospital|doctor|dental|medical|diagnostic/i.test(String(vp.business_name || "")));
 
     setActiveCalls(active.data || []);
     setRecentCalls(recent.data || []);
@@ -298,7 +333,9 @@ export default function DashboardPage() {
           {/* Stats row */}
           <div className="dash-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
             <StatCard icon={Phone}    value={stats.total}        label="Calls Today"          color={C.gbr}  />
-            <StatCard icon={Calendar} value={stats.appointments} label="Appointments Booked"  color={C.grn}  />
+            {walkIn
+              ? <StatCard icon={UserPlus} value={leadsToday}       label="New Leads Today"      color={C.grn}  />
+              : <StatCard icon={Calendar} value={stats.appointments} label="Appointments Booked"  color={C.grn}  />}
             {/* NOT "Missed (handled)". These are calls with status "missed" —
                 nobody picked up, Nikki included. The only thing that may have
                 been done about one is a WhatsApp follow-up, and that is shown
@@ -418,6 +455,29 @@ export default function DashboardPage() {
               (score 50+) who are still sitting untouched in "new". This is
               the only hot-leads list — a second "Hot Leads — Top Prospects"
               card used to render the same people directly above it. */}
+          {gaps.count > 0 && (
+            <Card style={{ marginBottom: 20, borderColor: C.gold + "66", background: C.gold + "08" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                marginBottom: 10, flexWrap: "wrap" }}>
+                <span style={{ color: C.txt, fontSize: 15, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Brain size={15} color={C.gold} />
+                  Nikki needs your answer · {gaps.count} question{gaps.count === 1 ? "" : "s"}
+                </span>
+                <a href="/knowledge" style={{ background: C.glow, color: "#fff", borderRadius: 8, padding: "7px 14px",
+                  fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Teach her now →</a>
+              </div>
+              <div style={{ color: C.mid, fontSize: 13, marginBottom: 8 }}>
+                Callers asked these and she didn&apos;t know. Answer once and she says it on every call.
+              </div>
+              {gaps.top.map(g => (
+                <div key={g.id} style={{ color: C.txt, fontSize: 14, padding: "6px 0", borderTop: "1px solid " + C.bord + "55" }}>
+                  &ldquo;{g.question}&rdquo;
+                  {g.times_asked > 1 && <span style={{ color: C.dim, fontSize: 12.5 }}> · asked {g.times_asked} times</span>}
+                </div>
+              ))}
+            </Card>
+          )}
+
           {hotLeads.length > 0 && (
             <Card style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between",
@@ -453,7 +513,7 @@ export default function DashboardPage() {
                       color: C.gbr, fontSize: 13, fontFamily: "monospace",
                       textDecoration: "none", fontWeight: 600,
                     }}>{l.phone}</a>
-                    <a href="/leads" style={{ background: C.grn + "22", color: C.grn,
+                    <a href={`tel:${l.phone}`} style={{ background: C.grn + "22", color: C.grn,
                       border: "1px solid " + C.grn + "44", borderRadius: 5,
                       padding: "4px 10px", fontSize: 12, fontWeight: 700,
                       textDecoration: "none", flexShrink: 0 }}>
@@ -485,8 +545,8 @@ export default function DashboardPage() {
                   textDecoration: "none", color: C.txt, textAlign: "left",
                 }}>
                   <div style={{ color: C.glow, fontSize: 12, fontWeight: 800, marginBottom: 4 }}>STEP 1</div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>Pick a voice profile</div>
-                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Choose Standard / Clinic / Real Estate / Premium →</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>Tell Nikki about your business</div>
+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Your name, hours and what you sell — about 5 minutes →</div>
                 </a>
                 <a href="/setup" style={{
                   display: "block", padding: 16, background: C.surf,
@@ -494,8 +554,8 @@ export default function DashboardPage() {
                   textDecoration: "none", color: C.txt, textAlign: "left",
                 }}>
                   <div style={{ color: C.grn, fontSize: 12, fontWeight: 800, marginBottom: 4 }}>STEP 2</div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>Forward your number</div>
-                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Add the Nikki DID to your business line →</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>Send your calls to Nikki</div>
+                  <div style={{ color: C.dim, fontSize: 12, marginTop: 4 }}>Forward your business number to the Nikki number shown in setup →</div>
                 </a>
               </div>
               <div style={{ color: C.dim, fontSize: 12, marginTop: 20 }}>
@@ -541,7 +601,7 @@ export default function DashboardPage() {
           <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
 
             {/* Today's appointments — query is slot_date = today (IST) */}
-            <Card>
+            {!walkIn && <Card>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <div style={{ color: C.gbr, fontSize: 13, fontWeight: 800 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Calendar size={15} /> Today&apos;s Appointments</span>
@@ -583,12 +643,12 @@ export default function DashboardPage() {
                   </div>
                 </div>
               ))}
-            </Card>
+            </Card>}
 
             {/* Missed calls */}
-            <Card>
+            <Card style={walkIn ? { gridColumn: "1 / -1" } : undefined}>
               <div style={{ color: C.gold, fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PhoneOff size={15} /> Missed Calls</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PhoneOff size={15} /> Recent Missed Calls</span>
               </div>
               {missedCalls.length === 0 ? (
                 <div style={{ color: C.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
@@ -599,14 +659,14 @@ export default function DashboardPage() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
                       <div style={{ color: C.txt, fontSize: 12, fontWeight: 700 }}>
-                        {call.caller_number}
+                        {people[String(call.caller_number || "").replace(/\D/g, "").slice(-10)]?.name || call.caller_number}
                       </div>
                       <div style={{ color: C.dim, fontSize: 12 }}>{timeAgo(call.created_at)}</div>
                     </div>
                     {/* Say what happened either way. A bare "WA ✓" on some
                         rows and nothing on the others left the owner to guess
                         whether silence meant "no follow-up" or "not shown". */}
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                       {call.wa_sent ? (
                         <span style={{ color: C.cyn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>
                           WhatsApp sent <Check size={10} />
@@ -614,6 +674,10 @@ export default function DashboardPage() {
                       ) : (
                         <span style={{ color: C.gold, fontSize: 12, fontWeight: 700 }}>No follow-up yet</span>
                       )}
+                      <a href={`tel:${call.caller_number}`} style={{ color: C.grn, fontSize: 12, fontWeight: 700,
+                        textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <Phone size={11} /> Call back
+                      </a>
                     </div>
                   </div>
                 </div>
@@ -624,7 +688,7 @@ export default function DashboardPage() {
           {/* Recent calls feed */}
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>Recent Calls</div>
+              <div style={{ color: C.txt, fontSize: 13, fontWeight: 800 }}>Recent Calls <span style={{ color: C.dim, fontWeight: 500, fontSize: 12 }}>· tap one to hear it</span></div>
               <a href="/calls" style={{ color: C.glow, fontSize: 12 }}>View all →</a>
             </div>
             <div className="nk-scroll">
@@ -650,11 +714,20 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {recentCalls.slice(0, 10).map(call => (
-                  <tr key={call.id} style={{ borderBottom: "1px solid " + C.bord + "33" }}
+                  <tr key={call.id} style={{ borderBottom: "1px solid " + C.bord + "33", cursor: "pointer" }}
+                    title="Open this call — recording, transcript and summary"
+                    onClick={() => { window.location.href = `/calls?call=${call.id}`; }}
                     onMouseEnter={e => (e.currentTarget.style.background = C.hi)}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                     <td style={{ padding: "8px 8px", color: C.txt, fontSize: 12 }}>
-                      {call.caller_number}
+                      {(() => {
+                        const p = people[String(call.caller_number || "").replace(/\D/g, "").slice(-10)];
+                        return (<>
+                          <div style={{ fontWeight: 650 }}>{p?.name || call.caller_number}</div>
+                          {p?.name && <div style={{ color: C.dim, fontSize: 11.5 }}>{call.caller_number}</div>}
+                          {p?.interest && <div style={{ color: C.mid, fontSize: 11.5 }}>{p.interest}</div>}
+                        </>);
+                      })()}
                     </td>
                     <td className="nk-hide-mobile" style={{ padding: "8px 8px" }}>
                       <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
