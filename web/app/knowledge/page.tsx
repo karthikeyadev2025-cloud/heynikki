@@ -16,6 +16,14 @@
  *     with no embedding, generates one via Gemini, and writes it back.
  *  3. From then on, calls retrieve it automatically.
  *
+ * The phone path does not wait for step 2: every call reads the business's
+ * facts straight from knowledge_base at pickup, so a fact saved here is used
+ * on the very next call. The embedding only serves search elsewhere.
+ *
+ * Above the composer: questions callers asked that Nikki could not answer
+ * (knowledge_gaps, 077), filed after every call. Answering one is the
+ * fastest way she learns — it is a question a customer actually asked.
+ *
  * Embedding is deliberately NOT done in the browser: it needs the Gemini API
  * key, which must never ship to a client. Saving text first and embedding
  * server-side keeps the key server-only and makes the UI instant.
@@ -28,13 +36,21 @@ import { useState, useEffect, useCallback } from "react";
 import Shell from "../../components/Shell";
 import { createClient } from "../../lib/supabase";
 import { NIKKI } from "../../lib/brand";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 
 const C = {
   bg: NIKKI.bg, surf: NIKKI.surface, hi: NIKKI.vault, bord: NIKKI.border,
   glow: NIKKI.teal, gbr: NIKKI.tealLight, gold: NIKKI.gold,
   grn: NIKKI.emerald, red: NIKKI.red, cyn: NIKKI.cyan,
   txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim,
+};
+
+type Gap = {
+  id: string;
+  question: string;
+  caller_said: string | null;
+  times_asked: number;
+  last_asked_at: string;
 };
 
 type Entry = {
@@ -66,6 +82,11 @@ export default function KnowledgePage() {
   const [notice, setNotice]     = useState("");
   const [draft, setDraft]       = useState("");
   const [name, setName]         = useState("");
+  const [gaps, setGaps]         = useState<Gap[]>([]);
+  const [gapDraft, setGapDraft] = useState<Record<string, string>>({});
+  const [gapBusy, setGapBusy]   = useState<string | null>(null);
+  const [editing, setEditing]   = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +102,13 @@ export default function KnowledgePage() {
     const { data: vp } = await sb.from("voice_profiles")
       .select("id").eq("tenant_id", tu.tenant_id).limit(1).maybeSingle();
     setProfileId(vp?.id ?? null);
+
+    // Before 077 the table is missing; the section simply does not show.
+    const { data: g } = await sb.from("knowledge_gaps")
+      .select("id, question, caller_said, times_asked, last_asked_at")
+      .eq("status", "open").order("times_asked", { ascending: false })
+      .order("last_asked_at", { ascending: false }).limit(30);
+    setGaps((g || []) as Gap[]);
 
     const { data, error: e } = await sb.from("knowledge_base")
       .select("id, content, source_type, source_name, embedding, created_at")
@@ -132,8 +160,55 @@ export default function KnowledgePage() {
     setSaving(false);
     if (e) { setError(e.message); return; }
     setDraft(""); setName("");
-    setNotice("Saved. Nikki will start using this within a few minutes.");
+    setNotice("Saved. Nikki will use this from her very next call.");
     load();
+  }
+
+  async function answerGap(gap: Gap) {
+    setError(""); setNotice("");
+    const answer = (gapDraft[gap.id] || "").trim();
+    if (!answer) { setError("Type the answer Nikki should give first."); return; }
+    if (!profileId) { setError("Finish your setup first — Nikki needs a voice profile."); return; }
+    setGapBusy(gap.id);
+    const sb = createClient();
+    const { error: e } = await sb.from("knowledge_base").insert({
+      tenant_id: tenantId, voice_profile_id: profileId,
+      content: `If a caller asks "${gap.question}": ${answer}`,
+      source_type: "faq", source_name: "Caller question",
+    });
+    if (!e) {
+      await sb.from("knowledge_gaps").update({
+        status: "answered", answer, answered_at: new Date().toISOString(),
+      }).eq("id", gap.id);
+    }
+    setGapBusy(null);
+    if (e) { setError(e.message); return; }
+    setGaps(gs => gs.filter(x => x.id !== gap.id));
+    setNotice("Taught. Nikki will answer this from her very next call.");
+    load();
+  }
+
+  async function dismissGap(gap: Gap) {
+    const sb = createClient();
+    const { error: e } = await sb.from("knowledge_gaps").update({ status: "dismissed" }).eq("id", gap.id);
+    if (e) setError(e.message);
+    else setGaps(gs => gs.filter(x => x.id !== gap.id));
+  }
+
+  async function saveEdit(id: string) {
+    const text = editText.trim();
+    if (!text) { setError("A fact cannot be empty — use Remove instead."); return; }
+    const sb = createClient();
+    // A changed fact needs a new embedding; the scheduler fills it in.
+    const { data, error: e } = await sb.from("knowledge_base")
+      .update({ content: text, embedding: null }).eq("id", id).select("id");
+    if (e || !data?.length) {
+      setError(e?.message || "Could not save the change — editing needs database update 077.");
+      return;
+    }
+    setEditing(null);
+    setEntries(es => es.map(x => x.id === id ? { ...x, content: text } : x));
+    setNotice("Updated. Nikki will say it this way from her next call.");
   }
 
   async function removeEntry(id: string) {
@@ -143,7 +218,12 @@ export default function KnowledgePage() {
     else { setEntries(es => es.filter(x => x.id !== id)); }
   }
 
-  const pending = entries.filter(e => !e.embedding).length;
+  const ago = (iso: string) => {
+    const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 60) return `${Math.max(1, m)} min ago`;
+    if (m < 1440) return `${Math.round(m / 60)} h ago`;
+    return `${Math.round(m / 1440)} d ago`;
+  };
 
   const inputStyle: React.CSSProperties = {
     width: "100%", background: C.surf, border: "1px solid #D8DFE8",
@@ -173,6 +253,47 @@ export default function KnowledgePage() {
           <div style={{ background: C.grn + "0A", border: `1px solid ${C.grn}44`, borderLeft: `3px solid ${C.grn}`,
             borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: C.txt, fontSize: 13.5 }}>
             {notice}
+          </div>
+        )}
+
+        {/* questions callers asked that she could not answer */}
+        {gaps.length > 0 && (
+          <div style={{ background: C.surf, border: `1px solid ${C.gold}55`, borderLeft: `3px solid ${C.gold}`, borderRadius: 12,
+            boxShadow: "0 1px 2px rgba(15,23,42,0.04)", padding: 22, marginBottom: 20 }}>
+            <div style={{ color: C.txt, fontFamily: "var(--font-display), sans-serif", fontSize: 17, fontWeight: 700,
+              letterSpacing: "-0.01em", marginBottom: 4 }}>
+              Callers asked — Nikki didn&apos;t know <span style={{ color: C.dim, fontSize: 13.5, fontWeight: 500 }}>· {gaps.length}</span>
+            </div>
+            <div style={{ color: C.mid, fontSize: 13, marginBottom: 14, lineHeight: 1.55 }}>
+              Real questions from your calls. Type the answer once and she gives it on every call from now on.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {gaps.map(g => (
+                <div key={g.id} style={{ background: "#F8FAFC", border: "1px solid #E4E9F0", borderRadius: 10, padding: 14 }}>
+                  <div style={{ color: C.txt, fontSize: 14.5, fontWeight: 600, marginBottom: 3 }}>&ldquo;{g.question}&rdquo;</div>
+                  <div style={{ color: C.dim, fontSize: 12.5, marginBottom: 10 }}>
+                    {g.times_asked > 1 ? `Asked ${g.times_asked} times` : "Asked once"} · {ago(g.last_asked_at)}
+                    {g.caller_said ? <> · caller said: <span style={{ color: C.mid }}>{g.caller_said}</span></> : null}
+                  </div>
+                  <textarea
+                    style={{ ...inputStyle, minHeight: 60, resize: "vertical", marginBottom: 10 }}
+                    value={gapDraft[g.id] || ""}
+                    onChange={e => setGapDraft(d => ({ ...d, [g.id]: e.target.value }))}
+                    placeholder="What should Nikki say? e.g. 100 visiting cards are ₹350, ready in 2 days."
+                  />
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={() => answerGap(g)} disabled={gapBusy === g.id} style={{
+                      background: gapBusy === g.id ? "#CBD5E1" : C.glow, color: "#fff", border: "none", borderRadius: 8,
+                      padding: "8px 16px", fontSize: 13.5, fontWeight: 600, cursor: gapBusy === g.id ? "not-allowed" : "pointer",
+                    }}>{gapBusy === g.id ? "Saving…" : "Teach Nikki"}</button>
+                    <button onClick={() => dismissGap(g)} style={{
+                      background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8, color: C.mid,
+                      padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    }}>Not relevant</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -210,7 +331,7 @@ export default function KnowledgePage() {
               cursor: saving ? "not-allowed" : "pointer",
             }}>{saving ? "Saving…" : "Teach Nikki"}</button>
             <span style={{ fontSize: 13, color: C.dim }}>
-              One fact or a short paragraph works best.
+              Live from her next call. Price lists and long notes are fine.
             </span>
           </div>
         </div>
@@ -240,13 +361,6 @@ export default function KnowledgePage() {
           </div>
         )}
 
-        {pending > 0 && (
-          <div style={{ background: C.gold + "0A", border: `1px solid ${C.gold}44`, borderLeft: `3px solid ${C.gold}`,
-            borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: C.txt, fontSize: 13.5 }}>
-            {pending} {pending === 1 ? "entry is" : "entries are"} still being processed —
-            Nikki will start using {pending === 1 ? "it" : "them"} within a few minutes.
-          </div>
-        )}
 
         {loading ? (
           <p style={{ color: C.mid, textAlign: "center", padding: 24 }}>Loading…</p>
@@ -267,17 +381,40 @@ export default function KnowledgePage() {
                       {e.source_name}
                     </div>
                   )}
-                  <div style={{ color: C.txt, fontSize: 14, lineHeight: 1.6,
-                    whiteSpace: "pre-wrap" }}>{e.content}</div>
-                  <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 600,
-                    color: e.embedding ? C.grn : C.gold }}>
-                    {e.embedding ? (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Nikki knows this</span>) : (<span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Loader2 size={12} /> Learning this…</span>)}
+                  {editing === e.id ? (
+                    <>
+                      <textarea style={{ ...inputStyle, minHeight: 80, resize: "vertical", marginBottom: 8 }}
+                        value={editText} onChange={ev => setEditText(ev.target.value)} />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => saveEdit(e.id)} style={{ background: C.glow, color: "#fff", border: "none",
+                          borderRadius: 8, padding: "6px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Save</button>
+                        <button onClick={() => setEditing(null)} style={{ background: C.surf, border: "1px solid #D8DFE8",
+                          borderRadius: 8, color: C.mid, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: C.txt, fontSize: 14, lineHeight: 1.6,
+                      whiteSpace: "pre-wrap" }}>{e.content}</div>
+                  )}
+                  {/* Calls read the text directly, so a saved fact is live
+                      at once — "Learning this…" was waiting on an embedding
+                      the phone never uses. */}
+                  <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 600, color: C.grn }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Check size={12} /> Nikki uses this on calls</span>
                   </div>
                 </div>
-                <button onClick={() => removeEntry(e.id)} title="Remove" aria-label="Remove" style={{
-                  background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8, color: C.red,
-                  cursor: "pointer", padding: "5px 11px", fontSize: 12.5, fontWeight: 600,
-                }}>Remove</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {editing !== e.id && (
+                    <button onClick={() => { setEditing(e.id); setEditText(e.content); }} title="Edit" aria-label="Edit" style={{
+                      background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8, color: C.glow,
+                      cursor: "pointer", padding: "5px 11px", fontSize: 12.5, fontWeight: 600,
+                    }}>Edit</button>
+                  )}
+                  <button onClick={() => removeEntry(e.id)} title="Remove" aria-label="Remove" style={{
+                    background: C.surf, border: "1px solid #D8DFE8", borderRadius: 8, color: C.red,
+                    cursor: "pointer", padding: "5px 11px", fontSize: 12.5, fontWeight: 600,
+                  }}>Remove</button>
+                </div>
               </div>
             ))}
           </div>

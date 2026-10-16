@@ -1361,11 +1361,22 @@ def _knowledge_block(knowledge: list[str] | None) -> str:
     facts = [f.strip() for f in (knowledge or []) if f and f.strip()]
     if not facts:
         return ""
-    kept = facts[:40]
+    # A pasted price list is one long fact; cut at 300 characters it lost
+    # everything after the third item. Bounded by total size instead.
+    kept, used = [], 0
+    for f in facts[:60]:
+        f = f[:1200]
+        if used + len(f) > 9000:
+            break
+        kept.append(f)
+        used += len(f)
     if len(facts) > len(kept):
         log.info(f"[knowledge] {len(facts)} facts, using first {len(kept)}")
-    lines = "\n".join(f"- {f[:300]}" for f in kept)
-    return ("\n[THIS BUSINESS TOLD YOU]\n"
+    lines = "\n".join(f"- {f}" for f in kept)
+    # Newest first: when an owner corrects a price by teaching the new one,
+    # both lines are here and the old one must lose.
+    return ("\n[THIS BUSINESS TOLD YOU — newest first; if two lines disagree, the "
+            "earlier line is current]\n"
             f"{lines}\n")
 
 # ── SHARED HTTP POOL for the caller's critical path ─────────────────
@@ -8589,12 +8600,25 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             f"{'Caller' if t['role'] == 'user' else 'Nikki'}: {t['content']}"
             for t in turns[-24:]
         )
+        # Questions already waiting for the owner, so a repeat comes back in
+        # the same words and is counted rather than filed twice.
+        open_gaps = await _open_gap_questions(agent)
         prompt = (
             "Rate this phone conversation for a business. Reply with ONLY a JSON "
             "object, no markdown fence:\n"
             '{"score":0-100,"stage":"new|contacted|qualified|won|lost",'
             '"intent":"short_snake_case","interest":"what they asked about",'
-            '"summary":"one sentence in English","do_not_call":true|false}\n'
+            '"summary":"one sentence in English","do_not_call":true|false,'
+            '"unanswered":[{"question":"short question in English","caller_said":"the Caller\'s words"}]}\n'
+            "unanswered: business questions the Caller asked that Nikki did NOT answer "
+            "with a real fact — she said she would find out, that the owner decides or "
+            "will call back, gave a vague reply, or got it wrong. Prices, timings, "
+            "availability, delivery, location, process. Not greetings, not chit-chat, "
+            "not things only the caller can know. Max 3; [] when she answered everything.\n"
+            + ("If one of these questions is the same as one already waiting, copy its "
+               "wording exactly: " + "; ".join(f'"{q}"' for q in open_gaps) + "\n"
+               if open_gaps else "")
+            + 
             "do_not_call: true ONLY if the Caller clearly asked not to be called "
             "again (stop calling me, don't call, leave me alone). A plain 'not "
             "interested' or 'busy now' is false.\n"
@@ -8617,6 +8641,10 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
             log.warning(f"[FS] {fs_uuid}: lead scoring returned no JSON")
             return
         d = json.loads(m.group(0))
+
+        if d.get("unanswered"):
+            # After hangup already, so awaiting costs the caller nothing.
+            await _file_knowledge_gaps(agent, fs_uuid, d.get("unanswered"))
 
         if d.get("do_not_call") is True and not getattr(agent, "opted_out", False):
             await _record_opt_out(agent, fs_uuid, caller_number, "caller asked (model)")
@@ -8801,6 +8829,42 @@ async def _score_and_log_lead(agent, fs_uuid: str, caller_number: str,
                      + (" (promised on the call)" if promised else ""))
     except Exception as e:  # noqa: BLE001 - scoring must never break cleanup
         log.warning(f"[FS] {fs_uuid}: lead scoring failed: {e}")
+
+
+async def _open_gap_questions(agent) -> list[str]:
+    """Questions this business has not answered yet (077), newest first."""
+    tid = (agent.profile or {}).get("tenant_id")
+    if not tid:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(f"{agent.db.url}/rest/v1/knowledge_gaps", headers=agent.db.headers,
+                            params={"select": "question", "tenant_id": f"eq.{tid}",
+                                    "status": "eq.open", "order": "last_asked_at.desc", "limit": "25"})
+        return [x["question"] for x in r.json()] if r.status_code == 200 else []
+    except Exception:  # noqa: BLE001 - before 077, or a slow read: file without it
+        return []
+
+
+async def _file_knowledge_gaps(agent, fs_uuid: str, gaps) -> None:
+    """Hand what she could not answer to the owner (api-server knowledge-gaps.ts).
+
+    The api files each once, counts repeats and pushes the owner; an answer
+    given on Teach Nikki is read by the very next call.
+    """
+    prof = agent.profile or {}
+    if not isinstance(gaps, list) or not prof.get("tenant_id"):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            r = await c.post(f"{API_SERVER_URL}/internal/knowledge-gaps",
+                             headers={"X-Internal-Secret": INTERNAL_SECRET},
+                             json={"tenant_id": prof.get("tenant_id"),
+                                   "voice_profile_id": prof.get("id"),
+                                   "call_id": agent.call_id, "gaps": gaps[:3]})
+        log.info(f"[FS] {fs_uuid}: knowledge gaps {r.status_code} {r.text[:120]}")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: knowledge gaps not filed: {e}")
 
 
 async def _brochure_sent_recently(db, tenant_id: str | None, digits: str, hours: int = 24) -> bool:

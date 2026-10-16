@@ -5270,6 +5270,7 @@ import { synthesizeWs } from "./sarvam-tts.js";
 import { mountAssetRoutes } from "./assets";
 import { mountDeskRoutes } from "./desk";
 import { mountDeskProRoutes } from "./desk-pro";
+import { mountKnowledgeGapRoutes } from "./knowledge-gaps";
 import { mountDeskCallRoutes } from "./desk-call";
 import { mountDeskDayRoutes } from "./desk-day";
 import { mountWaChatRoutes } from "./wa-chat";
@@ -5302,6 +5303,7 @@ mountAssetRoutes(app, verifyJWT, getTenantId);
 mountDeskRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, supabaseUrl: SUPABASE_URL, supabaseKey: SUPABASE_KEY });
 mountDeskProRoutes(app, { sb, verifyJWT, apiLimiter, getTenantId, audit, sendWhatsApp, pushToUsers,
   pipelineUrl: PIPELINE_URL, internalSecret: INTERNAL_SECRET, applyDisposition });
+mountKnowledgeGapRoutes(app, { sb, verifyInternal, pushToUsers });
 // The day as a board, and each telecaller's own dashboard (desk-day.ts).
 mountDeskDayRoutes(app, { sb, verifyJWT, getTenantId });
 // WhatsApp as conversations (wa-chat.ts), and lists shared out to the team
