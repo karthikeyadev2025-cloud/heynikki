@@ -880,6 +880,131 @@ def test_no_one_second_filler_and_none_on_hold_requests():
     assert not main._CALLER_HOLD_RE.search("మీ దగ్గర వెబ్‌సైట్ ధర ఎంత?")
 
 
+# ── "she says hu hu" (owner, 16 Oct) ──────────────────────────────────────
+# bulbul breathes an interjection instead of saying it; the filler "ఉమ్"
+# played on most turns.
+
+@pytest.mark.parametrize("said,heard", [
+    ("హా, మా దగ్గర రింగ్స్ ఉన్నాయండి.", "మా దగ్గర రింగ్స్ ఉన్నాయండి."),
+    ("ఆ, మా AI Telecaller తెలుగులో ఆన్సర్ చేస్తుంది.", "మా AI Telecaller తెలుగులో ఆన్సర్ చేస్తుంది."),
+    ("ఓహ్ అలాగే, మీ బిజినెస్ ఏంటి?", "అలాగే, మీ బిజినెస్ ఏంటి?"),
+    ("ఆc, మీ నంబర్ చెప్పండి.", "మీ నంబర్ చెప్పండి."),
+    ("హ్మ్, హా, సరేనండి.", "సరేనండి."),
+    ("హ్మ్మ్ ... అది చెప్తానండి.", "అది చెప్తానండి."),
+    ("అది కుదరదండి, హహ, మరోసారి చూద్దాం.", "అది కుదరదండి, మరోసారి చూద్దాం."),
+    ("హా హా, బాగుంది అండి.", "బాగుంది అండి."),
+    ("Umm, అవునండి.", "అవునండి."),
+])
+def test_interjections_are_not_sent_to_tts(said, heard):
+    out, changed = main._strip_interjections(said)
+    assert changed and out == heard
+
+
+@pytest.mark.parametrize("said", [
+    "ఆ నంబర్‌కే వాట్సాప్ పంపమంటారా?",        # ఆ = "that"
+    "అయ్యో, క్షమించండి అండి.",                # a word, and the register pack asks for it
+    "ఊరు పేరు చెప్తారా?",
+    "హాస్పిటల్ పక్కనే ఉందండి.",
+    "అహ్మద్ గారు, చెప్పండి.",
+    "మా ఉమ్మడి కుటుంబం అండి.",
+    "అవునండి, ఉంటారండి.",
+])
+def test_words_that_look_like_interjections_are_kept(said):
+    assert main._strip_interjections(said) == (said, False)
+
+
+def test_a_reply_that_is_only_a_hum_says_nothing():
+    assert main._strip_interjections("హ్మ్.") == ("", True)
+    assert main._strip_interjections("హా!") == ("", True)
+
+
+def test_interjection_strip_is_telugu_only():
+    assert main._strip_interjections("हाँ, बताइए।", "hi-IN") == ("हाँ, बताइए।", False)
+    assert main._strip_interjections("హా, చెప్పండి", "hi-IN")[1] is False
+
+
+def test_spoken_reply_and_history_lose_the_interjection():
+    agent = _agent()
+    spoken = []
+
+    async def gen(system_prompt, history, temperature=None, first_clause_cb=None):
+        first_clause_cb("హా, మా దగ్గర రింగ్స్ ఉన్నాయండి. ")
+        return "హా, మా దగ్గర రింగ్స్ ఉన్నాయండి. మీకు ఏది కావాలి?"
+    agent.llm.generate = gen
+    out = asyncio.run(agent.on_speech(b"", want_text=True, transcript_override="రింగ్స్ ఉన్నాయా?",
+                                      first_clause_cb=spoken.append))
+    assert out == "మా దగ్గర రింగ్స్ ఉన్నాయండి. మీకు ఏది కావాలి?"
+    # The clause that went to TTS early is the head of the final reply, so
+    # _run_turn speaks only the remainder after it — never the clause twice.
+    assert spoken and out.startswith(spoken[0].strip())
+    assert agent.history[-1]["content"] == out
+
+
+def test_filler_only_for_known_real_words_and_never_twice_running():
+    agent = _agent()
+    assert not main._filler_allowed(agent, None)              # words not known yet
+    assert not main._filler_allowed(agent, "")
+    assert not main._filler_allowed(agent, "మీ ధర ఎంత?", likely_noise=True)
+    assert not main._filler_allowed(agent, "ఉమ్")              # backchannel / echo
+    assert not main._filler_allowed(agent, "ఒక్క నిమిషం")       # hold
+    assert main._filler_allowed(agent, "మీ ధర ఎంత?")
+    agent._filler_at = time.monotonic()                       # one just played
+    assert not main._filler_allowed(agent, "మీ ధర ఎంత?")
+    agent._filler_at = time.monotonic() - main._FILLER_MIN_GAP - 1
+    assert main._filler_allowed(agent, "మీ ధర ఎంత?")
+
+
+def test_filler_is_off_unless_the_env_sets_it():
+    # Default stays off; only the deployment can switch it on.
+    import inspect
+    assert 'os.getenv("NIKKI_FILLER_DELAY", "0")' in inspect.getsource(main)
+    assert 'os.getenv("NIKKI_BACKCHANNELS", "0") == "1"' in inspect.getsource(main)
+
+
+def _wav(parts, rate=8000):
+    """parts: [(ms, amplitude)] of a 300Hz square-ish tone, 0 = silence."""
+    frames = bytearray()
+    for ms, amp in parts:
+        for i in range(rate * ms // 1000):
+            v = amp if (i // 13) % 2 else -amp
+            frames += struct.pack("<h", v)
+    return main._pcm16_to_wav_bytes(bytes(frames), rate)
+
+
+def _dur(wav_bytes):
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        return w.getnframes() / w.getframerate()
+
+
+def test_tts_dead_air_is_trimmed():
+    # Median 240ms lead / 160ms tail on the live cache; up to 680ms.
+    clip = _wav([(500, 0), (120, 400), (200, 0), (700, 9000), (450, 0)])
+    out = main._trim_silence(clip)
+    # The 120ms breath 200ms before the word goes with the lead.
+    assert abs(_dur(out) - (0.06 + 0.70 + 0.12)) < 0.03, _dur(out)
+
+
+def test_quiet_voice_keeps_its_onset():
+    clip = _wav([(300, 0), (100, 450), (600, 1500), (300, 0)])
+    out = main._trim_silence(clip)
+    assert _dur(out) >= 0.70 + 0.06, "a soft onset is speech, not silence"
+
+
+def test_trim_leaves_tight_and_foreign_audio_alone():
+    tight = _wav([(20, 0), (500, 9000), (20, 0)])
+    assert main._trim_silence(tight) == tight
+    assert main._trim_silence(b"ID3not-a-wav" * 200) == b"ID3not-a-wav" * 200
+    silent = _wav([(500, 0)])
+    assert main._trim_silence(silent) == silent
+
+
+def test_persona_keeps_turns_short_and_free_of_sounds():
+    p = main.TELUGU_PHONE_PERSONA
+    assert "Twenty words at most" in p
+    assert "No sounds" in p and "హ్మ్" in p
+    assert "Greet only once" in p
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():

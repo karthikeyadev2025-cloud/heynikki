@@ -258,7 +258,7 @@ Transfer on "human", "manager", "వేరే వ్యక్తి".
     # a fictional dental clinic.
     "heynikki": """You are Nikki, the assistant for Hey Nikki itself — a Telugu AI receptionist
 service for Indian businesses, Hyderabad. The caller is a business owner
-evaluating it. Answer their question FIRST and fully. Collecting their name,
+evaluating it. Answer their question FIRST, briefly. Collecting their name,
 number and business is secondary — ask ONCE in the whole conversation, when
 they show intent (demo, callback, signup), never twice, and never instead of
 answering what they actually said.
@@ -632,25 +632,39 @@ TELUGU_PHONE_PERSONA = (
     "\n\n[HOW YOU SPEAK]"
     "\nThis is a live phone call. Everything you write is spoken aloud, so"
     " talk the way people talk, not the way forms read."
-    "\n- One sentence. A second only if it is a question."
+    # 15 Oct: replies of 125-156 characters, one comma-spliced sentence
+    # each, obeyed "one sentence" to the letter and still sounded like a
+    # speech. The limit is in words now, and the turn is handed back.
+    "\n- Twenty words at most: one point, then one short question about"
+    " THEM that keeps them talking. A long sentence held together by commas"
+    " is still a speech."
     "\n- Lead with the answer."
-    "\n- Start with the substance. అలాగే / సరే / అవునండి only when you are"
-    " actually agreeing to do something or the answer is yes. When the"
-    " answer is no, or you did not understand, the first word is the fact —"
-    " never \'అలాగేనండి, అది మా దగ్గర లేదు\'. A caller on 4 September heard"
-    " సరే and అలాగే at the top of every reply and said she was a yes-machine."
-    "\n- React to what they said before you ask anything. Do not end every"
-    " reply with the appointment question — ask it once, then only when they"
-    " bring it up."
+    # 4 Sep: a caller heard సరే and అలాగే at the top of every reply and
+    # called her a yes-machine. 15 Oct: సరేనండి/అవునండి/చెప్పండి opened 306
+    # of 1003 logged replies.
+    "\n- Show you heard by naming what they said — \'రియల్ ఎస్టేట్ అంటే...\',"
+    " \'పంటి నొప్పా అండి?\' — not a bare సరేనండి or అవునండి. Those only when you"
+    " really are agreeing; a no, or not understanding, starts with the fact —"
+    " never \'అలాగేనండి, అది మా దగ్గర లేదు\'."
+    "\n- Do not end every reply with the appointment question — ask it once,"
+    " then only when they bring it up."
+    # The owner, 16 Oct: "she says hu hu". Bulbul turns a bare interjection
+    # into a breathy sound; _strip_interjections removes any that slip by.
+    "\n- No sounds: never write హా, హ్మ్, ఉమ్, ఓహ్ or laughter."
+    # 15 Oct: a mid-call "Hello" got "నమస్కారం నితిన్ గారు, ..." and a
+    # second goodbye. A line check wants to know the line works, no more.
+    "\n- \'హలో?\' mid-call means they cannot hear you: \'వినపడుతోందండి,"
+    " చెప్పండి\' and nothing else. Greet only once."
     "\n- Telugu script. Follow the caller into Hindi or English if they go there."
     "\n- Say these in English, as everyone does: appointment, doctor, time,"
     " number, WhatsApp, confirm, booking, address, cancel."
     "\n- Spoken Telugu, never officialese: చెప్పండి, not తెలియజేయండి. Open with"
     " \'చెప్పండి\'. \'మీకు ఎలా సహాయం చేయగలను\' is BANNED everywhere — not as an"
-    " opener, not tacked onto the end of an answer, not anywhere. It is how a"
-    " call centre script sounds, not a person."
-    "\n- గారు after a name, in Telugu script. Use their name now and then,"
-    " not in every sentence."
+    " opener, not tacked onto the end of an answer, not anywhere."
+    # 15 Oct: "నితిన్ గారు" in five replies running. Politeness on every
+    # clause reads as a script, not as respect.
+    "\n- గారు after a name, in Telugu script. Their name at most every third"
+    " reply; one అండి per reply is enough."
     "\n- Only a name they gave on this call, or one in the facts below."
     " Never guess one — a wrong name is worse than none."
     "\n- At most two options aloud. No lists, markdown, emoji or asterisks."
@@ -693,15 +707,13 @@ TELUGU_PHONE_PERSONA = (
     "\n\n[WHAT YOU NEVER DO]"
     "\n- Never invent a price, a doctor\'s availability, or any fact NOT"
     " listed below. Say you will find out, and offer a callback."
+    # One call gave two different towns for the same clinic.
     "\n- The address and the town are facts like any other. If they are not"
     " listed below, say you will confirm the address and send it — do NOT"
-    " name a place. On one call she gave two different towns for the same"
-    " clinic in the same conversation, which is worse than not knowing."
-    "\n- If you did not understand what they said, ASK. Never agree with a"
-    " sentence you cannot make sense of. A caller once said something the"
-    " speech recogniser mangled and got \'అవునండి\' plus a promise to do it"
-    " — agreeing to nonsense sounds far worse than \'అర్థం కాలేదండి, ఒక్కసారి"
-    " చెప్తారా?\'."
+    " name a place."
+    # A mangled transcript once got "అవునండి" plus a promise to do it.
+    "\n- If you did not understand what they said, ASK — \'అర్థం కాలేదండి,"
+    " ఒక్కసారి చెప్తారా?\' Never agree with a sentence you cannot make sense of."
     "\n- Never ask for the same thing twice in a row. If they did not answer,"
     " move on — much later, or not at all."
     "\n- Never send a reply they have already heard. A caller repeating"
@@ -735,7 +747,7 @@ TELUGU_PHONE_PERSONA = (
     " repeat your request in the same breath. \'ఏం మాట్లాడుతున్నావ్\' means you"
     " are not making sense: apologise, say plainly what you can do, and wait."
     "\n\n[REGISTER]"
-    "\n- ALWAYS: గారు after every name; -ండి on every imperative (చెప్పండి,"
+    "\n- ALWAYS: -ండి on every imperative (చెప్పండి,"
     " రండి); అండి on bare answers (అవునండి, లేదండి, సరేనండి); మీరు, never నువ్వు."
     "\n- English loans stay English with Telugu suffixes: అపాయింట్‌మెంట్‌కి,"
     " డాక్టర్ గారికి, టైంలో. Never translate them: నియామకం, వైద్యుడు,"
@@ -775,9 +787,7 @@ TELUGU_PHONE_PERSONA = (
     "\nOnly then. Not while anything is still being agreed, not if they have"
     " just asked something, and never merely because they said ok."
     "\nNever ask a question in the same reply as your closing line. If you are"
-    " asking, you are not closing — wait for their answer first. Confirming"
-    " their number and saying goodbye in one breath leaves them answering a"
-    " question to a dead line."
+    " asking, you are not closing — wait for their answer first."
     "\n\n[IF THEY ASK YOU TO HOLD]"
     "\nఆగండి / ఒక్క నిమిషం / hold on — reply with exactly SILENT and nothing"
     " else. It is a signal to stop talking, not a word to say aloud."
@@ -798,6 +808,10 @@ TELUGU_PHONE_PERSONA = (
     "\nN: చాలానే ఉన్నాయండి. మీకు దేనికోసం కావాలో చెప్తే, దానికి సరిపోయేది చెప్తాను."
     "\nC: ఇంకా?"
     "\nN: ఇంకా ఉన్నాయండి, కానీ మీ అవసరం ఏంటో తెలిస్తే కరెక్ట్‌గా చెప్పగలను. ఏం చేస్తుంటారు మీరు?"
+    "\nC: మాది real estate."
+    "\nN: రియల్ ఎస్టేట్ అంటే site visit enquiries ఎక్కువ కదండి — అవి miss అవుతున్నాయా?"
+    "\nC: హలో? హలో?"
+    "\nN: వినపడుతోందండి, చెప్పండి."
     "\n\n[WHAT YOU ARE COLLECTING]"
     "\nHelping comes first; this is secondary. Their name and a 10-digit"
     " number, plus whatever this business needs. Take everything they"
@@ -1826,12 +1840,16 @@ class SarvamTTS:
                     # one call's turn timings was whichever call synthesised
                     # last. _SarvamTTS_LAST is kept in step for /health.
                     self.last_ms = _SarvamTTS_LAST["ms"] = 0.0
-                    return f.read()
+                    # Clips cached before the trim existed are trimmed on
+                    # the way out; a few ms, and a no-op once they are.
+                    return _trim_silence(f.read())
         except OSError:
             pass
 
         _t = time.monotonic()
         audio = await self._synthesize_uncached(text, speaker, rate)
+        if audio:
+            audio = _trim_silence(audio)
         self.last_ms = _SarvamTTS_LAST["ms"] = (time.monotonic() - _t) * 1000
 
         if audio and len(audio) > 1000:
@@ -3989,6 +4007,11 @@ class NikkiAgent:
                 _known = _known_numbers(self.profile, self.knowledge, self.slots.get("phone"))
 
                 def first_clause_cb(prefix: str) -> None:  # noqa: F811
+                    # Same strip as the finished reply gets below, so the
+                    # reply still starts with the clause that was spoken.
+                    prefix = _strip_interjections(prefix, self.lang)[0]
+                    if not prefix.strip():
+                        return      # the clause was only a hum: nothing to say early
                     why = _first_clause_hold_reason(prefix, user_text, _prev_bot,
                                                     self.lang, _known)
                     if not why and self.collections_private and self.collections_identity != "self":
@@ -4098,6 +4121,12 @@ class NikkiAgent:
             if _reg_hits:
                 log.warning("register filter rewrote %d banned phrase(s): %s",
                             len(_reg_hits), _reg_hits)
+            _was = response
+            response, _intj = _strip_interjections(response, self.lang)
+            if _intj:
+                log.info(f"stripped an interjection bulbul would breathe: {_was[:40]!r}")
+                if not response:
+                    return "" if want_text else b""
 
             if self.collections_private:
                 response, _held = _collections_guard(
@@ -5432,6 +5461,52 @@ def _strip_false_agreement(text: str) -> tuple[str, bool]:
     if _NEGATION_RE.search(first):
         return rest.strip(), True
     return text, False
+
+
+# ── Interjections ────────────────────────────────────────────────────
+# The owner, 16 Oct: "she says hu hu". bulbul has no word to say for హా,
+# హ్మ్, ఉమ్ or హహ, so it breathes one — a short "huh" before the real
+# answer, or a sigh where a laugh was meant. The logs had "హా, మా దగ్గర…",
+# "ఆ, మా AI Telecaller…", "ఓహ్ అలాగే…" and the "ఆc," of 28 Aug. A leading
+# interjection carries nothing a caller needs, so it goes; a hum or a laugh
+# anywhere in the reply goes too.
+#
+# Only where it cannot be a word. ఆ is also "that" (ఆ నంబర్) and ఊ starts
+# ఊరు, so those two are only taken with punctuation after them; హా, హ్మ్,
+# ఉమ్, హూ, అహ్ and ఓహ్ are never anything else. అయ్యో stays: it is a word with
+# a meaning, and the register pack asks for it on bad news.
+_TE = "\u0C00-\u0C7F"   # the Telugu block
+_INTERJ_ALWAYS = (r"(?:హా+|హ్(?:మ్)+|హు(?:మ్)+|హూ+|ఉ(?:మ్)+|అహ్|ఓహ్|హఁ|హుఁ|ఆఁ|ఆc|"
+                  r"[Hh]m+|[Uu]m+|[Uu]h+)")
+_INTERJ_PUNCT = r"(?:ఆ+|ఊ+)"
+_LEAD_INTERJ_RE = re.compile(
+    rf"^[\s,.!?…\-]*(?:(?:{_INTERJ_ALWAYS})(?![{_TE}\w])[\s,.!?…\-]*"
+    rf"|(?:{_INTERJ_PUNCT})(?![{_TE}\w])\s*[,.!?…\-]+\s*)+")
+# A hum or a laugh mid-reply: "హ్మ్, అది…", "హహ, అలా కాదండి". హా on its own
+# mid-sentence is left alone — it is "yes" there as often as a noise.
+_MID_NOISE_RE = re.compile(
+    rf"(?<![{_TE}\w])(?:హ్(?:మ్)+|హు(?:మ్)+|ఉ(?:మ్)+|అహ్|హ+హ+[{_TE}]*|(?:హా[\s,]*){{2,}})"
+    rf"(?![{_TE}\w])[\s,.!…\-]*")
+
+
+def _strip_interjections(text: str, lang: str = LANG_DEFAULT) -> tuple[str, bool]:
+    """Remove interjections bulbul would breathe rather than say.
+
+    Returns (text, changed). A reply that was nothing BUT an interjection
+    comes back empty — the caller is better served by silence than by a
+    lone "హ్మ్", and the re-engagement timer covers a real lull. Telugu only:
+    हाँ is a word in Hindi.
+    """
+    if not text or lang != "te-IN":
+        return text, False
+    out = _LEAD_INTERJ_RE.sub("", text, count=1)
+    out = _MID_NOISE_RE.sub("", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    if out == text.strip():
+        return text, False
+    if not re.search(rf"[{_TE}\w]", out):
+        return "", True
+    return out, True
 
 
 # A reply that is nothing but a shouted token — "TRANSFER_CALL", "END_CALL"
@@ -8674,12 +8749,13 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # second bare.
         # Words already streamed in that need no answer get no filler: a hold
         # request is answered with quiet, a bare "ఆ"/"okay" is usually not a
-        # turn at all. When the words are not known yet, the filler runs.
-        _t = (transcript or "").strip()
-        _no_filler = bool(_t) and (bool(_CALLER_HOLD_RE.search(_t))
-                                   or bool(_BACKCHANNEL_RE.match(_t)))
+        # turn at all.
+        # Words NOT known yet get no filler either — see _filler_allowed.
         filler_task = asyncio.create_task(
-            _play_filler(fs_uuid, delay=0 if _no_filler else _FILLER_DELAY))
+            _play_filler(fs_uuid,
+                         delay=_FILLER_DELAY if _filler_allowed(
+                             agent, transcript, likely_noise) else 0,
+                         agent=agent))
         wav_bytes = _pcm16_to_wav_bytes(utterance_pcm)
 
         # ── First-clause fast path ──────────────────────────────────────
@@ -8850,7 +8926,30 @@ def _wav_duration_secs(audio: bytes) -> float:
         return len(audio) / (8000.0 * 2)
 
 
-async def _play_filler(fs_uuid: str, delay: float = 0.0) -> None:
+# The owner, 16 Oct: "she says hu hu". With NIKKI_FILLER_DELAY set, "ఉమ్"
+# went out on every turn slower than the delay — and a turn is 1.05s
+# median from transcript to reply text (p90 1.47s, 179 of 519 logged turns
+# over 1.2s) before TTS even starts, so that was most of them. Two "ఉమ్"s a
+# few seconds apart is the "hu hu". It also went out on turns whose words
+# were not known yet; those are the batch-STT fallbacks, which on the logs
+# are mostly noise that transcribes as "ఉమ్" or nothing — so the caller
+# heard a hum and then silence. Now: only when the caller's words are in
+# hand and are a real turn, and at most once every _FILLER_MIN_GAP seconds.
+_FILLER_MIN_GAP = 30.0
+
+
+def _filler_allowed(agent, transcript: str | None, likely_noise: bool = False) -> bool:
+    """Whether this turn may be covered by the filler at all."""
+    t = (transcript or "").strip()
+    if not t or likely_noise:
+        return False
+    if _CALLER_HOLD_RE.search(t) or _BACKCHANNEL_RE.match(t):
+        return False
+    last = getattr(agent, "_filler_at", None)
+    return last is None or time.monotonic() - last >= _FILLER_MIN_GAP
+
+
+async def _play_filler(fs_uuid: str, delay: float = 0.0, agent=None) -> None:
     """Say "I heard you" the instant speech ends, while the turn is computed.
 
     Measured on a live call: 0.52s VAD + ~1.0s STT + 1.23s LLM + 1.29s TTS
@@ -8873,6 +8972,10 @@ async def _play_filler(fs_uuid: str, delay: float = 0.0) -> None:
             # sleep expires and no filler plays at all.
             await asyncio.sleep(delay)
         pick = _FILLERS[int.from_bytes(os.urandom(2), "big") % len(_FILLERS)]
+        if agent is not None:
+            # Stamped when it actually plays: a filler cancelled by a fast
+            # reply was never heard and does not count against the gap.
+            agent._filler_at = time.monotonic()
         await _esl_api(f"uuid_broadcast {fs_uuid} {pick} aleg")
     except Exception as e:  # noqa: BLE001 - cosmetic only
         log.debug(f"[FS] filler skipped: {e}")
@@ -8988,6 +9091,56 @@ def _pcm16_to_wav_bytes(pcm: bytes, sample_rate: int = 8000) -> bytes:
         wf.setframerate(sample_rate)
         wf.writeframes(pcm)
     return buf.getvalue()
+
+
+def _trim_silence(audio: bytes, keep_lead_ms: int = 60,
+                  keep_tail_ms: int = 120) -> bytes:
+    """Cut the dead air bulbul puts around every clip.
+
+    Measured on the 72 clips in the live TTS cache (16 Oct): 240ms of
+    silence before the first word (median; p90 420ms, max 680ms) and 160ms
+    after the last (p90 320ms). All of it lands on the caller: the lead is
+    pure wait before every reply, and where a reply is spoken as clause +
+    remainder, one clip's tail plus the next one's lead is a half-second
+    hole mid-sentence that sounds like hesitation. One clip in 72 also had
+    a breath in the lead — a soft "hu" before the word.
+
+    The threshold is relative to the clip's own peak, so a quiet voice
+    keeps its soft onsets; a little of the lead and tail is kept so the
+    first consonant and the last nasal are never clipped. Anything that is
+    not a 16-bit mono WAV is returned untouched.
+    """
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as wf:
+            if wf.getsampwidth() != 2 or wf.getnchannels() != 1:
+                return audio
+            rate = wf.getframerate()
+            pcm = wf.readframes(wf.getnframes())
+    except Exception:  # noqa: BLE001 — not a WAV we understand
+        return audio
+    import array  # noqa: PLC0415
+    s = array.array("h")
+    s.frombytes(pcm[:len(pcm) - len(pcm) % 2])
+    if struct.pack("<h", 1) != array.array("h", [1]).tobytes():
+        s.byteswap()
+    n = len(s)
+    win = max(1, rate // 100)                      # 10ms windows
+    if n < win * 4:
+        return audio
+    peaks = [max(max(s[i:i + win]), -min(s[i:i + win])) for i in range(0, n, win)]
+    top = max(peaks)
+    if top <= 0:
+        return audio
+    thr = max(300, min(800, int(top * 0.06)))
+    first = next((i for i, p in enumerate(peaks) if p > thr), None)
+    if first is None:
+        return audio
+    last = len(peaks) - 1 - next(i for i, p in enumerate(reversed(peaks)) if p > thr)
+    start = max(0, first * win - rate * keep_lead_ms // 1000)
+    end = min(n, (last + 1) * win + rate * keep_tail_ms // 1000)
+    if start < rate * 40 // 1000 and n - end < rate * 40 // 1000:
+        return audio                               # nothing worth cutting
+    return _pcm16_to_wav_bytes(pcm[start * 2:end * 2], rate)
 
 
 async def _save_onboarding_draft(tenant_id: str, agent, db) -> None:
