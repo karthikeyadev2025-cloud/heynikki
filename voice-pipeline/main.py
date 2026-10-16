@@ -1659,6 +1659,15 @@ class SarvamStreamingSTT:
                 log.warning(f"[sttws] send loop ended ({e}) — batch fallback")
             self.dead = True
 
+    def settled_text(self) -> str:
+        """What finish_turn would return if the turn closed now with nothing
+        more to come — or "" while words are still owed (voiced audio fed
+        since the last segment). Read-only: the speculative reply is started
+        on this, and only adopted if finish_turn later returns the same."""
+        if self.dead or not self._segments or self._voiced_since_seg > self._SETTLED_SLACK:
+            return ""
+        return " ".join(x for x in self._segments if x).strip()
+
     async def finish_turn(self, timeout: float = 1.2, discard: bool = False) -> str:
         """Flush, wait briefly for the final segment, return + reset.
 
@@ -2210,7 +2219,10 @@ class GeminiLLM:
         return await self._generate_batch(system_prompt, history, temperature)
 
     async def _generate_streaming(self, system_prompt, history, temperature,
-                                  first_clause_cb) -> str:
+                                  first_clause_cb, pure: bool = False) -> str:
+        # pure=True is the speculative reply (see _Speculation): it may be
+        # thrown away, so it leaves the failure counters alone and the turn
+        # that adopts it does the bookkeeping.
         payload = self._payload(system_prompt, history, temperature)
         url = self.base_url.replace(":generateContent", ":streamGenerateContent")
         headers = {"Content-Type": "application/json",
@@ -2241,8 +2253,9 @@ class GeminiLLM:
                        "supabase", "OpenAI"]:
             text = text.replace(vendor, "our system")
         if text.strip():
-            self._consecutive_failures = 0
-            gemini_breaker.record_success()
+            if not pure:
+                self._consecutive_failures = 0
+                gemini_breaker.record_success()
             return text.strip()
         raise RuntimeError("empty stream")
 
@@ -3801,9 +3814,58 @@ class NikkiAgent:
         )
         return "".join(lines)
 
+    def speculation_context(self, user_text: str) -> tuple[str, str, list]:
+        """(why_not, system_prompt, history) for a reply started BEFORE the
+        turn is taken — see _Speculation. Reads the call's state and writes
+        none of it: the request on_speech would send if user_text became the
+        turn right now. why_not is non-empty when this turn must go the
+        ordinary way instead, and then the other two are empty.
+
+        Skipped whenever on_speech would not simply ask the model: tools
+        mode (a lookup or a booking is a side effect), a bare backchannel
+        (phantom), an emergency or a request for a person (fixed lines and a
+        transfer), a hold request or a request to hang up. Correctness over
+        speed — those turns lose nothing but the head start.
+        """
+        if self.use_tools:
+            return "tools", "", []
+        if not user_text or user_text != user_text.strip():
+            return "not a transcript", "", []
+        _prev_bot = next(
+            (t["content"] for t in reversed(self.transcript)
+             if t.get("role") == "assistant"), "")
+        # As on_speech decides it, without spending the flag.
+        _first_answer = (not _prev_bot and bool(getattr(self, "opened_with", ""))
+                         and not getattr(self, "_answered_opening", False))
+        if not _first_answer and _is_phantom_turn(user_text, _prev_bot):
+            return "phantom", "", []
+        intent = "enquiry" if getattr(self, "onboarding_tenant", None) else self._detect_intent(user_text)
+        if intent in ("emergency", "transfer"):
+            return intent, "", []
+        if _CALLER_HOLD_RE.search(user_text):
+            return "hold", "", []
+        if _HANGUP_REQUEST_RE.search(user_text):
+            return "hangup", "", []
+        # The facts block is built AFTER on_speech harvests this turn's name
+        # or number, so the prediction has to harvest too — on a copy, with
+        # the "slot:" lines kept out of the log (they would be logged again,
+        # for real, on adoption). Synchronous, so no other call's coroutine
+        # can run while the logger is muted.
+        saved, muted = self.slots, log.disabled
+        self.slots = dict(saved)
+        log.disabled = True
+        try:
+            self._harvest_slots(user_text)
+            prompt = self.system_prompt + self._known_facts_block()
+        finally:
+            self.slots = saved
+            log.disabled = muted
+        return "", prompt, list(self.history) + [{"role": "user", "content": user_text}]
+
     async def on_speech(self, audio_bytes: bytes, want_text: bool = False,
                         transcript_override: str | None = None,
-                        first_clause_cb=None, likely_noise: bool = False):
+                        first_clause_cb=None, likely_noise: bool = False,
+                        speculation=None):
         """Process one turn: STT -> detect intent -> LLM -> TTS.
 
         want_text=True returns the reply TEXT instead of synthesised audio, so
@@ -3811,6 +3873,13 @@ class NikkiAgent:
         before the whole reply is spoken. Measured: TTS is ~1950ms of a
         ~3970ms turn and scales with reply length, so waiting for the full
         reply is the single largest avoidable delay.
+
+        speculation: a _Speculation already streaming the reply to this exact
+        turn. Everything below runs exactly as without it — every harvest,
+        flag and append, in the same order — and only the model call itself
+        is swapped for the stream in flight, and only if the request it sent
+        is byte-for-byte the one this turn would send. Otherwise it is
+        discarded and the model is asked as usual.
         """
         try:
             # Per-stage wall clock. The industry gap between claimed and
@@ -3988,9 +4057,20 @@ class NikkiAgent:
                     on_tool_started=_announce,
                     on_first_clause=first_clause_cb)
             else:
-                response = await self.llm.generate(
-                    self.system_prompt + self._known_facts_block(), self.history,
-                    first_clause_cb=first_clause_cb)
+                _sys = self.system_prompt + self._known_facts_block()
+                response = None
+                if speculation is not None:
+                    response = await speculation.adopt(
+                        user_text, _sys, self.history, first_clause_cb, self.llm)
+                if response is None:
+                    # A clause the speculative stream already handed over
+                    # is not handed over twice: the same as a stream that
+                    # fails after its first clause, the rest comes batched.
+                    response = await self.llm.generate(
+                        _sys, self.history,
+                        first_clause_cb=None if (speculation is not None
+                                                 and speculation.clause_given)
+                        else first_clause_cb)
             _t_llm = time.monotonic() - _t0 - _t_stt
             log.info(f"LLM: {response}")
 
@@ -4234,6 +4314,11 @@ class NikkiAgent:
                        hi="माफ़ कीजिए, एक बार फिर से बताएँगे?", bn="দুঃখিত, আরেকবার বলবেন?",
                        en="Sorry, could you say that once more?")
             return msg if want_text else await self.tts.synthesize(msg, self.voice)
+        finally:
+            # A turn that went another way — phantom, transfer, tools, an
+            # error, a cancel — never adopted it. A no-op once adopted.
+            if speculation is not None:
+                speculation.discard("turn took another path")
 
     async def save_recording(self, raw_audio_bytes: bytes) -> Optional[str]:
         """Encrypt call recording with AES-256-GCM and upload to Supabase storage.
@@ -8823,10 +8908,200 @@ async def _transfer_mid_call(agent, ws, fs_uuid: str, seq: int, speaking: dict) 
         pass    # FreeSWITCH closed it first when the stream stopped
 
 
+# ── Speculative reply start ──────────────────────────────────────────
+# Sarvam finalises a segment on its own pause detection, 0.2-0.6s after the
+# caller stops, and on 255 of 887 streamed turns in the Aug-Oct logs that was
+# BEFORE our endpoint fired: by a median 0.17s, p75 0.45s, p90 0.83s. Then
+# finish_turn sits out its settled wait (0.3s) and only then is Gemini asked,
+# whose first token is ~1.1s away. The words were in hand the whole time.
+#
+# So the request is sent the moment a segment is in and the caller has
+# paused, and when the endpoint fires and finish_turn returns the SAME text,
+# that stream — often with its first clause already in — becomes the reply:
+# a median ~0.4s sooner on those turns, up to ~1.1s. If they said more, or
+# anything else moved, it is thrown away and the turn runs as before.
+#
+# Nothing of it is spoken, recorded or acted on until adopted: the
+# speculative part is only the model stream over a snapshot of the request,
+# and on_speech still does every harvest and append itself, in order, then
+# adopts the stream only if the request it would send is identical.
+# NIKKI_SPECULATE=0 in infra/.env turns it off.
+_SPECULATE = os.getenv("NIKKI_SPECULATE", "1") == "1"
+# Each discarded request is a paid Gemini prefill. A caller pausing mid-
+# sentence can start one per pause; three a turn and forty a call bound the
+# waste on a long, halting call to roughly what one extra minute of talk
+# costs. Measure with: grep -c "\[spec\] adopted" vs "\[spec\] started".
+_SPEC_PER_TURN = 3
+_SPEC_WASTE_CAP = 40
+
+
+def _spec_key(prompt: str, history: list) -> tuple:
+    return (prompt, tuple((h.get("role"), h.get("content")) for h in history))
+
+
+class _Speculation:
+    """One model stream started on a candidate turn before it was taken."""
+
+    def __init__(self, text: str, prompt: str, history: list):
+        self.text = text
+        self.prompt = prompt
+        self.history = history          # snapshot, ending on the candidate turn
+        self.key = _spec_key(prompt, history)
+        self.clause = None              # first clause, held until adopted
+        self.clause_given = False       # handed to the turn's callback
+        self._forward = None
+        self.state = "new"              # running | adopted | discarded
+        self.started = 0.0
+        self.task = None
+
+    def start(self, llm) -> None:
+        self.state = "running"
+        self.started = time.monotonic()
+        self.task = asyncio.create_task(llm._generate_streaming(
+            self.prompt, self.history, None, self._on_clause, pure=True))
+        log.info(f"[spec] started on {len(self.text)} chars: {self.text[:50]!r}")
+
+    def _on_clause(self, prefix: str) -> None:
+        # Before adoption this only remembers it — a clause spoken from a
+        # stream that is then thrown away would be an answer to something
+        # the caller had not finished saying.
+        self.clause = prefix
+        if self._forward is not None:
+            self.clause_given = True
+            self._forward(prefix)
+
+    def discard(self, why: str) -> bool:
+        """Cancel it unless adopted; True if it was still a live request."""
+        if self.state != "running":
+            return False
+        self.state = "discarded"
+        if self.task is not None:
+            if not self.task.done():
+                self.task.cancel()
+            elif not self.task.cancelled():
+                self.task.exception()   # retrieved, so asyncio does not warn
+        log.info(f"[spec] discarded ({why}) after "
+                 f"{(time.monotonic() - self.started) * 1000:.0f}ms: {self.text[:40]!r}")
+        return True
+
+    async def adopt(self, user_text: str, prompt: str, history: list,
+                    first_clause_cb, llm):
+        """The reply text, or None to ask the model the ordinary way."""
+        if self.state != "running":
+            return None
+        if user_text != self.text:
+            self.discard("transcript changed")
+            return None
+        if _spec_key(prompt, history) != self.key:
+            # A slot, the history or the prompt moved between the pause and
+            # the turn — the stream answered a request this turn would not send.
+            self.discard("context changed")
+            return None
+        self.state = "adopted"
+        ahead = (time.monotonic() - self.started) * 1000
+        log.info(f"[spec] adopted — request was {ahead:.0f}ms in flight, first clause "
+                 + ("in hand" if self.clause is not None else "pending"))
+        if first_clause_cb is not None:
+            self._forward = first_clause_cb
+            if self.clause is not None:
+                self.clause_given = True
+                try:
+                    first_clause_cb(self.clause)
+                except Exception as e:  # noqa: BLE001 — as in the stream itself
+                    log.debug(f"first_clause_cb error: {e}")
+        try:
+            # wait(), not await: a cancel of THIS turn (barge-in) raises here
+            # and is passed on to the stream below; the stream failing on its
+            # own is read from the task instead.
+            await asyncio.wait({self.task})
+        except asyncio.CancelledError:
+            self.task.cancel()
+            raise
+        if self.task.cancelled():
+            return None
+        exc = self.task.exception()
+        if exc is not None:
+            if _is_infra_failure(exc):
+                gemini_breaker.record_failure()
+            log.warning(f"[spec] adopted stream failed ({exc}) — asking again")
+            return None
+        # What generate() records on a streamed success.
+        llm._consecutive_failures = 0
+        gemini_breaker.record_success()
+        return self.task.result()
+
+
+class _Speculator:
+    """The call's speculation slot: at most one request in flight."""
+
+    def __init__(self, agent, enabled: bool | None = None):
+        self.agent = agent
+        self.enabled = _SPECULATE if enabled is None else enabled
+        self.cur: _Speculation | None = None
+        self.turn_starts = 0
+        self.wasted = 0
+        self._skipped = None            # candidate already judged unsuitable
+
+    def consider(self, candidate: str) -> None:
+        """The caller has paused with these words finalised. Start on them."""
+        if not self.enabled or not candidate:
+            return
+        if self.cur is not None:
+            if self.cur.text == candidate:
+                return
+            self.drop("caller said more")
+        if candidate == self._skipped:
+            return
+        if self.turn_starts >= _SPEC_PER_TURN or self.wasted >= _SPEC_WASTE_CAP:
+            return
+        # Not as the breaker's half-open trial call: that one belongs to a
+        # turn that is really being answered.
+        if getattr(getattr(gemini_breaker, "state", None), "value", "closed") != "closed":
+            return
+        why, prompt, history = self.agent.speculation_context(candidate)
+        if why:
+            self._skipped = candidate
+            log.info(f"[spec] skipped ({why}): {candidate[:40]!r}")
+            return
+        spec = _Speculation(candidate, prompt, history)
+        spec.start(self.agent.llm)
+        self.cur = spec
+        self.turn_starts += 1
+
+    def drop(self, why: str) -> None:
+        spec, self.cur = self.cur, None
+        if spec is not None and spec.discard(why):
+            self.wasted += 1
+            if self.wasted == _SPEC_WASTE_CAP:
+                log.info(f"[spec] {self.wasted} discarded — off for the rest of this call")
+
+    def take(self, text: str):
+        """At the endpoint: the speculation to adopt for this turn, or None."""
+        self.turn_starts, self._skipped = 0, None
+        spec = self.cur
+        if spec is not None and spec.text != (text or ""):
+            self.drop("transcript changed")
+            return None
+        self.cur = None
+        return spec
+
+    def end_turn(self, why: str) -> None:
+        """At an endpoint that does not become a turn (noise, a held fragment)."""
+        self.drop(why)
+        self.turn_starts, self._skipped = 0, None
+
+    def close(self):
+        """Call ending: cancel, and hand back the task so cleanup can wait on it."""
+        task = self.cur.task if self.cur is not None else None
+        self.drop("call ended")
+        return task
+
+
 async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     seq: int, speaking: dict,
                     transcript: str | None = None,
-                    likely_noise: bool = False) -> None:
+                    likely_noise: bool = False,
+                    speculation=None) -> None:
     """One STT -> LLM -> TTS -> playback turn, as a cancellable task.
 
     Runs detached so the receive loop keeps reading frames while Nikki is
@@ -8915,10 +9190,14 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # After a cut, audio that transcribes to nothing was not the caller
         # speaking: no "ఒక్కసారి మళ్ళీ చెప్తారా?" for it, she carries on.
         _turns_before = len(getattr(agent, "transcript", None) or ())
+        # Passed only when there is one: the keyword is new, and stand-in
+        # agents (tests, the website path) do not take it.
+        _spec_kw = {"speculation": speculation} if speculation is not None else {}
         reply_text = await agent.on_speech(wav_bytes, want_text=True,
                                            transcript_override=transcript,
                                            first_clause_cb=_on_first_clause,
-                                           likely_noise=likely_noise or bool(cut))
+                                           likely_noise=likely_noise or bool(cut),
+                                           **_spec_kw)
         # Reply ready: if the filler has not fired yet, it never should.
         if not filler_task.done():
             filler_task.cancel()
@@ -9036,6 +9315,11 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         raise
     except Exception as e:  # noqa: BLE001
         log.error(f"[FS] {fs_uuid}: turn failed: {e}")
+    finally:
+        # Cancelled or failed before on_speech took it: no stream outlives
+        # the turn it was started for. A no-op once adopted.
+        if speculation is not None:
+            speculation.discard("turn ended before it was used")
 
 
 def _wav_duration_secs(audio: bytes) -> float:
@@ -10112,6 +10396,7 @@ async def freeswitch_ws(
     burst_frames       = 0
     long_speech_frames = 0
     barge          = _BargeGate() # decides when the caller has really cut in
+    speculator     = _Speculator(agent)   # reply started in the caller's pause
     utt_peak       = 0.0          # loudest frame of the utterance being collected
     # How much the utterance's zero-crossing rate moved. A voice moves a lot
     # (vowels to consonants); a horn, a reversing beeper and a ringback tone
@@ -10440,6 +10725,10 @@ async def freeswitch_ws(
                     # local buffer, so billed STT seconds do not change.
                     if not stt_stream.dead:
                         stt_stream.feed(bytes(frame))
+                    # They are still talking after the segment it was
+                    # started on: that request answers half a sentence.
+                    if speculator.cur is not None and not stt_stream.settled_text():
+                        speculator.drop("caller kept talking")
                     # ── B8: she is listening, audibly ───────────────────
                     # Six seconds of continuous caller speech with Nikki
                     # silent earns a soft "హా" — and at most one every
@@ -10461,6 +10750,26 @@ async def freeswitch_ws(
                         speech_buf.extend(frame)  # include trailing silence
                         if not stt_stream.dead:
                             stt_stream.feed(bytes(frame), voiced=False)
+                    # ── Speculative reply start (see _Speculation) ───────
+                    # A pause, with Sarvam's segment already in and nothing
+                    # voiced since: ask the model now, adopt at the endpoint
+                    # if the words are the same. Only where the endpoint
+                    # would hand this straight to a fresh turn — not while a
+                    # reply is in flight or she is speaking (that is the
+                    # B7/barge-in path), not on a burst the background check
+                    # below will drop, not on a fragment the completeness
+                    # gate will hold, and not mid-dictation, where every
+                    # pause between digits would be a wasted request.
+                    if (speculator.enabled and speech_count >= speech_needed
+                            and (turn_task is None or turn_task.done())
+                            and time.monotonic() >= speaking["until"]
+                            and not getattr(agent, "expect_dictation", False)
+                            and not (utt_peak < vad_threshold * 1.9 and speech_count < 12)):
+                        _settled = stt_stream.settled_text()
+                        if _settled:
+                            _cand = (held_text + " " + _settled).strip() if held_text else _settled
+                            if not _utterance_incomplete(_cand):
+                                speculator.consider(_cand)
 
                 # ── BARGE-IN, with a confirmation window ─────────────────
                 # The caller started talking while Nikki is still speaking.
@@ -10499,6 +10808,7 @@ async def freeswitch_ws(
                     asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
                     if turn_task and not turn_task.done():
                         turn_task.cancel()
+                    speculator.drop("barge-in")
                     # The streamed first clause is a task of its own; left
                     # running it re-set speaking["until"] and broadcast
                     # over the caller who had just cut her off.
@@ -10543,6 +10853,7 @@ async def freeswitch_ws(
                         # the first words of the caller's next turn.
                         if not stt_stream.dead:
                             asyncio.create_task(stt_stream.finish_turn(timeout=0.8, discard=True))
+                        speculator.end_turn("background noise")
                         # If that noise is what cut her off, she carries on.
                         _cut = _take_cut(speaking)
                         if _cut and (turn_task is None or turn_task.done()):
@@ -10591,6 +10902,7 @@ async def freeswitch_ws(
                         if not (_pre_text or "").strip():
                             log.info(f"[FS] {fs_uuid}: {words:.1f}s of noise, nothing "
                                      "transcribed — keeping the reply in flight")
+                            speculator.end_turn("noise over a reply")
                             continue
                     if turn_task and not turn_task.done():
                         if words >= 0.7:
@@ -10669,6 +10981,7 @@ async def freeswitch_ws(
                             classify_tasks.add(_ct_short)
                             _ct_short.add_done_callback(classify_tasks.discard)
                             speech_buf = bytearray()
+                            speculator.end_turn("short utterance over a reply")
                             continue
 
                     turn_seq += 1
@@ -10711,13 +11024,15 @@ async def freeswitch_ws(
                         held_at   = time.monotonic()
                         log.info(f"[hold] fragment kept, waiting for the rest: {held_text[:60]!r}")
                         turn_seq -= 0   # no turn consumed
+                        speculator.end_turn("fragment held")
                         continue
 
                     turn_task = asyncio.create_task(
                         _run_turn(agent, ws, fs_uuid, utterance_pcm,
                                   turn_seq, speaking,
                                   transcript=_stream_text or None,
-                                  likely_noise=tonal))
+                                  likely_noise=tonal,
+                                  speculation=speculator.take(_stream_text)))
 
     except Exception as e:
         log.error(f"[FS] {fs_uuid}: WebSocket error: {e}")
@@ -10735,7 +11050,8 @@ async def freeswitch_ws(
         if gap_fill.get("getter") is not None:
             gap_fill["getter"].cancel()
         _mine = [t for t in (turn_task, pending_runner.get("t"),
-                             speaking.get("clause_task"), *classify_tasks)
+                             speaking.get("clause_task"), speculator.close(),
+                             *classify_tasks)
                  if t is not None and not t.done()]
         for _t in _mine:
             _t.cancel()

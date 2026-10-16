@@ -1920,3 +1920,262 @@ def test_tts_pace_is_part_of_the_cache_key(monkeypatch):
     assert tts._cache_path("సరేనండి.", "priya") != default
     monkeypatch.setattr(main, "_TTS_PACE", 1.0)
     assert tts._cache_path("సరేనండి.", "priya") == default
+# ── speculative reply start ───────────────────────────────────────────────
+# On 255 of 887 streamed turns Sarvam's segment was in before our endpoint
+# fired; the model is now asked in that pause and the stream adopted only if
+# the turn turns out to be exactly those words. See _Speculation in main.
+_SPEC_CLAUSE = "మా క్లినిక్ ఉదయం పది గంటలకి తెరుస్తాం. "
+_SPEC_REPLY = "మా క్లినిక్ ఉదయం పది గంటలకి తెరుస్తాం. సాయంత్రం ఎనిమిది వరకు ఉంటుంది."
+
+
+def _spec_agent(monkeypatch, release=None, fail=False):
+    """An agent whose model stream is a fake: it gives its first clause at
+    once, then waits for `release` before finishing."""
+    monkeypatch.setattr(main.gemini_breaker, "state", type(main.gemini_breaker.state).CLOSED)
+    agent = _agent()
+    agent.history = [{"role": "user", "content": "హలో"},
+                     {"role": "assistant", "content": "హలో, X అండి. చెప్పండి!"}]
+    agent.transcript = [dict(h) for h in agent.history]
+    calls = {"stream": [], "generate": []}
+
+    async def stream(system_prompt, history, temperature, first_clause_cb, pure=False):
+        calls["stream"].append({"prompt": system_prompt, "history": list(history), "pure": pure})
+        first_clause_cb(_SPEC_CLAUSE)
+        if release is not None:
+            await release.wait()
+        if fail:
+            raise RuntimeError("stream broke")
+        return _SPEC_REPLY
+
+    async def generate(system_prompt, history, temperature=None, first_clause_cb=None):
+        calls["generate"].append({"cb": first_clause_cb, "history": list(history)})
+        return "సాయంత్రం ఎనిమిది వరకు తెరిచి ఉంటుందండి."
+    agent.llm._generate_streaming = stream
+    agent.llm.generate = generate
+    return agent, calls
+
+
+def _state(agent):
+    return (list(agent.history), list(agent.transcript), dict(agent.slots),
+            agent.intent, agent.end_call_requested, agent.transfer_requested)
+
+
+def test_speculation_adopted_when_the_turn_is_the_same_words(monkeypatch):
+    async def go():
+        release = asyncio.Event()
+        agent, calls = _spec_agent(monkeypatch, release)
+        before = _state(agent)
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        # In flight, first clause in hand — and nothing about the call moved,
+        # nothing was spoken.
+        assert len(calls["stream"]) == 1 and calls["stream"][0]["pure"]
+        assert sp.cur.clause == _SPEC_CLAUSE and not sp.cur.clause_given
+        assert _state(agent) == before
+        spoken = []
+        spec = sp.take("ఎప్పుడు తెరుస్తారు?")
+        turn = asyncio.ensure_future(agent.on_speech(
+            b"", want_text=True, transcript_override="ఎప్పుడు తెరుస్తారు?",
+            first_clause_cb=spoken.append, speculation=spec))
+        await asyncio.sleep(0.01)
+        # Adopted: the held clause goes out at once, before the stream ends.
+        assert spoken == [_SPEC_CLAUSE]
+        release.set()
+        out = await turn
+        return agent, calls, out, spec
+    agent, calls, out, spec = asyncio.run(go())
+    assert spec.state == "adopted"
+    assert calls["generate"] == [], "the model is not asked twice"
+    assert out == _SPEC_REPLY.strip()
+    assert [h["content"] for h in agent.history[-2:]] == ["ఎప్పుడు తెరుస్తారు?", out]
+    # The speculative request is the one on_speech would have sent.
+    assert calls["stream"][0]["history"] == agent.history[:-1]
+
+
+def test_speculation_predicts_the_harvested_name_without_setting_it(monkeypatch):
+    async def go():
+        agent, calls = _spec_agent(monkeypatch)
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("నా పేరు రమేష్")
+        await asyncio.sleep(0.01)
+        assert not agent.slots.get("name"), "no slot before the turn is taken"
+        assert "రమేష్" in calls["stream"][0]["prompt"], "but the request already has it"
+        spec = sp.take("నా పేరు రమేష్")
+        await agent.on_speech(b"", want_text=True, transcript_override="నా పేరు రమేష్",
+                              first_clause_cb=lambda _p: None, speculation=spec)
+        return agent, calls, spec
+    agent, calls, spec = asyncio.run(go())
+    assert spec.state == "adopted" and calls["generate"] == []
+    assert agent.slots.get("name") == "రమేష్"
+
+
+def test_speculation_discarded_when_the_caller_said_more(monkeypatch):
+    async def go():
+        agent, calls = _spec_agent(monkeypatch, asyncio.Event())
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("నాకు రేపు")
+        await asyncio.sleep(0.01)
+        first = sp.cur
+        sp.consider("నాకు రేపు అపాయింట్మెంట్ కావాలి.")   # another pause, more words
+        await asyncio.sleep(0.01)
+        assert first.state == "discarded" and first.task.cancelled()
+        assert len(calls["stream"]) == 2 and sp.cur is not None
+        second = sp.cur
+        assert sp.take("నాకు రేపు అపాయింట్మెంట్ కావాలి. సోమవారం") is None
+        await asyncio.sleep(0.01)
+        assert second.state == "discarded" and second.task.cancelled()
+        assert sp.cur is None and sp.wasted == 2
+        spoken = []
+        out = await agent.on_speech(b"", want_text=True,
+                                    transcript_override="నాకు రేపు అపాయింట్మెంట్ కావాలి. సోమవారం",
+                                    first_clause_cb=spoken.append)
+        return calls, spoken, out
+    calls, spoken, out = asyncio.run(go())
+    assert len(calls["generate"]) == 1, "the turn runs the ordinary way"
+    assert _SPEC_CLAUSE not in spoken, "nothing from a discarded stream is spoken"
+
+
+def test_speculation_discarded_when_the_context_moved(monkeypatch):
+    async def go():
+        agent, calls = _spec_agent(monkeypatch, asyncio.Event())
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        spec = sp.take("ఎప్పుడు తెరుస్తారు?")
+        agent.slots["phone"] = "9848012345"     # landed between pause and turn
+        spoken = []
+        await agent.on_speech(b"", want_text=True, transcript_override="ఎప్పుడు తెరుస్తారు?",
+                              first_clause_cb=spoken.append, speculation=spec)
+        await asyncio.sleep(0)
+        return calls, spoken, spec
+    calls, spoken, spec = asyncio.run(go())
+    assert spec.state == "discarded" and spec.task.cancelled()
+    assert len(calls["generate"]) == 1 and calls["generate"][0]["cb"] is not None
+    assert _SPEC_CLAUSE not in spoken
+
+
+def test_adopted_stream_failing_after_its_clause_is_not_spoken_twice(monkeypatch):
+    async def go():
+        release = asyncio.Event()
+        agent, calls = _spec_agent(monkeypatch, release, fail=True)
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        spoken = []
+        turn = asyncio.ensure_future(agent.on_speech(
+            b"", want_text=True, transcript_override="ఎప్పుడు తెరుస్తారు?",
+            first_clause_cb=spoken.append, speculation=sp.take("ఎప్పుడు తెరుస్తారు?")))
+        await asyncio.sleep(0.01)
+        release.set()          # the stream breaks after its clause was spoken
+        await turn
+        return calls, spoken
+    calls, spoken = asyncio.run(go())
+    assert spoken == [_SPEC_CLAUSE]
+    # The rest is asked for batched, without a second first clause.
+    assert len(calls["generate"]) == 1 and calls["generate"][0]["cb"] is None
+
+
+@pytest.mark.parametrize("said,why", [
+    ("హ్యూమన్", "transfer"),
+    ("ఒక్క నిమిషం ఆగండి", "hold"),
+])
+def test_speculation_skipped_where_the_turn_is_not_a_plain_reply(monkeypatch, said, why):
+    agent, calls = _spec_agent(monkeypatch)
+    w, _p, _h = agent.speculation_context(said)
+    assert w == why, (said, w)
+
+
+def test_speculation_skipped_in_tools_mode_and_when_switched_off(monkeypatch):
+    async def go():
+        agent, calls = _spec_agent(monkeypatch)
+        agent.use_tools = True
+        main._Speculator(agent, enabled=True).consider("ఎప్పుడు తెరుస్తారు?")
+        agent.use_tools = False
+        main._Speculator(agent, enabled=False).consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        return calls
+    assert asyncio.run(go())["stream"] == []
+
+
+def test_speculation_on_by_default():
+    if "NIKKI_SPECULATE" not in os.environ:
+        assert main._SPECULATE is True
+
+
+def test_barge_in_cancels_an_adopted_speculation(monkeypatch):
+    async def slow_tts(*a, **k):
+        await asyncio.sleep(30)
+        return b""
+
+    async def no_filler(*a, **k):
+        return None
+
+    async def go():
+        agent, calls = _spec_agent(monkeypatch, asyncio.Event())
+        monkeypatch.setattr(agent.tts, "synthesize", slow_tts)
+        monkeypatch.setattr(main, "_play_filler", no_filler)
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        spec = sp.take("ఎప్పుడు తెరుస్తారు?")
+        speaking = {"until": 0.0}
+        turn = asyncio.ensure_future(main._run_turn(
+            agent, None, "u", b"\0" * 320, 2, speaking,
+            transcript="ఎప్పుడు తెరుస్తారు?", speculation=spec))
+        await asyncio.sleep(0.05)
+        assert spec.state == "adopted"
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+        await asyncio.sleep(0)
+        return spec, speaking
+    spec, speaking = asyncio.run(go())
+    assert spec.task.cancelled()
+
+
+def test_barge_in_and_call_end_cancel_a_pending_speculation(monkeypatch):
+    async def go():
+        agent, calls = _spec_agent(monkeypatch, asyncio.Event())
+        sp = main._Speculator(agent, enabled=True)
+        sp.consider("ఎప్పుడు తెరుస్తారు?")
+        await asyncio.sleep(0.01)
+        a = sp.cur
+        sp.drop("barge-in")
+        sp.take("")                                  # next turn
+        sp.consider("ఇంకా ఏమైనా ఉందా?")
+        await asyncio.sleep(0.01)
+        b = sp.cur
+        t = sp.close()
+        assert t is b.task
+        await asyncio.sleep(0)
+        return a, b, sp
+    a, b, sp = asyncio.run(go())
+    assert a.task.cancelled() and b.task.cancelled() and sp.cur is None
+
+
+def test_unadopted_speculation_dies_with_its_turn(monkeypatch):
+    # A turn that goes another way (here: the transfer path) discards it.
+    async def go():
+        agent, calls = _spec_agent(monkeypatch, asyncio.Event())
+
+        async def no_transfer(*a, **k):
+            return "ఒక్క నిమిషం."
+        agent._handle_transfer = no_transfer
+        spec = main._Speculation("హ్యూమన్", "p", [{"role": "user", "content": "హ్యూమన్"}])
+        spec.start(agent.llm)
+        await asyncio.sleep(0)
+        await agent.on_speech(b"", want_text=True, transcript_override="హ్యూమన్",
+                              speculation=spec)
+        await asyncio.sleep(0)
+        return spec
+    spec = asyncio.run(go())
+    assert spec.state == "discarded" and spec.task.cancelled()
+
+
+def test_settled_text_only_when_nothing_is_owed():
+    s = main.SarvamStreamingSTT()
+    s._segments = ["ఎప్పుడు", "తెరుస్తారు?"]
+    assert s.settled_text() == "ఎప్పుడు తెరుస్తారు?"
+    s._voiced_since_seg = s._SETTLED_SLACK + 1      # still talking
+    assert s.settled_text() == ""
