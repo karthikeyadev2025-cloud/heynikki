@@ -1319,3 +1319,58 @@ def test_collections_guard_lets_her_say_who_is_calling():
     en = "This is Nikki from Quick Loans. May I speak with Ravi?"
     assert main._collections_guard(en, "unknown", "Ravi", "en-IN", business="Quick Loans") == (en, False)
     assert main._collections_guard(en, "unknown", "Ravi", "en-IN")[1], "without the name it is a leak"
+
+
+# ── 15 Oct: a caller whose line goes quiet between words ──────────────────
+# Call 2d07c89e: the streaming socket transcribed "Hello" and "పైసలు
+# నెగిచింది", but the caller's network sent no RTP while they were quiet, so
+# no silent frames arrived, the endpoint never fired and nobody answered for
+# 32 seconds. The silence must be counted on the clock.
+def test_a_quiet_line_still_closes_the_turn():
+    frame_secs = 0.14                       # 2240B frames, as on that call
+    burst_frames = max(1, round(0.85 / frame_secs))
+
+    async def go():
+        q: asyncio.Queue = asyncio.Queue()
+        t0 = time.monotonic()
+        fill = {"until": t0}
+        got = []
+        # "Hello" was heard; then the line delivers nothing at all.
+        while len(got) < burst_frames:
+            arrived, msg = await main._next_frame(
+                q, last_real=t0, fill=fill, frame_secs=frame_secs,
+                turn_open=True, idle=5.0)
+            got.append((arrived - t0, msg))
+        return got
+    got = asyncio.run(go())
+    assert all(m.get("synthetic") for _, m in got)
+    # Silent frames, of the line's own size: never mistaken for speech.
+    assert all(len(m["bytes"]) == 2240 and main._frame_features(m["bytes"])[0] == 0.0
+               for _, m in got)
+    # Not before the jitter grace, and the short-burst window (~0.85s) is
+    # filled at about the time a line that DID send silence would fill it.
+    assert got[0][0] >= main._GAP_FILL_AFTER - 0.02
+    assert got[-1][0] < 1.3, got[-1][0]
+
+
+def test_a_real_frame_always_beats_a_synthetic_one():
+    async def go():
+        q: asyncio.Queue = asyncio.Queue()
+        t0 = time.monotonic() - 2.0         # gap long overdue for filling
+        q.put_nowait((time.monotonic(), {"type": "websocket.receive", "bytes": b"\x01\x02" * 1120}))
+        return await main._next_frame(q, last_real=t0, fill={"until": t0},
+                                      frame_secs=0.14, turn_open=True, idle=5.0)
+    _, msg = asyncio.run(go())
+    assert not msg.get("synthetic")
+
+
+def test_no_silence_is_invented_when_no_turn_is_open():
+    # Between turns a silent line is just a silent line; only the old
+    # two-minute dead-stream rule applies.
+    async def go():
+        q: asyncio.Queue = asyncio.Queue()
+        t0 = time.monotonic()
+        return await main._next_frame(q, last_real=t0, fill={"until": t0},
+                                      frame_secs=0.14, turn_open=False, idle=0.7)
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(go())

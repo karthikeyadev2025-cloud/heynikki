@@ -6709,6 +6709,73 @@ def _speech_like(zcr: float) -> bool:
     return _ZCR_RUMBLE <= zcr <= _ZCR_HISS
 
 
+# ── Endpointing on the clock, not only on frames ──────────────────────────
+# Every endpoint rule in the call loop counts SILENT FRAMES: a turn closes
+# after ~400-850ms of them, and a held fragment is answered after 1.6s of
+# them. That assumes FreeSWITCH sends a frame every 20-140ms for as long as
+# the call is up. It does not when the caller's network stops sending RTP
+# while they are quiet (mobile DTX / silence suppression): no packets in, no
+# frames out, so the silence counter never moves and the turn never closes.
+#
+# Call 2d07c89e (15 Oct): the caller said "Hello", then "పైసలు నెగిచింది",
+# and the streaming socket transcribed both — but only 8.8s of audio reached
+# us in a 32s call, every frame that DID arrive was voice, and the gaps
+# between them ("no caller audio for 3.9s", "5.2s") carried no frames at
+# all. finish_turn never ran, nothing reached the model, and the caller hung
+# up to dead air. 5c958369 (10 Oct) lost its final "Nikki" the same way. A
+# healthy call the same evening delivered 107s of audio in 104s.
+#
+# So while a turn is open (voice collected, or a fragment held), a silence
+# the socket does not deliver is filled in here: once no real frame has
+# arrived for _GAP_FILL_AFTER, zero frames are synthesised at the real frame
+# rate, as though FreeSWITCH had sent the silence itself. The existing rules
+# — burst vs long-utterance windows, dictation, the noise drop, the fragment
+# hold, barge-in classification — then run unchanged on wall-clock time.
+# The grace is well past any localhost jitter, and since a real frame always
+# wins, a caller who is still talking never has silence spliced in.
+_GAP_FILL_AFTER = 0.5
+
+
+async def _next_frame(frame_q: "asyncio.Queue", *, last_real: float, fill: dict,
+                      frame_secs, turn_open: bool, idle: float = 120.0):
+    """Next (arrived, message) for the call loop: a real one from FreeSWITCH,
+    or a synthetic silent frame when the line has gone quiet mid-turn.
+
+    fill["until"] is the time through which audio (real or synthetic) is
+    already accounted for; the caller sets it to the arrival of each real
+    frame. Raises asyncio.TimeoutError after `idle` seconds with no real
+    frame — the old two-minute dead-stream rule, unchanged.
+
+    The pending queue read is kept in fill["getter"] and reused across calls
+    rather than wrapped in wait_for: this polls several times a second while
+    a turn is open, and on Python 3.11 a wait_for timeout racing a get that
+    has just completed drops the item — a lost slice of the caller's voice.
+    The call loop cancels the getter at cleanup.
+    """
+    deadline = last_real + idle
+    while True:
+        g = fill.get("getter")
+        if g is None:
+            g = fill["getter"] = asyncio.ensure_future(frame_q.get())
+        if g.done():
+            fill["getter"] = None
+            return g.result()
+        now = time.monotonic()
+        if now >= deadline:
+            raise asyncio.TimeoutError
+        wait = deadline - now
+        if turn_open and frame_secs and frame_q.empty():
+            start = max(fill.get("until", 0.0), last_real)
+            due = max(last_real + _GAP_FILL_AFTER, start + frame_secs)
+            if now >= due:
+                fill["until"] = start + frame_secs
+                n = int(round(frame_secs * 8000)) * 2
+                return now, {"type": "websocket.receive", "bytes": bytes(n),
+                             "synthetic": True}
+            wait = min(wait, due - now)
+        await asyncio.wait({g}, timeout=max(wait, 0.005))
+
+
 def _wav_to_pcm16(audio: bytes) -> bytes:
     """Strip a RIFF/WAV container down to raw little-endian PCM16 samples.
 
@@ -9645,6 +9712,10 @@ async def freeswitch_ws(
     listen_from = float("inf")
     last_frame_at = time.monotonic()
     stall_logged = False
+    # Silence the socket did not deliver, filled in so a turn still closes —
+    # see _next_frame. Logged once per gap.
+    gap_fill: dict = {"until": 0.0}
+    gap_fill_logged = False
 
     try:
         # Load platform config for automation routing
@@ -9716,7 +9787,10 @@ async def freeswitch_ws(
         # Main audio loop
         while True:
             try:
-                arrived, message = await asyncio.wait_for(frame_q.get(), timeout=120.0)
+                arrived, message = await _next_frame(
+                    frame_q, last_real=last_frame_at, fill=gap_fill,
+                    frame_secs=frame_secs,
+                    turn_open=bool(speech_count > 0 or held_text))
             except asyncio.TimeoutError:
                 log.warning(f"[FS] {fs_uuid}: 120s timeout — hanging up")
                 # It said "hanging up" and only left the loop: the channel
@@ -9747,16 +9821,29 @@ async def freeswitch_ws(
             # ── Binary audio frame ────────────────────────────────────────────
             if message.get("type") == "websocket.receive" and message.get("bytes"):
                 frame = bytes(message["bytes"])
+                synthetic = bool(message.get("synthetic"))
+                if synthetic:
+                    if not gap_fill_logged:
+                        gap_fill_logged = True
+                        log.info(f"[FS] {fs_uuid}: line went quiet mid-turn with no "
+                                 f"frames for {arrived - last_frame_at:.1f}s — "
+                                 "counting the silence on the clock")
+                else:
+                    gap_fill["until"] = arrived
+                    gap_fill_logged = False
                 # FreeSWITCH sends a frame every 20ms for as long as the call
                 # is up. A gap means the caller's audio stopped reaching us
                 # and she can no longer hear them — say so, once per gap.
-                if arrived - last_frame_at > 3.0 and not stall_logged:
-                    log.warning(f"[FS] {fs_uuid}: no caller audio for "
-                                f"{arrived - last_frame_at:.1f}s")
-                    stall_logged = True
-                elif arrived - last_frame_at <= 3.0:
-                    stall_logged = False
-                last_frame_at = arrived
+                # A synthetic frame is not audio from the line: the gap it
+                # fills is still open.
+                if not synthetic:
+                    if arrived - last_frame_at > 3.0 and not stall_logged:
+                        log.warning(f"[FS] {fs_uuid}: no caller audio for "
+                                    f"{arrived - last_frame_at:.1f}s")
+                        stall_logged = True
+                    elif arrived - last_frame_at <= 3.0:
+                        stall_logged = False
+                    last_frame_at = arrived
 
                 # Derive the VAD counters from the ACTUAL frame duration
                 # rather than assuming 20ms. mod_audio_stream's
@@ -9793,7 +9880,9 @@ async def freeswitch_ws(
                 # the one that actually gets uploaded; this buffer is only the
                 # fallback for when that file is missing, so truncating it is
                 # a degraded fallback rather than a lost recording.
-                if len(recording_pcm) < _RECORDING_MAX_BYTES:
+                if synthetic:
+                    pass        # the recording keeps only what the line carried
+                elif len(recording_pcm) < _RECORDING_MAX_BYTES:
                     recording_pcm.extend(frame)
                 elif not recording_truncated:
                     recording_truncated = True
@@ -9829,7 +9918,9 @@ async def freeswitch_ws(
                 # The floor only updates while Nikki is NOT speaking, so her
                 # own audio bleeding back never raises it.
                 energy, zcr = _frame_features(frame)
-                if time.monotonic() >= speaking["until"]:
+                # A synthetic frame's zero energy would drag the noise floor
+                # down and make her hear the line hiss as speech.
+                if not synthetic and time.monotonic() >= speaking["until"]:
                     noise_win.append(energy)
                     if len(noise_win) >= 50:            # ~1s of samples
                         # 20th percentile, not 85th. The window is the last
@@ -10159,6 +10250,8 @@ async def freeswitch_ws(
         # with _enrich_appointment, which found no appointment_id and left
         # the row bare.
         pump_task.cancel()
+        if gap_fill.get("getter") is not None:
+            gap_fill["getter"].cancel()
         _mine = [t for t in (turn_task, pending_runner.get("t"),
                              speaking.get("clause_task"), *classify_tasks)
                  if t is not None and not t.done()]
