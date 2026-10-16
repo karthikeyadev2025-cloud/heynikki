@@ -1175,6 +1175,13 @@ def build_system_prompt(profile: dict, knowledge: list[str] | None = None) -> st
     open_days = ", ".join(profile.get("open_days", ["Mon","Tue","Wed","Thu","Fri","Sat"]))
     services = ", ".join(profile.get("services", []))
     appt_types = ", ".join(profile.get("appointment_types", []))
+    # A print shop with no appointment types was still told it books a
+    # "General appointment", and on 16 Oct she "confirmed" a 5 PM
+    # appointment for T-shirts that was never written anywhere. A standard
+    # business that set none is walk-in.
+    if not appt_types and sku == "standard":
+        appt_types = ("none — customers walk in during working hours. Never offer, book or "
+                      "confirm an appointment; if they want to come, give the hours and address")
 
     # The Telugu greeting words are examples for a Telugu line only. In the
     # prompt of an English business they were the nearest greeting to hand,
@@ -3766,8 +3773,10 @@ class NikkiAgent:
                 lines.append(
                     f"\n\n[WE CALLED THIS NUMBER FOR A CAMPAIGN — {when_s} IST]"
                     f"\nThis caller is very likely ringing back about that call.{extra}"
-                    " You already told them we called to tell them about an offer. Now say it:"
-                    " in one or two short sentences, the offer from the script below, then ask"
+                    + (" You already told them we called to tell them about an offer. Now say it:"
+                       if _called_them_recently(ro) else
+                       " If they ask why we called, or say they got a call from us, say it:")
+                    + " in one or two short sentences, the offer from the script below, then ask"
                     " if they are interested. Do NOT ask \"how can I help\" or what they"
                     " need — you rang them, you know why. If they ask about something else,"
                     " help with that instead. NEVER say they called us first."
@@ -3781,6 +3790,14 @@ class NikkiAgent:
                     " briefly why if you know, and ask how you can help. NEVER say they called us"
                     " first or that nobody called them."
                 )
+        elif not getattr(self, "is_outbound", False):
+            # 16 Oct: a customer whose missed campaign call left no record
+            # she could see asked why we rang, and was told "I did not call
+            # you, you called us".
+            lines.append(
+                "\n\nIf the caller says we called them, never deny it — someone from the"
+                " business may have. Say sorry we missed each other and help them."
+            )
         if self.slots.get("name_declined") and not self.slots.get("name"):
             lines.append(
                 "\n\n[THE CALLER DECLINED TO GIVE THEIR NAME]"
@@ -6789,6 +6806,7 @@ _JUNK_NAME_WORDS = {
 _NAME_STOP_TOKENS = {
     "కానీ", "కాని", "నా", "మీ", "మా", "వాళ్ళ", "నేను", "మీరు", "ఏం", "ఏమీ", "ఇంకా",
     "ఇంక", "అంటే", "కదా", "కూడా", "మళ్ళీ", "ఇప్పుడు", "వద్దు", "లేదు", "కాదు",
+    "నువ్వు", "నీ", "నీకు", "మీకు", "ఏయ్",
     "details", "detail", "డీటెయిల్స్", "వివరాలు", "but", "and", "or", "the", "no",
     "not", "need", "want", "give", "tell", "only", "just", "also", "again", "now",
 }
@@ -6821,7 +6839,7 @@ def _is_junk_name(name: str) -> bool:
         return True
     # A Telugu verb ending — a question ("...ఉందా", "...అయిపోద్దా") or an
     # imperative ("...పెట్టండి") — is a sentence, not a name.
-    if any(re.search(r"(ందా|ద్దా|తారా|తావా|తానా|ట్లేదు|లేదు|ండి)$", t.strip(".,!?"))
+    if any(re.search(r"(ందా|ద్దా|తారా|ావా|తానా|ట్లేదు|లేదు|ండి)$", t.strip(".,!?"))
            for t in low.split()):
         return True
     tokens = low.split()
@@ -10619,6 +10637,19 @@ async def freeswitch_ws(
             # FreeSWITCH sends disconnect on call end
             if message.get("type") == "websocket.disconnect":
                 log.info(f"[FS] {fs_uuid}: WebSocket disconnect received")
+                # The stream can die with the caller still on the line: on 16
+                # Oct mod_audio_stream lost two campaign legs seconds after
+                # answer and both customers sat in silence (75s and 20s) on a
+                # parked channel nobody was listening to. A caller who hung up
+                # is already gone and this is a no-op; one handed to a person
+                # is left alone.
+                if not getattr(agent, "handed_to_human", False):
+                    try:
+                        if (await _esl_api(f"uuid_exists {fs_uuid}")).strip() == "true":
+                            log.warning(f"[FS] {fs_uuid}: stream lost with the caller still on — hanging up")
+                            await _esl_api(f"uuid_kill {fs_uuid}")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(f"[FS] {fs_uuid}: post-disconnect check failed: {e}")
                 break
 
             # ── JSON metadata frame (first message from FreeSWITCH) ─────────

@@ -2197,3 +2197,19 @@ def test_settled_text_only_when_nothing_is_owed():
     assert s.settled_text() == "ఎప్పుడు తెరుస్తారు?"
     s._voiced_since_seg = s._SETTLED_SLACK + 1      # still talking
     assert s.settled_text() == ""
+
+
+def test_question_back_is_not_a_name():
+    # 15 Oct: "ఏయ్ పేరు చెప్పావా నువ్వు" filed the lead as "చెప్పావా నువ్వు".
+    assert main._is_junk_name("చెప్పావా నువ్వు")
+    assert not main._is_junk_name("శ్రావణి")
+
+
+def test_walk_in_business_is_not_offered_appointments():
+    # 16 Oct: an ads agency with no appointment types "confirmed" a 5 PM
+    # appointment that was never written anywhere.
+    shop = {"business_name": "mr all rounder ads agency", "profile_sku": "standard",
+            "services": ["VISITING CARDS"], "appointment_types": [], "tenant_id": "t", "id": "x"}
+    assert "Never offer, book or confirm an appointment" in main.build_system_prompt(shop)
+    clinic = {**shop, "business_name": "Bismillah Clinic"}
+    assert "Never offer, book or confirm an appointment" not in main.build_system_prompt(clinic)
