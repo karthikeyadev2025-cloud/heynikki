@@ -2213,3 +2213,112 @@ def test_walk_in_business_is_not_offered_appointments():
     assert "Never offer, book or confirm an appointment" in main.build_system_prompt(shop)
     clinic = {**shop, "business_name": "Bismillah Clinic"}
     assert "Never offer, book or confirm an appointment" not in main.build_system_prompt(clinic)
+
+
+# ── local Telugu voice (INDIC_TTS_URL) ─────────────────────────────────────
+# 15 Sep and 2 Oct: DNS went, Sarvam's breaker opened, and Google failed 108
+# times with "Temporary failure in name resolution" — callers heard silence.
+# The local voice must be asked FIRST when configured, must change nothing
+# when not, and must never poison Sarvam's cache with a different voice.
+class _Resp:
+    def __init__(self, status=200, content=b"", payload=None):
+        self.status_code, self.content, self._payload = status, content, payload
+        self.text = content.decode("latin-1")[:200] if content else ""
+
+    def json(self):
+        return self._payload
+
+
+def _tts_rig(monkeypatch, tmp_path, *, indic_url, lang="te-IN", indic_fails=False,
+             breaker_open=True):
+    import base64
+    calls = []
+    indic_wav = _wav([(40, 0), (600, 7000), (40, 0)])
+    google_wav = _wav([(40, 0), (900, 5000), (40, 0)])
+
+    async def post(url, **kw):
+        calls.append(url)
+        if url.endswith("/tts"):
+            if indic_fails:
+                raise main.httpx.ConnectError("connection refused")
+            return _Resp(200, indic_wav)
+        if "texttospeech.googleapis.com" in url:
+            return _Resp(200, payload={"audioContent": base64.b64encode(google_wav).decode()})
+        raise AssertionError(f"unexpected POST {url}")
+
+    async def no_ws(*a, **k):
+        raise AssertionError("Sarvam must not be asked")
+
+    monkeypatch.setattr(main._POOL, "post", post)
+    monkeypatch.setattr(main, "_INDIC_TTS_URL", indic_url)
+    monkeypatch.setattr(main, "_TTS_PROVIDER", "sarvam")
+    monkeypatch.setattr(main, "_TTS_VENDOR", "sarvam")
+    monkeypatch.setattr(main.SarvamTTS, "_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(main.SarvamTTS, "_synthesize_ws", no_ws)
+    monkeypatch.setattr(main.sarvam_tts_breaker, "allow_request", lambda: not breaker_open)
+    monkeypatch.setenv("GOOGLE_TTS_KEY", "k")
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    return main.SarvamTTS(lang=lang), calls
+
+
+def test_flag_off_never_touches_the_local_voice(monkeypatch, tmp_path):
+    tts, calls = _tts_rig(monkeypatch, tmp_path, indic_url="")
+    audio = asyncio.run(tts.synthesize("సరేనండి.", "priya"))
+    assert audio and tts.last_vendor == "google"
+    assert not any(u.endswith("/tts") for u in calls), calls
+
+
+def test_local_voice_is_the_first_fallback(monkeypatch, tmp_path):
+    tts, calls = _tts_rig(monkeypatch, tmp_path, indic_url="http://127.0.0.1:8100")
+    audio = asyncio.run(tts.synthesize("సరేనండి.", "priya"))
+    assert audio[:4] == b"RIFF" and tts.last_vendor == "indic"
+    assert calls == ["http://127.0.0.1:8100/tts"], "Google must not be asked first"
+    assert main._TTS_VENDOR == "indic"
+    # Cached under its own key, never Sarvam's: after recovery the caller
+    # must hear Sarvam again, not a cached local clip.
+    assert not os.path.exists(tts._cache_path("సరేనండి.", "priya"))
+    assert os.path.exists(tts._indic_cache_path("సరేనండి.", "female", 8000))
+    # …and a repeat is served from that cache without another request.
+    asyncio.run(tts.synthesize("సరేనండి.", "priya"))
+    assert len(calls) == 1
+
+
+def test_local_voice_down_falls_through_to_the_cloud(monkeypatch, tmp_path):
+    tts, calls = _tts_rig(monkeypatch, tmp_path, indic_url="http://127.0.0.1:8100",
+                          indic_fails=True)
+    audio = asyncio.run(tts.synthesize("సరేనండి.", "priya"))
+    assert audio and tts.last_vendor == "google"
+    assert calls[0].endswith("/tts") and "googleapis" in calls[1]
+    # A fallback vendor's clip must not take Sarvam's cache slot either.
+    assert not os.path.exists(tts._cache_path("సరేనండి.", "priya"))
+
+
+def test_local_voice_is_telugu_only(monkeypatch, tmp_path):
+    tts, calls = _tts_rig(monkeypatch, tmp_path, indic_url="http://127.0.0.1:8100",
+                          lang="hi-IN")
+    asyncio.run(tts.synthesize("ठीक है जी।", "priya"))
+    assert not any(u.endswith("/tts") for u in calls) and tts.last_vendor == "google"
+
+
+def test_local_voice_follows_the_speakers_gender(monkeypatch, tmp_path):
+    tts, _ = _tts_rig(monkeypatch, tmp_path, indic_url="http://127.0.0.1:8100")
+    sent = []
+    real = main._POOL.post
+
+    async def spy(url, **kw):
+        sent.append(kw.get("json", {}).get("gender"))
+        return await real(url, **kw)
+    monkeypatch.setattr(main._POOL, "post", spy)
+    asyncio.run(tts.synthesize("సరే.", "aditya"))
+    asyncio.run(tts.synthesize("సరే.", "shreya"))
+    assert sent == ["male", "female"]
+
+
+def test_provider_indic_speaks_before_sarvam(monkeypatch, tmp_path):
+    tts, calls = _tts_rig(monkeypatch, tmp_path, indic_url="http://127.0.0.1:8100",
+                          breaker_open=False)
+    monkeypatch.setattr(main, "_TTS_PROVIDER", "indic")
+    audio = asyncio.run(tts.synthesize("చెప్పండి.", "priya"))   # no_ws would raise
+    assert audio and tts.last_vendor == "indic" and calls == ["http://127.0.0.1:8100/tts"]
+    # Primary-for-testing is not an outage: /health must not say failing over.
+    assert main._TTS_VENDOR == "sarvam"

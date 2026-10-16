@@ -119,6 +119,45 @@ services:
           memory: 2G
           cpus: '1.5'
 
+  # ── Local Telugu TTS (AI4Bharat Indic-TTS) ────────────────────
+  # A voice that does not need the internet. On 15 Sep and 2 Oct the host
+  # lost DNS, Sarvam's breaker opened, the Google fallback failed 108 times
+  # with "Temporary failure in name resolution", and callers heard silence.
+  # With INDIC_TTS_URL=http://127.0.0.1:8100 in .env the pipeline asks this
+  # first whenever Sarvam cannot answer. See indic-tts/README.md.
+  #
+  # OPT-IN (profile), like the scheduler: the image carries a 1.6 GB model
+  # and nothing uses it until INDIC_TTS_URL is set, so a plain deploy must
+  # not build or start it. Start with:
+  #     docker compose --profile indic-tts up -d indic-tts
+  #
+  # Port: loopback only. The pipeline is network_mode: host, so it cannot
+  # resolve a bridge-network service name — 127.0.0.1 is how it reaches
+  # anything, exactly as with n8n. Nothing is published on a public
+  # interface.
+  #
+  # Limits: inference is CPU-bound and shares the box with live calls. Four
+  # of the eight cores and 3 GB (it settles around 1.3 GB) means a burst of fallback
+  # synthesis slows itself down, never FreeSWITCH or the pipeline.
+  indic-tts:
+    build:
+      context: ../indic-tts
+      dockerfile: Dockerfile
+    container_name: heynikki-indic-tts
+    logging: *default-logging
+    restart: unless-stopped
+    profiles: ["indic-tts"]
+    env_file: .env
+    environment:
+      - INDIC_TTS_THREADS=4
+    ports:
+      - "127.0.0.1:8100:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '4.0'
+
   # ── Node.js API Server ────────────────────────────────────────
   api-server:
     build:

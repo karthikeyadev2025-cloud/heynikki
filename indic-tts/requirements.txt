@@ -1,0 +1,9 @@
+# Direct dependencies. torch/torchaudio come from the CPU wheel index in the
+# Dockerfile — the default PyPI wheels drag in gigabytes of CUDA this host
+# (no GPU) can never use. requirements.lock pins everything transitively.
+TTS==0.22.0
+transformers==4.40.2
+numpy==1.26.4
+scipy==1.11.4
+fastapi==0.110.3
+uvicorn==0.29.0

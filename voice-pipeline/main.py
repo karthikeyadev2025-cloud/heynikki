@@ -1768,6 +1768,39 @@ class SarvamStreamingSTT:
 # Last synthesis time, so a turn can report what the caller waited for.
 _SarvamTTS_LAST: dict = {"ms": 0.0}
 
+# A Telugu voice that lives on this box (indic-tts/, AI4Bharat FastPitch +
+# HiFi-GAN). On 15 Sep and 2 Oct the host lost DNS: Sarvam's breaker opened,
+# the Google fallback failed 108 times with "Temporary failure in name
+# resolution", and callers heard silence — every voice Nikki had needed the
+# internet. This one does not, so when it is configured it is the FIRST
+# fallback, ahead of the cloud vendors that fail for the same reason Sarvam
+# just did. Unset (the default) changes nothing.
+#
+# NIKKI_TTS_PROVIDER=indic makes it the primary voice, for listening tests
+# only — Sarvam still answers whenever the local voice cannot.
+_INDIC_TTS_URL = os.getenv("INDIC_TTS_URL", "").strip().rstrip("/")
+_TTS_PROVIDER = (os.getenv("NIKKI_TTS_PROVIDER", "sarvam") or "sarvam").strip().lower()
+# bulbul's male speakers; everything else (priya, shreya, pooja, kavya…) is
+# female, and so is Nikki unless a tenant chose otherwise.
+_MALE_SPEAKERS = {"aditya", "rahul", "rohan", "amit", "dev", "ratan", "varun",
+                  "manan", "sumit", "kabir", "aayan", "shubh", "ashutosh",
+                  "advait", "anand", "tarun", "sunny", "mani", "gokul", "vijay",
+                  "mohit", "rehan", "soham", "abhilash", "karun", "hitesh"}
+
+
+def _indic_timeout(text: str) -> float:
+    """How long the local voice may take for this text.
+
+    Measured 16 Oct with the service on 4 threads: 0.7s for 24 characters,
+    2.7s for 86, 5.3s for 156 — about 0.035s a character (indic-tts/README).
+    The first budget assumed 2-3.5s for 250 characters, which would have cut
+    off every longer reply during exactly the outage this voice is for. The
+    budget scales with length at half again the measured rate and is capped
+    at 10s. It is a local socket: a dead service fails in milliseconds
+    (connection refused), not at this timeout.
+    """
+    return min(10.0, 1.5 + len(text) * 0.05)
+
 
 class SarvamTTS:
     """Sarvam Bulbul V3 TTS — 8kHz telephony, Mulaw output."""
@@ -1776,6 +1809,7 @@ class SarvamTTS:
         self.api_key = SARVAM_KEY
         self.lang = lang
         self.last_ms = 0.0       # this instance's most recent synthesis
+        self.last_vendor = "sarvam"   # who spoke this instance's last fresh line
 
     _CACHE_DIR = "/tmp/recordings/ttscache"
     _CACHE_MAX = 400          # ~400 short clips, tmpfs-friendly
@@ -1817,39 +1851,47 @@ class SarvamTTS:
             pass
 
         _t = time.monotonic()
+        self.last_vendor = "sarvam"
         audio = await self._synthesize_uncached(text, speaker, rate)
         if audio:
             audio = _trim_silence(audio)
         self.last_ms = _SarvamTTS_LAST["ms"] = (time.monotonic() - _t) * 1000
 
-        if audio and len(audio) > 1000:
-            try:
-                os.makedirs(self._CACHE_DIR, exist_ok=True)
-                # Cheap bound: clear the cache wholesale rather than tracking
-                # LRU. It refills on demand and only costs one slow turn.
-                names = os.listdir(self._CACHE_DIR)
-                if len(names) >= self._CACHE_MAX:
-                    # Oldest half, not everything. This directory is shared by
-                    # every concurrent call and both workers, so a wholesale
-                    # purge threw away clips another call had written moments
-                    # earlier and was about to reuse — and under load that is
-                    # exactly when the cache is worth most.
-                    paths = []
-                    for fn in names:
-                        fp = os.path.join(self._CACHE_DIR, fn)
-                        try: paths.append((os.path.getmtime(fp), fp))
-                        except OSError: pass
-                    paths.sort()
-                    for _, fp in paths[:len(paths) // 2]:
-                        try: os.remove(fp)
-                        except OSError: pass
-                tmp = key + ".part"
-                with open(tmp, "wb") as f:
-                    f.write(audio)
-                os.replace(tmp, key)      # atomic: never serve a half-written clip
-            except OSError as e:
-                log.debug(f"tts cache write skipped: {e}")
+        # Only Sarvam's audio goes under Sarvam's key. A fallback voice cached
+        # here would keep answering for that line after Sarvam came back — a
+        # caller would hear the voice change mid-call on every cached phrase.
+        # The local voice keeps its own cache (_indic_tts).
+        if audio and len(audio) > 1000 and self.last_vendor == "sarvam":
+            self._cache_put(key, audio)
         return audio
+
+    def _cache_put(self, key: str, audio: bytes) -> None:
+        try:
+            os.makedirs(self._CACHE_DIR, exist_ok=True)
+            # Cheap bound: clear the cache wholesale rather than tracking
+            # LRU. It refills on demand and only costs one slow turn.
+            names = os.listdir(self._CACHE_DIR)
+            if len(names) >= self._CACHE_MAX:
+                # Oldest half, not everything. This directory is shared by
+                # every concurrent call and both workers, so a wholesale
+                # purge threw away clips another call had written moments
+                # earlier and was about to reuse — and under load that is
+                # exactly when the cache is worth most.
+                paths = []
+                for fn in names:
+                    fp = os.path.join(self._CACHE_DIR, fn)
+                    try: paths.append((os.path.getmtime(fp), fp))
+                    except OSError: pass
+                paths.sort()
+                for _, fp in paths[:len(paths) // 2]:
+                    try: os.remove(fp)
+                    except OSError: pass
+            tmp = key + ".part"
+            with open(tmp, "wb") as f:
+                f.write(audio)
+            os.replace(tmp, key)      # atomic: never serve a half-written clip
+        except OSError as e:
+            log.debug(f"tts cache write skipped: {e}")
 
     _WS_URI = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3&send_completion_event=true"
     _warm: Optional[asyncio.Task] = None
@@ -1976,13 +2018,21 @@ class SarvamTTS:
             log.warning(f"TTS input {len(text)} chars — clamping to 2400")
             text = text[:2400]
 
+        # Listening tests only (NIKKI_TTS_PROVIDER=indic): the local voice
+        # speaks first, and Sarvam still covers anything it cannot say.
+        if _TTS_PROVIDER == "indic" and self._indic_available(rate):
+            audio = await self._indic_tts(text, speaker, rate)
+            if audio:
+                self.last_vendor = "indic"
+                return audio
+
         # WebSocket first on the phone path — it is what turns the ~700ms
         # REST floor into ~300ms end to end for a short chunk. REST stays as
         # the fallback and as the browser path (22050 works fine there and a
         # web turn is not latency-critical to the same degree).
         if not sarvam_tts_breaker.allow_request():
             log.warning("[breaker] sarvam_tts OPEN — speaking with the fallback voice")
-            return await self._fallback_tts(text, rate)
+            return await self._fallback_tts(text, rate, speaker)
 
         if rate == 8000:
             try:
@@ -2047,14 +2097,15 @@ class SarvamTTS:
                 log.critical("SARVAM CREDITS EXHAUSTED — falling back for speech")
             else:
                 log.error(f"Sarvam TTS error: {e} — falling back")
-            return await self._fallback_tts(text, rate)
+            return await self._fallback_tts(text, rate, speaker)
         except Exception as e:  # noqa: BLE001
             # Any failure at all, not only an HTTP one: a DNS blip or a
             # timeout leaves the caller in exactly the same silence.
             log.error(f"Sarvam TTS unexpected: {e} — falling back")
-            return await self._fallback_tts(text, rate)
+            return await self._fallback_tts(text, rate, speaker)
 
-    async def _fallback_tts(self, text: str, rate: int = 8000) -> bytes:
+    async def _fallback_tts(self, text: str, rate: int = 8000,
+                            speaker: str = "priya") -> bytes:
         """Speak when Sarvam cannot.
 
         Sarvam ran out of credits mid-day and every caller heard the cached
@@ -2068,9 +2119,17 @@ class SarvamTTS:
         it. Order is deliberate — Azure's te-IN neural voice is markedly
         closer to Sarvam's than Google's standard voice, so a caller mid-call
         hears less of a change.
+
+        The local voice (INDIC_TTS_URL) goes ahead of both. The outages that
+        actually silenced callers — 15 Sep and 2 Oct — were the host losing
+        DNS, and Azure and Google sit behind the same DNS as Sarvam: Google
+        failed 108 times in a row with "Temporary failure in name
+        resolution". Asking them first would spend the caller's wait on a
+        vendor that cannot answer for the same reason Sarvam could not.
         """
         global _TTS_VENDOR
         for name, fn, configured in (
+            ("indic",  None,                 self._indic_available(rate)),
             ("azure",  self._azure_fallback, bool(os.environ.get("AZURE_SPEECH_KEY"))),
             ("google", self._google_tts,     bool(os.environ.get("GOOGLE_TTS_KEY")
                                                   or os.environ.get("GOOGLE_STT_KEY"))),
@@ -2078,8 +2137,14 @@ class SarvamTTS:
             if not configured:
                 continue
             try:
-                audio = await fn(text, rate) if name == "google" else await fn(text)
+                if name == "indic":
+                    audio = await self._indic_tts(text, speaker, rate)
+                elif name == "google":
+                    audio = await fn(text, rate)
+                else:
+                    audio = await fn(text)
                 if audio and len(audio) > 1000:
+                    self.last_vendor = name
                     if _TTS_VENDOR != name:
                         log.critical(f"TTS FAILING OVER to {name} — Sarvam is not answering")
                         _TTS_VENDOR = name
@@ -2090,9 +2155,61 @@ class SarvamTTS:
 
         log.critical(
             "TTS DOWN — Sarvam is failing and no fallback vendor is configured. "
-            "Callers will hear cached lines only. Set AZURE_SPEECH_KEY or GOOGLE_TTS_KEY."
+            "Callers will hear cached lines only. Set INDIC_TTS_URL (local voice), "
+            "AZURE_SPEECH_KEY or GOOGLE_TTS_KEY."
         )
         return b""
+
+    def _indic_available(self, rate: int) -> bool:
+        """The local voice is Telugu-only and renders 8 kHz phone audio. A
+        Hindi or English tenant gets nothing useful from it — the model has
+        no other language — so for them it is not a fallback at all, and the
+        browser path (22050) keeps its cloud voices."""
+        return bool(_INDIC_TTS_URL) and self.lang == "te-IN" and rate == 8000
+
+    def _indic_cache_path(self, text: str, gender: str, rate: int) -> str:
+        # Its own key: never Sarvam's (see synthesize), and no pace suffix —
+        # NIKKI_TTS_PACE is a bulbul setting the local model does not take.
+        h = hashlib.sha1(f"indic-{gender}|{rate}|{text}".encode("utf-8")).hexdigest()
+        return os.path.join(self._CACHE_DIR, f"{h}.wav")
+
+    async def _indic_tts(self, text: str, speaker: str = "priya",
+                         rate: int = 8000) -> bytes:
+        """The local Telugu voice (indic-tts/). Returns b"" on any failure so
+        the caller moves on to the next voice; it never raises.
+
+        Cached like Sarvam's clips — an outage is exactly when the same
+        openers repeat call after call, and the local model costs CPU the
+        live calls share — but under its own key."""
+        if not self._indic_available(rate):
+            return b""
+        gender = "male" if speaker.lower() in _MALE_SPEAKERS else "female"
+        key = self._indic_cache_path(text, gender, rate)
+        try:
+            if os.path.exists(key) and os.path.getsize(key) > 1000:
+                with open(key, "rb") as f:
+                    return f.read()
+        except OSError:
+            pass
+        budget = _indic_timeout(text)
+        try:
+            resp = await _POOL.post(
+                f"{_INDIC_TTS_URL}/tts",
+                json={"text": text[:600], "gender": gender},
+                # connect=0.5: it is a loopback socket. If nothing answers in
+                # half a second the service is down, and the caller should
+                # hear the next voice rather than wait out the whole budget.
+                timeout=httpx.Timeout(budget, connect=0.5, pool=0.5),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.error(f"[tts] indic unreachable after {budget:.1f}s budget: {e}")
+            return b""
+        audio = resp.content if resp.status_code == 200 else b""
+        if audio[:4] != b"RIFF" or len(audio) <= 1000:
+            log.error(f"[tts] indic {resp.status_code}: {resp.text[:160] if not audio else 'not a WAV'}")
+            return b""
+        self._cache_put(key, audio)
+        return audio
 
     async def _google_tts(self, text: str, rate: int = 8000) -> bytes:
         """Google Cloud TTS, in the tenant's language. Uses an API key, so it needs no service
@@ -5210,7 +5327,8 @@ async def health():
         # are running on a fallback and someone should know.
         "tts_vendor": _TTS_VENDOR,
         "tts_fallbacks_configured": [
-            n for n, ok in (("azure",  bool(os.environ.get("AZURE_SPEECH_KEY"))),
+            n for n, ok in (("indic",  bool(_INDIC_TTS_URL)),
+                            ("azure",  bool(os.environ.get("AZURE_SPEECH_KEY"))),
                             ("google", bool(os.environ.get("GOOGLE_TTS_KEY")
                                             or os.environ.get("GOOGLE_STT_KEY"))))
             if ok
