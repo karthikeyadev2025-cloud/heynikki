@@ -1743,3 +1743,168 @@ def test_refusal_cuts_the_early_disclosure(monkeypatch):
     verbs = [c.split()[0] for c in ev["esl"]]
     assert "uuid_break" in verbs, verbs
     assert verbs.index("uuid_break") < verbs.index("uuid_kill"), verbs
+
+
+# ── false barge-ins: 115 of 384 cut-offs were nobody interrupting ────────
+# Each stopped her mid-word ("she says hu hu") and, the noise rightly getting
+# no reply, left the caller in silence. See _BargeGate in main.
+def _barge_frames(gate, levels, vad=300.0, frame_secs=0.14, speaking=True):
+    """Feed one frame per level; return the index that confirmed, or None."""
+    for i, e in enumerate(levels):
+        if gate.feed(e, 0.1, e > vad, vad, speaking, frame_secs):
+            return i
+    return None
+
+
+def test_a_backchannel_does_not_stop_her():
+    # "ఆ" / "Okay" while she talks: three voiced 140ms frames. That was
+    # enough to cut her off; it no longer is.
+    assert _barge_frames(main._BargeGate(), [0, 2000, 2000, 2000, 0, 0]) is None
+
+
+def test_a_real_interruption_still_stops_her_within_one_more_frame():
+    assert _barge_frames(main._BargeGate(), [2000] * 10) == 3     # 4th frame
+    # 20ms frames: the same half second, counted in frames.
+    assert _barge_frames(main._BargeGate(), [2000] * 40, frame_secs=0.02) == 24
+
+
+def test_a_gap_restarts_the_count():
+    gate = main._BargeGate()
+    assert _barge_frames(gate, [2000, 2000, 2000, 0, 2000, 2000, 2000, 0]) is None
+
+
+def test_her_own_echo_does_not_stop_her():
+    # A line that hands her voice back at ~RMS 1000 against a 300 floor:
+    # every frame of it clears the old 1.7x bar.
+    gate = main._BargeGate()
+    gate.echo.extend([1000] * 10)       # what the line carried under her greeting
+    assert _barge_frames(gate, [1000, 900, 1100] * 10) is None
+    assert gate.echo_level() >= 900
+    # The caller speaking over it, well clear of it, still gets through.
+    assert _barge_frames(gate, [2600] * 6) == 3
+
+
+def test_echo_bar_is_capped_so_a_loud_caller_always_wins():
+    gate = main._BargeGate()
+    _barge_frames(gate, [5000] * 20)                    # a line full of echo
+    assert gate.bar(300) <= 300 * main._BARGE_ECHO_CAP
+
+
+def test_a_clean_line_keeps_the_old_bar():
+    gate = main._BargeGate()
+    _barge_frames(gate, [120] * 30)                     # line hiss under her
+    assert gate.bar(300) == pytest.approx(300 * 1.7)
+
+
+def test_nothing_counts_while_she_is_silent():
+    gate = main._BargeGate()
+    assert _barge_frames(gate, [2000] * 10, speaking=False) is None
+    assert len(gate.echo) == 0
+
+
+def test_cut_mid_sentence_keeps_the_sentence_and_what_follows():
+    speaking = {"until": 0.0}
+    clip = _setup_wav(2.0)
+    main._now_playing(speaking, clip, "మీకు ఏ రోజు కావాలి?")
+    cut = main._cut_point(speaking, speaking["now"]["start"] + 0.6)
+    assert cut["audio"] == clip and cut["rest"] == "మీకు ఏ రోజు కావాలి?"
+
+
+def test_cut_at_the_end_of_a_sentence_does_not_repeat_it():
+    speaking = {"until": 0.0}
+    main._now_playing(speaking, _setup_wav(2.0), "మీకు ఏ రోజు కావాలి?")
+    cut = main._cut_point(speaking, speaking["now"]["start"] + 1.9)
+    assert cut["audio"] is None and cut["rest"]
+    # Nothing left at all: nothing to resume.
+    main._now_playing(speaking, _setup_wav(2.0), "")
+    assert main._cut_point(speaking, speaking["now"]["start"] + 1.9) is None
+
+
+def test_a_stale_clip_is_not_resumed():
+    speaking = {"until": 0.0}
+    main._now_playing(speaking, _setup_wav(1.0), "x")
+    assert main._cut_point(speaking, speaking["now"]["start"] + 5.0) is None
+    assert main._cut_point({"until": 0.0}, time.monotonic()) is None
+
+
+def test_speak_chunked_publishes_what_is_left(monkeypatch):
+    seen = []
+    speaking = {"until": 0.0}
+
+    async def send(_ws, audio, _u, seq=0):
+        seen.append(speaking["now"]["rest"])
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    agent = _resume_agent(None)
+    asyncio.run(main._speak_chunked(agent, None, "u",
+                                    "మీ పేరు చెప్పండి. మీకు ఏ రోజు కావాలి?", 1,
+                                    speaking, normalized=True))
+    assert len(seen) == len(agent.tts.said) >= 2
+    assert seen[0] and seen[-1] == ""
+
+
+class _ResumeTTS:
+    def __init__(self):
+        self.said = []
+
+    async def synthesize(self, text, voice):
+        self.said.append(text)
+        await asyncio.sleep(0)
+        return _setup_wav(0.02)
+
+
+def _resume_agent(on_speech):
+    a = type("A", (), {})()
+    a.tts = _ResumeTTS(); a.voice = "priya"; a.profile = {}; a.lang = "te-IN"
+    a.transcript = []
+    a.on_speech = on_speech
+    return a
+
+
+def _turn_after_cut(monkeypatch, reply, real_turn, transcript):
+    sent, seen = [], {}
+
+    async def send(_ws, audio, _u, seq=0):
+        sent.append(audio)
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+
+    async def on_speech(wav, want_text=False, transcript_override=None,
+                        first_clause_cb=None, likely_noise=False):
+        seen["likely_noise"] = likely_noise
+        if real_turn:
+            agent.transcript.append({"role": "user", "content": transcript_override})
+        return reply
+    agent = _resume_agent(on_speech)
+    clip = _setup_wav(0.1)
+    speaking = {"until": 0.0}
+    main._now_playing(speaking, clip, "మీకు ఏ రోజు కావాలి?")
+    speaking["cut"] = main._cut_point(speaking, speaking["now"]["start"] + 0.01)
+    asyncio.run(main._run_turn(agent, None, "u", b"\0" * 320, 2, speaking,
+                               transcript=transcript))
+    return agent, clip, sent, speaking, seen
+
+
+def test_phantom_barge_in_resumes_instead_of_going_silent(monkeypatch):
+    # "ఆ" after the cut: the phantom filter gives it no reply.
+    agent, clip, sent, speaking, seen = _turn_after_cut(monkeypatch, "", False, "ఆ")
+    assert sent and sent[0] == clip, "the interrupted sentence is replayed"
+    assert agent.tts.said == ["మీకు ఏ రోజు కావాలి?"], "then the rest of the reply"
+    # Nothing transcribed after a cut is not met with "say that again?".
+    assert seen["likely_noise"] is True
+    assert "cut" not in speaking
+
+
+def test_real_interruption_is_answered_not_resumed(monkeypatch):
+    agent, clip, sent, _, _ = _turn_after_cut(
+        monkeypatch, "సరేనండి.", True, "వద్దండి ఆపండి")
+    assert clip not in sent
+    assert agent.tts.said == ["సరేనండి."]
+
+
+def test_a_real_turn_left_unanswered_does_not_replay_the_old_reply(monkeypatch):
+    agent, clip, sent, _, _ = _turn_after_cut(monkeypatch, "", True, "ఒక్క నిమిషం")
+    assert sent == [] and agent.tts.said == []
+
+
+def test_a_stale_cut_is_not_resumed(monkeypatch):
+    speaking = {"cut": {"audio": b"x", "rest": "y", "at": time.monotonic() - 30}}
+    assert main._take_cut(speaking) is None and "cut" not in speaking

@@ -6777,6 +6777,158 @@ def _speech_like(zcr: float) -> bool:
     return _ZCR_RUMBLE <= zcr <= _ZCR_HISS
 
 
+# ── False barge-ins ───────────────────────────────────────────────────────
+# Of 384 confirmed barge-ins in the logs to 15 Oct, 115 (30%) were followed
+# by nothing the caller actually said: no transcript at all (42), or only a
+# bare "Hello" (27), "ఆ" (25), "ఉమ్" (9), "Okay" (8), "హ్మ్"/"ఏ". Each one
+# cut her off mid-word — the clipped syllable is the owner's "she says hu
+# hu" — and then (Hello aside) the phantom-turn filter rightly gave the
+# noise no reply, so the caller heard her stop and the line go silent.
+#
+# Waiting for the recogniser before stopping is not an option: Sarvam only
+# returns FINAL segments, and after a real interruption the first one landed
+# a median 1.38s after the barge-in (p10 0.62s, n=253). Stopping that late
+# reads as her talking over the caller. So the decision stays acoustic, but
+# asks more of it, and a cut that turns out to be nothing is undone — see
+# _cut_point and _resume_cut.
+_BARGE_CONFIRM_SECS = 0.5
+# Her own voice coming back down the line (speakerphone, car kit, a cheap
+# handset: no echo cancellation on this side) is the one sound guaranteed to
+# be voice-shaped and present whenever she talks. Its level is measured
+# while she speaks, and an interruption must stand well clear of it.
+_BARGE_ECHO_MARGIN = 2.0
+# ... but never more than this over the line's own floor: a caller on a line
+# that echoes badly must still be able to stop her by speaking up.
+_BARGE_ECHO_CAP = 6.0
+
+
+class _BargeGate:
+    """Decides, frame by frame, whether the caller has really cut in.
+
+    Three conditions, all needed, all measured from the line:
+      * voice-shaped (zero-crossing) and well over the noise floor — a horn
+        or an engine on speakerphone is not an interruption;
+      * clear of her own echo: over twice the level the line carries while
+        she alone is talking. On a clean line that level is the noise floor
+        and this changes nothing; on a line that hands her voice back it is
+        what stops her from interrupting herself;
+      * sustained for _BARGE_CONFIRM_SECS. It was ~240ms, which on 140ms
+        frames came out as three frames — and a bare "ఆ", "ఉమ్" or "Okay"
+        said while she talks fills three. A caller really interrupting keeps
+        going; the fourth frame costs a real interruption 140ms.
+    """
+
+    def __init__(self) -> None:
+        self.frames = 0
+        # Line level while she speaks. A median, so a caller's occasional
+        # "హా" does not move it but echo present through most of her speech
+        # does. ~8s of her talking at 140ms frames.
+        self.echo: deque = deque(maxlen=60)
+
+    def echo_level(self) -> float:
+        # Not before ~1.4s of her speech has been heard: on fewer frames a
+        # caller who starts talking with her would BE the estimate, and
+        # could never get through. So the first moments of the greeting
+        # rely on the longer window, and on the cut being undone.
+        if len(self.echo) < 10:
+            return 0.0
+        return sorted(self.echo)[len(self.echo) // 2]
+
+    def bar(self, vad_threshold: float) -> float:
+        base = vad_threshold * 1.7
+        echo = min(self.echo_level() * _BARGE_ECHO_MARGIN,
+                   vad_threshold * _BARGE_ECHO_CAP)
+        return max(base, echo)
+
+    def needed(self, frame_secs: float) -> int:
+        return max(3, round(_BARGE_CONFIRM_SECS / (frame_secs or 0.02)))
+
+    def feed(self, energy: float, zcr: float, is_speech: bool,
+             vad_threshold: float, she_speaks: bool, frame_secs: float) -> bool:
+        """True on the frame that confirms a real interruption."""
+        if she_speaks:
+            # The bar is judged against the level BEFORE this frame, so an
+            # interruption cannot raise its own bar.
+            loud = (is_speech and _speech_like(zcr)
+                    and energy > self.bar(vad_threshold))
+            self.echo.append(energy)
+            if loud:
+                self.frames += 1
+                if self.frames >= self.needed(frame_secs):
+                    self.frames = 0
+                    return True
+                return False
+        if not is_speech:
+            self.frames = 0
+        return False
+
+
+# How long after a cut a phantom turn may still undo it. A backchannel's
+# turn closes 1.5-2.5s after the barge-in (endpoint wait + flush), a held
+# fragment up to ~1.6s later still.
+_RESUME_WINDOW = 8.0
+# Cut this close to the end of a sentence, the sentence was heard: say
+# what comes after it rather than repeat it.
+_RESUME_HEARD_FRACTION = 0.85
+
+
+def _now_playing(speaking: dict, audio: bytes, rest: str) -> None:
+    """Record what has just been sent to the caller, so a cut can be undone.
+
+    rest is what is still to follow it, already normalised for TTS.
+    """
+    speaking["now"] = {"audio": audio, "start": time.monotonic(),
+                       "dur": _wav_duration_secs(audio), "rest": rest}
+
+
+def _cut_point(speaking: dict, at: float) -> Optional[dict]:
+    """What she had left to say when the caller cut in, or None.
+
+    The sentence she was in the middle of is kept as audio — repeating it
+    whole costs no synthesis and is what a person does after "sorry, go
+    on?" — followed by the text that had not started yet.
+    """
+    now = speaking.get("now")
+    if not now:
+        return None
+    elapsed = at - now["start"]
+    if elapsed < 0 or elapsed > now["dur"] + 0.3:
+        return None                 # stale: not what was playing
+    audio = now["audio"] if elapsed < now["dur"] * _RESUME_HEARD_FRACTION else None
+    rest = (now.get("rest") or "").strip()
+    if not audio and not rest:
+        return None
+    return {"audio": audio, "rest": rest, "at": at}
+
+
+async def _resume_cut(agent, ws, fs_uuid: str, cut: dict, seq: int,
+                      speaking: dict, why: str) -> None:
+    """She was cut off by something that was not the caller: carry on.
+
+    Going silent after a phantom barge-in was the failure the caller
+    actually heard — her stopping mid-word, then nothing.
+    """
+    log.info(f"[FS] {fs_uuid}: barge-in was {why} — picking up where she left off")
+    not_before = 0.0
+    if cut.get("audio"):
+        _now_playing(speaking, cut["audio"], cut.get("rest") or "")
+        speaking["until"] = time.monotonic() + speaking["now"]["dur"]
+        await _send_audio_to_freeswitch(ws, cut["audio"], fs_uuid, seq * 10)
+        not_before = speaking["until"] + 0.05
+    if cut.get("rest"):
+        await _speak_chunked(agent, ws, fs_uuid, cut["rest"], seq, speaking,
+                             sub_offset=1, not_before=not_before,
+                             normalized=True)
+
+
+def _take_cut(speaking: dict) -> Optional[dict]:
+    """The pending cut, if it is recent enough to undo. Consumed either way."""
+    cut = speaking.pop("cut", None)
+    if cut and time.monotonic() - cut["at"] <= _RESUME_WINDOW:
+        return cut
+    return None
+
+
 # ── Endpointing on the clock, not only on frames ──────────────────────────
 # Every endpoint rule in the call loop counts SILENT FRAMES: a turn closes
 # after ~400-850ms of them, and a held fragment is answered after 1.6s of
@@ -7517,7 +7669,7 @@ def _pincodes_digitwise(t: str, lang: str) -> str:
 
 async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
                          seq: int, speaking: dict, sub_offset: int = 0,
-                         not_before: float = 0.0) -> None:
+                         not_before: float = 0.0, normalized: bool = False) -> None:
     """Synthesise chunk N+1 while chunk N is still playing.
 
     uuid_broadcast INTERRUPTS whatever is playing rather than queueing, so
@@ -7527,17 +7679,25 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
     not_before (time.monotonic) holds the FIRST chunk's broadcast, not its
     synthesis: something already playing (the streamed opening clause)
     covers the round trip instead of the caller hearing a gap.
+
+    normalized=True: text is already in the form TTS is given (a resumed
+    remainder); normalising twice could re-apply a pronunciation mapping.
     """
     if isinstance(text, (bytes, bytearray)):
         # Should be unreachable now, but a wrong type here used to cost the
         # caller a whole turn of silence. Fail loudly instead of crashing.
         log.error("_speak_chunked got bytes, expected text — dropping turn")
         return
-    chunks = _speech_chunks(normalize_for_tts(
+    chunks = _speech_chunks(text if normalized else normalize_for_tts(
         text, (getattr(agent, "profile", None) or {}).get("pronunciation_map"),
         getattr(agent, "lang", LANG_DEFAULT)))
     if not chunks:
         return
+    # Whatever is playing now (the streamed opening clause) is followed by
+    # all of this: what a barge-in during it would leave unsaid.
+    _np = speaking.get("now")
+    if _np and _np["start"] + _np["dur"] > time.monotonic():
+        _np["rest"] = " ".join(chunks)
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
     _hold = not_before - time.monotonic()
     if _hold > 0:
@@ -7548,6 +7708,7 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
             return
         dur = _wav_duration_secs(audio)
         speaking["until"] = time.monotonic() + dur
+        _now_playing(speaking, audio, " ".join(chunks[i + 1:]))
         await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10 + sub)
         sub += 1
         if nxt is None:
@@ -8662,6 +8823,10 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
     to propagate untouched and everything else is swallowed.
     """
     clause = {"text": None, "until": 0.0, "task": None}
+    # She was cut off just before this turn. If what cut her off turns out
+    # to be nothing — noise, her own echo, a bare "ఆ" — she carries on with
+    # what she was saying instead of leaving the caller in silence.
+    cut = _take_cut(speaking)
     try:
         # The filler waits 1.1s and is cancelled the moment the reply text is
         # ready. Two research findings drove this: fillers on EVERY turn make
@@ -8725,6 +8890,8 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     dur = _wav_duration_secs(audio)
                     speaking["until"] = time.monotonic() + dur
                     clause["until"] = speaking["until"]
+                    # The rest is not known yet; _speak_chunked fills it in.
+                    _now_playing(speaking, audio, "")
                     await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10)
             clause["task"] = asyncio.create_task(_speak_prefix())
             # Published so barge-in can cancel it. It is its own task, not a
@@ -8733,14 +8900,24 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             # clause over the caller who had just interrupted.
             speaking["clause_task"] = clause["task"]
 
+        # After a cut, audio that transcribes to nothing was not the caller
+        # speaking: no "ఒక్కసారి మళ్ళీ చెప్తారా?" for it, she carries on.
+        _turns_before = len(getattr(agent, "transcript", None) or ())
         reply_text = await agent.on_speech(wav_bytes, want_text=True,
                                            transcript_override=transcript,
                                            first_clause_cb=_on_first_clause,
-                                           likely_noise=likely_noise)
+                                           likely_noise=likely_noise or bool(cut))
         # Reply ready: if the filler has not fired yet, it never should.
         if not filler_task.done():
             filler_task.cancel()
         if not reply_text:
+            # Only when nothing was taken as the caller's turn: a real turn
+            # the model chose to leave unanswered is not a reason to repeat
+            # the reply it interrupted.
+            if (cut and not clause["text"]
+                    and len(getattr(agent, "transcript", None) or ()) == _turns_before):
+                await _resume_cut(agent, ws, fs_uuid, cut, seq, speaking,
+                                  f"nothing ({(transcript or '').strip()[:20]!r})")
             return
         if _is_hold_sentinel(reply_text):
             # Caller asked for a moment. Say nothing; the silent-caller
@@ -9922,7 +10099,7 @@ async def freeswitch_ws(
     # Set once the real frame duration is known, alongside silence_needed.
     burst_frames       = 0
     long_speech_frames = 0
-    barge_frames   = 0            # consecutive voiced frames while Nikki speaks
+    barge          = _BargeGate() # decides when the caller has really cut in
     utt_peak       = 0.0          # loudest frame of the utterance being collected
     # How much the utterance's zero-crossing rate moved. A voice moves a lot
     # (vowels to consonants); a horn, a reversing beeper and a ringback tone
@@ -10060,6 +10237,8 @@ async def freeswitch_ws(
         if greet:
             await _send_audio_to_freeswitch(ws, greet, fs_uuid, 1)
             speaking["until"] = time.monotonic() + _wav_duration_secs(greet)
+            # A greeting cut off by line noise is played again, not lost.
+            _now_playing(speaking, greet, "")
             turn_seq = 1
 
         # Main audio loop
@@ -10283,8 +10462,8 @@ async def freeswitch_ws(
                 # briefly-talked-over agent does not. Vapi ships 200ms of
                 # sustained voice as its default for exactly this reason.
                 #
-                # ~240ms of consecutive voiced frames (12 x 20ms) is required
-                # before she yields. A caller genuinely interrupting sustains
+                # ~500ms of consecutive voiced frames is required before she
+                # yields (it was ~240ms). A caller genuinely interrupting sustains
                 # voice for far longer; a cough does not. The frames are
                 # already accumulating in speech_buf either way, so nothing
                 # the caller says during the window is lost.
@@ -10294,26 +10473,29 @@ async def freeswitch_ws(
                 # noise failure there is: she stops mid-sentence for a horn,
                 # every time a horn sounds, which on a Hyderabad street is
                 # constantly. Twice the noise floor AND voice-shaped AND
-                # sustained.
-                if (is_speech and _speech_like(zcr)
-                        and energy > vad_threshold * 1.7
-                        and time.monotonic() < speaking["until"]):
-                    barge_frames += 1
-                    if barge_frames >= max(3, round(0.24 / (frame_secs or 0.02))):
-                        speaking["until"] = 0.0
-                        barge_frames = 0
-                        asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
-                        if turn_task and not turn_task.done():
-                            turn_task.cancel()
-                        # The streamed first clause is a task of its own; left
-                        # running it re-set speaking["until"] and broadcast
-                        # over the caller who had just cut her off.
-                        _ct = speaking.get("clause_task")
-                        if _ct and not _ct.done():
-                            _ct.cancel()
-                        log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted (confirmed)")
-                elif not is_speech:
-                    barge_frames = 0
+                # sustained — and, since 16 Oct, clear of her own echo and
+                # sustained for longer: see _BargeGate for the 115 cut-offs
+                # that were nobody interrupting.
+                _barge_now = time.monotonic()
+                if barge.feed(energy, zcr, is_speech, vad_threshold,
+                              not synthetic and _barge_now < speaking["until"],
+                              frame_secs or 0.02):
+                    # What she had left to say, kept so that a cut-off
+                    # which turns out to be nothing can be undone.
+                    speaking["cut"] = _cut_point(speaking, _barge_now)
+                    speaking["until"] = 0.0
+                    asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
+                    if turn_task and not turn_task.done():
+                        turn_task.cancel()
+                    # The streamed first clause is a task of its own; left
+                    # running it re-set speaking["until"] and broadcast
+                    # over the caller who had just cut her off.
+                    _ct = speaking.get("clause_task")
+                    if _ct and not _ct.done():
+                        _ct.cancel()
+                    log.info(f"[FS] {fs_uuid}: barge-in — caller interrupted (confirmed) "
+                             f"rms={energy:.0f} bar={barge.bar(vad_threshold):.0f} "
+                             f"echo={barge.echo_level():.0f}")
 
                 # Fire STT when we hit silence after speech
                 # Triple the wait while a number is being dictated (~1.2s
@@ -10349,6 +10531,13 @@ async def freeswitch_ws(
                         # the first words of the caller's next turn.
                         if not stt_stream.dead:
                             asyncio.create_task(stt_stream.finish_turn(timeout=0.8, discard=True))
+                        # If that noise is what cut her off, she carries on.
+                        _cut = _take_cut(speaking)
+                        if _cut and (turn_task is None or turn_task.done()):
+                            turn_seq += 1
+                            turn_task = asyncio.create_task(_resume_cut(
+                                agent, ws, fs_uuid, _cut, turn_seq, speaking,
+                                "background noise"))
                         continue
                     utterance_pcm = bytes(speech_buf)
                     _trail_bytes  = silence_count * len(frame)   # silence after the voice
@@ -10419,7 +10608,10 @@ async def freeswitch_ws(
                                     r"[\s,.!]*?(హా|ఆ|ఊ|అవును|సరే|ఒకే|ఓకే|హ్మ్|అవునండి|సరేనండి|"
                                     r"ok(ay)?|yes|haan|hm+|right|acha)[\s,.!]*", low):
                                     return          # true backchannel — she talks on
-                                if re.search(r"ఆగండి|ఆపండి|wait|stop|hold|ఒక్క నిమిషం", low):
+                                # "వద్దు" too: a lone one is short enough to
+                                # fall under the barge-in window, and it means
+                                # stop as plainly as "ఆగండి" does.
+                                if re.search(r"ఆగండి|ఆపండి|వద్దు|wait|stop|hold|ఒక్క నిమిషం", low):
                                     speaking["until"] = 0.0
                                     if tt and not tt.done():
                                         tt.cancel()
