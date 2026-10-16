@@ -30,6 +30,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { minutesGate } from "./usage";
+import { waMsisdn } from "./wa-number";
 
 /**
  * What index.ts must hand this module.
@@ -519,7 +520,7 @@ export async function sendOwnerTemplate(
       body: JSON.stringify({
         messaging_product: "whatsapp",
         recipient_type: "individual",
-        to: o.to.replace(/\D/g, ""),
+        to: waMsisdn(o.to).ok ? (waMsisdn(o.to) as { msisdn: string }).msisdn : o.to.replace(/\D/g, ""),
         type: "template",
         template: {
           name: o.template, language: { code: o.lang },
