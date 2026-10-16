@@ -69,12 +69,15 @@ type Lead = {
 // itself — and nothing has ever read it, so a tenant row would have had no
 // effect anywhere. loadStages() below prefers the table.
 const STAGES: Stage[] = [
-  { id: "new",       label: "New",       color: C.cyn  },
-  { id: "contacted", label: "Contacted", color: C.gbr  },
-  { id: "qualified", label: "Qualified", color: C.gold },
-  { id: "won",       label: "Won",       color: C.grn  },
-  { id: "lost",      label: "Lost",      color: C.dim  },
+  { id: "new",       label: "New",            color: C.cyn  },
+  { id: "contacted", label: "Spoke to",       color: C.gbr  },
+  { id: "qualified", label: "Interested",     color: C.gold },
+  { id: "won",       label: "Customer",       color: C.grn  },
+  { id: "lost",      label: "Not interested", color: C.dim  },
 ];
+// Sales words ("qualified", "won") are not how a shop owner talks about the
+// people who rang. The stored values stay; only what is shown changes.
+const STAGE_WORDS: Record<string, string> = Object.fromEntries(STAGES.map(s => [s.id, s.label]));
 
 const titleCase = (s: string) =>
   String(s).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -87,10 +90,10 @@ const titleCase = (s: string) =>
 // server's /api/calls/disposition does to the lead's stage — "busy" is
 // accepted and logged but is not in its STAGE_MAP, so it moves nothing.
 const DISPOSITIONS = [
-  { label: "Interested",     value: "interested",     color: C.grn,  icon: Check,     hint: "Lead moves to Qualified" },
-  { label: "Booked",         value: "booked",         color: C.gbr,  icon: Calendar,  hint: "Lead moves to Won" },
-  { label: "Call Back",      value: "callback",       color: C.gold, icon: RefreshCw, hint: "Stays in Contacted" },
-  { label: "Not Interested", value: "not_interested", color: C.dim,  icon: X,         hint: "Lead moves to Lost" },
+  { label: "Interested",     value: "interested",     color: C.grn,  icon: Check,     hint: "Lead moves to Interested" },
+  { label: "Booked",         value: "booked",         color: C.gbr,  icon: Calendar,  hint: "Lead moves to Customer" },
+  { label: "Call Back",      value: "callback",       color: C.gold, icon: RefreshCw, hint: "Stays in Spoke to" },
+  { label: "Not Interested", value: "not_interested", color: C.dim,  icon: X,         hint: "Lead moves to Not interested" },
   { label: "No Answer",      value: "no_answer",      color: C.mid,  icon: PhoneOff,  hint: "Back to New" },
   { label: "Busy",           value: "busy",           color: C.mid,  icon: PhoneOff,  hint: "Logged only — stage unchanged" },
 ];
@@ -515,7 +518,7 @@ export default function LeadsPage() {
       // A tenant's own stage replaces the platform stage of the same name.
       const mine = st.filter((x: any) => x.tenant_id === tu?.tenant_id);
       const rows = (mine.length ? mine : st.filter((x: any) => !x.tenant_id));
-      setStages(rows.map((x: any) => ({ id: x.name, label: titleCase(x.name), color: x.color || C.dim })));
+      setStages(rows.map((x: any) => ({ id: x.name, label: STAGE_WORDS[x.name] || titleCase(x.name), color: x.color || C.dim })));
     }
 
     const canFollowUp = await followUpSupported();
@@ -702,7 +705,8 @@ export default function LeadsPage() {
         <div>
           <h1 style={{ fontFamily: "var(--font-display), sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "-0.02em", color: C.txt, margin: "0 0 4px" }}>Leads</h1>
           <p style={{ color: C.mid, fontSize: 14, margin: 0 }}>
-            Everyone who called, what they wanted, and where they are in your pipeline.
+            Everyone who called, what they wanted, and where they are now. The number in the circle is
+            how likely they are to buy, out of 100 — call the highest first.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

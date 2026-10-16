@@ -94,6 +94,8 @@ function fmtDays(c: { start_date: string | null; end_date: string | null }): str
 type Stats = {
   total: number; pending: number; queued: number; in_progress: number;
   completed: number; blocked_dnd: number; opted_out: number; failed: number;
+  /** Outcomes, which is what an owner asks: did they talk, did they pick up. */
+  talked: number; no_pickup: number;
 };
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
@@ -131,11 +133,11 @@ type RecipientRow = {
 };
 
 const RECIPIENT_STATUS: Record<string, { label: string; color: string }> = {
-  pending:     { label: "waiting",                  color: C.mid },
+  pending:     { label: "waiting to call",          color: C.mid },
   scrubbing:   { label: "checking",                 color: C.gold },
-  queued:      { label: "queued",                   color: C.cyn },
-  in_progress: { label: "on a call",                color: C.gbr },
-  completed:   { label: "called",                   color: C.grn },
+  queued:      { label: "waiting to call",          color: C.cyn },
+  in_progress: { label: "on a call now",            color: C.gbr },
+  completed:   { label: "done",                     color: C.grn },
   failed:      { label: "failed",                   color: C.red },
   blocked_dnd: { label: "not dialled (no consent)", color: C.gold },
   opted_out:   { label: "opted out",                color: C.red },
@@ -143,9 +145,17 @@ const RECIPIENT_STATUS: Record<string, { label: string; color: string }> = {
 
 /** The dispatcher writes `answered`, `dialled`, `no_conversation_<CAUSE>` or
  *  a raw trunk reason. Say it in words where the shape is known. */
+// Every way a dial ends without a conversation, as the dispatcher and the
+// hangup hook write it ("originate failed: NO_ANSWER", "refused_unknown").
+const NO_PICKUP = /NO_ANSWER|USER_BUSY|CALL_REJECTED|NO_USER_RESPONSE|no_conversation|refused_|originate failed/i;
+
 function fmtOutcome(o: string | null): string {
   if (!o) return "";
-  if (o === "answered") return "answered";
+  if (o === "answered") return "talked to Nikki";
+  if (/NO_ANSWER|NO_USER_RESPONSE/i.test(o)) return "didn't pick up";
+  if (/USER_BUSY/i.test(o)) return "line busy";
+  if (/CALL_REJECTED/i.test(o)) return "cut the call";
+  if (/^refused_/.test(o)) return "call dropped";
   if (o === "dialled")  return "dialling";
   if (o.startsWith("no_conversation_")) {
     const cause = o.slice("no_conversation_".length).replace(/_/g, " ").toLowerCase();
@@ -358,7 +368,7 @@ function ScheduleEditor({ campaign: c, inputStyle, onSave }: {
         {field("Call until",
           <input type="time" style={inputStyle} value={f.window_end}
             onChange={e => setF(v => ({ ...v, window_end: e.target.value }))} />)}
-        {field("Simultaneous calls",
+        {field("Calls at the same time",
           <input type="number" min={1} max={25} style={inputStyle} value={f.max_concurrent}
             onChange={e => setF(v => ({ ...v, max_concurrent: parseInt(e.target.value) || 1 }))} />)}
       </div>
@@ -409,16 +419,18 @@ export default function CampaignsPage() {
     if (!ids.length) return;
     const sb = createClient();
     const { data } = await sb.from("outbound_recipients")
-      .select("campaign_id,status").in("campaign_id", ids);
+      .select("campaign_id,status,outcome").in("campaign_id", ids);
     const acc: Record<string, Stats> = {};
     for (const id of ids) {
       acc[id] = { total:0, pending:0, queued:0, in_progress:0, completed:0,
-                  blocked_dnd:0, opted_out:0, failed:0 };
+                  blocked_dnd:0, opted_out:0, failed:0, talked:0, no_pickup:0 };
     }
-    for (const r of (data || []) as { campaign_id: string; status: string }[]) {
+    for (const r of (data || []) as { campaign_id: string; status: string; outcome?: string | null }[]) {
       const s = acc[r.campaign_id];
       if (!s) continue;
       s.total += 1;
+      if (r.outcome === "answered") s.talked += 1;
+      else if (r.outcome && NO_PICKUP.test(r.outcome)) s.no_pickup += 1;
       if (r.status in s) (s as unknown as Record<string, number>)[r.status] += 1;
     }
     setStats(acc);
@@ -642,6 +654,12 @@ export default function CampaignsPage() {
               value={form.script}
               placeholder="Introduce yourself, mention the Diwali offer of 20% off, and ask if they'd like to book an appointment this week."
               onChange={e => setForm(f => ({ ...f, script: e.target.value }))} />
+            {/* 16 Oct: a script named a different shop from the business, and
+                customers who rang back asked for "the Big Bang Store owner". */}
+            <p style={{ fontSize: 12.5, color: C.dim, marginTop: -8, marginBottom: 14, lineHeight: 1.55 }}>
+              Use your business name exactly as customers know it, the offer, and the price. If someone
+              misses the call and rings back, Nikki tells them this same offer.
+            </p>
 
             <div style={{ display:"flex", gap: 12, flexWrap:"wrap", marginBottom: 12 }}>
               <div style={{ flex:"1 1 160px" }}>
@@ -676,7 +694,7 @@ export default function CampaignsPage() {
               </div>
               <div style={{ flex:"1 1 130px" }}>
                 <label style={{ display:"block", fontSize:12.5, fontWeight:600, color:C.mid, marginBottom:6 }}>
-                  Simultaneous calls
+                  Calls at the same time
                 </label>
                 <input type="number" min={1} max={25} style={inputStyle} value={form.max_concurrent}
                   onChange={e => setForm(f => ({ ...f, max_concurrent: parseInt(e.target.value) || 1 }))} />
@@ -762,6 +780,18 @@ export default function CampaignsPage() {
                 </div>
               </div>
 
+              {/* What to do next, so a new campaign is never a card with
+                  no obvious move: create → add numbers → start. */}
+              {(c.status === "draft" || c.status === "paused") && (
+                <div style={{ marginTop: 12, padding: "9px 12px", borderRadius: 8, fontSize: 13,
+                  background: C.glow + "0D", border: "1px solid " + C.glow + "33", color: C.txt }}>
+                  {!s || s.total === 0
+                    ? <><strong>Next:</strong> press <strong>Upload numbers</strong> and add the people to call. Then press Start.</>
+                    : c.status === "draft"
+                      ? <><strong>Ready.</strong> {s.total} number{s.total === 1 ? "" : "s"} on the list — press <strong>{c.start_date && c.start_date > istToday() ? "Schedule" : "Start"}</strong> to begin calling.</>
+                      : <><strong>Paused.</strong> Press Start to carry on calling the rest of the list.</>}
+                </div>
+              )}
               {editing === c.id && (
                 <ScheduleEditor campaign={c} inputStyle={inputStyle}
                   onSave={patch => saveSchedule(c.id, patch)} />
@@ -774,15 +804,14 @@ export default function CampaignsPage() {
                     gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #EEF2F6",
                   }}>
                     {[
-                      { l:"Total",       v:s.total,       c:C.glow },
-                      { l:"Pending",     v:s.pending,     c:C.mid },
-                      { l:"Queued",      v:s.queued,      c:C.cyn },
-                      { l:"On a call",   v:s.in_progress, c:C.gbr },
-                      { l:"Called",      v:s.completed,   c:C.grn },
-                      { l:"Failed",      v:s.failed,      c:C.red },
-                      { l:"Blocked",     v:s.blocked_dnd, c:C.gold },
-                      { l:"Opted out",   v:s.opted_out,   c:C.red },
-                    ].map(x => (
+                      { l:"On the list",      v:s.total,                                         c:C.glow, show:true },
+                      { l:"Still to call",    v:Math.max(0, s.total - s.talked - s.no_pickup - s.blocked_dnd - s.opted_out), c:C.mid, show:true },
+                      { l:"Talked to Nikki",  v:s.talked,                                        c:C.grn,  show:true },
+                      { l:"Didn't pick up",   v:s.no_pickup,                                     c:C.gold, show:true },
+                      { l:"On a call now",    v:s.in_progress,                                   c:C.gbr,  show:s.in_progress > 0 },
+                      { l:"Not dialled",      v:s.blocked_dnd,                                   c:C.gold, show:s.blocked_dnd > 0 },
+                      { l:"Asked not to call",v:s.opted_out,                                     c:C.red,  show:s.opted_out > 0 },
+                    ].filter(x => x.show).map(x => (
                       // Ink figures; the colour sits on the edge only.
                       <div key={x.l} style={{ background: "#F8FAFC", borderRadius: 8, padding: "8px 10px",
                         borderLeft: `3px solid ${x.v ? x.c : "#E4E9F0"}` }}>
