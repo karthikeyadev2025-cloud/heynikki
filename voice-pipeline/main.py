@@ -129,6 +129,15 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("nikki")
 GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
+# Nikki's speaking speed on calls (bulbul pace; 1.0 is the voice's natural
+# speed). An operator setting so the owner can try a livelier 1.05-1.1 on
+# real calls and go back without a code change. Clamped to a range that
+# still sounds like a person; a typo must not make her race or drawl.
+try:
+    _TTS_PACE = round(min(1.3, max(0.85, float(os.getenv("NIKKI_TTS_PACE", "1.0") or 1.0))), 2)
+except ValueError:
+    _TTS_PACE = 1.0
+
 # Messages of conversation sent with each turn: 8 exchanges. It was 4
 # exchanges once, and the earliest facts fell out mid-call and were re-asked;
 # then 12. The facts a booking needs no longer depend on the window — name,
@@ -1745,7 +1754,10 @@ class SarvamTTS:
     _CACHE_MAX = 400          # ~400 short clips, tmpfs-friendly
 
     def _cache_path(self, text: str, speaker: str, rate: int = 8000) -> str:
-        h = hashlib.sha1(f"{speaker}|{rate}|{text}".encode("utf-8")).hexdigest()
+        # Pace is part of the key: a clip cached at the old speed would
+        # otherwise keep playing after NIKKI_TTS_PACE changes.
+        pace = "" if _TTS_PACE == 1.0 else f"|p{_TTS_PACE}"
+        h = hashlib.sha1(f"{speaker}|{rate}|{text}{pace}".encode("utf-8")).hexdigest()
         return os.path.join(self._CACHE_DIR, f"{h}.wav")
 
     async def synthesize(self, text: str, speaker: str = "priya",
@@ -1897,7 +1909,7 @@ class SarvamTTS:
         try:
             await ws.send(json.dumps({"type": "config", "data": {
                 "target_language_code": self.lang, "speaker": speaker,
-                "pace": 1.0, "speech_sample_rate": rate,
+                "pace": _TTS_PACE, "speech_sample_rate": rate,
                 "enable_preprocessing": True, "output_audio_codec": "wav",
                 "min_buffer_size": 30, "max_chunk_length": 120,
             }}))
@@ -1969,7 +1981,7 @@ class SarvamTTS:
                     "target_language_code": self.lang,
                     "speaker": speaker,
                     "model": "bulbul:v3",
-                    "pace": 1.0,
+                    "pace": _TTS_PACE,
                     # 8000 for the phone, where the trunk is narrowband
                     # anyway; 22050 for a browser. The landing-page agent
                     # was synthesising at 8k and playing it through laptop

@@ -1908,3 +1908,15 @@ def test_a_real_turn_left_unanswered_does_not_replay_the_old_reply(monkeypatch):
 def test_a_stale_cut_is_not_resumed(monkeypatch):
     speaking = {"cut": {"audio": b"x", "rest": "y", "at": time.monotonic() - 30}}
     assert main._take_cut(speaking) is None and "cut" not in speaking
+
+
+def test_tts_pace_is_part_of_the_cache_key(monkeypatch):
+    # A clip cached at one speed must not be replayed after NIKKI_TTS_PACE
+    # changes; at the default the key is what it always was, so the warm
+    # cache survives this change.
+    tts = main.SarvamTTS()
+    default = tts._cache_path("సరేనండి.", "priya")
+    monkeypatch.setattr(main, "_TTS_PACE", 1.1)
+    assert tts._cache_path("సరేనండి.", "priya") != default
+    monkeypatch.setattr(main, "_TTS_PACE", 1.0)
+    assert tts._cache_path("సరేనండి.", "priya") == default
