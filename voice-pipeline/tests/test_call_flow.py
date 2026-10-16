@@ -863,6 +863,24 @@ def test_callback_greeting_says_we_called_them():
     assert "కాల్ చేశాం" not in main._greeting_text(prof, {}, None)
 
 
+def test_campaign_callback_says_it_called_about_an_offer():
+    # A customer who missed a campaign call and rang back was asked "how can
+    # I help?" — she should say she called about an offer, then tell it.
+    from datetime import datetime, timedelta, timezone
+    prof = {"business_name": "Sri Ramya Dental", "id": "p"}
+    rang = {"last_outbound_at": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+            "campaign_script": "Tell {{first_name}} about 20% off cleaning at {{business_name}} this week.",
+            "first_name": "Ravi"}
+    assert "ఆఫర్" in main._greeting_text(prof, {}, rang)
+    assert "offer" in main._greeting_text({**prof, "language": "en-IN"}, {}, rang)
+    assert main._callback_campaign_script(rang, prof) == \
+        "Tell Ravi about 20% off cleaning at Sri Ramya Dental this week."
+    # A lender never repeats a collections script to whoever rings back.
+    lender = {**prof, "profile_sku": "loan_recovery"}
+    assert main._callback_campaign_script(rang, lender) == ""
+    assert "ఆఫర్" not in main._greeting_text(lender, {}, rang)
+
+
 def test_callers_own_number_is_corrected_when_misread():
     # 25 Sep: "మీ WhatsApp నెంబర్ 74347459 కి పంపిస్తాను" for 8074347459.
     known = main._known_numbers({"business_name": "x"}, [], "8074347459")

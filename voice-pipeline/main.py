@@ -2737,7 +2737,7 @@ class SupabaseClient:
         since = (datetime.utcnow() - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                calls, desk = await asyncio.gather(
+                calls, desk, camp = await asyncio.gather(
                     client.get(f"{self.url}/rest/v1/calls", headers=self.headers, params={
                         "tenant_id": f"eq.{tenant_id}", "caller_number": f"like.*{digits}",
                         "direction": "eq.outbound", "created_at": f"gte.{since}",
@@ -2748,17 +2748,36 @@ class SupabaseClient:
                         "created_at": f"gte.{since}",
                         "select": "created_at,disposition,notes",
                         "order": "created_at.desc", "limit": "1"}),
+                    # Which campaign rang them, and its script — the reason
+                    # for the call. Without it a customer returning a missed
+                    # offer call heard "we called you, how can I help?" and
+                    # had to drag out of her what she had rung to say.
+                    client.get(f"{self.url}/rest/v1/outbound_recipients", headers=self.headers, params={
+                        "tenant_id": f"eq.{tenant_id}", "phone": f"like.*{digits}",
+                        "last_attempt_at": f"gte.{since}",
+                        "select": "last_attempt_at,first_name,outbound_campaigns(name,script)",
+                        "order": "last_attempt_at.desc", "limit": "1"}),
                 )
             c = (calls.json() or [None])[0] if calls.status_code == 200 else None
             dsk = (desk.json() or [None])[0] if desk.status_code == 200 else None
-            if not c and not dsk:
+            rcp = (camp.json() or [None])[0] if camp.status_code == 200 else None
+            if not c and not dsk and not rcp:
                 return {}
-            at = (c or dsk or {}).get("created_at")
+            at = (c or dsk or rcp or {}).get("created_at") or (rcp or {}).get("last_attempt_at")
             by_person = bool(dsk) or (c or {}).get("intent") == "transfer"
-            return {"last_outbound_at": at, "by_person": by_person,
-                    "answered": ((c or {}).get("duration_seconds") or 0) >= 10,
-                    "note": ((dsk or {}).get("notes") or "")[:200],
-                    "outcome": (dsk or {}).get("disposition")}
+            out = {"last_outbound_at": at, "by_person": by_person,
+                   "answered": ((c or {}).get("duration_seconds") or 0) >= 10,
+                   "note": ((dsk or {}).get("notes") or "")[:200],
+                   "outcome": (dsk or {}).get("disposition")}
+            # The campaign is the reason only if it rang after the Desk did.
+            oc = (rcp or {}).get("outbound_campaigns") or {}
+            if rcp and (oc.get("script") or "").strip() and (
+                    not dsk or str(rcp.get("last_attempt_at") or "") >= str(dsk.get("created_at") or "")):
+                out.update(by_person=False,
+                           campaign_name=(oc.get("name") or "").strip(),
+                           campaign_script=oc["script"].strip()[:1500],
+                           first_name=(rcp.get("first_name") or "").strip())
+            return out
         except Exception as e:  # noqa: BLE001
             log.debug(f"recent outbound lookup failed: {e}")
             return {}
@@ -3740,13 +3759,28 @@ class NikkiAgent:
                 extra += f" What they noted on that call: \"{ro['note']}\"."
             if not ro.get("answered"):
                 extra += " That call was probably missed."
-            lines.append(
-                f"\n\n[WE CALLED THIS NUMBER — {when_s} IST, {who}]"
-                f"\nThis caller may be ringing back about it.{extra} If they ask why they were"
-                " called or say they got a call from this number, say yes, we called them, say"
-                " briefly why if you know, and ask how you can help. NEVER say they called us"
-                " first or that nobody called them."
-            )
+            pitch = _callback_campaign_script(ro, self.profile)
+            if pitch:
+                # A missed campaign call rung back. She knows exactly why she
+                # called — so she says it, instead of "how can I help?".
+                lines.append(
+                    f"\n\n[WE CALLED THIS NUMBER FOR A CAMPAIGN — {when_s} IST]"
+                    f"\nThis caller is very likely ringing back about that call.{extra}"
+                    " You already told them we called to tell them about an offer. Now say it:"
+                    " in one or two short sentences, the offer from the script below, then ask"
+                    " if they are interested. Do NOT ask \"how can I help\" or what they"
+                    " need — you rang them, you know why. If they ask about something else,"
+                    " help with that instead. NEVER say they called us first."
+                    f"\nWhat the campaign was calling to say:\n{pitch}"
+                )
+            else:
+                lines.append(
+                    f"\n\n[WE CALLED THIS NUMBER — {when_s} IST, {who}]"
+                    f"\nThis caller may be ringing back about it.{extra} If they ask why they were"
+                    " called or say they got a call from this number, say yes, we called them, say"
+                    " briefly why if you know, and ask how you can help. NEVER say they called us"
+                    " first or that nobody called them."
+                )
         if self.slots.get("name_declined") and not self.slots.get("name"):
             lines.append(
                 "\n\n[THE CALLER DECLINED TO GIVE THEIR NAME]"
@@ -7425,6 +7459,20 @@ def _called_them_recently(recent: dict | None, hours: float = 6) -> bool:
         return False
 
 
+def _callback_campaign_script(recent: dict | None, profile: dict | None) -> str:
+    """The script of the campaign that rang this number, ready for a prompt.
+
+    "" when no campaign did, and always for a lender: whoever rings a
+    collections number back may not be the borrower, and the script is
+    about their loan.
+    """
+    script = ((recent or {}).get("campaign_script") or "").strip()
+    if not script or (profile or {}).get("profile_sku") == "loan_recovery":
+        return ""
+    return (script.replace("{{business_name}}", (profile or {}).get("business_name") or "")
+                  .replace("{{first_name}}", (recent or {}).get("first_name") or ""))
+
+
 def _greeting_text(profile: dict, history: dict | None = None,
                    recent: dict | None = None) -> str:
     """Warm brand greeting, spoken right after the TRAI disclosure.
@@ -7447,6 +7495,16 @@ def _greeting_text(profile: dict, history: dict | None = None,
     called = _called_them_recently(recent)
     lang_c = _tenant_lang(profile)
     biz_c  = (profile.get("business_name") or "").strip()
+    if called and _callback_campaign_script(recent, profile):
+        # Rung back after a campaign call: say why we called, as a person
+        # would, and ask to tell them — the offer itself comes next turn.
+        if lang_c == "hi-IN":
+            return f"नमस्ते, {biz_c} से बोल रहे हैं — सर, हमने आपको एक ऑफ़र के बारे में बताने के लिए कॉल किया था। एक मिनट में बताऊँ?"
+        if lang_c == "bn-IN":
+            return f"নমস্কার, {biz_c} থেকে বলছি — স্যার, একটা অফারের কথা জানাতে আপনাকে ফোন করেছিলাম। এক মিনিটে বলি?"
+        if lang_c == "en-IN":
+            return f"Hello, {biz_c} here — sir, we called you to tell you about an offer. Can I tell you in a minute?"
+        return f"హలో, {biz_c} అండి — సర్, ఒక ఆఫర్ గురించి చెప్పడానికి మీకు కాల్ చేశాం. ఒక్క నిమిషం చెప్పనా?"
     if called:
         if lang_c == "hi-IN":
             return f"नमस्ते, {biz_c} से बोल रहे हैं — हमने अभी आपको कॉल किया था। बताइए, मैं कैसे मदद करूँ?"
