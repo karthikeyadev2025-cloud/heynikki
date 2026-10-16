@@ -390,7 +390,7 @@ export default function SetupPage() {
 
         {/* Voice Profile SKU selector */}
         <Card style={{ marginBottom: 16 }}>
-          <SectionHead desc="Pick the kind of business you run. Press play to hear each voice.">Voice profile</SectionHead>
+          <SectionHead desc="Pick the kind of business you run. Press play to hear each voice.">Your business type &amp; Nikki&apos;s voice</SectionHead>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {PROFILE_SKUS.map(sku => {
               const isSelected = form.profile_sku === sku.id;
@@ -450,6 +450,7 @@ export default function SetupPage() {
             <Label>Business name *</Label>
             <input value={form.business_name} onChange={e => setForm(f => ({ ...f, business_name: e.target.value }))}
               placeholder="Ravi Clinic, Banjara Hills" required />
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 5, lineHeight: 1.5 }}>Nikki says this on every call. Write it exactly as your customers know you.</div>
           </FieldGroup>
 
           {/* Both are saved by the form already; neither had an input, so the
@@ -497,17 +498,20 @@ export default function SetupPage() {
           </FieldGroup>
 
           <FieldGroup>
-            <Label>Services (comma-separated)</Label>
+            <Label>What you sell or do</Label>
             <input value={form.services}
               onChange={e => setForm(f => ({ ...f, services: e.target.value }))}
-              placeholder="General Consultation, Blood Test, ECG" />
+              placeholder="Visiting cards, Flex printing, T-shirt printing" />
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 5, lineHeight: 1.5 }}>Separate with commas. Prices and details go on <a href="/knowledge" style={{ color: C.glow }}>Teach Nikki</a>.</div>
           </FieldGroup>
 
           <FieldGroup>
-            <Label>Appointment types (comma-separated)</Label>
+            <Label>Appointment types <span style={{ color: C.dim, fontWeight: 500 }}>(optional)</span></Label>
             <input value={form.appointment_types}
               onChange={e => setForm(f => ({ ...f, appointment_types: e.target.value }))}
               placeholder="New Patient, Follow-up, Emergency" />
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 5, lineHeight: 1.5 }}>Only if customers book a time with you. Leave empty if they just walk in — Nikki then
+              gives your hours and address instead of booking.</div>
           </FieldGroup>
         </Card>
 
