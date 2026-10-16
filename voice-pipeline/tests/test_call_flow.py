@@ -1593,3 +1593,132 @@ def test_rest_of_reply_is_synthesised_while_the_clause_plays(monkeypatch):
     send_at = [t for k, t in ev if k == "send"][0]
     assert synth_at < clause_ends - 0.2, "synthesis must not wait for the clause"
     assert send_at >= clause_ends - 0.01, "broadcast must not cut the clause off"
+# ── call setup: the disclosure does not wait for the paperwork ────────────
+# d2e75ac7 (15 Oct): connected 16:13:29.6, routing answer 32.45, disclosure
+# 32.67, greeting ~37.6. The ~3s of silence before the disclosure was the
+# API server's routing answer and lookups that do not change a word of it;
+# the gap after it was the caller lookups, which only started once the
+# disclosure had finished. These drive the real handler with every network
+# edge faked and check the order things reach the caller in.
+def _setup_wav(secs: float) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"\x00\x00" * int(8000 * secs))
+    return buf.getvalue()
+
+
+def _run_call_setup(monkeypatch, did_routing_mode="ai", routing=None,
+                    routing_secs=0.4, disc_secs=0.6):
+    t0 = time.monotonic()
+    ev: dict = {}
+    hung = asyncio.Event()
+    clip = _setup_wav(disc_secs)
+
+    class _CallWS:
+        client = type("C", (), {"host": "127.0.0.1"})()
+        headers: dict = {}
+        async def accept(self): pass
+        async def receive(self):
+            await hung.wait()
+            return {"type": "websocket.disconnect"}
+        async def close(self, code=1000): hung.set()
+        async def send_text(self, _t): pass
+
+    async def get_voice_profile(self, _did):
+        self.did_routing_mode = did_routing_mode
+        return {"id": "p1", "tenant_id": "t1", "business_name": "X",
+                "profile_sku": "standard"}
+    async def slow(result, secs=0.2):
+        await asyncio.sleep(secs)
+        return result
+    monkeypatch.setattr(main.SupabaseClient, "get_voice_profile", get_voice_profile)
+    monkeypatch.setattr(main.SupabaseClient, "get_knowledge", lambda s, _p: slow([], 0.05))
+    monkeypatch.setattr(main.SupabaseClient, "get_caller_history",
+                        lambda s, *a: slow({"previous_calls": 2}))
+    monkeypatch.setattr(main.SupabaseClient, "get_caller_memory", lambda s, *a: slow({}))
+    monkeypatch.setattr(main.SupabaseClient, "get_recent_outbound", lambda s, *a: slow({}))
+    monkeypatch.setattr(main.SupabaseClient, "update_call", lambda s, *a: slow(None, 0))
+
+    async def routing_lookup(*_a):
+        await asyncio.sleep(routing_secs)
+        ev["routing_done"] = time.monotonic() - t0
+        return routing if routing is not None else \
+            {"ok": True, "call_id": "c1", "routing_mode": "ai"}
+    monkeypatch.setattr(main, "_routing_lookup", routing_lookup)
+    monkeypatch.setattr(main, "_read_platform_config", lambda: slow({}, 0.1))
+    monkeypatch.setattr(main, "_refresh_pricing", lambda: slow(None, 0.1))
+    monkeypatch.setattr(main, "_prerecorded_disclosure", lambda _v: clip)
+    async def on_call_start(self):
+        return clip
+    monkeypatch.setattr(main.NikkiAgent, "on_call_start", on_call_start)
+    monkeypatch.setattr(main.SarvamTTS, "prewarm", lambda self: None)
+
+    async def greeting(agent):
+        ev["history"] = dict(agent.caller_history)
+        return _setup_wav(0.2)
+    monkeypatch.setattr(main, "_greeting_audio", greeting)
+
+    async def send(_ws, _audio, _uuid, seq=0):
+        ev.setdefault(f"sent{seq}", time.monotonic() - t0)
+        if seq == 1:
+            hung.set()
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    async def esl(cmd, timeout=5.0):
+        ev.setdefault("esl", []).append(cmd)
+        return "+OK"
+    monkeypatch.setattr(main, "_esl_api", esl)
+
+    class _STT:
+        dead = True
+        def __init__(self, *_a): pass
+        async def start(self): pass
+        async def close(self): pass
+    monkeypatch.setattr(main, "SarvamStreamingSTT", _STT)
+    async def nothing(*_a, **_k):
+        return None
+    for name in ("_prepare_missed_call_audio", "_score_and_log_lead", "_file_call_later",
+                 "_enrich_appointment", "_extract_order", "_report_reminder_result",
+                 "_surface_wa_otp"):
+        monkeypatch.setattr(main, name, nothing)
+    monkeypatch.setattr(main, "_mixed_recording_bytes", lambda _u: slow(b"", 0))
+
+    asyncio.run(asyncio.wait_for(
+        main.freeswitch_ws(_CallWS(), "8633502031", "9492013766",
+                           "d2e75ac7-9fd6-47f5-904c-894689673644"), 10))
+    return ev
+
+
+def test_disclosure_plays_while_the_call_is_set_up(monkeypatch):
+    ev = _run_call_setup(monkeypatch, routing_secs=0.4, disc_secs=0.6)
+    # First sound before the routing answer, not after it.
+    assert ev["sent0"] < ev["routing_done"], ev
+    assert ev["sent0"] < 0.25, ev
+    # The greeting never cuts the disclosure off ...
+    assert ev["sent1"] >= ev["sent0"] + 0.6 + 0.2 - 0.02, ev
+    # ... and follows it straight away: the lookups ran underneath it, so
+    # they add nothing (the old order: routing + disclosure + lookups, ~1.5s).
+    assert ev["sent1"] < ev["sent0"] + 0.6 + 0.2 + 0.15, ev
+    # Returning-caller memory still lands in the greeting.
+    assert ev["history"] == {"previous_calls": 2}
+
+
+def test_human_routed_number_does_not_hear_the_robot_first(monkeypatch):
+    # The business routed this number to people. If the API then falls back
+    # to the AI (nobody to ring) the disclosure plays — but only once the
+    # answer is in, never as a preface to a ring.
+    ev = _run_call_setup(monkeypatch, did_routing_mode="human", routing_secs=0.3)
+    assert ev["sent0"] >= ev["routing_done"], ev
+    assert ev["sent1"] >= ev["sent0"] + 0.8 - 0.02, ev
+
+
+def test_refusal_cuts_the_early_disclosure(monkeypatch):
+    async def synth(self, *_a, **_k):
+        return _setup_wav(0.1)
+    monkeypatch.setattr(main.SarvamTTS, "synthesize", synth)
+    ev = _run_call_setup(monkeypatch, routing={"ok": False, "reason": "no_credits",
+                                               "routing_mode": "reject", "message": "x"})
+    assert "sent0" in ev and "sent99" in ev, ev
+    verbs = [c.split()[0] for c in ev["esl"]]
+    assert "uuid_break" in verbs, verbs
+    assert verbs.index("uuid_break") < verbs.index("uuid_kill"), verbs

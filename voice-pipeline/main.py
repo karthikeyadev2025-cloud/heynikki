@@ -113,13 +113,15 @@ def _internal_ok(supplied: Optional[str]) -> bool:
 # it. Nikki also says she is an AI whenever asked — a prompt rule that must
 # never change, whatever this flag says.
 #
-# What it costs the caller, measured from the assets in voice-pipeline/assets:
-# 7.0s on simran (standard + the Hey Nikki line), 9.5s on shreya (clinic),
-# 10.3s on aditya (real estate) — because the recorded script is TWO
-# sentences, the disclosure plus "say human any time and I will transfer
-# you", not the single line TRAI_DISCLOSURE below. Anyone shortening this
-# should regenerate every voice with scripts/generate_trai_disclosure.py;
-# a missing asset falls back to a runtime TTS round-trip at call start.
+# What it costs the caller, measured from the assets in voice-pipeline/assets
+# (16 Oct, after 2e31557 cut the recording to the one TRAI_DISCLOSURE line):
+# 4.36s simran (standard + the Hey Nikki line), 4.32s shreya, 4.62s aditya,
+# 4.42s kavya, 4.46s priya. It was 7.0-10.3s while the recording carried a
+# second sentence offering a transfer. It now plays ~0.5s after pickup,
+# while the call is set up (see _routing_lookup), so it costs the caller
+# its own length and nothing more. Anyone changing it should regenerate
+# every voice with scripts/generate_trai_disclosure.py; a missing asset
+# falls back to a runtime TTS round-trip after the routing answer.
 PLAY_AI_DISCLOSURE = os.environ.get("PLAY_AI_DISCLOSURE", "0") == "1"
 API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:4000")
 
@@ -2758,6 +2760,7 @@ class SupabaseClient:
     def __init__(self):
         self.url = SUPABASE_URL
         self.key = SUPABASE_KEY
+        self.did_routing_mode = ""   # set by get_voice_profile
         self.headers = {
             "apikey": self.key,
             "Authorization": f"Bearer {self.key}",
@@ -2883,6 +2886,11 @@ class SupabaseClient:
                 data = resp.json()
                 if not data or not data[0].get("voice_profiles"):
                     return None
+                # Kept for the call handler, which plays the AI disclosure
+                # before the API server's routing answer arrives — except on a
+                # number the business routed to people, where a robot line
+                # followed by a ring would be wrong. Same row, no extra query.
+                self.did_routing_mode = str(data[0].get("routing_mode") or "")
                 return data[0]["voice_profiles"]
         except Exception as e:
             log.error(f"Supabase get_voice_profile: {e}")
@@ -9424,6 +9432,92 @@ async def _fire_automation_webhook(event: str, payload: dict, cfg: dict):
             log.warning(f"[FS] Tenant webhook failed ({event}): {e}")
 
 
+# ── Call setup, off the caller's clock ──────────────────────────────────────
+# Everything below used to run one after another before the caller heard a
+# sound. Call d2e75ac7 (15 Oct): connected 16:13:29.6, voice profile 29.8,
+# knowledge 30.1, routing answer 32.45 (the API server's ~12 sequential
+# Supabase reads), platform config 32.67 — and only THEN the disclosure.
+# After it finished, the caller lookups ran (37.48-37.54) and the greeting
+# went out at ~37.6. Eight seconds from pickup to "hello", three of them dead
+# air, and callers fill dead air with "Hello? Hello?". Across the logs:
+# connect -> first audio p50 2.7s / p90 4.8s, connect -> greeting p50 8.7s /
+# p90 11.1s. None of these lookups decides WHAT the disclosure says; they are
+# now started together and joined while it plays.
+
+def _prerecorded_disclosure(voice: str) -> bytes:
+    """The pre-generated disclosure for this voice, or b"" when there is none.
+
+    Pre-recorded only. The runtime-TTS fallback in NikkiAgent.on_call_start
+    needs a Sarvam round trip, so a voice without an asset keeps the old,
+    slower path rather than racing a synthesis against the routing answer.
+    """
+    if not PLAY_AI_DISCLOSURE:
+        return b""
+    path = pathlib.Path(__file__).resolve().parent / "assets" / f"trai_disclosure_{voice}.wav"
+    try:
+        return path.read_bytes() if path.exists() else b""
+    except OSError:
+        return b""
+
+
+async def _routing_lookup(did_number: str, caller_number: str, fs_uuid: str,
+                          is_outbound: bool, campaign_id: str) -> dict:
+    """Ask the API server how to handle this call; {} if it never answered."""
+    # Two attempts, because losing this answer is not cosmetic: routing_mode,
+    # the tenant's concurrency cap and the credit check all live in it, and
+    # falling through means a DID configured for human agents gets the bot and
+    # a tenant over its cap is served anyway. It used to fail silently at
+    # warning level; a busy minute could do it to every call in that minute.
+    for _attempt, _budget in enumerate((4.0, 2.5)):
+        try:
+            async with httpx.AsyncClient(timeout=_budget) as client:
+                r = await client.post(
+                    f"{API_SERVER_URL}/webhooks/freeswitch/inbound",
+                    headers={"X-Internal-Secret": INTERNAL_SECRET},
+                    json={
+                        "did_number":    did_number,
+                        "caller_number": caller_number,
+                        "fs_uuid":       fs_uuid,
+                        "direction":     "outbound" if is_outbound else "inbound",
+                        "campaign_id":   campaign_id or None,
+                    },
+                )
+            if r.status_code == 200:
+                return r.json()
+            log.error(f"[FS] routing lookup HTTP {r.status_code} "
+                      f"(attempt {_attempt + 1}) — {r.text[:120]}")
+        except Exception as e:  # noqa: BLE001
+            log.error(f"[FS] routing lookup failed ({e}) — attempt {_attempt + 1}")
+    return {}
+
+
+async def _caller_lookups(db, profile: dict, caller_number: str, fs_uuid: str,
+                          is_outbound: bool):
+    """Who this caller is to the business: (history, memory, recent_outbound).
+
+    None when the lookups failed — the call goes on with a stranger's
+    greeting rather than waiting. The price list is refreshed alongside,
+    since its round trip used to sit on the same path (2d07c89e, 15 Oct:
+    GET /api/platform/pricing after the disclosure, before the greeting).
+    """
+    pid = (profile or {}).get("id", "")
+    tid = (profile or {}).get("tenant_id", "")
+    try:
+        _, found = await asyncio.gather(
+            _refresh_pricing(),
+            asyncio.gather(
+                db.get_caller_history(caller_number, pid, fs_uuid),
+                db.get_caller_memory(caller_number, tid),
+                db.get_recent_outbound(caller_number, tid)
+                if not is_outbound else asyncio.sleep(0, result={}),
+            ),
+        )
+        return tuple(found)
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"[FS] caller history skipped: {e}")
+        return None
+
+
 # ── FreeSWITCH WebSocket endpoint ────────────────────────────────────────────
 @app.websocket("/ws/freeswitch/{did_number}/{caller_number}/{fs_uuid}")
 async def freeswitch_ws(
@@ -9521,6 +9615,22 @@ async def freeswitch_ws(
             return
         log.info(f"[FS] demo call {used + 1}/{limit} for {profile.get('business_name')}")
 
+    # The slow lookups start NOW and are joined later, while the disclosure
+    # plays — see _routing_lookup and the note above it. The routing answer
+    # still gates everything it decides (transfer, refusal, call_id) below;
+    # it just no longer gates the first sound the caller hears.
+    routing_task = asyncio.create_task(
+        _routing_lookup(did_number, caller_number, fs_uuid, is_outbound, campaign_id))
+    lookups_task = asyncio.create_task(
+        _caller_lookups(db, profile, caller_number, fs_uuid, is_outbound))
+    cfg_task = asyncio.create_task(_read_platform_config())
+
+    def _drop_setup_tasks() -> None:
+        # For the paths that end the call before the main loop.
+        for _t in (lookups_task, cfg_task):
+            if not _t.done():
+                _t.cancel()
+
     # Facts the business taught her — brochure extractions, Teach Nikki
     # entries, uploaded documents. Fetched once per call rather than per
     # turn: they do not change mid-conversation and the caller should not
@@ -9531,6 +9641,26 @@ async def freeswitch_ws(
     agent = NikkiAgent(profile, caller_number, knowledge)
     agent.is_outbound = is_outbound      # lead scoring reads the direction
     agent.tts.prewarm()     # greeting/disclosure may be cached; turn 1 is not
+
+    # ── Disclosure first, before the routing answer ─────────────────────
+    # The recording depends on nothing but the voice, and the leg is already
+    # answered, so the caller hears it ~0.5s after pickup instead of ~3s
+    # (d2e75ac7: 3.07s of silence, all of it waiting on lookups that do not
+    # change a word of it). Not on a number routed to people: they should
+    # hear a ring, not a robot announcing itself and then a ring. That case,
+    # and a voice with no recorded asset, keep the old order below.
+    disc_audio = b""
+    disc_ends  = 0.0
+    if db.did_routing_mode != "human":
+        disc_audio = _prerecorded_disclosure(agent.voice)
+    if disc_audio:
+        log.info(f"TRAI disclosure: playing pre-recorded trai_disclosure_{agent.voice}.wav "
+                 "while the call is set up")
+        await _send_audio_to_freeswitch(ws, disc_audio, fs_uuid, 0)
+        # uuid_broadcast returns once the clip is QUEUED; the greeting must
+        # not start until it has finished — the disclosure is the regulatory
+        # part.
+        disc_ends = time.monotonic() + _wav_duration_secs(disc_audio) + 0.2
 
     # ── CAMPAIGN SCRIPT ─────────────────────────────────────────────────
     # "What should Hey Nikki say?" is the whole point of creating a campaign,
@@ -9633,33 +9763,8 @@ async def freeswitch_ws(
     # handled. Previously the pipeline created its own row and ignored
     # routing_mode entirely, so a DID configured for human agents still
     # got the bot, and /webhooks/freeswitch/inbound was dead code.
-    routing = {}
-    # Two attempts, because losing this answer is not cosmetic: routing_mode,
-    # the tenant's concurrency cap and the credit check all live in it, and
-    # falling through means a DID configured for human agents gets the bot and
-    # a tenant over its cap is served anyway. It used to fail silently at
-    # warning level; a busy minute could do it to every call in that minute.
-    for _attempt, _budget in enumerate((4.0, 2.5)):
-        try:
-            async with httpx.AsyncClient(timeout=_budget) as client:
-                r = await client.post(
-                    f"{API_SERVER_URL}/webhooks/freeswitch/inbound",
-                    headers={"X-Internal-Secret": INTERNAL_SECRET},
-                    json={
-                        "did_number":    did_number,
-                        "caller_number": caller_number,
-                        "fs_uuid":       fs_uuid,
-                        "direction":     "outbound" if is_outbound else "inbound",
-                        "campaign_id":   campaign_id or None,
-                    },
-                )
-            if r.status_code == 200:
-                routing = r.json()
-                break
-            log.error(f"[FS] routing lookup HTTP {r.status_code} "
-                      f"(attempt {_attempt + 1}) — {r.text[:120]}")
-        except Exception as e:  # noqa: BLE001
-            log.error(f"[FS] routing lookup failed ({e}) — attempt {_attempt + 1}")
+    # Started above, before the disclosure; joined here.
+    routing = await routing_task
     if not routing:
         log.error(f"[FS] {fs_uuid}: no routing answer — answering as the AI without "
                   "the tenant's routing mode, concurrency cap or credit check")
@@ -9809,6 +9914,7 @@ async def freeswitch_ws(
                                          {"status": "transferred", "intent": "transfer"})
                 except Exception as e:  # noqa: BLE001
                     log.warning(f"[FS] {fs_uuid}: could not mark call transferred: {e}")
+            _drop_setup_tasks()
             await ws.close(code=1000)
             return
 
@@ -9828,11 +9934,21 @@ async def freeswitch_ws(
             "bn-IN": "দুঃখিত, এই নম্বরটি এখন উপলব্ধ নয়।",
             "en-IN": "Sorry, this number is not available right now.",
         }.get(_lang, "క్షమించండి, ఈ నంబర్ ప్రస్తుతం అందుబాటులో లేదు.")
+        _drop_setup_tasks()
+        if disc_audio:
+            # The disclosure may already be playing (it no longer waits for
+            # this verdict). Cut it, or the refusal queues behind it.
+            try:
+                await _esl_api(f"uuid_break {fs_uuid} all")
+            except Exception:  # noqa: BLE001
+                pass
         try:
             tts = SarvamTTS(_lang)
             wav = await tts.synthesize(normalize_for_tts(msg, None, _lang),
                                        profile.get("voice") or "priya", 8000)
-            await _send_audio_to_freeswitch(ws, wav, fs_uuid)
+            # Its own spool file: seq 0 is the disclosure clip FreeSWITCH
+            # may still have open.
+            await _send_audio_to_freeswitch(ws, wav, fs_uuid, 99)
             # 8kHz mono 16-bit => 16000 bytes/sec; wait for playback to finish
             # before killing the channel or the caller hears nothing at all.
             await asyncio.sleep(max(1.0, len(wav) / 16000.0))
@@ -9948,32 +10064,34 @@ async def freeswitch_ws(
     gap_fill_logged = False
 
     try:
-        # Load platform config for automation routing
-        cfg = await _read_platform_config()
+        # Load platform config for automation routing (started at connect)
+        cfg = await cfg_task
         agent.platform_cfg = cfg      # trunk_outbound_state gates transfers
 
-        # Send TRAI disclosure audio immediately on connect
-        disclosure_audio = await agent.on_call_start()
-        if disclosure_audio:
-            await _send_audio_to_freeswitch(ws, disclosure_audio, fs_uuid, 0)
-            # uuid_broadcast returns as soon as the clip is QUEUED, not when
-            # it finishes. Without waiting, the greeting cuts the disclosure
-            # off mid-sentence — and the disclosure is the regulatory part.
-            await asyncio.sleep(_wav_duration_secs(disclosure_audio) + 0.2)
-        disclosure_sent = True
+        if not disc_audio:
+            # The old order: a human-routed number that fell back to the AI,
+            # or a voice with no recorded asset (runtime TTS).
+            disclosure_audio = await agent.on_call_start()
+            if disclosure_audio:
+                await _send_audio_to_freeswitch(ws, disclosure_audio, fs_uuid, 0)
+                # uuid_broadcast returns as soon as the clip is QUEUED, not
+                # when it finishes — see disc_ends where it is set above.
+                disc_ends = time.monotonic() + _wav_duration_secs(disclosure_audio) + 0.2
+        elif not agent.call_id:
+            # Already playing; on_call_start is only wanted here for its
+            # last-resort calls row, and its audio is discarded.
+            await agent.on_call_start()
 
         # Load before greeting so a returning caller is recognised in the
-        # very first sentence, which is where it actually lands.
+        # very first sentence, which is where it actually lands. Started at
+        # connect, so by now it has normally finished under the disclosure;
+        # it used to start only AFTER the disclosure ended, which put five
+        # Supabase reads and the price list between the disclosure and the
+        # greeting (d2e75ac7: 37.48-37.54, 2d07c89e: 52.76-53.05).
         try:
-            await _refresh_pricing()
-            # Two lookups, one round trip's worth of waiting: how many times
-            # they have rung, and what they last asked this business for.
-            agent.caller_history, agent.caller_memory, agent.recent_outbound = await asyncio.gather(
-                db.get_caller_history(caller_number, (profile or {}).get("id", ""), fs_uuid),
-                db.get_caller_memory(caller_number, (profile or {}).get("tenant_id", "")),
-                db.get_recent_outbound(caller_number, (profile or {}).get("tenant_id", ""))
-                if not getattr(agent, "is_outbound", False) else asyncio.sleep(0, result={}),
-            )
+            _found = await lookups_task
+            if _found:
+                agent.caller_history, agent.caller_memory, agent.recent_outbound = _found
             if agent.recent_outbound:
                 log.info(f"[FS] {fs_uuid}: we called this number at {agent.recent_outbound.get('last_outbound_at')}")
             if agent.caller_history.get("previous_calls"):
@@ -10008,6 +10126,13 @@ async def freeswitch_ws(
                 "Do not greet or introduce yourself again. If the caller only says "
                 "'hello' or talks over you, they may not have heard it: say in one "
                 "short sentence who you are and why you are on the line, then listen.")
+        # The greeting was looked up (and, uncached, synthesised) while the
+        # disclosure played; now wait out whatever is left of it. Without
+        # this wait the greeting cuts the disclosure off mid-sentence.
+        _left = disc_ends - time.monotonic()
+        if _left > 0:
+            await asyncio.sleep(_left)
+        disclosure_sent = True
         listen_from = time.monotonic()
         if greet:
             await _send_audio_to_freeswitch(ws, greet, fs_uuid, 1)

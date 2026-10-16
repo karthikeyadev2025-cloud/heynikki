@@ -6559,19 +6559,14 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // A paying subscription overrides the balance: credits are the trial
     // and the prepaid top-up, not a cap on customers who pay monthly.
     // Getting this backwards would cut off the accounts that matter most.
-    const { data: tenantRow } = await sb.from("tenants")
-      .select("credit_minutes, status, plan").eq("id", did.tenant_id).maybeSingle();
-    // An ALLOWLIST of the tiers that actually pay, not a denylist of the ones
-    // that do not. Written as a denylist first, and plan='demo' — which two
-    // tenants still carry — fell through it as "paid" and would have dialled
-    // for free forever. A new plan name should default to needing credits,
-    // never to unlimited.
-    const PAID_PLANS = ["starter", "growth", "scale"];
-    const onPaidPlan = PAID_PLANS.includes(String(tenantRow?.plan || "").toLowerCase());
-
-    // Concurrency is the cap with real cost behind it: the trunk carries ten
-    // channels in total, so one tenant on Scale can occupy all of them.
-    const limits = await planLimitsFor(tenantRow?.plan);
+    //
+    // Every read this handler needs is issued together and judged in the
+    // original order. The caller is on an answered line while this runs, and
+    // one after another they were ~12 Supabase round trips — 2.4s of the
+    // 3.07s before call d2e75ac7 (15 Oct) heard anything; p50 2.3s across
+    // the logs. None of the reads below depends on another's answer except
+    // where awaited in turn, and none writes, so a refusal still leaves no
+    // row and no side effect.
     let liveQ = sb.from("calls")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", did.tenant_id).eq("status", "active");
@@ -6580,7 +6575,34 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     if (fs_uuid && /^[0-9a-f-]{36}$/i.test(String(fs_uuid))) {
       liveQ = liveQ.or(`livekit_room_id.is.null,livekit_room_id.neq.${fs_uuid}`);
     }
-    const { count: liveNow } = await liveQ;
+    const tenantRowP = sb.from("tenants")
+      .select("credit_minutes, status, plan").eq("id", did.tenant_id).maybeSingle()
+      .then((r: any) => r.data);
+    const [tenantRow, limits, { count: liveNow }, gate, existingRow] = await Promise.all([
+      tenantRowP,
+      // Concurrency is the cap with real cost behind it: the trunk carries
+      // ten channels in total, so one tenant on Scale can occupy all of them.
+      tenantRowP.then((t: any) => planLimitsFor(t?.plan)),
+      liveQ,
+      // Minutes. Paid plans used to skip this entirely, so the 200 minutes
+      // Starter includes were unlimited in practice — see usage.ts.
+      minutesGate(sb, did.tenant_id,
+        !isOutbound && did.routing_mode === "human" ? "desk" : "ai"),
+      // See "One row per FreeSWITCH channel" below.
+      fs_uuid
+        ? sb.from("calls").select()
+            .eq("livekit_room_id", fs_uuid).order("created_at", { ascending: true })
+            .limit(1).maybeSingle().then((r: any) => r.data)
+        : Promise.resolve(null),
+    ]);
+    // An ALLOWLIST of the tiers that actually pay, not a denylist of the ones
+    // that do not. Written as a denylist first, and plan='demo' — which two
+    // tenants still carry — fell through it as "paid" and would have dialled
+    // for free forever. A new plan name should default to needing credits,
+    // never to unlimited.
+    const PAID_PLANS = ["starter", "growth", "scale"];
+    const onPaidPlan = PAID_PLANS.includes(String(tenantRow?.plan || "").toLowerCase());
+
     if ((liveNow || 0) >= limits.concurrent) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} at concurrency cap ` +
         `(${liveNow}/${limits.concurrent}, ${limits.tier}) — refusing`);
@@ -6599,10 +6621,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
         message: "This number is not in service.",
       });
     }
-    // Minutes. Paid plans used to skip this entirely, so the 200 minutes
-    // Starter includes were unlimited in practice — see usage.ts.
-    const gate = await minutesGate(sb, did.tenant_id,
-      !isOutbound && did.routing_mode === "human" ? "desk" : "ai");
+    // Minutes (read above, alongside the rest).
     if (!gate.ok) {
       console.warn(`[FS Inbound] tenant ${did.tenant_id} ${gate.reason} ` +
         `(${gate.usedMinutes}/${gate.limitMinutes} min, credits ${gate.credits}) — refusing`);
@@ -6624,14 +6643,9 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // inserted — on 13 Sep one outbound call produced two rows at the same
     // instant. The hangup hook could then match neither, so the call was
     // never completed or billed and the orphan held a concurrency slot for
-    // two hours. Reuse the row a previous attempt created.
-    let callRow: any = null;
-    if (fs_uuid) {
-      const { data: existing } = await sb.from("calls").select()
-        .eq("livekit_room_id", fs_uuid).order("created_at", { ascending: true })
-        .limit(1).maybeSingle();
-      callRow = existing;
-    }
+    // two hours. Reuse the row a previous attempt created (read above; a
+    // retry racing this one is still caught by the unique index below).
+    let callRow: any = existingRow;
     if (!callRow) {
       const { data: inserted, error: insErr } = await sb.from("calls").insert({
         tenant_id:        did.tenant_id,
@@ -6662,6 +6676,62 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       return res.status(503).json({ ok: false, reason: "call_record_failed", error: "Could not record the call" });
     }
 
+    // Everything from here to the response is reads, started together and
+    // used in the original order below — see the note at the tenant reads.
+    // A Supabase query only runs once something calls .then() on it, which
+    // is why each is .then()-ed here rather than awaited later.
+    const agentsP = isOutbound ? null : sb.from("tenant_users")
+      .select("phone")
+      .eq("tenant_id", did.tenant_id)
+      .not("phone", "is", null)
+      .then((r: any) => r);
+    const holderP = isOutbound ? null : sb.from("tenant_users")
+      .select("user_id, phone").eq("tenant_id", did.tenant_id)
+      .eq("outbound_did", didDigits).not("phone", "is", null).limit(1).maybeSingle()
+      .then(async (r: any) => {
+        const holder = r.error ? null : r.data;
+        if (!holder?.phone) return { holder, shiftRes: null as any };
+        const shiftRes = await sb.from("seat_attendance")
+          .select("user_id, check_in_at, check_out_at").eq("tenant_id", did.tenant_id)
+          .eq("user_id", holder.user_id).is("check_out_at", null)
+          .order("check_in_at", { ascending: false }).limit(1).maybeSingle();
+        return { holder, shiftRes };
+      });
+    const onlineSeatsP: Promise<string[]> | null = isOutbound ? null : (async () => {
+      const { data: seats } = await sb.from("tenant_users")
+        .select("user_id").eq("tenant_id", did.tenant_id);
+      const online: string[] = [];
+      await Promise.all((seats || []).map(async (r: any) => {
+        try {
+          if ((await fsl.browserContacts(softphone.seatId(r.user_id))).length) {
+            online.push(softphone.seatPlaceholder(r.user_id));
+          }
+        } catch { /* a malformed id is simply not a seat */ }
+      }));
+      return online;
+    })();
+    const cfgP = getPlatformConfig();
+    const guardVpP = did.voice_profile_id
+      ? sb.from("voice_profiles")
+          .select("missed_call_guard_enabled, missed_call_guard_seconds")
+          .eq("id", did.voice_profile_id).maybeSingle().then((r: any) => r)
+      : Promise.resolve({ data: null as any });
+    const menuP = sb.from("ivr_menus")
+      .select("greeting, options, enabled")
+      .eq("tenant_id", did.tenant_id).eq("enabled", true)
+      .or(`did_number.eq.${didDigits},did_number.is.null`)
+      // A menu for this specific number beats the tenant-wide one.
+      .order("did_number", { ascending: false, nullsFirst: false })
+      .limit(1).maybeSingle().then((r: any) => r);
+    // A thrown read must still reach the catch below as it always did — but
+    // one nobody has awaited yet when an earlier await throws (or the menu,
+    // unused on a human-routed number) would be an unhandled rejection, and
+    // Node exits on those. A no-op handler marks them seen; the await that
+    // reads each one still gets the error.
+    for (const p of [agentsP, holderP, onlineSeatsP, cfgP, guardVpP, menuP]) {
+      if (p) Promise.resolve(p).catch(() => undefined);
+    }
+
     // Resolve the ring group for human/hybrid routing.
     let ringGroup = "";
     // routing_mode answers "what happens when someone rings this number".
@@ -6680,10 +6750,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       // The error is checked now rather than discarded, because an empty ring
       // group and a failed query look identical from here and only one of
       // them is worth waking someone up about.
-      const { data: agents, error: agentErr } = await sb.from("tenant_users")
-        .select("phone")
-        .eq("tenant_id", did.tenant_id)
-        .not("phone", "is", null);
+      const { data: agents, error: agentErr } = await agentsP!;
       if (agentErr) {
         console.error("[routing] ring group lookup failed:", agentErr.message);
       } else if (!agents?.length) {
@@ -6700,15 +6767,9 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
       // ringing it back is usually ringing them. While they are on shift,
       // their phone rings alone for 15 s, then the whole team as before. Off
       // shift, or before 065/061 are applied, nothing changes.
-      const { data: holder } = await sb.from("tenant_users")
-        .select("user_id, phone").eq("tenant_id", did.tenant_id)
-        .eq("outbound_did", didDigits).not("phone", "is", null).limit(1).maybeSingle()
-        .then((r: any) => r.error ? { data: null } : r);
-      if (holder?.phone && leg(holder.phone).length > 32) {
-        const { data: shift, error: shiftErr } = await sb.from("seat_attendance")
-          .select("user_id, check_in_at, check_out_at").eq("tenant_id", did.tenant_id)
-          .eq("user_id", holder.user_id).is("check_out_at", null)
-          .order("check_in_at", { ascending: false }).limit(1).maybeSingle();
+      const { holder, shiftRes } = await holderP!;
+      if (holder?.phone && leg(holder.phone).length > 32 && shiftRes) {
+        const { data: shift, error: shiftErr } = shiftRes;
         // No attendance table yet reads as on shift: shifts are optional.
         const onShift = shiftErr ? true : !!(shift && shiftOpen(shift as any));
         if (onShift) {
@@ -6726,16 +6787,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // a human-routed number to a transfer that reaches nobody.
     if (!isOutbound) {
       try {
-        const { data: seats } = await sb.from("tenant_users")
-          .select("user_id").eq("tenant_id", did.tenant_id);
-        const online: string[] = [];
-        await Promise.all((seats || []).map(async (r: any) => {
-          try {
-            if ((await fsl.browserContacts(softphone.seatId(r.user_id))).length) {
-              online.push(softphone.seatPlaceholder(r.user_id));
-            }
-          } catch { /* a malformed id is simply not a seat */ }
-        }));
+        const online = await onlineSeatsP!;
         if (online.length) {
           ringGroup = online.join(",") + (ringGroup ? `,${ringGroup}` : "");
           console.log(`[routing] ${online.length} seat(s) online in the browser — ringing them first`);
@@ -6750,12 +6802,8 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // timeout came from platform_config alone, so a business that set 30
     // seconds still rang out at 20 and could not turn the guard off. The
     // tenant's value wins; the platform value is the default.
-    const cfg = await getPlatformConfig();
-    const { data: guardVp } = did.voice_profile_id
-      ? await sb.from("voice_profiles")
-          .select("missed_call_guard_enabled, missed_call_guard_seconds")
-          .eq("id", did.voice_profile_id).maybeSingle()
-      : { data: null as any };
+    const cfg = await cfgP;
+    const { data: guardVp } = await guardVpP;
     const platformGuard = parseInt(cfg["missed_call_seconds"] || "20");
     const tenantGuard   = Number(guardVp?.missed_call_guard_seconds);
     const guardSeconds  = Math.min(45, Math.max(10,
@@ -6791,13 +6839,7 @@ app.post("/webhooks/freeswitch/inbound", verifyInternal, async (req, res) => {
     // the menu too — it was skipped here and a hybrid line lost its menu.
     let ivr: any = null;
     if (effectiveMode === "ivr" || effectiveMode === "ai" || effectiveMode === "hybrid") {
-      const { data: menu } = await sb.from("ivr_menus")
-        .select("greeting, options, enabled")
-        .eq("tenant_id", did.tenant_id).eq("enabled", true)
-        .or(`did_number.eq.${didDigits},did_number.is.null`)
-        // A menu for this specific number beats the tenant-wide one.
-        .order("did_number", { ascending: false, nullsFirst: false })
-        .limit(1).maybeSingle();
+      const { data: menu } = await menuP;
       if (menu?.options?.length) ivr = menu;
       else if (effectiveMode === "ivr") console.warn(`[routing] DID ${didDigits} is on 'ivr' with no menu configured — using AI`);
     }
