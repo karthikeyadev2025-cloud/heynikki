@@ -281,10 +281,10 @@ export default function AnalyticsPage() {
 
   const leadFunnelData = [
     { stage: "New",       count: newLeads,                       color: C.cyn  },
-    { stage: "Contacted", count: leads.filter(l => l.stage === "contacted").length, color: C.gbr },
-    { stage: "Qualified", count: qualified,                      color: C.gold },
-    { stage: "Won",       count: won,                            color: C.grn  },
-    { stage: "Lost",      count: leads.filter(l => l.stage === "lost").length, color: C.dim },
+    { stage: "Spoke to",  count: leads.filter(l => l.stage === "contacted").length, color: C.gbr },
+    { stage: "Interested", count: qualified,                     color: C.gold },
+    { stage: "Customer",  count: won,                            color: C.grn  },
+    { stage: "Not interested", count: leads.filter(l => l.stage === "lost").length, color: C.dim },
   ];
 
   const ctcDispData = Object.entries(ctcDispositions).map(([name, value]) => ({ name, value: value as number }));

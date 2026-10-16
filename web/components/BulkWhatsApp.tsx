@@ -15,7 +15,7 @@ import { toast } from "./Toast";
 
 const C = { txt: NIKKI.text, mid: NIKKI.textMid, dim: NIKKI.textDim, bord: NIKKI.border, surf: NIKKI.surface,
   hi: NIKKI.vault, teal: NIKKI.teal, red: NIKKI.red, grn: NIKKI.emerald };
-const STAGES = [["new", "New"], ["contacted", "Contacted"], ["qualified", "Qualified"], ["won", "Won"], ["lost", "Lost"]];
+const STAGES = [["new", "New"], ["contacted", "Spoke to"], ["qualified", "Interested"], ["won", "Customer"], ["lost", "Not interested"]];
 
 export default function BulkWhatsApp({ templates, business }: { templates: any[]; business: string }) {
   const [open, setOpen] = useState(false);
