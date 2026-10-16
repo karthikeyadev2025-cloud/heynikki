@@ -1589,6 +1589,12 @@ class SarvamStreamingSTT:
                 "&input_audio_codec=pcm_s16le&flush_signal=true&vad_signals=false")
 
     _FLUSH = object()          # queue sentinel: flush ordered after prior audio
+    # A finalised turn's flush wait. One 140ms frame of slack: the RMS VAD
+    # often calls the fading last syllable speech after Sarvam has already
+    # finalised it ('మాది real estate మేమ్.' arrived ~50ms before our own
+    # end of speech on the 15 Oct call), and that frame is not new words.
+    _SETTLED_WAIT = 0.3
+    _SETTLED_SLACK = 2240
 
     def __init__(self, lang: str = LANG_DEFAULT):
         self.lang = lang
@@ -1608,6 +1614,10 @@ class SarvamStreamingSTT:
         # one flush's words came back as the other's turn, or as nothing.
         self._finish_lock = asyncio.Lock()
         self.dead = False
+        # Voiced audio fed since the last transcript arrived. Zero means
+        # Sarvam has already finalised everything the caller said; see
+        # _finish_turn_locked for what that buys.
+        self._voiced_since_seg = 0
 
     async def start(self) -> bool:
         try:
@@ -1642,6 +1652,7 @@ class SarvamStreamingSTT:
                 if isinstance(data, dict) and data.get("transcript") is not None:
                     log.info(f"[sttws] segment: {str(data['transcript'])[:60]!r}")
                     self._segments.append(str(data["transcript"]))
+                    self._voiced_since_seg = 0
                     # Any transcript after a flush means the flush answered.
                     self._flush_evt.set()
                 elif msg.get("type") == "error":
@@ -1653,10 +1664,16 @@ class SarvamStreamingSTT:
             self.dead = True
             self._flush_evt.set()
 
-    def feed(self, pcm: bytes) -> None:
-        """Queue one chunk of raw 8kHz s16le PCM. Never blocks, never raises."""
+    def feed(self, pcm: bytes, voiced: bool = True) -> None:
+        """Queue one chunk of raw 8kHz s16le PCM. Never blocks, never raises.
+
+        voiced=False marks the trailing silence after speech: it is sent all
+        the same, but it is not words Sarvam still owes us a transcript for.
+        """
         if self.dead:
             return
+        if voiced:
+            self._voiced_since_seg += len(pcm)
         try:
             self._q.put_nowait(pcm)
         except asyncio.QueueFull:
@@ -1705,6 +1722,21 @@ class SarvamStreamingSTT:
             return ""
         try:
             self._flush_evt.clear()
+            # Sarvam finalises a segment on its own pause detection, and it
+            # usually does so 0.2-0.6s after the caller stops — often BEFORE
+            # our endpoint fires. A flush with nothing left to finalise gets
+            # no reply at all, so every such turn sat out the full timeout:
+            # on the 15 Oct call (d2e75ac7) "Good Evening Madam." was in hand
+            # at 46.041 and the turn only closed at 47.442, "Hello" 1.7s
+            # late; across 901 logged turns 28% paid it. When the words are
+            # already here and no voiced audio has been fed since the last
+            # one arrived, there is nothing pending: wait only a beat for a
+            # tail, not the whole timeout. Voiced audio after the segment —
+            # the caller kept talking — still gets the full wait.
+            settled = (bool(self._segments)
+                       and self._voiced_since_seg <= self._SETTLED_SLACK)
+            if settled:
+                timeout = min(timeout, self._SETTLED_WAIT)
             # Through the queue, so the flush lands AFTER every frame already
             # queued — sending it around them would finalise early.
             self._q.put_nowait(self._FLUSH)
@@ -1728,8 +1760,10 @@ class SarvamStreamingSTT:
                 # than it saves at this point.
                 pass
             out = " ".join(x for x in self._segments if x).strip()
-            log.info(f"[sttws] finish_turn -> {len(out)} chars, dead={self.dead}")
+            log.info(f"[sttws] finish_turn -> {len(out)} chars, dead={self.dead}"
+                     + (" (settled)" if settled else ""))
             self._segments = []
+            self._voiced_since_seg = 0
             return out
         except Exception as e:  # noqa: BLE001
             log.warning(f"[sttws] flush failed ({e})")
@@ -2251,15 +2285,43 @@ class GeminiLLM:
             return text.strip()
         raise RuntimeError("empty stream")
 
+    # A first sentence up to this long is spoken whole; past it, the opener
+    # is cut at its first comma. See _first_clause_cut.
+    _CLAUSE_WHOLE_MAX = 60
+    _CLAUSE_COMMA_MIN, _CLAUSE_COMMA_MAX = 18, 70
+
     @staticmethod
     def _first_clause_cut(text: str) -> int:
         """Index to cut the opening clause at, or 0 if not yet determined.
-        A sentence end wins; a comma after enough words is good enough —
+        A short sentence goes whole; a long one is cut at its first comma —
         Telugu's agglutinative words make sub-clause cuts risky, so nothing
-        shorter than a clause is ever dispatched."""
+        shorter than a clause is ever dispatched.
+
+        "Sentence end wins" used to apply at any length, and flash-lite
+        streams in big pieces, so on the 15 Oct call (d2e75ac7) the
+        "first clause" was the whole 156-char sentence "అవునండి నితిన్ గారు,
+        మేము … పంపిస్తామండి." and the caller waited for all of it to be
+        synthesised. TTS time scales with length; "అవునండి నితిన్ గారు," is a
+        natural breath and plays while the rest is synthesised."""
         m = re.search(r"[.!?\u0964]\s", text)
-        if m and m.start() >= 12:
-            return m.start() + 1
+        sent = m.start() + 1 if m and m.start() >= 12 else 0
+        if sent and sent <= GeminiLLM._CLAUSE_WHOLE_MAX:
+            return sent
+        if sent or len(text) > GeminiLLM._CLAUSE_WHOLE_MAX:
+            # Not after an agreement opener ("సరేనండి, …"): the negative that
+            # makes it false may be in the rest of the sentence, and
+            # _first_clause_hold_reason would hold the comma clause anyway —
+            # the whole sentence at least gets spoken early.
+            if not _AGREE_OPENER_RE.match(text):
+                # ", " only: "1,500" is a number, not a pause.
+                for c in re.finditer(r",\s", text):
+                    if c.start() < GeminiLLM._CLAUSE_COMMA_MIN:
+                        continue
+                    if c.start() <= GeminiLLM._CLAUSE_COMMA_MAX and (not sent or c.start() < sent):
+                        return c.start() + 1
+                    break
+        if sent:
+            return sent
         if len(text) >= 55:
             c = text.rfind(",", 25, 90)
             if c > 0:
@@ -7448,12 +7510,17 @@ def _pincodes_digitwise(t: str, lang: str) -> str:
 
 
 async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
-                         seq: int, speaking: dict, sub_offset: int = 0) -> None:
+                         seq: int, speaking: dict, sub_offset: int = 0,
+                         not_before: float = 0.0) -> None:
     """Synthesise chunk N+1 while chunk N is still playing.
 
     uuid_broadcast INTERRUPTS whatever is playing rather than queueing, so
     each chunk is held until the previous one has actually finished — the
     same reason the greeting had to wait for the disclosure.
+
+    not_before (time.monotonic) holds the FIRST chunk's broadcast, not its
+    synthesis: something already playing (the streamed opening clause)
+    covers the round trip instead of the caller hearing a gap.
     """
     if isinstance(text, (bytes, bytearray)):
         # Should be unreachable now, but a wrong type here used to cost the
@@ -7466,6 +7533,9 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
     if not chunks:
         return
     audio = await agent.tts.synthesize(chunks[0], agent.voice)
+    _hold = not_before - time.monotonic()
+    if _hold > 0:
+        await asyncio.sleep(_hold)
     sub = sub_offset
     for i, nxt in enumerate(chunks[1:] + [None]):
         if not audio:
@@ -8683,6 +8753,12 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
         # startswith and the clause was spoken twice.
         _head = (clause["text"] or "").strip()
         reply_text = reply_text.strip()
+        # The rest is synthesised WHILE the clause plays and only its
+        # broadcast waits for the clause to end. It used to sleep out the
+        # clause first and only then start synthesising, so every streamed
+        # reply had a hole the length of one TTS round trip (~0.7s p50)
+        # between its opening clause and the rest — the caller heard
+        # "అవునండి నితిన్ గారు," then silence, mid-sentence.
         if _head and reply_text.startswith(_head):
             # The opening clause is already playing (or in flight). Speak only
             # the remainder, starting after the clause audio ends, with sub
@@ -8691,19 +8767,20 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                 await clause["task"]
             remainder = reply_text[len(_head):].strip()
             if remainder:
-                await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
                 await _speak_chunked(agent, ws, fs_uuid, remainder, seq, speaking,
-                                     sub_offset=1)
+                                     sub_offset=1, not_before=clause["until"] + 0.05)
         else:
+            _not_before = 0.0
             if clause["task"]:
                 # A prefix was dispatched but the final text diverged (vendor
                 # filter rewrote it, or the fallback path answered). Let the
                 # clause finish, then speak the WHOLE reply — a one-off echo
                 # of the opening beats a reply that skips its first words.
                 await clause["task"]
-                await asyncio.sleep(max(0.0, clause["until"] - time.monotonic()) + 0.05)
+                _not_before = clause["until"] + 0.05
             await _speak_chunked(agent, ws, fs_uuid, reply_text, seq, speaking,
-                                 sub_offset=1 if clause["text"] else 0)
+                                 sub_offset=1 if clause["text"] else 0,
+                                 not_before=_not_before)
 
         # ── End the call, once the goodbye has actually been heard ──────
         # Ordered BEFORE the transfer check: a caller who booked and then
@@ -9991,7 +10068,7 @@ async def freeswitch_ws(
                     if speech_count > 0:
                         speech_buf.extend(frame)  # include trailing silence
                         if not stt_stream.dead:
-                            stt_stream.feed(bytes(frame))
+                            stt_stream.feed(bytes(frame), voiced=False)
 
                 # ── BARGE-IN, with a confirmation window ─────────────────
                 # The caller started talking while Nikki is still speaking.

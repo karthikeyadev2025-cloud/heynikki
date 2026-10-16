@@ -1374,3 +1374,97 @@ def test_no_silence_is_invented_when_no_turn_is_open():
                                       frame_secs=0.14, turn_open=False, idle=0.7)
     with pytest.raises(asyncio.TimeoutError):
         asyncio.run(go())
+# ── latency: the 15 Oct call (d2e75ac7) ───────────────────────────────────
+# "Good Evening Madam." was transcribed at 46.041 and the turn closed at
+# 47.442: Sarvam had already finalised it, the flush got no reply, and the
+# turn sat out the whole 1.2s timeout. 28% of 901 logged turns paid it.
+def test_finalised_turn_does_not_wait_out_the_flush_timeout():
+    stt = main.SarvamStreamingSTT()
+    stt._ws = object()
+    stt.feed(b"\x00" * 2240 * 5)               # the caller's words...
+    stt._segments = ["Good Evening Madam."]     # ...already finalised
+    stt._voiced_since_seg = 0                   # (what _recv_loop does)
+    stt.feed(b"\x00" * 2240 * 3, voiced=False)  # then only endpoint silence
+    t0 = time.monotonic()
+    out = asyncio.run(stt.finish_turn(timeout=1.2))
+    assert out == "Good Evening Madam."
+    assert time.monotonic() - t0 < 0.5, "a finalised turn must close in a beat"
+
+
+def test_caller_still_talking_after_a_segment_gets_the_full_wait():
+    # Words after the last segment are still owed: the flush has to be
+    # answered, or they would open the caller's next turn.
+    stt = main.SarvamStreamingSTT()
+    stt._ws = object()
+    stt._segments = ["నా పేరు"]
+    stt.feed(b"\x00" * 2240 * 4)                # voiced, after the segment
+    t0 = time.monotonic()
+    asyncio.run(stt.finish_turn(timeout=0.6))
+    assert time.monotonic() - t0 >= 0.55
+
+
+def test_nothing_transcribed_yet_gets_the_full_wait():
+    stt = main.SarvamStreamingSTT()
+    stt._ws = object()
+    t0 = time.monotonic()
+    asyncio.run(stt.finish_turn(timeout=0.6))
+    assert time.monotonic() - t0 >= 0.55
+
+
+def test_long_first_sentence_is_cut_at_its_first_comma():
+    said = ("అవునండి నితిన్ గారు, మేము కస్టమర్ల ఫోన్ కాల్స్‌కి రియల్ తెలుగులో ఆటోమేటిక్‌గా "
+            "ఆన్సర్ చేస్తూ, అపాయింట్‌మెంట్‌లు బుక్ చేసి వాట్సాప్ కన్ఫర్మేషన్ పంపిస్తామండి. "
+            "మీది ఏ బిజినెస్ అండి?")
+    cut = main.GeminiLLM._first_clause_cut(said)
+    assert said[:cut] == "అవునండి నితిన్ గారు,"
+
+
+def test_short_first_sentence_is_still_spoken_whole():
+    said = "గుడ్ ఈవెనింగ్ నితిన్ గారు! చెప్పండి, మీకు ఏం కావాలి?"
+    assert said[:main.GeminiLLM._first_clause_cut(said)] == "గుడ్ ఈవెనింగ్ నితిన్ గారు!"
+    # Not decided until the sentence is known to be short or long.
+    assert main.GeminiLLM._first_clause_cut("సరే నితిన్ గారు, రేపు పది గంటలకి") == 0
+
+
+def test_comma_cut_skips_numbers_and_agreement_openers():
+    price = ("Starter ప్లాన్ ధర 1,999 రూపాయలు, అందులో మూడువందల నిమిషాలు ఉంటాయి, "
+             "ఇంకా వాట్సాప్ కూడా ఉంటుంది.")
+    assert price[:main.GeminiLLM._first_clause_cut(price)] == "Starter ప్లాన్ ధర 1,999 రూపాయలు,"
+    # "సరేనండి, …" may turn negative later in the sentence; a comma clause
+    # would only be held, so the whole sentence goes as before.
+    agree = ("సరేనండి, డాక్టర్ గారు రేపు ఉదయం పది గంటలకి అందుబాటులో ఉంటారు కానీ ఆ టైమ్ "
+             "ఇప్పటికే బుక్ అయిపోయిందండి. వేరే టైమ్ చెప్పండి.")
+    cut = main.GeminiLLM._first_clause_cut(agree)
+    assert agree[:cut].endswith("అయిపోయిందండి.")
+
+
+def test_rest_of_reply_is_synthesised_while_the_clause_plays(monkeypatch):
+    # The remainder used to start synthesising only once the opening clause
+    # had finished playing: a TTS round trip of silence mid-reply.
+    ev = []
+
+    class _TTS:
+        async def synthesize(self, text, voice):
+            ev.append(("synth", time.monotonic()))
+            await asyncio.sleep(0.05)
+            b = io.BytesIO()
+            with wave.open(b, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+                w.writeframes(b"\x00\x00" * 80)
+            return b.getvalue()
+
+    async def send(ws, audio, fs_uuid, n):
+        ev.append(("send", time.monotonic()))
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    agent = type("A", (), {"tts": _TTS(), "voice": "priya", "profile": {}, "lang": "te-IN"})()
+
+    async def go():
+        clause_ends = time.monotonic() + 0.3
+        await main._speak_chunked(agent, None, "u", "మీది ఏ బిజినెస్ అండి?", 1,
+                                  {"until": 0}, sub_offset=1, not_before=clause_ends)
+        return clause_ends
+    clause_ends = asyncio.run(go())
+    synth_at = [t for k, t in ev if k == "synth"][0]
+    send_at = [t for k, t in ev if k == "send"][0]
+    assert synth_at < clause_ends - 0.2, "synthesis must not wait for the clause"
+    assert send_at >= clause_ends - 0.01, "broadcast must not cut the clause off"
