@@ -1005,6 +1005,27 @@ def test_persona_keeps_turns_short_and_free_of_sounds():
     assert "Greet only once" in p
 
 
+def test_prompt_stays_inside_its_prefill_budget():
+    # Every character of the system prompt is prefill before the first
+    # token, on every turn. 16 Oct: 8.4k persona + 4.6k Hey Nikki block cut
+    # to ~5.5k + ~2.3k with no rule lost. Growing past these needs a reason
+    # and a re-measure, not one more paragraph.
+    assert len(main.TELUGU_PHONE_PERSONA) < 6000
+    assert len(main.PROFILE_PROMPTS["heynikki"]) < 2600
+
+
+def test_history_window_is_bounded_and_opens_on_the_caller():
+    llm = main.GeminiLLM()
+    turns = [{"role": "user" if i % 2 else "assistant", "content": f"t{i}"}
+             for i in range(main.HISTORY_WINDOW + 4)] + [{"role": "user", "content": "last"}]
+    sent = llm._payload("sys", turns)["contents"]
+    assert len(sent) <= main.HISTORY_WINDOW
+    assert sent[0]["role"] == "user" and sent[-1]["parts"][0]["text"] == "last"
+    # A short call is sent whole, her opening line included.
+    short = [{"role": "assistant", "content": "opener"}, {"role": "user", "content": "hi"}]
+    assert len(llm._payload("sys", short)["contents"]) == 2
+
+
 # ── live: needs the network ───────────────────────────────────────────────
 @pytest.mark.live
 def test_dids_route_to_the_right_business():
