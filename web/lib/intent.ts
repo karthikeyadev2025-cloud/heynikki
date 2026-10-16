@@ -52,6 +52,8 @@ const INTENTS: Record<string, { label: string; tone: Tone }> = {
   // ── shared ────────────────────────────────────────────────────
   other:            { label: "Something else",     tone: "dim"   },
   unknown:          { label: "Not captured",       tone: "dim"   },
+  // A call we placed (campaign, follow-up): it has no "why they called".
+  campaign:         { label: "Campaign call",      tone: "teal"  },
   // Legacy rows carry `wa_otp_<code>` in calls.intent — an internal marker
   // for a WhatsApp verification call, not anything a caller asked for.
   wa_otp:           { label: "WhatsApp OTP",       tone: "cyan"  },

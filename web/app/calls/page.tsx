@@ -61,8 +61,20 @@ function formatTime(ts: string) {
   });
 }
 
-function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
+/** What the business knows about a number: the lead Nikki filed for it. */
+type Person = { id: string; name?: string; interest?: string; notes?: string };
+const last10 = (n: string | null | undefined) => String(n || "").replace(/\D/g, "").slice(-10);
+
+/** A campaign leg has no inbound reason, and "Unknown" read as a fault. */
+function reasonFor(intent: string | null | undefined, direction: string | null | undefined) {
+  if (direction === "outbound" && (!intent || intent === "unknown")) return "campaign";
+  return intent;
+}
+
+function CallDetail({ call, onClose, onRecordingDeleted, recordingDays, person }: {
   call: CallRecord; onClose: () => void; onRecordingDeleted: (id: string) => void;
+  /** The lead for this number, when there is one. */
+  person?: Person;
   /** plans.recording_days for this account; null while unknown. */
   recordingDays: number | null;
 }) {
@@ -79,14 +91,15 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
         <div style={{ padding: "16px 20px", borderBottom: "1px solid " + C.bord,
           display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ color: C.txt, fontSize: 15, fontWeight: 800 }}>{call.caller_number}</div>
+            <div style={{ color: C.txt, fontSize: 15, fontWeight: 800 }}>{person?.name || call.caller_number}</div>
             <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
-              {formatTime(call.created_at)} · {formatDur(call.duration_seconds)}
+              {person?.name ? <>{call.caller_number} · </> : null}
+              {call.direction === "outbound" ? "We called them" : "They called"} · {formatTime(call.created_at)} · {formatDur(call.duration_seconds)}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <StatusPill status={call.status} />
-            <IntentBadge intent={call.intent} />
+            <IntentBadge intent={reasonFor(call.intent, call.direction)} />
             {call.wa_sent && (
               <span style={{ color: C.cyn, fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}>WA <Check size={11} /></span>
             )}
@@ -96,6 +109,27 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+          {/* The answer to "what was this call?" in one line, and what to do
+              next, before the journey chips and the transcript. */}
+          {(person?.notes || person?.interest) && (
+            <div style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, background: C.glow + "0D",
+              border: "1px solid " + C.glow + "33" }}>
+              <div style={{ color: C.mid, fontSize: 12, fontWeight: 700, marginBottom: 3 }}>What happened</div>
+              <div style={{ color: C.txt, fontSize: 13.5, lineHeight: 1.5 }}>{person.notes || person.interest}</div>
+            </div>
+          )}
+          {call.caller_number && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              <a href={`tel:${call.caller_number}`} style={{ background: C.grn, color: "#fff", borderRadius: 8,
+                padding: "8px 14px", fontSize: 13, fontWeight: 700, textDecoration: "none",
+                display: "inline-flex", alignItems: "center", gap: 6 }}><Phone size={13} /> Call back</a>
+              <a href={person ? `/leads?lead=${person.id}` : `/leads?phone=${last10(call.caller_number)}`}
+                style={{ background: C.surf, color: C.txt, border: "1px solid " + C.bord, borderRadius: 8,
+                padding: "8px 14px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
+                {person ? "Open lead" : "Find in leads"}
+              </a>
+            </div>
+          )}
           {/* Call Journey Audit Trail */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ color: C.gold, fontSize: 12, fontWeight: 800,
@@ -104,8 +138,8 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
             </div>
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
               {[
-                "Call Received",
-                `Why they called: ${intentLabel(call.intent)}`,
+                call.direction === "outbound" ? "Call placed" : "Call Received",
+                call.direction === "outbound" ? "We called them" : `Why they called: ${intentLabel(call.intent)}`,
                 call.status === "transferred" ? "Answered by team" : null,
                 call.appointment_created ? "Appointment Booked" : null,
                 call.wa_sent ? "WhatsApp Sent" : null,
@@ -184,7 +218,10 @@ function CallDetail({ call, onClose, onRecordingDeleted, recordingDays }: {
                   border: "1px solid " + (turn.role === "assistant" ? C.bord : C.glow + "44"),
                   borderRadius: 8, padding: "8px 12px", maxWidth: "75%",
                 }}>
-                  <div style={{ color: C.txt, fontSize: 12, lineHeight: 1.5 }}>{turn.content}</div>
+                  <div style={{ color: C.dim, fontSize: 11, fontWeight: 700, marginBottom: 2 }}>
+                    {turn.role === "assistant" ? "Nikki" : "Caller"}
+                  </div>
+                  <div style={{ color: C.txt, fontSize: 13.5, lineHeight: 1.55 }}>{turn.content}</div>
                   {turn.ts && (
                     <div style={{ color: C.dim, fontSize: 12, marginTop: 2 }}>
                       {new Date(turn.ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -341,6 +378,8 @@ const RANGES: Array<{ id: string; label: string; from: () => string; to: () => s
 
 export default function CallsPage() {
   const [rows, setRows]         = useState<CallRow[]>([]);
+  // Leads by number, so a row says who called and what they wanted.
+  const [people, setPeople]     = useState<Record<string, Person>>({});
   const [selected, setSelected] = useState<CallRecord | null>(null);
   const [opening, setOpening]   = useState<string | null>(null);
   const [loading, setLoading]   = useState(true);
@@ -506,6 +545,19 @@ export default function CallsPage() {
   }, []);
 
   useEffect(() => { if (tenantId) load(tenantId); }, [tenantId, load]);
+  useEffect(() => {
+    if (!tenantId) return;
+    createClient().from("leads").select("id, phone, name, interest, notes").eq("tenant_id", tenantId)
+      .order("last_contacted_at", { ascending: false, nullsFirst: false }).limit(1000)
+      .then(({ data }) => {
+        const m: Record<string, Person> = {};
+        for (const l of (data || []) as any[]) {
+          const k = last10(l.phone);
+          if (k && !m[k]) m[k] = { id: l.id, name: l.name || undefined, interest: l.interest || undefined, notes: l.notes || undefined };
+        }
+        setPeople(m);
+      });
+  }, [tenantId]);
 
   const activeRange = RANGES.find(r => r.from() === from && r.to() === to)?.id
     || (from || to ? "custom" : "all");
@@ -529,6 +581,7 @@ export default function CallsPage() {
     <Shell title="Call History">
       {selected && (
         <CallDetail call={selected} onClose={() => setSelected(null)}
+          person={people[last10(selected.caller_number)]}
           recordingDays={recordingDays}
           onRecordingDeleted={(id) => {
             // Mirror what the API did to the row: key and URL gone,
@@ -631,7 +684,7 @@ export default function CallsPage() {
               </div>
             ) : (
               <>
-                <div>No calls yet. Set up your voice profile to start receiving calls.</div>
+                <div>No calls yet. Finish your setup and send your calls to Nikki to start.</div>
                 <a href="/setup" style={{ color: C.glow, fontSize: 13, display: "block", marginTop: 8 }}>
                   Set up now →
                 </a>
@@ -660,7 +713,18 @@ export default function CallsPage() {
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
                   <td style={{ padding: "12px 14px", color: C.txt, fontSize: 13.5, fontWeight: 500,
                     fontFamily: "var(--font-mono), monospace" }}>
-                    {call.caller_number || "Unknown"}
+                    {people[last10(call.caller_number)]?.name ? (
+                      <>
+                        <div style={{ fontFamily: "var(--font-body), sans-serif", fontWeight: 650 }}>{people[last10(call.caller_number)]!.name}</div>
+                        <div style={{ color: C.dim, fontSize: 12 }}>{call.caller_number}</div>
+                      </>
+                    ) : (call.caller_number || "Unknown")}
+                    {!call.snippet && people[last10(call.caller_number)]?.interest && (
+                      <div style={{ color: C.mid, fontSize: 12, fontWeight: 400, marginTop: 3, fontFamily: "var(--font-body), sans-serif",
+                        maxWidth: 320, whiteSpace: "normal", lineHeight: 1.45 }}>
+                        {people[last10(call.caller_number)]!.interest}
+                      </div>
+                    )}
                     {/* Why this call came back from a search, without opening it. */}
                     {call.snippet && (
                       <div style={{ color: C.mid, fontSize: 12, fontWeight: 400, marginTop: 3, fontFamily: "var(--font-body), sans-serif",
@@ -672,7 +736,7 @@ export default function CallsPage() {
                   <td style={{ padding: "12px 14px" }}>
                     <span style={{ color: call.direction === "inbound" ? C.grn : C.gold,
                       fontSize: 12, fontWeight: 600 }}>
-                      {call.direction === "inbound" ? "↙ Inbound" : "↗ Outbound"}
+                      {call.direction === "inbound" ? "↙ They called" : "↗ We called"}
                     </span>
                   </td>
                   <td style={{ padding: "12px 14px" }}>
@@ -682,7 +746,7 @@ export default function CallsPage() {
                     {formatDur(call.duration_seconds)}
                   </td>
                   <td style={{ padding: "12px 14px" }}>
-                    <IntentBadge intent={call.intent} />
+                    <IntentBadge intent={reasonFor(call.intent, call.direction)} />
                   </td>
                   <td style={{ padding: "12px 14px", fontSize: 13,
                     color: call.wa_sent ? C.grn : C.dim }}>
