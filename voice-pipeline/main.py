@@ -10063,8 +10063,16 @@ async def _fire_automation_webhook(event: str, payload: dict, cfg: dict):
     url = f"{base.rstrip('/')}/{event}"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(url, json=payload)
-        log.info(f"[FS] Automation webhook fired → {engine}: {event}")
+            r = await client.post(url, json=payload)
+        # The status was never read, so "fired" was logged for a 404 too —
+        # order-created has no workflow and every order said it had been
+        # sent on. 404 is "nothing listens for this", not an outage.
+        if r.status_code == 404:
+            log.info(f"[FS] Automation webhook {event}: no {engine} workflow listens for it")
+        elif r.status_code >= 300:
+            log.warning(f"[FS] Automation webhook {event} → {engine} answered {r.status_code}: {r.text[:120]}")
+        else:
+            log.info(f"[FS] Automation webhook fired → {engine}: {event}")
     except Exception as e:
         log.warning(f"[FS] Automation webhook failed ({event}): {e}")
 

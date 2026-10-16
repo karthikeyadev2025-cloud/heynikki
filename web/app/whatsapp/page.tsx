@@ -60,6 +60,17 @@ function SectionTitle({ icon, children, right }: { icon: React.ReactNode; childr
 // Every value the API writes to wa_dispatch_log.status: "sent" at send time
 // (Meta accepted it), "failed" when Meta refused, then the delivery webhook
 // moves it to "delivered" / "read" / "failed".
+/** Meta's failure, as something an owner can act on. */
+function waFailWords(reason: string): string {
+  const r = String(reason || "");
+  if (/131047|24 hours|re-engagement/i.test(r)) return "They haven't messaged in 24 hours — send a ready-made message instead.";
+  if (/131026|not.*whatsapp|undeliverable/i.test(r)) return "This number isn't on WhatsApp.";
+  if (/not a mobile|not a WhatsApp number/i.test(r)) return "Not a mobile number — WhatsApp can't reach it.";
+  if (/132000|parameter/i.test(r)) return "The message didn't match its approved template.";
+  if (/131049|healthy ecosystem|marketing/i.test(r)) return "WhatsApp held it back — too many marketing messages to this person.";
+  return r.replace(/^Meta template [a-z_]+: /i, "");
+}
+
 const DISPATCH_STATUS: Record<string, { label: string; color: string }> = {
   sent:      { label: "sent",      color: C.gold },
   delivered: { label: "delivered", color: C.grn },
@@ -212,7 +223,9 @@ export default function WhatsAppPage() {
           .then(async r => { const j = await r.json().catch(() => ({})); return r.ok ? j : { error: j.error }; })
           .catch(e => ({ error: e.message })),
         sb.from("wa_dispatch_log")
-          .select("id, message_type, to_number, message_body, status, sent_at, call_id, appointment_id")
+          // "*" rather than a column list: error_reason (078) is shown when
+          // it exists, and naming it before 078 would fail the whole list.
+          .select("*")
           .eq("tenant_id", tu.tenant_id)
           .order("sent_at", { ascending: false }).limit(50),
       ]);
@@ -537,6 +550,11 @@ export default function WhatsAppPage() {
                         </td>
                         <td style={{ padding: "11px 14px" }}>
                           <Pill label={st.label} color={st.color} />
+                          {d.status === "failed" && d.error_reason && (
+                            <div style={{ color: C.red, fontSize: 12, marginTop: 4, maxWidth: 220, whiteSpace: "normal", lineHeight: 1.4 }}>
+                              {waFailWords(d.error_reason)}
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: "11px 14px", textAlign: "right" }}>
                           {tpl && (

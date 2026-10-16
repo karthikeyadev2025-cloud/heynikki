@@ -8,6 +8,7 @@
 // gracefully (dev / CI). Errors are captured automatically by the
 // expressErrorHandler at the BOTTOM of the middleware stack.
 import * as Sentry from "@sentry/node";
+import { waMsisdn } from "./wa-number";
 import { makePush } from "./push.js";
 import { requireOwner } from "./roles";
 
@@ -678,7 +679,9 @@ async function sendViaMeta(to: string, message: string, senderId?: string): Prom
   if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
 
   // Meta wants the number in E.164 WITHOUT a leading +.
-  const msisdn = to.replace(/[^\d]/g, "");
+  const num = waMsisdn(to);
+  if (num.ok === false) return { ok: false, error: (num as { error: string }).error };
+  const msisdn = num.msisdn;
 
   const resp = await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`, {
     method: "POST",
@@ -936,7 +939,9 @@ async function sendTemplateViaMeta(
   const version = process.env.META_WA_API_VERSION || "v21.0";
   if (!token || !phoneId) return { ok: false, error: "Meta Cloud API not configured" };
 
-  const msisdn = to.replace(/[^\d]/g, "");
+  const num = waMsisdn(to);
+  if (num.ok === false) return { ok: false, error: (num as { error: string }).error };
+  const msisdn = num.msisdn;
   const components = params.length
     ? [{ type: "body", parameters: params.map(t => ({ type: "text", text: String(t || "").slice(0, 60) })) }]
     : [];
@@ -1024,7 +1029,7 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
   else if (tpl) console.log(`[WhatsApp] template ${tpl.name} -> ${to} (as ${sender.tenant ? "tenant" : "platform"} number)`);
 
   try {
-    await sb.from("wa_dispatch_log").insert({
+    const row: Record<string, unknown> = {
       tenant_id:        tenantId,
       voice_profile_id: voiceProfileId,
       call_id:          callId || null,
@@ -1038,7 +1043,15 @@ async function sendWhatsApp(to: string, message: string, tenantId: string,
       // The id is what lets the delivery webhook below correct that.
       status:           result.ok ? "sent" : "failed",
       provider_msg_id:  result.id || null,
-    });
+    };
+    // Why, so the WhatsApp page can say it (078). Before 078 the column is
+    // missing and the row is written without it rather than lost.
+    if (!result.ok && result.error) row.error_reason = String(result.error).slice(0, 300);
+    const { error: logErr } = await sb.from("wa_dispatch_log").insert(row);
+    if (logErr && "error_reason" in row && /error_reason/.test(logErr.message)) {
+      delete row.error_reason;
+      await sb.from("wa_dispatch_log").insert(row);
+    } else if (logErr) console.error("[WhatsApp log error]", logErr.message);
   } catch (err: any) {
     // A logging failure must never swallow a successful send.
     console.error("[WhatsApp log error]", err.message);
@@ -7152,10 +7165,24 @@ app.post("/webhooks/whatsapp", async (req, res) => {
           // to answer. Terminal states only — 'sent' here would overwrite a
           // later 'delivered' depending on webhook ordering.
           if (["delivered", "read", "failed"].includes(st.status) && st.id) {
-            const { data: logged, error: stErr } = await sb.from("wa_dispatch_log")
-              .update({ status: st.status })
-              .eq("provider_msg_id", st.id)
-              .select("call_id");
+            // Receipts can arrive out of order; "delivered" landing after
+            // "read" must not walk the row backwards.
+            const behind = st.status === "delivered" ? ["read", "failed"] : st.status === "read" ? ["failed"] : [];
+            // Why it failed, from Meta (131047 outside the 24-hour window,
+            // 131026 not on WhatsApp…). It was dropped, so a failed row could
+            // never say what to fix. error_reason is 078; before it the
+            // status alone is written.
+            const reason = st.status === "failed"
+              ? String(st.errors?.[0]?.title || st.errors?.[0]?.message || st.errors?.[0]?.code || "").slice(0, 300) || null
+              : null;
+            if (reason) console.error(`[WhatsApp] ${st.id} failed: ${reason} (${st.errors?.[0]?.code || "?"})`);
+            const upd = (fields: Record<string, unknown>) => {
+              let q = sb.from("wa_dispatch_log").update(fields).eq("provider_msg_id", st.id);
+              if (behind.length) q = q.not("status", "in", `(${behind.join(",")})`);
+              return q.select("call_id");
+            };
+            let { data: logged, error: stErr } = await upd(reason ? { status: st.status, error_reason: reason } : { status: st.status });
+            if (stErr && reason && /error_reason/.test(stErr.message)) ({ data: logged, error: stErr } = await upd({ status: st.status }));
             if (stErr) console.error("[WhatsApp] status reconcile failed:", stErr.message);
             // n8n sends the appointment confirmation and the brochure itself,
             // so only its wa_dispatch_log row knows the call — calls.wa_sent
