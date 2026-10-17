@@ -2601,7 +2601,7 @@ class GeminiLLM:
         for turn in recent:
             parts_history.append({
                 "role": "user" if turn["role"] == "user" else "model",
-                "parts": [{"text": turn["content"]}]
+                "parts": [{"text": _turn_text(turn)}]
             })
 
         # Backstop for the shape rule above: a trailing model turn is a 400,
@@ -4343,7 +4343,11 @@ class NikkiAgent:
             if _stripped:
                 log.info("stripped an agreement opener from a negative answer")
 
-            response, _dropped_q = _drop_repeated_question(response, _prev_bot)
+            # A question the caller cut off before hearing is not a repeat.
+            _was_cut = next((bool(h.get("unheard")) for h in reversed(self.history)
+                             if h.get("role") == "assistant"), False)
+            response, _dropped_q = _drop_repeated_question(
+                response, "" if _was_cut else _prev_bot)
             if _dropped_q:
                 log.info("dropped a closing question that repeated the last turn")
 
@@ -7150,13 +7154,15 @@ _RESUME_WINDOW = 8.0
 _RESUME_HEARD_FRACTION = 0.85
 
 
-def _now_playing(speaking: dict, audio: bytes, rest: str) -> None:
+def _now_playing(speaking: dict, audio: bytes, rest: str, text: str = "") -> None:
     """Record what has just been sent to the caller, so a cut can be undone.
 
-    rest is what is still to follow it, already normalised for TTS.
+    rest is what is still to follow it, already normalised for TTS; text is
+    the words of this clip itself, when known.
     """
     speaking["now"] = {"audio": audio, "start": time.monotonic(),
-                       "dur": _wav_duration_secs(audio), "rest": rest}
+                       "dur": _wav_duration_secs(audio), "rest": rest,
+                       "text": text}
 
 
 def _cut_point(speaking: dict, at: float) -> Optional[dict]:
@@ -7176,7 +7182,123 @@ def _cut_point(speaking: dict, at: float) -> Optional[dict]:
     rest = (now.get("rest") or "").strip()
     if not audio and not rest:
         return None
-    return {"audio": audio, "rest": rest, "at": at}
+    # A sentence cut short was not heard any more than the ones after it.
+    unheard = " ".join(p for p in (
+        (now.get("text") or "").strip() if audio else "", rest) if p)
+    return {"audio": audio, "rest": rest, "at": at, "unheard": unheard}
+
+
+# ── What the caller did not hear ────────────────────────────────────────
+# The whole reply goes into history before a word of it is played, so after
+# a real interruption the model believed the caller had heard all of it: it
+# referred back to a time the caller never heard, and the question the
+# caller cut off was dropped as a "repeat" when she asked it again. Vapi and
+# PolyAI both tell the model where it was cut; so does this. The note rides
+# on the history entry (not its content, which the call record and every
+# string check read) and is only rendered into the model's request.
+def _note_cut(agent, cut: Optional[dict]) -> None:
+    """Mark the reply the caller cut into with the part they never heard."""
+    unheard = (cut or {}).get("unheard")
+    hist = getattr(agent, "history", None)
+    if not unheard or not hist or hist[-1].get("role") != "assistant":
+        return
+    # Only if the words really are that reply's. A check-in or a resumed
+    # line that never entered history must not be pinned on the turn before.
+    said = normalize_for_tts(hist[-1]["content"],
+                             (getattr(agent, "profile", None) or {}).get("pronunciation_map"),
+                             getattr(agent, "lang", LANG_DEFAULT))
+    if " ".join(unheard.split()) not in " ".join(said.split()):
+        return
+    hist[-1]["unheard"] = unheard
+    cut["noted"] = hist[-1]
+
+
+def _unnote_cut(cut: Optional[dict]) -> None:
+    """The cut was nothing and she is saying the rest after all."""
+    turn = (cut or {}).pop("noted", None)
+    if turn is not None:
+        turn.pop("unheard", None)
+
+
+def _turn_text(turn: dict) -> str:
+    """A history entry as the model is shown it."""
+    if turn.get("unheard"):
+        return (f'{turn["content"]}\n[The caller cut in here and did not hear: '
+                f'"{turn["unheard"]}"]')
+    return turn["content"]
+
+
+# ── A caller who has gone quiet ─────────────────────────────────────────
+# FreeSWITCH sends frames for as long as the call is up, so the 120s
+# dead-stream rule never fires on a caller who simply says nothing: they sat
+# in silence until they hung up. Several paths here ("say nothing; the
+# silent-caller timer brings her back") counted on a timer that was never
+# built. Now: a check-in after ~12s of quiet, a callback offer ~12s after
+# that, and a polite close ~12s later — Vapi's "wait 10-15s, check in once,
+# then assess", and Retell's 10s reminder. A caller who asked her to hold
+# gets 30s before the first check-in. Each gap is measured from the end of
+# whatever was last said, by either side.
+_QUIET_GAPS      = (12.0, 12.0, 12.0)
+_QUIET_GAPS_HOLD = (30.0, 15.0, 15.0)
+
+
+def _quiet_line_due(quiet_for: float, said: int, holding: bool = False) -> int:
+    """Which quiet-caller line (1 check-in, 2 callback offer, 3 close) is due
+    after `quiet_for` seconds with `said` of them already spoken; 0 for none."""
+    gaps = _QUIET_GAPS_HOLD if holding else _QUIET_GAPS
+    if said >= len(gaps) or quiet_for < gaps[said]:
+        return 0
+    return said + 1
+
+
+def _quiet_line(lang: str, step: int) -> str:
+    if step == 1:
+        return _say(lang, "హలో, వినపడుతుందా అండి? చెప్పండి.",
+                    hi="हैलो, आवाज़ आ रही है? बताइए।",
+                    bn="হ্যালো, শুনতে পাচ্ছেন? বলুন।",
+                    en="Hello, can you hear me? Go ahead.")
+    if step == 2:
+        return _say(lang, "లైన్ సరిగ్గా లేనట్టుంది అండి. మీ నంబర్ మా దగ్గర ఉంది, "
+                          "కావాలంటే మేమే మళ్ళీ కాల్ చేస్తాం.",
+                    hi="लगता है लाइन ठीक नहीं है। आपका नंबर हमारे पास है, "
+                       "चाहें तो हम वापस कॉल कर लेंगे।",
+                    bn="মনে হচ্ছে লাইনটা ঠিক নেই। আপনার নম্বর আমাদের কাছে আছে, "
+                       "চাইলে আমরা আবার কল করব।",
+                    en="The line doesn't seem clear. We have your number, "
+                       "so we can call you back.")
+    return _say(lang, "సరే అండి, ఇప్పుడు కట్ చేస్తున్నాను. మళ్ళీ ఎప్పుడైనా కాల్ చేయండి.",
+                hi="ठीक है, अभी कॉल रखती हूँ। कभी भी दोबारा कॉल कीजिए।",
+                bn="ঠিক আছে, এখন রাখছি। যেকোনো সময় আবার কল করবেন।",
+                en="Alright, I'll end the call now. Call us back any time.")
+
+
+async def _speak_quiet_line(agent, ws, fs_uuid: str, step: int, seq: int,
+                            speaking: dict) -> None:
+    """Say the due quiet-caller line; after the last one, hang up — unless
+    the caller spoke while she was saying it."""
+    line = _quiet_line(getattr(agent, "lang", LANG_DEFAULT), step)
+    log.info(f"[FS] {fs_uuid}: caller quiet — line {step} of 3")
+    # Into the record and the model's history, like any line she says: the
+    # owner sees why the call ended, and a caller who answers the check-in
+    # is answered by a model that knows what she just asked.
+    agent.history.append({"role": "assistant", "content": line})
+    agent.transcript.append({"role": "assistant", "content": line,
+                             "ts": datetime.now(timezone.utc).isoformat()})
+    turns_before = len(agent.transcript)
+    try:
+        await _speak_chunked(agent, ws, fs_uuid, line, seq, speaking)
+        if step < 3:
+            return
+        await asyncio.sleep(max(0.0, speaking.get("until", 0.0) - time.monotonic()) + 1.2)
+        if len(agent.transcript) > turns_before:
+            log.info(f"[FS] {fs_uuid}: caller spoke after the closing line — staying on")
+            return
+        log.info(f"[FS] {fs_uuid}: caller silent throughout — hanging up")
+        await _esl_api(f"uuid_kill {fs_uuid}")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[FS] {fs_uuid}: quiet-caller line failed: {e}")
 
 
 async def _resume_cut(agent, ws, fs_uuid: str, cut: dict, seq: int,
@@ -7187,6 +7309,7 @@ async def _resume_cut(agent, ws, fs_uuid: str, cut: dict, seq: int,
     actually heard — her stopping mid-word, then nothing.
     """
     log.info(f"[FS] {fs_uuid}: barge-in was {why} — picking up where she left off")
+    _unnote_cut(cut)
     not_before = 0.0
     if cut.get("audio"):
         _now_playing(speaking, cut["audio"], cut.get("rest") or "")
@@ -8010,7 +8133,7 @@ async def _speak_chunked(agent, ws, fs_uuid: str, text: str,
             return
         dur = _wav_duration_secs(audio)
         speaking["until"] = time.monotonic() + dur
-        _now_playing(speaking, audio, " ".join(chunks[i + 1:]))
+        _now_playing(speaking, audio, " ".join(chunks[i + 1:]), chunks[i])
         await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10 + sub)
         sub += 1
         if nxt is None:
@@ -9422,11 +9545,10 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             # It is cancelled below, immediately before the audio plays.
 
             async def _speak_prefix():
-                audio = await agent.tts.synthesize(
-                    normalize_for_tts(prefix,
-                        (agent.profile or {}).get("pronunciation_map"),
-                        getattr(agent, "lang", LANG_DEFAULT)),
-                    agent.voice)
+                _said = normalize_for_tts(prefix,
+                    (agent.profile or {}).get("pronunciation_map"),
+                    getattr(agent, "lang", LANG_DEFAULT))
+                audio = await agent.tts.synthesize(_said, agent.voice)
                 if audio:
                     # Now the cover comes off: real speech is a moment away,
                     # and uuid_broadcast interrupts whatever is playing.
@@ -9436,7 +9558,7 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
                     speaking["until"] = time.monotonic() + dur
                     clause["until"] = speaking["until"]
                     # The rest is not known yet; _speak_chunked fills it in.
-                    _now_playing(speaking, audio, "")
+                    _now_playing(speaking, audio, "", _said)
                     await _send_audio_to_freeswitch(ws, audio, fs_uuid, seq * 10)
             clause["task"] = asyncio.create_task(_speak_prefix())
             # Published so barge-in can cancel it. It is its own task, not a
@@ -9472,7 +9594,9 @@ async def _run_turn(agent, ws, fs_uuid: str, utterance_pcm: bytes,
             # Caller asked for a moment. Say nothing; the silent-caller
             # re-engagement timer is what brings her back if they go quiet.
             log.info(f"[FS] {fs_uuid}: caller asked to hold — no reply spoken")
+            agent.holding = True
             return
+        agent.holding = False
         # The log showed STT and an LLM reply landing AFTER "Call ended" —
         # work billed against a channel nobody is on any more.
         if getattr(ws, "client_state", None) is not None and \
@@ -10679,6 +10803,8 @@ async def freeswitch_ws(
     held_text = ""                # completeness gate: fragments awaiting the rest
     held_pcm  = bytearray()
     held_at   = 0.0
+    last_heard = 0.0              # last frame taken as the caller's voice
+    quiet = {"said": 0, "users": 0}   # quiet-caller lines said since they last spoke
     vad_threshold  = float(_SILENCE_THRESHOLD)
     noise_win: "deque" = deque(maxlen=250)   # ~5s of frame RMS while she is silent
     # Per-call streaming STT. Transcribes WHILE the caller talks, so the
@@ -10940,6 +11066,24 @@ async def freeswitch_ws(
                         _run_turn(agent, ws, fs_uuid, q_pcm,
                                   turn_seq, speaking, transcript=q_text))
 
+                # ── A caller who has gone quiet: see _QUIET_GAPS ─────────
+                if (speech_count == 0 and not held_text
+                        and (turn_task is None or turn_task.done())
+                        and not getattr(agent, "handed_to_human", False)):
+                    _quiet_for = time.monotonic() - max(last_heard, speaking["until"], listen_from)
+                    if _quiet_line_due(_quiet_for, quiet["said"], getattr(agent, "holding", False)):
+                        # Counted only when a line is due, not every frame.
+                        _users = sum(1 for t in agent.transcript if t.get("role") == "user")
+                        if _users != quiet["users"]:
+                            quiet["users"], quiet["said"] = _users, 0
+                        _step = _quiet_line_due(_quiet_for, quiet["said"],
+                                                getattr(agent, "holding", False))
+                        if _step:
+                            quiet["said"] = _step
+                            turn_seq += 1
+                            turn_task = asyncio.create_task(_speak_quiet_line(
+                                agent, ws, fs_uuid, _step, turn_seq, speaking))
+
                 # VAD: compute RMS energy of this frame.
                 #
                 # The threshold ADAPTS to this call's noise floor rather than
@@ -10994,6 +11138,7 @@ async def freeswitch_ws(
                     is_speech = False
 
                 if is_speech:
+                    last_heard = time.monotonic()
                     speech_buf.extend(frame)
                     speech_count  += 1
                     silence_count  = 0
@@ -11083,6 +11228,9 @@ async def freeswitch_ws(
                     # What she had left to say, kept so that a cut-off
                     # which turns out to be nothing can be undone.
                     speaking["cut"] = _cut_point(speaking, _barge_now)
+                    # Before the caller's words are speculated on: the
+                    # request that stream sends must already carry it.
+                    _note_cut(agent, speaking["cut"])
                     speaking["until"] = 0.0
                     asyncio.create_task(_esl_api(f"uuid_break {fs_uuid} all"))
                     if turn_task and not turn_task.done():

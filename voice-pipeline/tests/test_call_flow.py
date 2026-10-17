@@ -1928,6 +1928,120 @@ def test_a_stale_cut_is_not_resumed(monkeypatch):
     assert main._take_cut(speaking) is None and "cut" not in speaking
 
 
+# ── what the caller did not hear ─────────────────────────────────────────
+_CUT_REPLY = "మీ పేరు చెప్పండి. మీకు ఏ రోజు కావాలి?"
+
+
+def _cut_reply(at_fraction):
+    agent = _resume_agent(None)
+    agent.history = [{"role": "user", "content": "అపాయింట్మెంట్ కావాలి"},
+                     {"role": "assistant", "content": _CUT_REPLY}]
+    speaking = {"until": 0.0}
+    main._now_playing(speaking, _setup_wav(2.0), "మీకు ఏ రోజు కావాలి?",
+                      "మీ పేరు చెప్పండి.")
+    cut = main._cut_point(speaking, speaking["now"]["start"] + 2.0 * at_fraction)
+    main._note_cut(agent, cut)
+    return agent, cut
+
+
+def test_a_cut_tells_the_model_what_was_not_heard():
+    agent, cut = _cut_reply(0.3)
+    turn = agent.history[-1]
+    assert turn["content"] == _CUT_REPLY, "the reply itself is untouched"
+    assert turn["unheard"] == "మీ పేరు చెప్పండి. మీకు ఏ రోజు కావాలి?"
+    shown = main._turn_text(turn)
+    assert shown.startswith(_CUT_REPLY) and "did not hear" in shown
+
+
+def test_a_sentence_heard_to_the_end_is_not_listed_as_unheard():
+    agent, _ = _cut_reply(0.95)
+    assert agent.history[-1]["unheard"] == "మీకు ఏ రోజు కావాలి?"
+
+
+def test_a_resumed_cut_takes_the_note_back(monkeypatch):
+    async def send(*_a, **_k):
+        pass
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    agent, cut = _cut_reply(0.3)
+    asyncio.run(main._resume_cut(agent, None, "u", cut, 3, {"until": 0.0}, "noise"))
+    assert "unheard" not in agent.history[-1]
+
+
+def test_words_that_were_not_that_reply_are_not_pinned_on_it():
+    agent = _resume_agent(None)
+    agent.history = [{"role": "assistant", "content": "సరేనండి."}]
+    speaking = {"until": 0.0}
+    main._now_playing(speaking, _setup_wav(2.0), "", "వినపడుతుందా అండి?")
+    main._note_cut(agent, main._cut_point(speaking, speaking["now"]["start"] + 0.2))
+    assert "unheard" not in agent.history[-1]
+
+
+def test_a_quiet_caller_is_checked_on_then_offered_a_callback_then_closed():
+    due = main._quiet_line_due
+    assert due(5.0, 0) == 0
+    assert due(12.5, 0) == 1
+    assert due(5.0, 1) == 0 and due(12.5, 1) == 2
+    assert due(12.5, 2) == 3
+    assert due(60.0, 3) == 0, "nothing after the close"
+    # Asked to hold: the first check-in waits longer.
+    assert due(20.0, 0, holding=True) == 0 and due(31.0, 0, holding=True) == 1
+
+
+def _quiet_agent():
+    a = _resume_agent(None)
+    a.history, a.lang = [], "te-IN"
+    return a
+
+
+def test_the_closing_line_hangs_up(monkeypatch):
+    killed = []
+
+    async def send(*_a, **_k):
+        pass
+
+    async def esl(cmd, timeout=5.0):
+        killed.append(cmd)
+        return ""
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    monkeypatch.setattr(main, "_esl_api", esl)
+    monkeypatch.setattr(main.asyncio, "sleep", _no_sleep)
+    agent = _quiet_agent()
+    asyncio.run(main._speak_quiet_line(agent, None, "u", 3, 5, {"until": 0.0}))
+    assert killed == ["uuid_kill u"]
+    assert agent.transcript[-1]["role"] == "assistant", "the record says why it ended"
+
+
+def test_a_check_in_does_not_hang_up(monkeypatch):
+    killed = []
+
+    async def send(*_a, **_k):
+        pass
+
+    async def esl(cmd, timeout=5.0):
+        killed.append(cmd)
+        return ""
+    monkeypatch.setattr(main, "_send_audio_to_freeswitch", send)
+    monkeypatch.setattr(main, "_esl_api", esl)
+    agent = _quiet_agent()
+    asyncio.run(main._speak_quiet_line(agent, None, "u", 1, 5, {"until": 0.0}))
+    assert killed == [] and agent.tts.said, "the check-in is spoken, the call stays up"
+
+
+_real_sleep = asyncio.sleep
+
+
+async def _no_sleep(_s, *a, **k):
+    await _real_sleep(0)
+
+
+def test_the_model_request_carries_the_note():
+    agent, _ = _cut_reply(0.3)
+    hist = agent.history + [{"role": "user", "content": "ఆగండి"}]
+    payload = main.GeminiLLM()._payload("sys", hist)
+    texts = [c["parts"][0]["text"] for c in payload["contents"]]
+    assert any("did not hear" in t for t in texts)
+
+
 def test_tts_pace_is_part_of_the_cache_key(monkeypatch):
     # A clip cached at one speed must not be replayed after NIKKI_TTS_PACE
     # changes; at the default the key is what it always was, so the warm
