@@ -1,20 +1,24 @@
-# HeyNikki print: flyer + auto poster
+# HeyNikki print: brochure, flyer, auto poster
 
-Ready-to-print files are in `out/`.
+Ready-to-print files are in `out/`. All text is written the way business owners in
+Guntur talk: Telugu sentences, with everyday English words (call, order, booking,
+WhatsApp, customer) left in English letters.
 
 | File | What it is | Size to order |
 |---|---|---|
-| `heynikki-flyer-A5-2sided.pdf` | Flyer. **Page 1 = Telugu (front), page 2 = English (back)** | A5 (148 × 210 mm), double-sided |
-| `heynikki-auto-poster-24x18.pdf` | Auto-rickshaw back poster. Page 1 Telugu, page 2 English: pick one per auto | 24 × 18 in (610 × 457 mm), landscape |
-| `*.png` | One image per side (flyer at 300 dpi, poster at 150 dpi) for WhatsApp, or for a printer who asks for an image | |
+| `heynikki-brochure-A4-2sided.pdf` | **Main brochure, every feature.** Page 1 (front) = Nikki the AI: how a call works, 8 things she does, owner tools. Page 2 (back) = Telecaller Desk, AI + Human, who it's for, plans, free offer | A4, double-sided |
+| `heynikki-flyer-A5.pdf` | Quick handout about the missed call: why it costs money, and how Nikki picks up | A5, one side |
+| `heynikki-auto-poster-24x18.pdf` | Back of the auto | 24 × 18 in (610 × 457 mm), landscape |
+| `*.png` | One image per side (300 dpi; poster 150 dpi) for WhatsApp, or for a printer who wants an image | |
 
 ## Tell the printer
 
-**Flyer:** "A5, double-sided, flip on long edge, 3 mm bleed already in the PDF, trim to A5.
-170 GSM art paper (gloss or matt)." The PDF page is 154 × 216 mm because of the bleed;
-that is correct.
+**Brochure:** "A4, double-sided, flip on long edge, 3 mm bleed already in the PDF, trim to A4.
+170 GSM art paper (gloss or matt)." The PDF page is 216 × 303 mm because of the bleed; that is correct.
 
-**Auto poster:** "24 × 18 inch, 3 mm bleed in the PDF, print on vinyl sticker (or star flex),
+**Flyer:** "A5, single side, 3 mm bleed in the PDF, 130 GSM art paper."
+
+**Auto poster:** "24 × 18 inch, 3 mm bleed in the PDF, vinyl sticker (or star flex),
 outdoor inks, matt lamination." Use vinyl for the back of the auto, since it survives rain and sun.
 
 Before a big print run, print one copy and **scan the QR with a phone**. It should start
@@ -22,7 +26,7 @@ a call to +91 86335 02031.
 
 ## Changing the text
 
-All words, the phone number and the price are in `content.mjs`. Edit there, then rebuild:
+Flyer and poster words are in `content.mjs`, brochure words in `brochure-content.mjs`. Edit there, then rebuild:
 
 ```bash
 cd marketing/print
