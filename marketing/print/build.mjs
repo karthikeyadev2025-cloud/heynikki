@@ -31,16 +31,13 @@ const BLEED = 3; // mm
 // Line icons, drawn at 24x24 like the site's lucide set.
 const icon = {
   phone: `<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>`,
-  talk: `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9v2M11 7.5v5M14 8.5v3M17 9.5v1"/>`,
-  done: `<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2-5.4A8.4 8.4 0 1 1 21 11.5z"/><path d="m8.5 11.5 2.5 2.5 4.5-5"/>`,
+  missed: `<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/><path d="m16 2 6 6M22 2l-6 6"/>`,
+  store: `<path d="M3 9l1.5-5h15L21 9"/><path d="M4 9v11h16V9"/><path d="M3 9h18"/><path d="M9 20v-6h6v6"/>`,
+  rupee: `<path d="M6 3h12M6 8h12M6 13l8.5 8M6 13h3c6.7 0 6.7-10 0-10"/>`,
   clock: `<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>`,
-  lang: `<path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/>`,
-  sim: `<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>`,
-  list: `<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>`,
 };
 const svg = (name, cls = "ic") =>
   `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon[name]}</svg>`;
-const whyIcons = ["clock", "lang", "sim", "list"];
 
 const fonts = `<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -49,7 +46,7 @@ const fonts = `<link rel="preconnect" href="https://fonts.googleapis.com">
 const base = `
   :root {
     --navy: #0B1220; --navy2: #132036; --ink: #0F172A; --muted: #475569;
-    --green: #10B981; --teal: #14B8A6; --orange: #F97316; --yellow: #FACC15;
+    --green: #10B981; --red: #EF4444; --teal: #14B8A6; --orange: #F97316; --yellow: #FACC15;
     --paper: #FFFFFF; --mint: #ECFDF5; --line: #E2E8F0;
     --grad: linear-gradient(110deg, #10B981 0%, #14B8A6 55%, #F97316 100%);
   }
@@ -67,52 +64,54 @@ const base = `
 `;
 
 // ── A5 flyer: 148 x 210 mm trim ─────────────────────────────────
+// One story, top to bottom: the missed call you already know (the phone
+// notification), why it costs you, Nikki picking up instead, how to try her.
 const FW = 148 + BLEED * 2, FH = 210 + BLEED * 2;
 const flyerCss = `
   @page { size: ${FW}mm ${FH}mm; margin: 0; }
   .flyer { width: ${FW}mm; height: ${FH}mm; display: flex; flex-direction: column; background: var(--paper); }
-  .f-top { background: var(--navy); color: #fff; padding: ${BLEED + 6}mm ${BLEED + 8}mm 6mm; position: relative; }
-  .f-top::before { content: ""; position: absolute; right: -30mm; top: -30mm; width: 90mm; height: 90mm; border-radius: 50%;
-    background: radial-gradient(circle, rgba(20,184,166,.45), rgba(20,184,166,0) 65%); }
-  .f-top::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1.6mm; background: var(--grad); }
+  .f-top { background: var(--navy); color: #fff; padding: ${BLEED + 5}mm ${BLEED + 8}mm 5.5mm; position: relative; }
+  .f-top::before { content: ""; position: absolute; right: -34mm; top: -24mm; width: 100mm; height: 100mm; border-radius: 50%;
+    background: radial-gradient(circle, rgba(239,68,68,.30), rgba(239,68,68,0) 65%); }
   .f-bar { display: flex; align-items: center; justify-content: space-between; position: relative; }
   .f-logo { display: flex; align-items: center; gap: 2.6mm; }
-  .f-logo .logo { width: 11mm; height: 11mm; }
-  .f-logo .brand { font-size: 6.4mm; color: #fff; }
-  .f-tag { font-family: var(--head); font-weight: 600; font-size: 3.3mm; color: #A7F3D0; border: .35mm solid rgba(167,243,208,.5);
-    border-radius: 10mm; padding: .9mm 3mm; }
-  .f-head { position: relative; font-family: var(--head); font-weight: 800; color: #fff; margin-top: 4.5mm; line-height: 1.1; }
+  .f-logo .logo { width: 10mm; height: 10mm; }
+  .f-logo .brand { font-size: 5.8mm; color: #fff; }
+  .f-tag { font-family: var(--head); font-weight: 600; font-size: 3.1mm; color: #A7F3D0; border: .35mm solid rgba(167,243,208,.5);
+    border-radius: 10mm; padding: .8mm 3mm; }
+  .kicker { position: relative; margin-top: 4.5mm; font-family: var(--head); font-weight: 600; font-size: 4mm; color: #CBD5E1; }
+
+  /* The missed-call notification every shop owner has seen. */
+  .notif { position: relative; margin-top: 2.6mm; display: flex; align-items: center; gap: 3mm; width: 78mm;
+    background: #fff; border-radius: 3.4mm; padding: 2.6mm 3.4mm; box-shadow: 0 1.2mm 0 rgba(0,0,0,.35); }
+  .notif .ic { flex: none; width: 9mm; height: 9mm; padding: 2mm; border-radius: 50%; background: #FEE2E2; color: var(--red); }
+  .notif b { display: block; font-family: var(--head); font-weight: 800; font-size: 4.4mm; color: var(--red); line-height: 1.2; }
+  .notif small { display: block; font-size: 2.9mm; color: var(--muted); }
+
+  .f-head { position: relative; font-family: var(--head); font-weight: 800; color: #fff; margin-top: 4.5mm; line-height: 1.12; }
   .te .f-head { font-size: 10mm; }
-  .en .f-head { font-size: 8.6mm; letter-spacing: -0.02em; }
+  .en .f-head { font-size: 9.6mm; letter-spacing: -0.02em; }
   .f-head span { display: block; }
-  .f-head span:last-child { color: var(--yellow); }
-  .f-sub { position: relative; margin-top: 2.6mm; font-size: 3.6mm; line-height: 1.5; color: #CBD5E1; max-width: 120mm; }
-  .te .f-sub { font-size: 3.5mm; }
-  .f-pain { position: relative; display: inline-flex; align-items: center; gap: 2mm; margin-top: 3.4mm; background: var(--orange); color: #fff;
-    font-family: var(--head); font-weight: 700; font-size: 4mm; padding: 1.2mm 4mm; border-radius: 1.6mm; }
-  .f-pain .ic { width: 4.4mm; height: 4.4mm; }
+  .f-head span:first-child { display: inline-block; background: var(--red); padding: 1mm 3mm 0; border-radius: 2mm; margin-bottom: 1.4mm; }
 
-  .f-body { flex: 1; padding: 5mm ${BLEED + 8}mm 4.5mm; display: flex; flex-direction: column; justify-content: space-between; gap: 3.6mm; }
-  .h2 { font-family: var(--head); font-weight: 800; font-size: 4.6mm; color: var(--navy); margin-bottom: 2.4mm; display: flex; align-items: center; gap: 2mm; }
-  .h2::before { content: ""; width: 1.3mm; height: 4.4mm; border-radius: 1mm; background: var(--grad); }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.6mm; }
-  .step { background: var(--mint); border-radius: 2.6mm; padding: 2.6mm 2.2mm 2.4mm; position: relative; text-align: center; }
-  .step .n { position: absolute; top: -2.2mm; left: 50%; transform: translateX(-50%); width: 5.6mm; height: 5.6mm; border-radius: 50%;
-    background: var(--navy); color: #fff; font: 700 3.2mm/5.6mm "Poppins", sans-serif; }
-  .step .ic { width: 6.6mm; height: 6.6mm; color: #059669; margin: 1.4mm auto 1.2mm; display: block; }
-  .step p { font-size: 3mm; line-height: 1.4; font-weight: 600; color: var(--ink); }
-  .te .step p { font-size: 2.95mm; }
+  .f-body { flex: 1; padding: 4.5mm ${BLEED + 8}mm 4mm; display: flex; flex-direction: column; justify-content: space-between; gap: 3mm; }
+  .h2 { font-family: var(--head); font-weight: 800; font-size: 4.6mm; color: var(--navy); margin-bottom: 2.2mm; }
+  .why { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.4mm; }
+  .why div { background: #FEF2F2; border-top: 1mm solid var(--red); border-radius: 1.6mm 1.6mm 2.4mm 2.4mm; padding: 2.2mm 2.4mm 2.4mm; }
+  .why .ic { width: 6mm; height: 6mm; color: var(--red); display: block; margin-bottom: 1.2mm; }
+  .why b { display: block; font-family: var(--head); font-weight: 800; font-size: 3.6mm; line-height: 1.25; color: var(--navy); }
+  .why small { display: block; margin-top: 1mm; font-size: 2.9mm; line-height: 1.4; color: #334155; }
 
-  .why { display: grid; grid-template-columns: 1fr 1fr; gap: 2.2mm 4mm; }
-  .why div { display: flex; gap: 2.4mm; align-items: flex-start; }
-  .why .ic { flex: none; width: 6.6mm; height: 6.6mm; padding: 1.3mm; border-radius: 2mm; background: var(--navy); color: #5EEAD4; }
-  .why b { display: block; font-family: var(--head); font-weight: 700; font-size: 3.5mm; line-height: 1.25; color: var(--navy); }
-  .why small { display: block; font-size: 2.8mm; line-height: 1.4; color: var(--muted); }
-
-  .for { display: flex; flex-wrap: wrap; gap: 1.6mm; }
-  .for span { font-size: 2.9mm; font-weight: 600; padding: .5mm 2.4mm; border-radius: 10mm; border: .3mm solid var(--line); color: var(--ink); background: #F8FAFC; }
-  .for-row { display: flex; align-items: center; gap: 3mm; }
-  .for-row .h2 { margin: 0; flex: none; }
+  .fix { background: var(--mint); border: .4mm solid #A7F3D0; border-radius: 3mm; padding: 3mm 3.4mm 2.8mm; }
+  .fix .h2 { color: #047857; margin-bottom: 2.4mm; display: flex; align-items: center; gap: 2mm; }
+  .fix .h2 .ic { width: 6mm; height: 6mm; padding: 1.2mm; border-radius: 50%; background: var(--green); color: #fff; flex: none; }
+  .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 1.6mm; }
+  .flow span { background: #fff; border-radius: 2mm; padding: 1.6mm 1.6mm; text-align: center; font-family: var(--head); font-weight: 700;
+    font-size: 3.1mm; line-height: 1.3; color: var(--navy); min-height: 10mm; display: flex; align-items: center; justify-content: center; }
+  .flow i { font: normal 800 6mm/1 "Poppins", sans-serif; color: var(--green); }
+  .ticks { display: flex; justify-content: center; gap: 4mm; margin-top: 2.4mm; flex-wrap: wrap; }
+  .ticks span { font-family: var(--head); font-weight: 700; font-size: 3.1mm; color: #047857; }
+  .ticks span::before { content: "✓ "; color: var(--green); }
 
   .f-cta { background: var(--navy); color: #fff; padding: 4.5mm ${BLEED + 8}mm ${BLEED + 6}mm; position: relative;
     display: grid; grid-template-columns: 1fr auto; gap: 5mm; align-items: center; }
@@ -137,27 +136,22 @@ const flyerPage = (t) => `
       <div class="f-logo"><div class="logo">${logo}</div><div class="brand">Hey<b>Nikki</b></div></div>
       <div class="f-tag">${t.tag}</div>
     </div>
+    <p class="kicker">${t.kicker}</p>
+    <div class="notif">${svg("missed")}<span><b>${t.notif[0]}</b><small>${t.notif[1]}</small></span></div>
     <h1 class="f-head">${t.headline.map((l) => `<span>${l}</span>`).join("")}</h1>
-    <p class="f-sub">${t.sub}</p>
-    <div class="f-pain">${svg("phone")}${t.pain}</div>
   </div>
 
   <div class="f-body">
     <div>
-      <h2 class="h2">${t.howTitle}</h2>
-      <div class="steps">
-        ${t.steps.map((s, i) => `<div class="step"><span class="n">${i + 1}</span>${svg(["phone", "talk", "done"][i])}<p>${s}</p></div>`).join("")}
-      </div>
-    </div>
-    <div>
       <h2 class="h2">${t.whyTitle}</h2>
       <div class="why">
-        ${t.why.map(([b, s], i) => `<div>${svg(whyIcons[i])}<span><b>${b}</b><small>${s}</small></span></div>`).join("")}
+        ${t.why.map(([b, s], i) => `<div>${svg(["store", "clock", "rupee"][i])}<b>${b}</b><small>${s}</small></div>`).join("")}
       </div>
     </div>
-    <div class="for-row">
-      <h2 class="h2">${t.forTitle}</h2>
-      <div class="for">${t.forList.map((x) => `<span>${x}</span>`).join("")}</div>
+    <div class="fix">
+      <h2 class="h2">${svg("phone")}${t.fixTitle}</h2>
+      <div class="flow">${t.flow.map((f) => `<span>${f}</span>`).join("<i>→</i>")}</div>
+      <div class="ticks">${t.ticks.map((x) => `<span>${x}</span>`).join("")}</div>
     </div>
   </div>
 
@@ -165,7 +159,7 @@ const flyerPage = (t) => `
     <div>
       <div class="offer">${t.offer}</div>
       <div class="offer-sub">${t.offerSub}</div>
-      <div class="cta">${t.cta} ${t.ctaSub}</div>
+      <div class="cta">${t.cta}</div>
       <div class="phone">${svg("phone")}<span class="num">${PHONE_DISPLAY}</span></div>
       <div class="site">${WEBSITE}</div>
     </div>
@@ -190,14 +184,15 @@ const autoCss = `
   .a-logo .brand { font-size: 26mm; color: #fff; }
   .a-free { background: var(--yellow); color: var(--navy); font-family: var(--head); font-weight: 800; font-size: 17mm;
     padding: 5mm 13mm; border-radius: 6mm; transform: rotate(-3deg); box-shadow: 0 3mm 0 rgba(0,0,0,.25); }
-  .a-head { position: relative; margin-top: 20mm; font-family: var(--head); font-weight: 800; line-height: 1.08; }
-  .te .a-head { font-size: 60mm; }
-  .en .a-head { font-size: 56mm; letter-spacing: -0.02em; }
+  .a-head { position: relative; margin-top: 26mm; font-family: var(--head); font-weight: 800; line-height: 1.08; }
+  .te .a-head { font-size: 56mm; }
+  .en .a-head { font-size: 52mm; letter-spacing: -0.02em; }
   .a-head span { display: block; }
+  .a-head span:first-child { display: inline-block; background: var(--red); padding: 4mm 12mm 0; border-radius: 7mm; margin-bottom: 5mm; }
   .a-head span:last-child { color: var(--yellow); }
-  .a-sub { position: relative; margin-top: 10mm; font-family: var(--head); font-weight: 600; font-size: 17mm; line-height: 1.3; color: #CBD5E1; max-width: 560mm; }
-  .te .a-sub { font-size: 16.5mm; }
-  .en .a-sub { font-size: 15.5mm; }
+  .a-sub { position: relative; margin-top: 10mm; font-family: var(--head); font-weight: 600; font-size: 17mm; line-height: 1.3; color: #fff; max-width: 560mm; }
+  .te .a-sub { font-size: 18mm; }
+  .en .a-sub { font-size: 19mm; }
   .a-call { position: relative; margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 14mm;
     background: #fff; color: var(--navy); border-radius: 10mm; padding: 9mm 12mm 9mm 14mm; }
   .a-call .lbl { font-family: var(--head); font-weight: 700; font-size: 13mm; color: #059669; line-height: 1.1; }

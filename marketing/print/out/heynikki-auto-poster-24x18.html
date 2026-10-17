@@ -5,7 +5,7 @@
 <style>
   :root {
     --navy: #0B1220; --navy2: #132036; --ink: #0F172A; --muted: #475569;
-    --green: #10B981; --teal: #14B8A6; --orange: #F97316; --yellow: #FACC15;
+    --green: #10B981; --red: #EF4444; --teal: #14B8A6; --orange: #F97316; --yellow: #FACC15;
     --paper: #FFFFFF; --mint: #ECFDF5; --line: #E2E8F0;
     --grad: linear-gradient(110deg, #10B981 0%, #14B8A6 55%, #F97316 100%);
   }
@@ -33,14 +33,15 @@
   .a-logo .brand { font-size: 26mm; color: #fff; }
   .a-free { background: var(--yellow); color: var(--navy); font-family: var(--head); font-weight: 800; font-size: 17mm;
     padding: 5mm 13mm; border-radius: 6mm; transform: rotate(-3deg); box-shadow: 0 3mm 0 rgba(0,0,0,.25); }
-  .a-head { position: relative; margin-top: 20mm; font-family: var(--head); font-weight: 800; line-height: 1.08; }
-  .te .a-head { font-size: 60mm; }
-  .en .a-head { font-size: 56mm; letter-spacing: -0.02em; }
+  .a-head { position: relative; margin-top: 26mm; font-family: var(--head); font-weight: 800; line-height: 1.08; }
+  .te .a-head { font-size: 56mm; }
+  .en .a-head { font-size: 52mm; letter-spacing: -0.02em; }
   .a-head span { display: block; }
+  .a-head span:first-child { display: inline-block; background: var(--red); padding: 4mm 12mm 0; border-radius: 7mm; margin-bottom: 5mm; }
   .a-head span:last-child { color: var(--yellow); }
-  .a-sub { position: relative; margin-top: 10mm; font-family: var(--head); font-weight: 600; font-size: 17mm; line-height: 1.3; color: #CBD5E1; max-width: 560mm; }
-  .te .a-sub { font-size: 16.5mm; }
-  .en .a-sub { font-size: 15.5mm; }
+  .a-sub { position: relative; margin-top: 10mm; font-family: var(--head); font-weight: 600; font-size: 17mm; line-height: 1.3; color: #fff; max-width: 560mm; }
+  .te .a-sub { font-size: 18mm; }
+  .en .a-sub { font-size: 19mm; }
   .a-call { position: relative; margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 14mm;
     background: #fff; color: var(--navy); border-radius: 10mm; padding: 9mm 12mm 9mm 14mm; }
   .a-call .lbl { font-family: var(--head); font-weight: 700; font-size: 13mm; color: #059669; line-height: 1.1; }
@@ -90,7 +91,7 @@
     <div class="a-free">100 నిమిషాలు ఉచితం</div>
   </div>
   <h1 class="a-head"><span>కాల్ మిస్ అయితే,</span><span>కస్టమర్ మిస్!</span></h1>
-  <p class="a-sub">మీ బిజినెస్ ఫోన్‌కి తెలుగులో జవాబిచ్చే AI రిసెప్షనిస్ట్ — 24 గంటలూ</p>
+  <p class="a-sub">మీరు ఫోన్ ఎత్తలేకపోతే, నిక్కీ ఎత్తుతుంది — తెలుగులో, 24 గంటలూ</p>
   <div class="a-call">
     <div>
       <div class="lbl">నిక్కీతో మాట్లాడండి</div>
@@ -139,7 +140,7 @@
     <div class="a-free">100 minutes FREE</div>
   </div>
   <h1 class="a-head"><span>Missed call =</span><span>Missed customer!</span></h1>
-  <p class="a-sub">AI receptionist that answers your business phone in Telugu, 24 hours</p>
+  <p class="a-sub">Can't pick up? Nikki will — in Telugu, 24 hours</p>
   <div class="a-call">
     <div>
       <div class="lbl">Call & talk to Nikki</div>

@@ -3,6 +3,10 @@
 // the front and English on the back, and a reader who turns it over should
 // find the same offer, not a different one.
 //
+// The whole piece is about one idea, the missed call: show it, say why it
+// costs money, then say Nikki picks up when you can't. Anything that is not
+// part of that story stays off the paper.
+//
 // Prices and the phone number mirror web/app/page.tsx — change them there
 // first, then here.
 
@@ -13,33 +17,27 @@ export const WEBSITE = "heynikki.in";
 export const te = {
   lang: "te",
   tag: "తెలుగు AI రిసెప్షనిస్ట్",
-  headline: ["ఒక్క కాల్ కూడా", "ఇక మిస్ అవ్వదు!"],
-  sub: "మీరు బిజీగా ఉన్నా, షాప్ మూసేసినా — నిక్కీ మీ ఫోన్ ఎత్తి కస్టమర్‌తో తెలుగులో మాట్లాడుతుంది.",
-  pain: "మిస్డ్ కాల్ = పోయిన కస్టమర్",
-  howTitle: "ఎలా పనిచేస్తుంది?",
-  steps: [
-    "కస్టమర్ మీ నంబర్‌కి కాల్ చేస్తారు",
-    "నిక్కీ తెలుగులో మాట్లాడి అపాయింట్‌మెంట్ / ఆర్డర్ తీసుకుంటుంది",
-    "కస్టమర్‌కి వాట్సాప్‌లో కన్ఫర్మేషన్ వెళ్తుంది",
-  ],
-  whyTitle: "ఎందుకు నిక్కీ?",
+  kicker: "మీ ఫోన్‌లో ఇది రోజూ చూస్తున్నారా?",
+  // The notification card drawn under the kicker.
+  notif: ["3 మిస్డ్ కాల్స్", "కొత్త కస్టమర్ · ఉదయం 11:42"],
+  headline: ["మిస్డ్ కాల్", "= పోయిన కస్టమర్"],
+  whyTitle: "మిస్డ్ కాల్ ఎందుకు నష్టం?",
   why: [
-    ["24 గంటలూ పనిచేస్తుంది", "సెలవు లేదు, జీతం లేదు"],
-    ["మూడు భాషలు", "తెలుగు, హిందీ, ఇంగ్లీష్"],
-    ["మీ నంబర్ మారదు", "బోర్డ్, విజిటింగ్ కార్డ్ అలాగే"],
-    ["ప్రతి కాల్ మీ ఫోన్‌లో", "ఎవరు, ఏం అడిగారు — అన్నీ"],
+    ["మళ్ళీ కాల్ చేయరు", "కస్టమర్ వెంటనే పక్క షాప్‌కి కాల్ చేస్తారు"],
+    ["బిజీగా ఉన్నప్పుడే వస్తుంది", "కస్టమర్‌తో ఉన్నప్పుడు, డ్రైవింగ్‌లో, రాత్రి"],
+    ["డబ్బు పోతుంది", "ప్రతి మిస్డ్ కాల్ = ఒక ఆర్డర్ / అపాయింట్‌మెంట్ నష్టం"],
   ],
-  forTitle: "ఎవరికి?",
-  forList: ["క్లినిక్‌లు", "సెలూన్‌లు", "హోటళ్లు", "రియల్ ఎస్టేట్", "షాపులు"],
+  fixTitle: "మీరు ఎత్తలేకపోతే, నిక్కీ ఎత్తుతుంది",
+  flow: ["కాల్ వస్తుంది", "నిక్కీ తెలుగులో మాట్లాడుతుంది", "బుకింగ్ + వాట్సాప్ కన్ఫర్మేషన్"],
+  ticks: ["24 గంటలూ", "తెలుగు · హిందీ · ఇంగ్లీష్", "మీ నంబర్ మారదు"],
   offer: "మొదటి 100 నిమిషాలు ఉచితం",
   offerSub: "కార్డ్ అవసరం లేదు · తర్వాత నెలకు ₹3,999 నుంచి",
-  cta: "నిక్కీతో మీరే మాట్లాడి చూడండి!",
-  ctaSub: "ఇప్పుడే కాల్ చేయండి",
+  cta: "నిక్కీతో మీరే మాట్లాడి చూడండి! ఇప్పుడే కాల్ చేయండి",
   scan: "స్కాన్ చేసి కాల్ చేయండి",
-  // Auto poster: read from the vehicle behind in a few seconds, so four
-  // lines and a phone number, nothing else.
+  // Auto poster: read from the vehicle behind in a few seconds, so the
+  // missed-call line, one line of answer, and the phone number.
   autoHeadline: ["కాల్ మిస్ అయితే,", "కస్టమర్ మిస్!"],
-  autoSub: "మీ బిజినెస్ ఫోన్‌కి తెలుగులో జవాబిచ్చే AI రిసెప్షనిస్ట్ — 24 గంటలూ",
+  autoSub: "మీరు ఫోన్ ఎత్తలేకపోతే, నిక్కీ ఎత్తుతుంది — తెలుగులో, 24 గంటలూ",
   autoCall: "నిక్కీతో మాట్లాడండి",
   autoFree: "100 నిమిషాలు ఉచితం",
 };
@@ -47,31 +45,24 @@ export const te = {
 export const en = {
   lang: "en",
   tag: "AI receptionist that speaks Telugu",
-  headline: ["Never miss a", "customer call again!"],
-  sub: "Busy with a customer, or shop closed? Nikki picks up your phone and talks to the caller in Telugu.",
-  pain: "Missed call = Lost customer",
-  howTitle: "How it works",
-  steps: [
-    "Customer calls your number",
-    "Nikki talks in Telugu and books the appointment / takes the order",
-    "Customer gets a WhatsApp confirmation",
-  ],
-  whyTitle: "Why Nikki?",
+  kicker: "Do you see this on your phone every day?",
+  notif: ["3 missed calls", "New customer · 11:42 AM"],
+  headline: ["Missed call", "= Lost customer"],
+  whyTitle: "Why a missed call costs you",
   why: [
-    ["Works 24 hours", "No leave, no salary"],
-    ["Three languages", "Telugu, Hindi, English"],
-    ["Keep your number", "Boards & visiting cards stay"],
-    ["Every call on your phone", "Who called, what they asked"],
+    ["They don't call back", "The customer calls the next shop instead"],
+    ["It rings when you're busy", "With a customer, driving, or at night"],
+    ["You lose money", "Every missed call = a lost order or appointment"],
   ],
-  forTitle: "Made for",
-  forList: ["Clinics", "Salons", "Restaurants", "Real estate", "Shops"],
+  fixTitle: "Can't pick up? Nikki will.",
+  flow: ["Call comes in", "Nikki talks in Telugu", "Booking done + WhatsApp sent"],
+  ticks: ["24 hours", "Telugu · Hindi · English", "Keep your same number"],
   offer: "First 100 minutes FREE",
   offerSub: "No card needed · Then from ₹3,999 / month",
-  cta: "Talk to Nikki yourself!",
-  ctaSub: "Call now",
+  cta: "Talk to Nikki yourself! Call now",
   scan: "Scan to call",
   autoHeadline: ["Missed call =", "Missed customer!"],
-  autoSub: "AI receptionist that answers your business phone in Telugu, 24 hours",
+  autoSub: "Can't pick up? Nikki will — in Telugu, 24 hours",
   autoCall: "Call & talk to Nikki",
   autoFree: "100 minutes FREE",
 };
